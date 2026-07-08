@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HiBid Safe Bid Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.3.4
-// @description  Safely queues HiBid incremental bids from a per-lot max plan. Automatically confirms bid modals.
+// @version      0.4.0
+// @description  Safely queues HiBid bids and exports active eBay/Facebook Marketplace listings for FlipTracker.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @match        https://hibid.com/lots*
@@ -11,6 +11,10 @@
 // @match        https://hibid.com/account/watchlist*
 // @match        https://hibid.com/*
 // @match        https://bid.ajwillnerauctions.com/ui/auctions/*
+// @match        https://www.ebay.com/sh/lst*
+// @match        https://www.ebay.com/mys/*
+// @match        https://www.facebook.com/marketplace/you/*
+// @match        https://www.facebook.com/marketplace/profile/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_setClipboard
@@ -21,7 +25,7 @@
   'use strict';
 
   const PANEL_ID = 'hibid-bid-assistant-panel';
-  const SCRIPT_VERSION = '0.3.4';
+  const SCRIPT_VERSION = '0.4.0';
   const PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const AUTO_REFRESH_KEY = 'hibid-bid-assistant-auto-refresh-v1';
   const AUTO_CONFIRM_KEY = 'hibid-bid-assistant-auto-confirm-v1';
@@ -359,6 +363,241 @@
     return { status: 'eligible', eligible: true };
   }
 
+  function decodeHtml(value) {
+    return String(value || '')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&nbsp;/g, ' ');
+  }
+
+  function stripHtml(value) {
+    return decodeHtml(String(value || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+  }
+
+  function firstMatch(value, patterns) {
+    for (const pattern of patterns) {
+      const match = String(value || '').match(pattern);
+      if (match?.[1]) return decodeHtml(match[1]).trim();
+    }
+    return '';
+  }
+
+  function parseDollarAmount(value) {
+    const match = String(value || '').match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
+    return match ? Number(match[1].replace(/,/g, '')) : null;
+  }
+
+  function parsePlainInteger(value) {
+    const match = String(value || '').match(/\b([\d,]+)\b/);
+    return match ? Number(match[1].replace(/,/g, '')) : null;
+  }
+
+  function cleanListingTitle(value) {
+    return String(value || '')
+      .replace(/\s+/g, ' ')
+      .replace(/^Mark as sold\s+/i, '')
+      .trim();
+  }
+
+  function normalizeListingUrl(value) {
+    const url = decodeHtml(value || '').trim();
+    if (!url) return '';
+    if (/^https?:\/\//i.test(url)) return url;
+    if (url.startsWith('/')) {
+      if (/\/marketplace\//i.test(url)) return `https://www.facebook.com${url}`;
+      return `https://www.ebay.com${url}`;
+    }
+    return url;
+  }
+
+  function dedupeListings(listings) {
+    const seen = new Set();
+    const result = [];
+    listings.forEach(listing => {
+      const key = [
+        listing.source || '',
+        listing.itemId || '',
+        listing.url || '',
+        String(listing.title || '').toLowerCase(),
+        listing.price ?? ''
+      ].join('|');
+      if (seen.has(key)) return;
+      seen.add(key);
+      result.push(listing);
+    });
+    return result;
+  }
+
+  function parseEbayActiveListingsHtml(html) {
+    const text = String(html || '');
+    const chunks = text.split(/(?=<div[^>]+(?:qa-id="active-item-|\bid="active-item-|class="[^"]*active-item))/i);
+    const listings = [];
+
+    chunks.forEach(chunk => {
+      if (!/ebay\.com\/itm\/\d+|active-item-\d+|item__price/i.test(chunk)) return;
+      const url = normalizeListingUrl(firstMatch(chunk, [
+        /href="(https:\/\/www\.ebay\.com\/itm\/\d+[^"]*)"/i,
+        /href="(\/itm\/\d+[^"]*)"/i
+      ]));
+      const itemId = firstMatch(chunk, [
+        /active-item-(\d+)/i,
+        /Item ID:\s*(\d+)/i,
+        /\/itm\/(\d+)/i
+      ]);
+      const title = stripHtml(firstMatch(chunk, [
+        /<h3[^>]*class="[^"]*item-title[^"]*"[\s\S]*?<a[^>]*>[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/i,
+        /<a[^>]+href="(?:https:\/\/www\.ebay\.com)?\/itm\/\d+[^"]*"[^>]*>\s*<span[^>]*>([\s\S]*?)<\/span>/i,
+        /<img[^>]+alt="([^"]+)"/i
+      ]));
+      const priceHtml = firstMatch(chunk, [/<div[^>]+class="[^"]*item__price[^"]*"[^>]*>([\s\S]*?)<\/div>/i]);
+      const price = parseDollarAmount(stripHtml(priceHtml) || chunk);
+      if (!title || !price) return;
+      const activityText = stripHtml(chunk);
+      const views = parsePlainInteger(firstMatch(activityText, [/\b([\d,]+)\s+Views?\b/i, /\b([\d,]+)\s+View\b/i]));
+      const watchers = parsePlainInteger(firstMatch(activityText, [/\b([\d,]+)\s+Watchers?\b/i]));
+
+      listings.push({
+        source: 'eBay',
+        itemId,
+        title,
+        price,
+        url,
+        status: 'Active',
+        listedDateText: stripHtml(firstMatch(chunk, [/<div[^>]+class="[^"]*item__listing-status[^"]*"[^>]*>([\s\S]*?)<\/div>/i])),
+        shippingText: stripHtml(firstMatch(chunk, [/<div[^>]+class="[^"]*item__shipping-price[^"]*"[^>]*>([\s\S]*?)<\/div>/i])),
+        views,
+        watchers,
+        clicks: null,
+      });
+    });
+
+    return dedupeListings(listings);
+  }
+
+  function parseFacebookMarketplaceListingsHtml(html) {
+    const text = String(html || '');
+    const listings = [];
+    const markSoldPattern = /aria-label="Mark as sold\s+([^"]+)"/gi;
+    let match;
+
+    while ((match = markSoldPattern.exec(text))) {
+      const title = cleanListingTitle(decodeHtml(match[1]));
+      const titleIndex = title ? text.lastIndexOf(title, match.index) : -1;
+      const start = titleIndex >= 0 ? titleIndex : Math.max(0, match.index - 3200);
+      const windowHtml = text.slice(start, match.index);
+      const priceMatches = Array.from(windowHtml.matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g));
+      const price = priceMatches.length ? Number(priceMatches[priceMatches.length - 1][1].replace(/,/g, '')) : null;
+      const url = normalizeListingUrl(firstMatch(windowHtml, [
+        /href="(https:\/\/www\.facebook\.com\/marketplace\/item\/\d+\/?[^"]*)"/i,
+        /href="(\/marketplace\/item\/\d+\/?[^"]*)"/i
+      ]));
+      const fullText = stripHtml(windowHtml);
+      const clicks = parsePlainInteger(firstMatch(fullText, [/\b([\d,]+)\s+clicks?\s+on\s+listing\b/i]));
+      const listedDateText = firstMatch(fullText, [/\b(Active\s+·\s+Listed\s+on\s+[^·]+?)(?:\s+Listed|\s+\d+\s+clicks|$)/i]) || 'Active';
+
+      if (!title || !price) continue;
+      listings.push({
+        source: 'Facebook Marketplace',
+        itemId: firstMatch(url, [/\/marketplace\/item\/(\d+)/i]),
+        title,
+        price,
+        url,
+        status: /sold|inactive/i.test(listedDateText) ? 'Inactive' : 'Active',
+        listedDateText,
+        shippingText: '',
+        views: null,
+        watchers: null,
+        clicks,
+      });
+    }
+
+    if (!listings.length) {
+      const cardPattern = /<div[^>]+aria-label="([^"]+)"[^>]+role="button"[\s\S]*?(?=<div[^>]+aria-label=|$)/gi;
+      let card;
+      while ((card = cardPattern.exec(text))) {
+        const title = cleanListingTitle(decodeHtml(card[1]));
+        if (!title || /^Mark as sold\b/i.test(title)) continue;
+        const chunk = card[0];
+        const price = parseDollarAmount(chunk);
+        if (!price) continue;
+        const fullText = stripHtml(chunk);
+        listings.push({
+          source: 'Facebook Marketplace',
+          itemId: firstMatch(chunk, [/\/marketplace\/item\/(\d+)/i]),
+          title,
+          price,
+          url: normalizeListingUrl(firstMatch(chunk, [
+            /href="(https:\/\/www\.facebook\.com\/marketplace\/item\/\d+\/?[^"]*)"/i,
+            /href="(\/marketplace\/item\/\d+\/?[^"]*)"/i
+          ])),
+          status: /sold|inactive/i.test(fullText) ? 'Inactive' : 'Active',
+          listedDateText: firstMatch(fullText, [/\b(Active\s+·\s+Listed\s+on\s+[^·]+?)(?:\s+Listed|\s+\d+\s+clicks|$)/i]) || 'Active',
+          shippingText: '',
+          views: null,
+          watchers: null,
+          clicks: parsePlainInteger(firstMatch(fullText, [/\b([\d,]+)\s+clicks?\s+on\s+listing\b/i])),
+        });
+      }
+    }
+
+    return dedupeListings(listings);
+  }
+
+  function parseFlipTrackerActiveListingsHtml(html, context = {}) {
+    const sourceUrl = String(context.url || '');
+    const text = String(html || '');
+    if (/ebay\.com/i.test(sourceUrl) || /active-item-\d+|item__price|ebay\.com\/itm\/\d+/i.test(text)) {
+      return parseEbayActiveListingsHtml(text);
+    }
+    if (/facebook\.com/i.test(sourceUrl) || /Mark as sold|clicks on listing|marketplace\/item\//i.test(text)) {
+      return parseFacebookMarketplaceListingsHtml(text);
+    }
+    return dedupeListings(parseEbayActiveListingsHtml(text).concat(parseFacebookMarketplaceListingsHtml(text)));
+  }
+
+  function buildFlipTrackerListingsExportHtml(listings, meta = {}) {
+    const rows = Array.isArray(listings) ? listings : [];
+    const generatedAt = meta.generatedAt || new Date().toISOString();
+    const pageUrl = meta.pageUrl || (typeof location !== 'undefined' ? location.href : '');
+    const source = rows[0]?.source || 'Unknown';
+    const cards = rows.map((listing, index) => {
+      if (listing.source === 'eBay') {
+        const itemId = listing.itemId || firstMatch(listing.url, [/\/itm\/(\d+)/i]) || String(index + 1);
+        return `
+          <div qa-id="active-item-${escapeHtml(itemId)}" class="active-item" data-fliptracker-source="ebay">
+            <h3 class="item-title"><a href="${escapeHtml(listing.url || '')}"><span>${escapeHtmlText(listing.title || '')}</span></a></h3>
+            <div class="item__itemid"><span>Item ID: ${escapeHtml(itemId)}</span></div>
+            <div class="item__price"><span>$${Number(listing.price || 0).toFixed(2)}</span><span> Buy It Now</span></div>
+            <div class="item__shipping-price">${escapeHtml(listing.shippingText || '')}</div>
+            <div class="item__listing-status">${escapeHtml(listing.listedDateText || listing.status || 'Active')}</div>
+            <div class="me-item-activity__column"><span>${Number.isFinite(listing.views) ? listing.views : ''}</span><span>View</span></div>
+            <div class="me-item-activity__column"><span>${Number.isFinite(listing.watchers) ? listing.watchers : ''}</span><span>Watchers</span></div>
+          </div>`;
+      }
+      return `
+        <div aria-label="${escapeHtml(listing.title || '')}" role="button" data-fliptracker-source="facebook">
+          <span>${escapeHtmlText(listing.title || '')}</span><span>$${Number(listing.price || 0).toFixed(2)}</span>
+          <span>${escapeHtmlText(listing.listedDateText || listing.status || 'Active')}</span>
+          <span>Listed on Marketplace · ${Number.isFinite(listing.clicks) ? listing.clicks : 0} clicks on listing</span>
+          ${listing.url ? `<a href="${escapeHtml(listing.url)}">Open</a>` : ''}
+        </div>
+        <div aria-label="Mark as sold ${escapeHtml(listing.title || '')}" role="button">Mark as sold</div>`;
+    }).join('\n');
+
+    return `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>FlipTracker Active Listing Export</title></head>
+<body data-fliptracker-export="active-listings">
+<h1>FlipTracker Active Listing Export</h1>
+<script type="application/json" id="fliptracker-export-metadata">${JSON.stringify({ generatedAt, pageUrl, source, count: rows.length }).replace(/</g, '\\u003c')}</script>
+${cards}
+</body>
+</html>`;
+  }
+
   const Core = {
     evaluateLot,
     moneyFromText,
@@ -373,6 +612,7 @@
     findConfirmSurface,
     getLoadTarget,
     isLiveCatalogPage,
+    isFlipTrackerListingPage,
     shouldInitOnLocation,
     getLotTiles,
     extractLot,
@@ -381,6 +621,10 @@
     extractLivePageLots,
     expandLivePageLots,
     buildLlmAuctionBrief,
+    parseEbayActiveListingsHtml,
+    parseFacebookMarketplaceListingsHtml,
+    parseFlipTrackerActiveListingsHtml,
+    buildFlipTrackerListingsExportHtml,
     evaluateLiveLot,
     prepareLiveBid,
     findLotOnPage,
@@ -441,6 +685,18 @@
     return /^\/livecatalog\b/i.test(String(loc.pathname || ''));
   }
 
+  function isFlipTrackerListingPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const pathname = String(loc.pathname || '');
+    if (host === 'www.ebay.com') {
+      return /^\/sh\/lst\b/i.test(pathname) || /^\/mys\//i.test(pathname);
+    }
+    if (host === 'www.facebook.com' || host === 'facebook.com') {
+      return /^\/marketplace\/(?:you|profile)\b/i.test(pathname);
+    }
+    return false;
+  }
+
   function shouldInitOnLocation(loc = location) {
     const host = String(loc.hostname || '').toLowerCase();
     const pathname = String(loc.pathname || '');
@@ -449,6 +705,8 @@
     if (host === 'bid.ajwillnerauctions.com') {
       return /^\/ui\/auctions\//i.test(pathname);
     }
+
+    if (isFlipTrackerListingPage(loc)) return true;
 
     if (host !== 'hibid.com' && !host.endsWith('.hibid.com')) return false;
     if (/^\/account\/watchlist\b/i.test(pathname)) return /status=OUTBID/i.test(search);
@@ -770,6 +1028,32 @@
       return true;
     }
     return false;
+  }
+
+  function safeTimestamp(value = new Date()) {
+    const date = value instanceof Date ? value : new Date(value);
+    return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  }
+
+  function downloadTextFile(filename, contents, type = 'text/html;charset=utf-8') {
+    const blob = new Blob([contents], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+      link.remove();
+    }, 1000);
+  }
+
+  function scanCurrentFlipTrackerListings() {
+    return parseFlipTrackerActiveListingsHtml(document.documentElement?.outerHTML || '', {
+      url: location.href
+    });
   }
 
   function lotSummary(rows) {
@@ -1232,6 +1516,18 @@
         </div>
       </div>
       <div id="hibid-bid-body">
+        <div id="fliptracker-listing-export-mode" style="display:none;border-bottom:1px solid #fff2;margin-bottom:10px;padding-bottom:10px">
+          <strong>FlipTracker Active Listing Export</strong>
+          <div class="hiba-meta" style="margin-top:4px">Scrapes visible active eBay/Facebook listing cards and exports an HTML file for FlipTracker ImportInbox.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <button id="fliptracker-listing-scan" type="button" class="hiba-btn">Scan Listings</button>
+            <button id="fliptracker-listing-copy" type="button" class="hiba-btn">Copy Export HTML</button>
+            <button id="fliptracker-listing-download" type="button" class="hiba-btn">Download Export HTML</button>
+          </div>
+          <div id="fliptracker-listing-status" class="hiba-meta" style="margin-top:8px">Waiting to scan.</div>
+          <div id="fliptracker-listing-results" style="margin-top:8px"></div>
+        </div>
+        <div id="hibid-bid-controls">
         <textarea id="hibid-bid-plan-json" spellcheck="false" style="width:100%;height:132px;box-sizing:border-box;background:#050505;color:#fff;border:1px solid #fff3;border-radius:8px;padding:8px;font:12px ui-monospace,Consolas,monospace"></textarea>
         <label style="display:flex;align-items:center;gap:6px;margin-top:8px;color:#ddd">
           <input id="hibid-bid-outbid-only" type="checkbox">
@@ -1250,6 +1546,7 @@
           <button id="hibid-bid-scan" type="button" class="hiba-btn">Scan</button>
           <button id="hibid-bid-next" type="button" class="hiba-btn">Prepare Next Eligible</button>
           <button id="hibid-bid-stop" type="button" class="hiba-btn danger">Stop</button>
+        </div>
         </div>
         <div id="hibid-live-mode" style="display:none;border-top:1px solid #fff2;margin-top:10px;padding-top:10px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
@@ -1311,6 +1608,14 @@
     const resultsEl = panel.querySelector('#hibid-bid-results');
     const planEl = panel.querySelector('#hibid-bid-plan-json');
     const liveMode = isLiveCatalogPage();
+    const listingExportMode = isFlipTrackerListingPage();
+    const bidControlsEl = panel.querySelector('#hibid-bid-controls');
+    const listingExportModeEl = panel.querySelector('#fliptracker-listing-export-mode');
+    const listingExportStatusEl = panel.querySelector('#fliptracker-listing-status');
+    const listingExportResultsEl = panel.querySelector('#fliptracker-listing-results');
+    const listingExportScanButton = panel.querySelector('#fliptracker-listing-scan');
+    const listingExportCopyButton = panel.querySelector('#fliptracker-listing-copy');
+    const listingExportDownloadButton = panel.querySelector('#fliptracker-listing-download');
     const liveModeEl = panel.querySelector('#hibid-live-mode');
     const liveStateEl = panel.querySelector('#hibid-live-state');
     const liveArmButton = panel.querySelector('#hibid-live-arm');
@@ -1318,7 +1623,7 @@
     const liveCopyJsonButton = panel.querySelector('#hibid-live-copy-json');
     const liveCopyLlmButton = panel.querySelector('#hibid-live-copy-llm');
     const autoRefreshInput = panel.querySelector('#hibid-bid-auto-refresh');
-    const state = { stop: false, rows: [], busy: false, refreshTimer: null, refreshSeconds: 30, lotCache: new Map(), planFocused: false, lastPlanInputAt: 0, liveArmed: false, liveRow: null, liveTimer: null };
+    const state = { stop: false, rows: [], busy: false, refreshTimer: null, refreshSeconds: 30, lotCache: new Map(), planFocused: false, lastPlanInputAt: 0, liveArmed: false, liveRow: null, liveTimer: null, listingRows: [] };
 
     const status = (message) => {
       statusEl.textContent = message;
@@ -1341,6 +1646,33 @@
           <button type="button" class="hiba-prepare" data-index="${index}" ${row.eligible ? '' : 'disabled'}>Prepare Bid</button>
         </div>
       `).join('');
+    };
+
+    const renderListingExport = (rows) => {
+      state.listingRows = rows;
+      listingExportStatusEl.textContent = rows.length
+        ? `Found ${rows.length} active listing card(s). Download the export, then scan/import it in FlipTracker.`
+        : 'No active listing cards found. Scroll/load more listings, then scan again.';
+      listingExportResultsEl.innerHTML = rows.slice(0, 8).map(row => `
+        <div class="hiba-row" style="grid-template-columns:1fr">
+          <div>
+            <div><strong>${escapeHtml(row.source || 'Listing')}</strong> | ${escapeHtml(row.title || '(missing title)')}</div>
+            <div class="hiba-meta">$${Number(row.price || 0).toFixed(2)} | ${escapeHtml(row.status || '')} | Views: ${row.views ?? '-'} | Watchers: ${row.watchers ?? '-'} | Clicks: ${row.clicks ?? '-'}</div>
+            <div class="hiba-meta">${escapeHtml(row.url || '')}</div>
+          </div>
+        </div>
+      `).join('') + (rows.length > 8 ? `<div class="hiba-meta">Showing 8 of ${rows.length} listing(s).</div>` : '');
+    };
+
+    const currentListingExportHtml = () => buildFlipTrackerListingsExportHtml(state.listingRows, {
+      pageUrl: location.href,
+      generatedAt: new Date().toISOString()
+    });
+
+    const scanListingsForExport = () => {
+      const rows = scanCurrentFlipTrackerListings();
+      renderListingExport(rows);
+      return rows;
     };
 
     const loadCurrentOutbidLots = async () => {
@@ -1514,6 +1846,42 @@
       }, 1000);
     };
 
+    if (listingExportMode) {
+      listingExportModeEl.style.display = '';
+      if (!/hibid\.com$/i.test(location.hostname) && location.hostname !== 'bid.ajwillnerauctions.com') {
+        bidControlsEl.style.display = 'none';
+        liveModeEl.style.display = 'none';
+        detectedEl.textContent = 'FlipTracker export mode. Scroll/load your active listings, then scan and download the export.';
+        status('Ready to export active listings for FlipTracker.');
+      }
+      window.setTimeout(scanListingsForExport, 500);
+    }
+
+    listingExportScanButton.addEventListener('click', () => {
+      const rows = scanListingsForExport();
+      status(`Scanned ${rows.length} active listing card(s).`);
+    });
+    listingExportCopyButton.addEventListener('click', async () => {
+      if (!state.listingRows.length) scanListingsForExport();
+      if (!state.listingRows.length) {
+        status('Nothing to copy yet. Scroll/load listings and scan again.');
+        return;
+      }
+      const copied = await writeClipboard(currentListingExportHtml()).catch(() => false);
+      status(copied ? `Copied FlipTracker export HTML for ${state.listingRows.length} listing(s).` : 'Clipboard write failed. Use Download Export HTML instead.');
+    });
+    listingExportDownloadButton.addEventListener('click', () => {
+      if (!state.listingRows.length) scanListingsForExport();
+      if (!state.listingRows.length) {
+        status('Nothing to download yet. Scroll/load listings and scan again.');
+        return;
+      }
+      const source = state.listingRows[0]?.source === 'eBay' ? 'ebay' : 'facebook';
+      const filename = `FlipTracker-listings-${source}-${safeTimestamp()}.html`;
+      downloadTextFile(filename, currentListingExportHtml());
+      status(`Downloaded ${filename}. Put it in ImportInbox, then use FlipTracker import.`);
+    });
+
     autoRefreshInput.addEventListener('change', (event) => {
       setAutoRefresh(event.target.checked);
     });
@@ -1630,6 +1998,13 @@
       .replace(/"/g, '&quot;');
   }
 
+  function escapeHtmlText(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
   if (!globalThis.__HIBID_BID_ASSISTANT_TEST__) {
     const start = () => waitForLotDocument().then(shouldInit => {
       if (shouldInit) init();
@@ -1640,6 +2015,7 @@
 
   async function waitForLotDocument() {
     if (!shouldInitOnLocation()) return false;
+    if (isFlipTrackerListingPage()) return true;
 
     for (let i = 0; i < 24; i += 1) {
       if (getLotTiles().length || extractTextLots().length) return true;
