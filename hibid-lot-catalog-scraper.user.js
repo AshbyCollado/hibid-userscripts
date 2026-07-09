@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.4.3
+// @version      1.4.4
 // @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
@@ -155,6 +155,9 @@
     if (totalMatch) return Number(totalMatch[1].replace(/,/g, ''));
 
     const bodyText = textOf(document.body);
+    const showingMatch = bodyText.match(/\bShowing\s+[\d,]+\s+to\s+[\d,]+\s+of\s+([\d,]+)\s+lots\b/i);
+    if (showingMatch) return Number(showingMatch[1].replace(/,/g, ''));
+
     const ofMatch = bodyText.match(/\b(?:of|total)\s+([\d,]+)\s+lots\b/i);
     if (ofMatch) return Number(ofMatch[1].replace(/,/g, ''));
 
