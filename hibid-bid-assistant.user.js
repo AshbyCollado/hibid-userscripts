@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.6.6
+// @version      0.6.7
 // @description  Modular resale helper for HiBid catalog/live scraping, LLM exports, safe bid prep, and FlipTracker marketplace exports.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -31,7 +31,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.6.6';
+  const SCRIPT_VERSION = '0.6.7';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -769,6 +769,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function cleanEbaySellerHubTitle(value) {
     let title = cleanListingTitle(value);
     const prefixes = [
+      /^[^|]{1,40}\|\s*/i,
       /^eBay\s*\|\s*/i,
       /^Item photo\.\s*/i,
       /^Show Listing Details(?:\s+new)?\.\s*/i,
@@ -1231,11 +1232,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         /Item ID:\s*(\d+)/i,
         /\/itm\/(\d+)/i
       ]);
-      const title = stripHtml(firstMatch(chunk, [
+      const title = cleanEbaySellerHubTitle(stripHtml(firstMatch(chunk, [
         /<h3[^>]*class="[^"]*item-title[^"]*"[\s\S]*?<a[^>]*>[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/i,
         /<a[^>]+href="(?:https:\/\/www\.ebay\.com)?\/itm\/\d+[^"]*"[^>]*>\s*<span[^>]*>([\s\S]*?)<\/span>/i,
         /<img[^>]+alt="([^"]+)"/i
-      ]));
+      ])));
       const priceHtml = firstMatch(chunk, [/<div[^>]+class="[^"]*item__price[^"]*"[^>]*>([\s\S]*?)<\/div>/i]);
       const price = parseDollarAmount(stripHtml(priceHtml) || chunk);
       if (!title || !price) return;
