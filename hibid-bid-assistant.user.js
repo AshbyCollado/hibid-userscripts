@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Safe Bid Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.4.5
+// @version      0.4.6
 // @description  Safely queues HiBid bids and exports active eBay/Facebook Marketplace listings for FlipTracker.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -25,7 +25,7 @@
   'use strict';
 
   const PANEL_ID = 'hibid-bid-assistant-panel';
-  const SCRIPT_VERSION = '0.4.5';
+  const SCRIPT_VERSION = '0.4.6';
   const PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const AUTO_REFRESH_KEY = 'hibid-bid-assistant-auto-refresh-v1';
   const AUTO_CONFIRM_KEY = 'hibid-bid-assistant-auto-confirm-v1';
@@ -1014,6 +1014,118 @@ ${cards}
       'Lot data JSON:',
       JSON.stringify(compactLots, null, 2)
     ].join('\n');
+  }
+
+  function installAssistantCatalogScraperButton(status = () => {}) {
+    const buttonId = 'hibid-scraper-copy-button';
+    const fallbackId = 'hibid-scraper-json';
+    const state = { running: false, stopRequested: false };
+
+    function setButton(text, color = '#111') {
+      const button = document.getElementById(buttonId);
+      if (!button) return;
+      button.textContent = text;
+      button.style.backgroundColor = color;
+    }
+
+    function showFallback(payload) {
+      let box = document.getElementById(fallbackId);
+      if (!box) {
+        box = document.createElement('textarea');
+        box.id = fallbackId;
+        box.style.cssText =
+          'position:fixed;left:16px;bottom:64px;z-index:2147483647;width:520px;height:300px;background:#111;color:#fff;border:1px solid #fff5;border-radius:12px;padding:10px;font:12px monospace;box-shadow:0 8px 30px #0008';
+        document.body.appendChild(box);
+      }
+      box.value = payload;
+      box.focus();
+      box.select();
+    }
+
+    function collectCatalogLots(itemsMap) {
+      getLotTiles().forEach(tile => {
+        const lot = extractLot(tile);
+        const key = lot.url || lot.id || lot.lot;
+        if (key && lot.title) itemsMap.set(String(key), lot);
+      });
+      return itemsMap.size;
+    }
+
+    async function copyAllLots() {
+      if (state.running) {
+        state.stopRequested = true;
+        setButton('Stopping...', '#9c1b1b');
+        status('Catalog scraper stop requested.');
+        return;
+      }
+
+      state.running = true;
+      state.stopRequested = false;
+      setButton('Starting...', '#d32f2f');
+
+      try {
+        let lots = [];
+        let stopped = false;
+        let expectedTotal = 0;
+
+        if (isLiveCatalogPage()) {
+          const expanded = await expandLivePageLots(message => {
+            setButton(message, '#d32f2f');
+            status(message);
+          }, () => state.stopRequested);
+          lots = expanded.lots || [];
+          stopped = expanded.stopped;
+          expectedTotal = expanded.expectedOpenLots;
+        } else {
+          const itemsMap = new Map();
+          await loadLots(message => {
+            setButton(message, '#d32f2f');
+            status(message);
+          }, () => state.stopRequested, () => collectCatalogLots(itemsMap));
+          collectCatalogLots(itemsMap);
+          lots = Array.from(itemsMap.values());
+          stopped = state.stopRequested;
+          expectedTotal = numberFromText(textOf(document.querySelector('.lot-list-header')).match(/Total Lots:\s*([\d,]+)/i)?.[1] || '');
+        }
+
+        if (!lots.length) {
+          setButton('Failed. Try again.', '#111');
+          status('Catalog scraper found no lots.');
+          return;
+        }
+
+        const payload = JSON.stringify(lots, null, 2);
+        const copied = await writeClipboard(payload).catch(() => false);
+        if (!copied) showFallback(payload);
+        const countText = expectedTotal ? `${lots.length}/${expectedTotal}` : String(lots.length);
+        setButton(stopped
+          ? (copied ? `Stopped. Copied ${countText}.` : `Stopped at ${countText}. Select text box.`)
+          : (copied ? `Success! Copied ${countText}.` : `Scraped ${countText}. Select text box.`), '#2e7d32');
+        status(copied ? `Catalog scraper copied ${countText} lot(s).` : `Catalog scraper scraped ${countText}; select fallback text box.`);
+      } finally {
+        state.running = false;
+        state.stopRequested = false;
+        setTimeout(() => setButton('Copy All HiBid Lots', '#111'), 5000);
+      }
+    }
+
+    function ensureButton() {
+      if (!shouldInitOnLocation() || isFlipTrackerListingPage() || !document.body) return;
+      if (document.getElementById(buttonId)) return;
+      const button = document.createElement('button');
+      button.id = buttonId;
+      button.type = 'button';
+      button.textContent = 'Copy All HiBid Lots';
+      button.style.cssText =
+        'position:fixed;left:16px;bottom:16px;z-index:2147483647;padding:12px 16px;border-radius:999px;border:1px solid #fff3;background:#111;color:white;font:600 13px system-ui;box-shadow:0 8px 30px #0008;cursor:pointer;transition:background-color 0.3s;';
+      button.addEventListener('click', copyAllLots);
+      document.body.appendChild(button);
+    }
+
+    ensureButton();
+    setTimeout(ensureButton, 1000);
+    setTimeout(ensureButton, 3000);
+    setInterval(ensureButton, 5000);
   }
 
   async function writeClipboard(payload) {
@@ -2098,6 +2210,7 @@ ${cards}
     };
     liveCopyJsonButton.addEventListener('click', () => copyLiveLots('json'));
     liveCopyLlmButton.addEventListener('click', () => copyLiveLots('llm'));
+    installAssistantCatalogScraperButton(status);
     resultsEl.addEventListener('click', async (event) => {
       if (state.busy) return;
       const button = event.target.closest('.hiba-prepare');
