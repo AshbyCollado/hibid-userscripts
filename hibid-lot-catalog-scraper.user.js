@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.4.5
+// @version      1.4.6
 // @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
@@ -440,6 +440,7 @@
       const key = lot.url || lot.id;
       if (key && lot.title) itemsMap.set(key, lot);
     });
+    mergeLots(itemsMap, extractLivePageLots(document));
   }
 
   function scrollToTop() {
