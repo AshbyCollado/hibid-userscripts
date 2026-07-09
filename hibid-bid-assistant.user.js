@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.6.0
+// @version      0.6.1
 // @description  Modular resale helper for HiBid catalog/live scraping, LLM exports, safe bid prep, and FlipTracker marketplace exports.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -31,7 +31,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.6.0';
+  const SCRIPT_VERSION = '0.6.1';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -2683,8 +2683,8 @@ ${cards}
     return renderCatalogSection(debugEnabled);
   }
 
-  function shouldRebuildPanelForMode(existingMode, nextMode, allowed = true) {
-    if (!existingMode) return false;
+  function shouldRebuildPanelForMode(existingMode, nextMode, allowed = true, panelExists = false) {
+    if (!existingMode) return Boolean(panelExists);
     if (!allowed || nextMode === 'unsupported') return true;
     return existingMode !== nextMode;
   }
@@ -3385,7 +3385,7 @@ ${cards}
         teardownPanel(`unsupported:${reason}`);
         return false;
       }
-      if (shouldRebuildPanelForMode(existingMode, modeInfo.mode, allowed)) {
+      if (shouldRebuildPanelForMode(existingMode, modeInfo.mode, allowed, Boolean(existingPanel))) {
         teardownPanel(`mode-change:${existingMode || 'none'}:${modeInfo.mode}:${reason}`);
       }
       if (location.href !== lastMountedHref) {

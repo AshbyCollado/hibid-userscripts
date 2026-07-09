@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.6.0`.
+- Current version: `0.6.1`.
 - UI: bottom-right minimized launcher plus dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 
@@ -92,6 +92,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: include enriched lot fields in LLM brief JSON.
 - Done: make legacy max-plan migration one-time so old global plans do not leak into future auctions.
 - Done: rebuild/remove the drawer when same-tab navigation changes modules or reaches an unsupported route.
+- Done: replace an old pre-FlipperAddon panel if the renamed script is installed alongside the old script during migration.
 - Pending future: inject Add to Max Plan near HiBid watch controls on page cards.
 - Pending future: richer visual max-plan table editing beyond inline row saves and raw JSON.
 - Pending future: live Waterfox screenshot/install verification after the user asks to load/install this branch.

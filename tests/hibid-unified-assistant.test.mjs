@@ -356,6 +356,8 @@ test('panel remount policy rebuilds on module changes and unsupported routes', (
   const core = loadCore();
 
   assert.equal(core.shouldRebuildPanelForMode('catalog', 'catalog', true), false);
+  assert.equal(core.shouldRebuildPanelForMode('', 'catalog', true, true), true);
+  assert.equal(core.shouldRebuildPanelForMode('', 'catalog', true, false), false);
   assert.equal(core.shouldRebuildPanelForMode('catalog', 'live', true), true);
   assert.equal(core.shouldRebuildPanelForMode('catalog', 'fliptracker', true), true);
   assert.equal(core.shouldRebuildPanelForMode('catalog', 'unsupported', false), true);
