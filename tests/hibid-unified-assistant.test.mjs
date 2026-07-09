@@ -396,6 +396,8 @@ test('LLM auction brief includes the advanced resale coordinator prompt and full
 
   assert.match(brief, /You are an auction resale analysis coordinator/);
   assert.match(brief, /Coverage first, confirmation second/);
+  assert.match(brief, /Sold\/completed comps first, profit second, hunches last/);
+  assert.match(brief, /auction all-in = bid x 1\.25/);
   assert.match(brief, /Use eBay sold\/completed listings first/);
   assert.match(brief, /sedan risk/i);
   assert.match(brief, /Factory sealed speaker/);

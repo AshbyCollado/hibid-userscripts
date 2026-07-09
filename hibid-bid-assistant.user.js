@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.6.1
+// @version      0.6.2
 // @description  Modular resale helper for HiBid catalog/live scraping, LLM exports, safe bid prep, and FlipTracker marketplace exports.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -31,7 +31,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.6.1';
+  const SCRIPT_VERSION = '0.6.2';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -64,6 +64,7 @@ Find profitable resale deals from a full auction export without missing hidden v
 
 Context:
 I am buying to resell for profit. I do not want $10-$20 time-wasters unless they are tiny, easy, or bundled into a larger profitable pickup. I may be driving about an hour and I am in a sedan, so bulky items need much higher profit and must be marked with sedan risk.
+Sold/completed comps first, profit second, hunches last.
 
 Core rule:
 Coverage first, confirmation second. Every lot gets classified. Nothing silently disappears.
@@ -82,6 +83,7 @@ Profit math:
 Assume auction buyer premium is 15%.
 Assume sales tax applies to hammer price plus buyer premium unless stated otherwise.
 Use sales tax rate: [INSERT TAX RATE].
+Rough quick math: auction all-in = bid x 1.25 for buyer premium/tax estimate; eBay net = sold price x 0.87 before shipping complications.
 Assume eBay resale has seller fees and promoted listing friction:
 - eBay final value fee default: 13.25%
 - Promoted listing ad rate default: 2%
