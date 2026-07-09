@@ -1,15 +1,29 @@
-# HiBid Assistant Brain
+# FlipperAddon Brain
 
-## Current Architecture
+Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 
+## Current Product
+
+- Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Single UI: bottom-right `#hibid-bid-assistant-panel` drawer. The assistant removes legacy floating scraper artifacts when it mounts.
-- Legacy file: `hibid-lot-catalog-scraper.user.js` remains for reference/tests, not as the normal active install. It detects the unified assistant and does not mount its old floating button while the assistant is active.
+- Current version: `0.6.0`.
+- UI: bottom-right minimized launcher plus dark drawer. It starts minimized every mount.
+- Principle: only the module for the current page exposes controls.
+
+## Module Map
+
+- `catalog`: HiBid catalog/category/lot/OUTBID watchlist and AJ Willner auction pages.
+  - Controls: max plan, Load Lots, Scan, Prepare Next, Stop, Copy Lots JSON, Copy LLM Brief.
+- `live`: HiBid `/livecatalog/...` pages.
+  - Controls: max plan, Auto-confirm, Arm, Snipe Now, Stop, Copy Lots JSON, Copy LLM Brief.
+- `fliptracker`: eBay and Facebook active selling pages.
+  - Controls: Scan Listings, Copy HTML, Download.
+- `unsupported`: do not mount.
 
 ## Route Map
 
-The assistant should mount without waiting for lot tiles on:
+Mount without waiting for lot tiles on:
 
 - `https://hibid.com/lots*`
 - `https://hibid.com/*/lots*`, including `/newjersey/lots/40196/computers-and-electronics`
@@ -21,8 +35,13 @@ The assistant should mount without waiting for lot tiles on:
 - `https://*.hibid.com/catalog/*`
 - `https://*.hibid.com/lot/*`
 - `https://*.hibid.com/account/watchlist?status=OUTBID`
+- `https://bid.ajwillnerauctions.com/ui/auctions/*`
+- `https://www.ebay.com/sh/lst*`
+- `https://www.ebay.com/mys/*`
+- `https://www.facebook.com/marketplace/you/*`
+- `https://www.facebook.com/marketplace/profile/*`
 
-Do not mount on generic HiBid account/help/search pages unless a supported route resolver case is added and tested.
+Do not mount on generic HiBid account/help/search pages unless a resolver case is added and tested.
 
 ## Scraper Flow
 
@@ -38,36 +57,62 @@ Do not mount on generic HiBid account/help/search pages unless a supported route
    - If embedded state is missing or state pagination is incomplete, scan visible DOM tiles/text, scroll, and use safe next/open-more controls.
    - Avoid `_ngcontent-*` attributes; they are Angular build artifacts.
 
+## Max Plan State
+
+- Store max plans per auction when possible: `flipperaddon-max-plan-v2:<host>:auction:<id>`.
+- Migrate from legacy `hibid-bid-assistant-plan-v1` on first read.
+- `max: null` means saved but not eligible.
+- Assistant rows expose Add/Save Plan first. Direct page-card injection is a future task.
+
 ## Debugging
 
-- Console/log prefix: `[HiBid Assistant]`.
-- Keep a capped GM storage ring buffer under `hibid-bid-assistant-debug-log-v1`.
-- Drawer controls:
-  - `hibid-debug-copy`
-  - `hibid-debug-clear`
-- Tampermonkey menu commands:
-  - `Remount HiBid Assistant`
-  - `Copy HiBid Assistant Debug Log`
-  - `Clear HiBid Assistant Debug Log`
+- Debug boolean key: `flipperaddon-debug-enabled-v1`.
+- Debug log key: `flipperaddon-debug-log-v1`.
+- Prefix: `[FlipperAddon]`.
+- Menu commands:
+  - `Remount FlipperAddon`
+  - `Toggle FlipperAddon Debug Mode`
+  - `Copy FlipperAddon Debug Log`
+  - `Clear FlipperAddon Debug Log`
   - `Copy HiBid Lots Now`
 
-Important log checkpoints: boot URL, route decision, mount reason, data source, counts, pagination fetches, fallback scroll/open-more steps, clipboard result, and caught errors.
+Debug UI and console/log capture are off unless debug mode is enabled.
+
+## Issue Tracker
+
+- Done: rename active script/UI/menu/debug prefix to FlipperAddon by ALOS.
+- Done: keep hosted raw update/download URL unchanged.
+- Done: add active page module resolver.
+- Done: make drawer render catalog/live/FlipTracker modules independently.
+- Done: start drawer minimized on every mount.
+- Done: gate debug UI/logging behind addon debug boolean.
+- Done: add per-auction max-plan storage and legacy migration.
+- Done: add assistant-row Add/Save Plan affordance.
+- Done: include the full auction-resale coordinator prompt in LLM brief.
+- Done: include enriched lot fields in LLM brief JSON.
+- Done: make legacy max-plan migration one-time so old global plans do not leak into future auctions.
+- Done: rebuild/remove the drawer when same-tab navigation changes modules or reaches an unsupported route.
+- Pending future: inject Add to Max Plan near HiBid watch controls on page cards.
+- Pending future: richer visual max-plan table editing beyond inline row saves and raw JSON.
+- Pending future: live Waterfox screenshot/install verification after the user asks to load/install this branch.
 
 ## Verification Checklist
 
 - `node --check .\hibid-bid-assistant.user.js`
 - `node --check .\hibid-lot-catalog-scraper.user.js`
 - `npm test`
-- Waterfox:
-  - Confirm the unified assistant version is enabled.
+- Waterfox manual checks:
+  - Confirm only the current hosted FlipperAddon script is enabled.
   - Open `https://hibid.com/newjersey/lots/40196/computers-and-electronics`.
-  - Capture a full-window screenshot with the page and bottom-right drawer visible.
-  - Copy lots JSON and compare copied count to the discoverable total, or copy debug evidence explaining the limit.
+  - Open `https://hibid.com/livecatalog/752334/the-luxe-edit`.
+  - Open eBay/Facebook active selling pages.
+  - Capture full-window screenshots showing the page and bottom-right launcher/drawer.
+  - Confirm each page exposes only its active module.
   - Confirm scrolling, filters, lot links, watch buttons, and bid buttons still work when not actively scraping.
 
 ## Known Pitfalls
 
-- `@match https://hibid.com/*` can inject on broad HiBid routes, so internal `resolveHiBidPage()` is the real gate.
+- `@match https://hibid.com/*` injects broadly, so `resolveAssistantMode()` and `shouldInitOnLocation()` are the real gates.
 - Waterfox/Tampermonkey Content Script API mode affects injection timing; keep mounting idempotent and callable from menu.
 - Seller subdomains may lack `#hibid-state`; fallback DOM/network-observed behavior matters there.
 - Closed catalog price realized text is auction result data, not an eBay sold comp.

@@ -2,7 +2,7 @@
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
 // @version      1.4.9
-// @description  Legacy standalone scraper. It stays quiet when the unified HiBid Assistant is active.
+// @description  Legacy standalone scraper. It stays quiet when FlipperAddon by ALOS is active.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @match        https://hibid.com/lots*

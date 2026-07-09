@@ -1,23 +1,39 @@
 # Project Notes
 
-This repo is the standalone home for the HiBid/Tampermonkey auction tools, separate from `DeadlockStreamer`.
+This repo is the standalone home for FlipperAddon by ALOS, separate from `DeadlockStreamer`.
 
 ## Hosted userscript
 
 - Repo: https://github.com/AshbyCollado/hibid-userscripts
 - Install URL: https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
-- The unified assistant script uses `@updateURL` and `@downloadURL` pointing at that raw URL. Bump `@version` for every hosted release.
-- Treat `hibid-bid-assistant.user.js` as the single active install. The old standalone lot scraper is retained for legacy reference/tests only.
+- Active file: `hibid-bid-assistant.user.js`
+- Current product name: `FlipperAddon by ALOS`
+- The script uses `@updateURL` and `@downloadURL` pointing at the raw URL. Bump `@version` for every hosted release.
 
-## HiBid auction assistant context
+## Modules
 
-- Catalog scraping reads HiBid embedded Apollo state first, including state-prefixed pages such as `/newjersey/lots/...`, and falls back to DOM scrolling/open-more behavior when state data is missing or incomplete.
-- Live catalog scraping expands visible lots through safe `Open More` / `Load More` style controls before copying JSON or the LLM brief.
-- The LLM brief tells the model to search eBay sold/completed comps first and use rough math:
-  - auction all-in cost = bid x 1.25
-  - eBay net = sold price x 0.87 before shipping complications
-- Auto-confirm remains controlled by the Tampermonkey panel checkbox.
-- Debug logs use `[HiBid Assistant]` and can be copied or cleared from the drawer/menu.
+- Catalog mode: HiBid catalog/category/lot/OUTBID watchlist pages. Owns catalog scrape, max plan, safe bid prep, JSON copy, and LLM brief.
+- Live mode: HiBid `livecatalog` pages. Owns live current-lot evaluation, manual-fire Snipe Now, live scrape, JSON copy, and LLM brief.
+- FlipTracker mode: eBay/Facebook active selling pages. Owns scan/copy/download active-listing export.
+
+Only the active page module should expose controls. Do not bring back the old all-controls-visible drawer.
+
+## Max Plans
+
+- Storage is per auction when an auction ID is available: `flipperaddon-max-plan-v2:<host>:auction:<id>`.
+- The old global `hibid-bid-assistant-plan-v1` key is legacy-migrated on first read.
+- A row with `max: null` is saved but not eligible.
+- Keep the raw JSON editor behind the Max plan dropdown; surface row-level Add/Save Plan buttons in the drawer first.
+
+## LLM Brief
+
+`buildLlmAuctionBrief(...)` is the durable insertion point for resale instructions. It must include the full auction-resale coordinator prompt and enriched lot JSON, including URLs, image, description, bids, auction title, and buyer premium where available.
+
+## Debug
+
+- Debug mode is an addon boolean controlled by `Toggle FlipperAddon Debug Mode`.
+- Debug UI and logging are hidden/off unless debug mode is enabled.
+- Debug prefix: `[FlipperAddon]`.
 
 ## Local archive
 

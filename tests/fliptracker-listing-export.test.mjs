@@ -68,14 +68,15 @@ test('assistant panel defaults to minimized before a stored preference exists', 
 
 test('panel markup exposes modern drawer shell and stable controls', () => {
   const core = loadCore();
-  const html = core.buildPanelHtml();
+  const html = core.buildPanelHtml({ mode: 'fliptracker', debugEnabled: false });
 
   assert.match(html, /hiba-drawer/);
   assert.match(html, /hiba-launcher/);
-  assert.match(html, /id="hibid-bid-load"/);
-  assert.match(html, /id="hibid-live-copy-llm"/);
+  assert.match(html, /FlipperAddon by ALOS/);
   assert.match(html, /id="fliptracker-listing-download"/);
-  assert.match(html, /data-mode-tab="live"/);
+  assert.match(html, /data-mode-tab="fliptracker"/);
+  assert.doesNotMatch(html, /id="hibid-bid-load"/);
+  assert.doesNotMatch(html, /id="hibid-live-copy-llm"/);
 });
 
 test('parses Facebook Marketplace manager listing cards for FlipTracker export', () => {

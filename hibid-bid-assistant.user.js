@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         HiBid Safe Bid Assistant
+// @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.5.2
-// @description  Unified HiBid assistant for catalog scraping, LLM exports, safe bid prep, live support, and FlipTracker exports.
+// @version      0.6.0
+// @description  Modular resale helper for HiBid catalog/live scraping, LLM exports, safe bid prep, and FlipTracker marketplace exports.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @match        https://hibid.com/lots*
@@ -29,12 +29,17 @@
   'use strict';
 
   const PANEL_ID = 'hibid-bid-assistant-panel';
-  const SCRIPT_VERSION = '0.5.2';
-  const PLAN_KEY = 'hibid-bid-assistant-plan-v1';
-  const AUTO_REFRESH_KEY = 'hibid-bid-assistant-auto-refresh-v1';
-  const AUTO_CONFIRM_KEY = 'hibid-bid-assistant-auto-confirm-v1';
-  const MINIMIZED_KEY = 'hibid-bid-assistant-minimized-v1';
-  const DEBUG_LOG_KEY = 'hibid-bid-assistant-debug-log-v1';
+  const APP_NAME = 'FlipperAddon by ALOS';
+  const APP_SHORT_NAME = 'FlipperAddon';
+  const SCRIPT_VERSION = '0.6.0';
+  const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
+  const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
+  const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
+  const AUTO_REFRESH_KEY = 'flipperaddon-auto-refresh-v1';
+  const AUTO_CONFIRM_KEY = 'flipperaddon-auto-confirm-v1';
+  const MINIMIZED_KEY = 'flipperaddon-minimized-v1';
+  const DEBUG_ENABLED_KEY = 'flipperaddon-debug-enabled-v1';
+  const DEBUG_LOG_KEY = 'flipperaddon-debug-log-v1';
   const DEBUG_LOG_LIMIT = 200;
   const OUTBID_WATCHLIST_URL = 'https://hibid.com/account/watchlist?status=OUTBID';
   const LEGACY_SCRAPER_IDS = [
@@ -44,13 +49,182 @@
     'hibid-scraper-json'
   ];
   const MENU_COMMANDS = [
-    'Remount HiBid Assistant',
-    'Copy HiBid Assistant Debug Log',
-    'Clear HiBid Assistant Debug Log',
+    'Remount FlipperAddon',
+    'Toggle FlipperAddon Debug Mode',
+    'Copy FlipperAddon Debug Log',
+    'Clear FlipperAddon Debug Log',
     'Copy HiBid Lots Now'
   ];
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-  const DEBUG_PREFIX = '[HiBid Assistant]';
+  const DEBUG_PREFIX = '[FlipperAddon]';
+  const AUCTION_RESALE_COORDINATOR_PROMPT = `You are an auction resale analysis coordinator.
+
+Goal:
+Find profitable resale deals from a full auction export without missing hidden value. Do not skim only obvious items. Every lot must be parsed, classified, and included in the final spreadsheet.
+
+Context:
+I am buying to resell for profit. I do not want $10-$20 time-wasters unless they are tiny, easy, or bundled into a larger profitable pickup. I may be driving about an hour and I am in a sedan, so bulky items need much higher profit and must be marked with sedan risk.
+
+Core rule:
+Coverage first, confirmation second. Every lot gets classified. Nothing silently disappears.
+
+Statuses:
+- Confirmed Lead: exact or close sold comps support meaningful profit after all fees.
+- Research Lead: possible value, but proof is incomplete, active-only, model uncertain, or condition-sensitive.
+- Local Flip Lead: better for Facebook/Craigslist/local marketplace than eBay.
+- Bundle/Parts Lead: value comes from quantity, parts, accessories, or splitting.
+- Garbage: unlikely worth time.
+
+Do not mark something garbage just because the title is generic.
+Look for hidden value in vague titles, bundles, quantities, pro gear, tools, electronics, restaurant equipment, industrial, medical, camera/audio, baby gear, and local bulky flips.
+
+Profit math:
+Assume auction buyer premium is 15%.
+Assume sales tax applies to hammer price plus buyer premium unless stated otherwise.
+Use sales tax rate: [INSERT TAX RATE].
+Assume eBay resale has seller fees and promoted listing friction:
+- eBay final value fee default: 13.25%
+- Promoted listing ad rate default: 2%
+- Total default eBay selling friction: 15.25%
+
+Assume buyer pays shipping, so shipping is not deducted from profit unless the item is oversized, fragile, hard to pack, likely to need packing materials, or commonly causes shipping damage/returns.
+
+For local flips:
+- Do not apply eBay fees.
+- Use lower local resale estimate.
+- Apply extra caution for pickup, storage, meetup time, and sedan fit.
+
+Calculations:
+auction_all_in_cost = hammer_price * 1.15 * (1 + sales_tax_rate)
+
+ebay_net = estimated_resale * (1 - 0.1525)
+
+estimated_net_profit = ebay_net - auction_all_in_cost
+
+recommended_max_bid = ((estimated_resale * (1 - 0.1525)) - target_profit) / (1.15 * (1 + sales_tax_rate))
+
+For local flips:
+local_net_profit = estimated_local_resale - auction_all_in_cost
+recommended_max_bid = (estimated_local_resale - target_profit) / (1.15 * (1 + sales_tax_rate))
+
+Default target profit:
+- Small easy ship item: minimum $30 profit
+- Medium item: minimum $50 profit
+- Heavy/fragile/restaurant equipment: minimum $100-$150 profit
+- One-hour pickup trip: total expected profit should be $150+ minimum, preferably $250+
+- Sedan-risk bulky item: only include if profit is large enough to justify logistics
+
+Comping rules:
+- Use eBay sold/completed listings first.
+- Exact sold comps are strongest.
+- Close sold comps are acceptable but mark speculative.
+- Active listings alone cannot make a Confirmed Lead.
+- If proof is only an eBay search/shop/category page, mark Research Lead unless there is very strong market context.
+- For local-only bulky items, use local market intuition only if potential profit justifies pickup.
+- Every lead needs proof URL or must be explicitly marked local/speculative.
+
+Proof levels:
+- exact_ebay_sold
+- close_ebay_sold
+- sold_search_page
+- active_only
+- retail_reference
+- local_speculative
+- no_proof
+
+Only exact_ebay_sold or close_ebay_sold can be Confirmed Lead.
+
+Spreadsheet output:
+Create an Excel workbook with these tabs:
+- Best Bids
+- Research Leads
+- Local Flip Leads
+- Bundle/Parts Leads
+- All Lots
+- Garbage
+- Audit
+
+Required columns:
+row_id
+lot
+title
+current_bid
+next_bid
+quantity
+category
+status
+estimated_resale
+estimated_local_resale
+buyer_premium_rate
+sales_tax_rate
+auction_all_in_cost
+ebay_fee_rate
+promo_fee_rate
+ebay_net
+target_profit
+estimated_net_profit
+breakeven_bid
+recommended_max_bid
+proof_type
+proof_urls
+reason
+risk_notes
+sedan_fit
+shipping_assumption
+assigned_agent
+audit_flag
+
+Classification instructions:
+1. Parse every lot into normalized rows.
+2. Assign stable row_id and lot number.
+3. Identify quantity and {each} lots. Treat {each} lots carefully because bid may be per unit.
+4. Estimate resale conservatively.
+5. Calculate max bid backwards from target profit.
+6. If current bid is already above recommended max bid, mark audit_flag: current_bid_over_max.
+7. If item is bulky, fragile, restaurant equipment, refrigerated, gas-powered, or needs truck/rigging, mark sedan_fit as No or Maybe.
+8. If sell-through is uncertain, mark Research Lead, not Confirmed Lead.
+9. Garbage rows must have a reason, not a blank dismissal.
+
+Garbage reason must be one or more of:
+- low ASP
+- no sold comps
+- active-only weak proof
+- current bid too high
+- bulky/sedan risk
+- refrigeration risk
+- gas/electrical install risk
+- hygiene risk
+- missing-parts risk
+- generic saturated item
+- slow local sale
+- admin/info lot
+
+Audit requirements:
+- 100% of lots must appear in All Lots.
+- Missing row count must be zero.
+- Duplicate row IDs must be zero.
+- Every non-garbage row must have proof URL or be marked local_speculative.
+- Every Confirmed Lead must have exact or close sold-comp proof.
+- Recheck any Garbage row with brand/model/quantity/value signals.
+- Recheck every {each} lot for per-unit bid math.
+- Recheck all current bids over recommended max bid.
+
+Final summary:
+After creating the spreadsheet, summarize:
+- total lots parsed
+- total confirmed leads
+- total research leads
+- total local flip leads
+- total bundle/parts leads
+- total garbage
+- missing row count
+- top 10 best bids
+- max bid for each
+- what needs inspection
+- whether pickup is worth the drive
+
+Tone:
+Be skeptical, but do not be lazy. The mission is to avoid missing profitable deals while not fooling me with fake profit before fees.`;
 
   function safeClone(value) {
     if (value === undefined) return undefined;
@@ -96,7 +270,24 @@
     }).join('\n');
   }
 
+  function getStoredDebugEnabled() {
+    try {
+      return Boolean(GM_getValue(DEBUG_ENABLED_KEY, false));
+    } catch {
+      return false;
+    }
+  }
+
+  function saveDebugEnabled(value) {
+    try {
+      GM_setValue(DEBUG_ENABLED_KEY, Boolean(value));
+    } catch {
+      // Tampermonkey storage may be unavailable in tests.
+    }
+  }
+
   function debug(message, data) {
+    if (!getStoredDebugEnabled()) return;
     const entry = {
       at: new Date().toISOString(),
       version: SCRIPT_VERSION,
@@ -1088,6 +1279,8 @@ ${cards}
   }
 
   const Core = {
+    APP_NAME,
+    APP_SHORT_NAME,
     evaluateLot,
     moneyFromText,
     numberFromText,
@@ -1096,6 +1289,7 @@ ${cards}
     DEBUG_PREFIX,
     MENU_COMMANDS,
     resolveHiBidPage,
+    resolveAssistantMode,
     getExpectedLotTotal,
     findCatalogNextPageButton,
     extractHibidApolloLots,
@@ -1128,10 +1322,16 @@ ${cards}
     prepareLiveBid,
     findLotOnPage,
     planTextFromLoadedLots,
+    addLotToPlanText,
+    getPlanStorageKey,
+    getStoredPlanText,
+    shouldRebuildPanelForMode,
+    shouldTeardownPanelForRebuild,
     scanPlan,
     lotSummary,
     getStoredAutoConfirm,
-    getStoredMinimized
+    getStoredMinimized,
+    getStoredDebugEnabled
   };
   globalThis.HiBidBidAssistantCore = Core;
 
@@ -1312,7 +1512,6 @@ ${cards}
   function shouldInitOnLocation(loc = location) {
     const host = String(loc.hostname || '').toLowerCase();
     const pathname = String(loc.pathname || '');
-    const search = String(loc.search || '');
 
     if (host === 'bid.ajwillnerauctions.com') {
       return /^\/ui\/auctions\//i.test(pathname);
@@ -1322,6 +1521,32 @@ ${cards}
 
     if (isHiBidHost(host)) return resolveHiBidPage(loc).supported;
     return false;
+  }
+
+  function resolveAssistantMode(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    if (host === 'bid.ajwillnerauctions.com' && /^\/ui\/auctions\//i.test(loc.pathname || '')) {
+      return {
+        supported: true,
+        mode: 'catalog',
+        source: 'ajwillner',
+        reason: 'AJ Willner auction route',
+        route: { supported: true, kind: 'catalog', host, auctionId: getAjWillnerAuctionId(loc), reason: 'AJ Willner auction route' }
+      };
+    }
+
+    if (isFlipTrackerListingPage(loc)) {
+      return { supported: true, mode: 'fliptracker', source: 'marketplace', reason: 'active listing export route', route: null };
+    }
+
+    if (isHiBidHost(host)) {
+      const route = resolveHiBidPage(loc);
+      if (!route.supported) return { supported: false, mode: 'unsupported', source: 'hibid', reason: route.reason, route };
+      if (route.kind === 'live') return { supported: true, mode: 'live', source: 'hibid', reason: route.reason, route };
+      return { supported: true, mode: 'catalog', source: 'hibid', reason: route.reason, route };
+    }
+
+    return { supported: false, mode: 'unsupported', source: 'unknown', reason: 'unsupported host', route: null };
   }
 
   function getLoadTarget(options = {}, loc = location) {
@@ -1609,29 +1834,43 @@ ${cards}
   }
 
   function buildLlmAuctionBrief(lots, context = liveAuctionContext()) {
-    const compactLots = lots.map(lot => ({
+    const fullLots = lots.map(lot => ({
+      id: lot.id ?? '',
       lot: lot.lot,
       title: lot.title,
-      highBid: lot.highBidAmount ?? null,
-      nextBid: lot.nextBidAmount ?? null,
-      bidCount: lot.bidCountNumber ?? null,
+      url: lot.url || '',
+      image: lot.image || '',
+      description: lot.description || '',
+      highBid: lot.highBid || '',
+      highBidAmount: lot.highBidAmount ?? null,
+      currentPrice: lot.currentPrice ?? null,
+      currentBid: lot.currentBid ?? null,
+      nextBid: lot.nextBid || '',
+      nextBidAmount: lot.nextBidAmount ?? null,
+      bidCount: lot.bidCount || '',
+      bidCountNumber: lot.bidCountNumber ?? null,
       timeLeft: lot.timeLeft || '',
       valueHint: lot.estimatedValue ?? null,
-      status: lot.status || lot.userBidStatus || ''
+      status: lot.status || lot.userBidStatus || '',
+      userBidStatus: lot.userBidStatus || '',
+      isWinning: Boolean(lot.isWinning),
+      isOutbid: Boolean(lot.isOutbid),
+      watched: Boolean(lot.watched),
+      pictureCount: lot.pictureCount ?? null,
+      auctionTitle: lot.auctionTitle || '',
+      buyerPremium: lot.buyerPremium || '',
+      rawText: lot.rawText || ''
     }));
     return [
-      'You are evaluating an auction catalog for deal quality, resale/use value, and bidding priority.',
-      'Search eBay sold/completed comps for every lead before recommending it. Profit comes before hunches.',
-      'Use rough math unless better fee data is known: auction all-in cost = bid x 1.25 for buyer premium/tax estimate; eBay net = sold price x 0.87 before shipping complications.',
-      'Return a ranked shortlist of the best opportunities, suspicious/overpriced lots, and any lots that need manual research. Include estimated all-in cost, sold-comp range, estimated eBay net, and expected profit where possible.',
+      AUCTION_RESALE_COORDINATOR_PROMPT,
       '',
-      'Auction context:',
+      'Parsed auction context:',
       JSON.stringify(context, null, 2),
       '',
-      `Lots scraped: ${compactLots.length}`,
+      `Lots scraped: ${fullLots.length}`,
       '',
-      'Lot data JSON:',
-      JSON.stringify(compactLots, null, 2)
+      'Full lot data JSON:',
+      JSON.stringify(fullLots, null, 2)
     ].join('\n');
   }
 
@@ -2111,20 +2350,89 @@ ${cards}
     return JSON.stringify({}, null, 2);
   }
 
-  function getStoredPlanText() {
+  function storageSafeSegment(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9.-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'page';
+  }
+
+  function getAjWillnerAuctionId(loc = location) {
+    const match = String(loc.pathname || '').match(/\/ui\/auctions\/([^/?#]+)/i);
+    return match?.[1] || '';
+  }
+
+  function getPlanStorageKey(loc = location) {
+    const host = storageSafeSegment(loc.hostname || 'page');
+    if (host === 'bid.ajwillnerauctions.com') {
+      const auctionId = getAjWillnerAuctionId(loc);
+      return `${PLAN_KEY_PREFIX}:${host}:${auctionId ? `auction:${storageSafeSegment(auctionId)}` : 'catalog'}`;
+    }
+
+    if (isFlipTrackerListingPage(loc)) return `${PLAN_KEY_PREFIX}:${host}:fliptracker`;
+
+    const route = resolveHiBidPage(loc);
+    if (route.auctionId) return `${PLAN_KEY_PREFIX}:${host}:auction:${storageSafeSegment(route.auctionId)}`;
+    if (route.kind === 'watchlist-outbid') return `${PLAN_KEY_PREFIX}:${host}:watchlist-outbid`;
+    return `${PLAN_KEY_PREFIX}:${host}:${storageSafeSegment(route.kind || 'page')}`;
+  }
+
+  function getStoredPlanText(loc = (typeof location !== 'undefined' ? location : null)) {
     try {
-      return GM_getValue(PLAN_KEY, defaultPlanText());
+      const key = loc ? getPlanStorageKey(loc) : `${PLAN_KEY_PREFIX}:global`;
+      const stored = GM_getValue(key, null);
+      if (typeof stored === 'string') return stored;
+
+      const migrated = Boolean(GM_getValue(LEGACY_PLAN_MIGRATED_KEY, false));
+      const legacy = migrated ? null : GM_getValue(LEGACY_PLAN_KEY, null);
+      if (typeof legacy === 'string') {
+        GM_setValue(key, legacy);
+        GM_setValue(LEGACY_PLAN_MIGRATED_KEY, true);
+        return legacy;
+      }
+      return defaultPlanText();
     } catch {
       return defaultPlanText();
     }
   }
 
-  function savePlanText(value) {
+  function savePlanText(value, loc = (typeof location !== 'undefined' ? location : null)) {
     try {
-      GM_setValue(PLAN_KEY, value);
+      const key = loc ? getPlanStorageKey(loc) : `${PLAN_KEY_PREFIX}:global`;
+      GM_setValue(key, value);
     } catch {
       // Tampermonkey storage may be unavailable in tests.
     }
+  }
+
+  function addLotToPlanText(raw, lot) {
+    let existingPlan;
+    try {
+      existingPlan = JSON.parse(raw || '{}');
+    } catch {
+      existingPlan = {};
+    }
+    if (!existingPlan || Array.isArray(existingPlan) || typeof existingPlan !== 'object') existingPlan = {};
+    if (!lot?.lot) return JSON.stringify(existingPlan, null, 2);
+
+    const lotKey = String(lot.lot);
+    const existing = existingPlan[lotKey];
+    const existingMax = typeof existing === 'number' ? existing : existing?.max;
+    const max = Number(existingMax);
+    existingPlan[lotKey] = {
+      max: Number.isFinite(max) && max > 0 ? max : null,
+      title: lot.title || existing?.title || ''
+    };
+
+    const sorted = {};
+    Object.keys(existingPlan).sort((a, b) => String(a).localeCompare(String(b), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    })).forEach(key => {
+      sorted[key] = existingPlan[key];
+    });
+    return JSON.stringify(sorted, null, 2);
   }
 
   function planTextFromLoadedLots(raw, lots) {
@@ -2234,21 +2542,171 @@ ${cards}
     return `<svg class="hiba-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[name] || icons.shield}</svg>`;
   }
 
-  function actionButton(id, icon, label, tone = 'primary', extra = '') {
-    return `<button id="${id}" type="button" class="hiba-btn ${tone}" ${extra}>${hibaIcon(icon)}<span>${label}</span></button>`;
+  function helpAttrs(text) {
+    if (!text) return '';
+    const safe = escapeHtml(text);
+    return ` title="${safe}" aria-label="${safe}" data-help="${safe}"`;
   }
 
-  function buildPanelHtml() {
+  function actionButton(id, icon, label, tone = 'primary', extra = '', help = '') {
+    return `<button id="${id}" type="button" class="hiba-btn ${tone}"${helpAttrs(help || label)} ${extra}>${hibaIcon(icon)}<span>${label}</span></button>`;
+  }
+
+  function renderModeTabs(mode) {
+    const meta = {
+      catalog: { label: 'Catalog', icon: 'list', help: 'Catalog mode loads visible or outbid HiBid lots, edits max plans, copies JSON, and builds the resale LLM brief.' },
+      live: { label: 'Live', icon: 'radio', help: 'Live mode watches the current HiBid live lot and lets you manually fire a bid if the ask is within your saved max.' },
+      fliptracker: { label: 'FlipTracker', icon: 'file', help: 'FlipTracker mode exports visible eBay or Facebook selling listings for import/review.' },
+      unsupported: { label: 'Unsupported', icon: 'shield', help: 'This page is not supported by FlipperAddon.' }
+    };
+    const active = meta[mode] || meta.catalog;
     return `
-      <div class="hiba-drawer" role="dialog" aria-label="HiBid Safe Bid Assistant">
+      <div class="hiba-tabs" role="tablist" aria-label="Active FlipperAddon module">
+        <button type="button" class="hiba-tab active" data-mode-tab="${escapeHtml(mode)}"${helpAttrs(active.help)} disabled>${hibaIcon(active.icon)}<span>${active.label}</span></button>
+      </div>
+    `;
+  }
+
+  function renderMaxPlanEditor() {
+    return `
+      <details id="hibid-max-plan-details" class="hiba-details">
+        <summary data-help="Open this to edit the lot-number to maximum-bid plan. Null means saved, but not allowed to bid yet.">Max plan</summary>
+        <div class="hiba-meta">Format: {"1627sf":{"max":40,"title":"optional title words"}}. Leave max null to save a lot for later without making it eligible.</div>
+        <textarea id="hibid-bid-plan-json" spellcheck="false" class="hiba-plan" placeholder='{
+  "1627sf": {
+    "max": 40,
+    "title": "Chloe"
+  }
+}'></textarea>
+      </details>
+    `;
+  }
+
+  function renderDebugActions(debugEnabled) {
+    if (!debugEnabled) return '';
+    return `
+      <div class="hiba-actions hiba-debug-actions">
+        ${actionButton('hibid-debug-copy', 'copy', 'Copy Debug', 'secondary', '', 'Copy the in-memory FlipperAddon debug log for troubleshooting.')}
+        ${actionButton('hibid-debug-clear', 'stop', 'Clear Debug', 'danger', '', 'Clear saved FlipperAddon debug log entries.')}
+      </div>
+    `;
+  }
+
+  function renderCatalogSection(debugEnabled) {
+    return `
+      <section id="hibid-bid-controls" class="hiba-section" data-module="catalog">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">HiBid catalog</div>
+            <strong>Catalog / Watchlist Scanner</strong>
+          </div>
+          <span class="hiba-chip neutral">max plan</span>
+        </div>
+        <div class="hiba-meta">Load lots, set a max per lot, then prepare only rows that are still under your max. This module is for catalog, category, lot, and OUTBID watchlist pages.</div>
+        ${renderMaxPlanEditor()}
+        <div class="hiba-toggle-grid">
+          <label class="hiba-switch"${helpAttrs('Only show and prepare lots where the page says you are outbid.')}><input id="hibid-bid-outbid-only" type="checkbox"><span>Outbid only</span></label>
+          <label class="hiba-switch"${helpAttrs('Refresh the outbid/watchlist scan every 30 seconds, pausing while you type.')}><input id="hibid-bid-auto-refresh" type="checkbox"><span>Auto refresh 30s</span></label>
+          <label class="hiba-switch"${helpAttrs('When checked, FlipperAddon clicks only strongly matched HiBid confirm bid buttons after you prepare/fire a bid.')}><input id="hibid-bid-auto-confirm" type="checkbox"><span>Auto-confirm modals</span></label>
+        </div>
+        <div class="hiba-actions">
+          ${actionButton('hibid-bid-load', 'download', 'Load Lots', 'primary', '', 'Scrape the current catalog or OUTBID watchlist and merge lots into the max plan with blank max values.')}
+          ${actionButton('hibid-bid-scan', 'scan', 'Scan', 'primary', '', 'Evaluate current visible or loaded lots against your max plan.')}
+          ${actionButton('hibid-bid-next', 'zap', 'Prepare Next', 'success', '', 'Click the next eligible bid button after a fresh scan.')}
+          ${actionButton('hibid-bid-stop', 'stop', 'Stop', 'danger', '', 'Stop scraping, auto refresh, or pending bid preparation.')}
+        </div>
+        <div class="hiba-actions">
+          ${actionButton('hibid-catalog-copy-json', 'copy', 'Copy Lots JSON', 'secondary', '', 'Copy scraped HiBid lots as JSON for manual use.')}
+          ${actionButton('hibid-catalog-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Copy the full resale-analysis prompt plus scraped lot JSON for a desktop LLM.')}
+        </div>
+        ${renderDebugActions(debugEnabled)}
+      </section>
+    `;
+  }
+
+  function renderLiveSection(debugEnabled) {
+    return `
+      <section id="hibid-live-mode" class="hiba-section" data-module="live">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">HiBid live</div>
+            <strong>Live Snipe Assistant</strong>
+          </div>
+          <span class="hiba-chip neutral">manual fire</span>
+        </div>
+        <div class="hiba-meta">Live mode does not reload the page. It watches the current live lot, compares the ask to your max plan, and enables Snipe Now only when eligible.</div>
+        ${renderMaxPlanEditor()}
+        <div class="hiba-toggle-grid">
+          <label class="hiba-switch"${helpAttrs('When checked, FlipperAddon clicks only strongly matched HiBid confirm bid buttons after Snipe Now opens a confirm surface.')}><input id="hibid-bid-auto-confirm" type="checkbox"><span>Auto-confirm modals</span></label>
+        </div>
+        <div class="hiba-actions">
+          ${actionButton('hibid-live-arm', 'shield', 'Arm', 'secondary', '', 'Arm or disarm manual live sniping for the current eligible live lot.')}
+          ${actionButton('hibid-live-snipe', 'zap', 'Snipe Now', 'success', 'disabled', 'Fresh-check the current live lot and click its bid control if the ask is still under max.')}
+          ${actionButton('hibid-bid-stop', 'stop', 'Stop', 'danger', '', 'Disarm live mode and stop pending activity.')}
+        </div>
+        <div class="hiba-actions">
+          ${actionButton('hibid-live-copy-json', 'copy', 'Copy Lots JSON', 'secondary', '', 'Expand visible live lots and copy their JSON.')}
+          ${actionButton('hibid-live-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Expand visible live lots and copy the resale-analysis prompt plus lot JSON.')}
+        </div>
+        ${renderDebugActions(debugEnabled)}
+        <div id="hibid-live-state" class="hiba-live-card hiba-meta">Waiting for live lot...</div>
+      </section>
+    `;
+  }
+
+  function renderFlipTrackerSection(debugEnabled) {
+    return `
+      <section id="fliptracker-listing-export-mode" class="hiba-section" data-module="fliptracker">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">Marketplace listings</div>
+            <strong>FlipTracker Active Listing Export</strong>
+          </div>
+          <span class="hiba-chip neutral">HTML</span>
+        </div>
+        <div class="hiba-meta">Scrapes visible active eBay/Facebook selling cards and exports an HTML file for FlipTracker ImportInbox. Scroll or load more listings first if needed.</div>
+        <div class="hiba-actions">
+          ${actionButton('fliptracker-listing-scan', 'scan', 'Scan Listings', 'primary', '', 'Read the currently visible eBay or Facebook active selling listings.')}
+          ${actionButton('fliptracker-listing-copy', 'copy', 'Copy HTML', 'secondary', '', 'Copy the FlipTracker import HTML to the clipboard.')}
+          ${actionButton('fliptracker-listing-download', 'download', 'Download', 'success', '', 'Download the FlipTracker import HTML file.')}
+        </div>
+        ${renderDebugActions(debugEnabled)}
+        <div id="fliptracker-listing-status" class="hiba-meta">Waiting to scan.</div>
+        <div id="fliptracker-listing-results" class="hiba-results"></div>
+      </section>
+    `;
+  }
+
+  function renderActiveSection(mode, debugEnabled) {
+    if (mode === 'live') return renderLiveSection(debugEnabled);
+    if (mode === 'fliptracker') return renderFlipTrackerSection(debugEnabled);
+    return renderCatalogSection(debugEnabled);
+  }
+
+  function shouldRebuildPanelForMode(existingMode, nextMode, allowed = true) {
+    if (!existingMode) return false;
+    if (!allowed || nextMode === 'unsupported') return true;
+    return existingMode !== nextMode;
+  }
+
+  function shouldTeardownPanelForRebuild(reason = '') {
+    return /^(mode-change|unsupported|debug-toggle)\b/i.test(String(reason || ''));
+  }
+
+  function buildPanelHtml(options = {}) {
+    const mode = options.mode || (typeof location !== 'undefined' ? resolveAssistantMode(location).mode : 'catalog') || 'catalog';
+    const debugEnabled = options.debugEnabled ?? getStoredDebugEnabled();
+    const modeLabel = mode === 'fliptracker' ? 'FlipTracker' : (mode === 'live' ? 'Live' : 'Catalog');
+    return `
+      <div class="hiba-drawer" role="dialog" aria-label="${APP_NAME}" data-flipperaddon-mode="${escapeHtml(mode)}">
         <div class="hiba-shellbar">
           <button id="hibid-bid-minimize" type="button" class="hiba-launcher" title="Show assistant" aria-label="Show assistant">
             <span class="hiba-orb"></span>
             <span class="hiba-launcher-copy">
-              <span class="hiba-title">HiBid Assistant</span>
+              <span class="hiba-title">${APP_NAME}</span>
               <span class="hiba-subtitle">Ready</span>
             </span>
-            <span class="hiba-mode-pill" id="hiba-current-mode-pill">Auto</span>
+            <span class="hiba-mode-pill" id="hiba-current-mode-pill">${modeLabel}</span>
             ${hibaIcon('chevron')}
           </button>
           <button id="hibid-bid-close" type="button" class="hiba-icon-btn" title="Close assistant" aria-label="Close assistant">${hibaIcon('close')}</button>
@@ -2256,82 +2714,15 @@ ${cards}
         <div id="hibid-bid-body" class="hiba-body">
           <div class="hiba-head">
             <div>
-              <div class="hiba-kicker">Tampermonkey tool</div>
-              <strong>HiBid Safe Bid Assistant v${SCRIPT_VERSION}</strong>
+              <div class="hiba-kicker">by ALOS</div>
+              <strong>${APP_SHORT_NAME} v${SCRIPT_VERSION}</strong>
+              <div class="hiba-meta">A modular resale cockpit for the people: HiBid catalog/live tools plus eBay/Facebook FlipTracker export.</div>
             </div>
             <span class="hiba-chip neutral" id="hiba-session-chip">idle</span>
           </div>
-          <div class="hiba-tabs" role="tablist" aria-label="Assistant modes">
-            <button type="button" class="hiba-tab" data-mode-tab="catalog">${hibaIcon('list')}<span>Catalog</span></button>
-            <button type="button" class="hiba-tab" data-mode-tab="live">${hibaIcon('radio')}<span>Live</span></button>
-            <button type="button" class="hiba-tab" data-mode-tab="fliptracker">${hibaIcon('file')}<span>FlipTracker</span></button>
-          </div>
-
-          <section id="fliptracker-listing-export-mode" class="hiba-section" style="display:none">
-            <div class="hiba-section-head">
-              <div>
-                <div class="hiba-kicker">Listing export</div>
-                <strong>FlipTracker Active Listing Export</strong>
-              </div>
-              <span class="hiba-chip neutral">HTML</span>
-            </div>
-            <div class="hiba-meta">Scrapes visible active eBay/Facebook listing cards and exports an HTML file for FlipTracker ImportInbox.</div>
-            <div class="hiba-actions">
-              ${actionButton('fliptracker-listing-scan', 'scan', 'Scan Listings')}
-              ${actionButton('fliptracker-listing-copy', 'copy', 'Copy HTML', 'secondary')}
-              ${actionButton('fliptracker-listing-download', 'download', 'Download', 'success')}
-            </div>
-            <div id="fliptracker-listing-status" class="hiba-meta">Waiting to scan.</div>
-            <div id="fliptracker-listing-results" class="hiba-results"></div>
-          </section>
-
-          <section id="hibid-bid-controls" class="hiba-section">
-            <div class="hiba-section-head">
-              <div>
-                <div class="hiba-kicker">Max plan</div>
-                <strong>Catalog / Watchlist Scanner</strong>
-              </div>
-              <span class="hiba-chip neutral">safe prep</span>
-            </div>
-            <textarea id="hibid-bid-plan-json" spellcheck="false" class="hiba-plan"></textarea>
-            <div class="hiba-toggle-grid">
-              <label class="hiba-switch"><input id="hibid-bid-outbid-only" type="checkbox"><span>Outbid only</span></label>
-              <label class="hiba-switch"><input id="hibid-bid-auto-refresh" type="checkbox"><span>Auto refresh 30s</span></label>
-              <label class="hiba-switch"><input id="hibid-bid-auto-confirm" type="checkbox"><span>Auto-confirm modals</span></label>
-            </div>
-            <div class="hiba-actions">
-              ${actionButton('hibid-bid-load', 'download', 'Load Lots')}
-              ${actionButton('hibid-bid-scan', 'scan', 'Scan')}
-              ${actionButton('hibid-bid-next', 'zap', 'Prepare Next', 'success')}
-              ${actionButton('hibid-bid-stop', 'stop', 'Stop', 'danger')}
-            </div>
-            <div class="hiba-actions">
-              ${actionButton('hibid-catalog-copy-json', 'copy', 'Copy Lots JSON', 'secondary')}
-              ${actionButton('hibid-catalog-copy-llm', 'file', 'Copy LLM Brief')}
-              ${actionButton('hibid-debug-copy', 'copy', 'Copy Debug', 'secondary')}
-              ${actionButton('hibid-debug-clear', 'stop', 'Clear Debug', 'danger')}
-            </div>
-          </section>
-
-          <section id="hibid-live-mode" class="hiba-section" style="display:none">
-            <div class="hiba-section-head">
-              <div>
-                <div class="hiba-kicker">Live auction</div>
-                <strong>Live Mode</strong>
-              </div>
-              <div class="hiba-actions compact">
-                ${actionButton('hibid-live-arm', 'shield', 'Arm', 'secondary')}
-                ${actionButton('hibid-live-snipe', 'zap', 'Snipe Now', 'success', 'disabled')}
-              </div>
-            </div>
-            <div class="hiba-actions">
-              ${actionButton('hibid-live-copy-json', 'copy', 'Copy Lots JSON', 'secondary')}
-              ${actionButton('hibid-live-copy-llm', 'file', 'Copy LLM Brief')}
-            </div>
-            <div id="hibid-live-state" class="hiba-live-card hiba-meta">Waiting for live lot...</div>
-          </section>
-
-          <div id="hibid-bid-status" class="hiba-statusline">Paste max plan, then Scan.</div>
+          ${renderModeTabs(mode)}
+          ${renderActiveSection(mode, debugEnabled)}
+          <div id="hibid-bid-status" class="hiba-statusline">Open the active module, then scan or export.</div>
           <div id="hibid-bid-detected" class="hiba-detected"></div>
           <div id="hibid-bid-results" class="hiba-results"></div>
         </div>
@@ -2356,11 +2747,13 @@ ${cards}
         #${PANEL_ID} .hiba-head, #${PANEL_ID} .hiba-section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
         #${PANEL_ID} .hiba-head { margin-bottom:10px; }
         #${PANEL_ID} .hiba-head strong, #${PANEL_ID} .hiba-section-head strong { font-size:14px; }
-        #${PANEL_ID} .hiba-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:10px 0; padding:3px; border:1px solid rgba(148,163,184,.18); border-radius:11px; background:rgba(2,6,23,.62); }
+        #${PANEL_ID} .hiba-tabs { display:grid; grid-template-columns:1fr; gap:6px; margin:10px 0; padding:3px; border:1px solid rgba(148,163,184,.18); border-radius:11px; background:rgba(2,6,23,.62); }
         #${PANEL_ID} .hiba-tab { display:flex; align-items:center; justify-content:center; gap:6px; min-width:0; color:#94a3b8; background:transparent; border:0; border-radius:8px; padding:7px 5px; font-weight:800; cursor:pointer; }
-        #${PANEL_ID} .hiba-tab.active { color:#fff; background:#1d4ed8; box-shadow:0 8px 22px rgba(37,99,235,.24); }
+        #${PANEL_ID} .hiba-tab.active { color:#fff; background:#1d4ed8; box-shadow:0 8px 22px rgba(37,99,235,.24); cursor:default; }
         #${PANEL_ID} .hiba-section { border:1px solid rgba(148,163,184,.16); border-radius:12px; padding:10px; margin-top:9px; background:rgba(15,23,42,.52); }
         #${PANEL_ID} .hiba-section[style*="display:none"] { margin:0; padding:0; border:0; }
+        #${PANEL_ID} .hiba-details { margin-top:9px; border:1px solid rgba(148,163,184,.16); border-radius:10px; background:rgba(2,6,23,.38); padding:8px 9px; }
+        #${PANEL_ID} .hiba-details summary { cursor:pointer; font-weight:900; color:#e0f2fe; }
         #${PANEL_ID} .hiba-actions { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:9px; }
         #${PANEL_ID} .hiba-actions.compact { margin-top:0; justify-content:flex-end; }
         #${PANEL_ID} .hiba-btn, #${PANEL_ID} .hiba-prepare, #${PANEL_ID} .hiba-icon-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid rgba(147,197,253,.28); border-radius:9px; padding:7px 9px; color:#eff6ff; background:#1d4ed8; font-weight:800; cursor:pointer; min-height:34px; }
@@ -2379,11 +2772,14 @@ ${cards}
         #${PANEL_ID} .hiba-detected { font-family:ui-monospace, SFMono-Regular, Consolas, monospace; }
         #${PANEL_ID} .hiba-row { border:1px solid rgba(148,163,184,.16); border-radius:11px; padding:9px; margin-top:8px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; background:rgba(2,6,23,.42); }
         #${PANEL_ID} .hiba-row strong { color:#f8fafc; }
+        #${PANEL_ID} .hiba-row-actions { display:grid; grid-template-columns:76px 86px 104px; gap:6px; align-items:center; }
+        #${PANEL_ID} .hiba-max-inline { width:100%; min-height:34px; color:#f8fafc; background:#020617; border:1px solid rgba(148,163,184,.28); border-radius:9px; padding:6px 7px; font:12px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
+        #${PANEL_ID} .hiba-add-plan { min-height:34px; border:1px solid rgba(147,197,253,.28); border-radius:9px; color:#eff6ff; background:#1f2937; font-weight:800; cursor:pointer; }
         #${PANEL_ID} .hiba-status { display:inline-flex; align-items:center; width:max-content; margin-top:5px; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:900; }
         #${PANEL_ID} .hiba-status.eligible { color:#bbf7d0; background:rgba(22,101,52,.38); }
         #${PANEL_ID} .hiba-status.skip { color:#fecaca; background:rgba(127,29,29,.34); }
         #${PANEL_ID} .hiba-live-card { border-radius:10px; padding:9px; background:rgba(2,6,23,.5); border:1px solid rgba(148,163,184,.16); }
-        @media (max-width:520px) { #${PANEL_ID} { right:8px; bottom:8px; width:calc(100vw - 16px); } #${PANEL_ID} .hiba-row { grid-template-columns:1fr; } }
+        @media (max-width:520px) { #${PANEL_ID} { right:8px; bottom:8px; width:calc(100vw - 16px); } #${PANEL_ID} .hiba-row { grid-template-columns:1fr; } #${PANEL_ID} .hiba-row-actions { grid-template-columns:1fr; } }
       </style>
     `;
   }
@@ -2413,21 +2809,26 @@ ${cards}
     }
   }
 
-  function createPanel() {
+  function createPanel(mode = resolveAssistantMode().mode, debugEnabled = getStoredDebugEnabled()) {
     removeLegacyScraperArtifacts('createPanel');
     const old = document.getElementById(PANEL_ID);
     if (old) old.remove();
 
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
-    panel.innerHTML = buildPanelHtml();
+    panel.dataset.flipperaddonMode = mode;
+    panel.innerHTML = buildPanelHtml({ mode, debugEnabled });
 
     document.body.appendChild(panel);
-    document.getElementById('hibid-bid-plan-json').value = getStoredPlanText();
-    document.getElementById('hibid-bid-outbid-only').checked = isWatchlistOutbidPage();
-    document.getElementById('hibid-bid-auto-refresh').checked = getStoredAutoRefresh();
-    document.getElementById('hibid-bid-auto-confirm').checked = getStoredAutoConfirm();
-    setPanelMinimized(panel, getStoredMinimized());
+    const planInput = panel.querySelector('#hibid-bid-plan-json');
+    if (planInput) planInput.value = getStoredPlanText();
+    const outbidInput = panel.querySelector('#hibid-bid-outbid-only');
+    if (outbidInput) outbidInput.checked = isWatchlistOutbidPage();
+    const autoRefreshInput = panel.querySelector('#hibid-bid-auto-refresh');
+    if (autoRefreshInput) autoRefreshInput.checked = getStoredAutoRefresh();
+    const autoConfirmInput = panel.querySelector('#hibid-bid-auto-confirm');
+    if (autoConfirmInput) autoConfirmInput.checked = getStoredAutoConfirm();
+    setPanelMinimized(panel, true);
     return panel;
   }
 
@@ -2438,13 +2839,16 @@ ${cards}
   }
 
   function init() {
-    const panel = createPanel();
+    const assistantMode = resolveAssistantMode();
+    const activeMode = assistantMode.mode === 'unsupported' ? 'catalog' : assistantMode.mode;
+    const panel = createPanel(activeMode, getStoredDebugEnabled());
     const statusEl = panel.querySelector('#hibid-bid-status');
     const detectedEl = panel.querySelector('#hibid-bid-detected');
     const resultsEl = panel.querySelector('#hibid-bid-results');
     const planEl = panel.querySelector('#hibid-bid-plan-json');
-    const liveMode = isLiveCatalogPage();
-    const listingExportMode = isFlipTrackerListingPage();
+    const liveMode = activeMode === 'live';
+    const listingExportMode = activeMode === 'fliptracker';
+    const catalogMode = activeMode === 'catalog';
     const bidControlsEl = panel.querySelector('#hibid-bid-controls');
     const listingExportModeEl = panel.querySelector('#fliptracker-listing-export-mode');
     const listingExportStatusEl = panel.querySelector('#fliptracker-listing-status');
@@ -2464,10 +2868,6 @@ ${cards}
     const debugClearButton = panel.querySelector('#hibid-debug-clear');
     const autoRefreshInput = panel.querySelector('#hibid-bid-auto-refresh');
     const state = { stop: false, rows: [], busy: false, refreshTimer: null, refreshSeconds: 30, lotCache: new Map(), planFocused: false, lastPlanInputAt: 0, liveArmed: false, liveRow: null, liveTimer: null, listingRows: [] };
-    const hibidHost = /hibid\.com$/i.test(location.hostname) || location.hostname === 'bid.ajwillnerauctions.com';
-    const flipTrackerOnlyMode = listingExportMode && !hibidHost;
-    const activeMode = liveMode ? 'live' : (flipTrackerOnlyMode ? 'fliptracker' : 'catalog');
-
     setActiveModeTab(panel, activeMode);
 
     const status = (message) => {
@@ -2503,7 +2903,11 @@ ${cards}
             <div class="hiba-meta">Current: ${row.highBid || '-'} | Next: ${row.nextBid || '-'} | Max: $${row.max ?? '-'} | Your: ${row.userBidStatus || '-'} | ${row.bidCount || ''} | ${row.timeLeft || ''}</div>
             <div class="hiba-status ${row.eligible ? 'eligible' : 'skip'}">${row.status}</div>
           </div>
-          <button type="button" class="hiba-prepare" data-index="${index}" ${row.eligible ? '' : 'disabled'}>Prepare Bid</button>
+          <div class="hiba-row-actions">
+            <input class="hiba-max-inline" data-lot="${escapeHtml(row.lot)}" type="number" min="0" step="0.01" value="${row.max ?? ''}" placeholder="max" title="Your maximum hammer bid for this lot.">
+            <button type="button" class="hiba-add-plan" data-lot="${escapeHtml(row.lot)}" title="Add or update this lot in the max plan.">${row.max ? 'Save Max' : 'Add Plan'}</button>
+            <button type="button" class="hiba-prepare" data-index="${index}" ${row.eligible ? '' : 'disabled'}>Prepare Bid</button>
+          </div>
         </div>
       `).join('');
     };
@@ -2562,7 +2966,7 @@ ${cards}
     };
 
     const renderLive = () => {
-      if (!liveMode) return null;
+      if (!liveMode || !liveStateEl) return null;
       const liveState = extractLiveAuctionState();
       const plan = getLivePlan();
       const planEntry = liveState.lot ? plan[String(liveState.lot)] : null;
@@ -2583,9 +2987,9 @@ ${cards}
         <div>Current: ${escapeHtml(currentText)} | Ask: ${escapeHtml(askText)} | Max: $${row.max ?? '-'} | ${escapeHtml(row.bidCount || '')}</div>
         <div class="hiba-status ${row.eligible ? 'eligible' : 'skip'}">${escapeHtml(row.status)} (${armedText})</div>
       `;
-      const liveArmLabel = liveArmButton.querySelector('span');
+      const liveArmLabel = liveArmButton?.querySelector('span');
       if (liveArmLabel) liveArmLabel.textContent = state.liveArmed ? 'Disarm' : 'Arm';
-      liveSnipeButton.disabled = state.busy || !state.liveArmed || !row.eligible;
+      if (liveSnipeButton) liveSnipeButton.disabled = state.busy || !state.liveArmed || !row.eligible;
       debug('live render', {
         lot: row.lot,
         title: row.title,
@@ -2598,21 +3002,23 @@ ${cards}
       return row;
     };
 
-    planEl.addEventListener('focus', () => {
-      state.planFocused = true;
-      debug('plan editing focus');
-    });
-    planEl.addEventListener('blur', () => {
-      state.planFocused = false;
-      state.lastPlanInputAt = Date.now();
-      savePlanText(planEl.value);
-      debug('plan editing blur');
-    });
-    planEl.addEventListener('input', () => {
-      state.lastPlanInputAt = Date.now();
-      savePlanText(planEl.value);
-      debug('plan editing input: saved plan text');
-    });
+    if (planEl) {
+      planEl.addEventListener('focus', () => {
+        state.planFocused = true;
+        debug('plan editing focus');
+      });
+      planEl.addEventListener('blur', () => {
+        state.planFocused = false;
+        state.lastPlanInputAt = Date.now();
+        savePlanText(planEl.value);
+        debug('plan editing blur');
+      });
+      planEl.addEventListener('input', () => {
+        state.lastPlanInputAt = Date.now();
+        savePlanText(planEl.value);
+        debug('plan editing input: saved plan text');
+      });
+    }
 
     panel.querySelectorAll('[data-mode-tab]').forEach(tab => {
       tab.addEventListener('click', () => {
@@ -2631,20 +3037,20 @@ ${cards}
       debug('panel minimize toggled', { minimized });
     });
     panel.querySelector('#hibid-bid-close').addEventListener('click', () => {
-      if (state.liveTimer) clearInterval(state.liveTimer);
+      cleanupTimers();
       document.dispatchEvent(new CustomEvent('hibid-bid-assistant-close'));
       panel.remove();
     });
-    panel.querySelector('#hibid-bid-stop').addEventListener('click', () => {
+    panel.querySelector('#hibid-bid-stop')?.addEventListener('click', () => {
       state.stop = true;
-      autoRefreshInput.checked = false;
+      if (autoRefreshInput) autoRefreshInput.checked = false;
       if (state.refreshTimer) clearInterval(state.refreshTimer);
       state.refreshTimer = null;
       state.liveArmed = false;
       renderLive();
       status('Stop requested.');
     });
-    panel.querySelector('#hibid-bid-load').addEventListener('click', async () => {
+    panel.querySelector('#hibid-bid-load')?.addEventListener('click', async () => {
       state.stop = false;
       const target = getLoadTarget(getScanOptions());
       if (target) {
@@ -2657,7 +3063,7 @@ ${cards}
       render(rows);
       status(`Load finished. Replaced plan with ${state.lotCache.size} loaded OUTBID lot(s).`);
     });
-    panel.querySelector('#hibid-bid-scan').addEventListener('click', () => {
+    panel.querySelector('#hibid-bid-scan')?.addEventListener('click', () => {
       const plan = getPlan(status);
       const rows = scanPlan(plan, { ...getScanOptions(), includeUnplanned: true }, Array.from(state.lotCache.values()));
       render(rows);
@@ -2666,6 +3072,7 @@ ${cards}
       status(`${rows.filter(row => row.eligible).length} eligible / ${plannedCount} planned. ${loadedCount} loaded without max. ${rows.filter(row => row.status === 'not found').length} not found.`);
     });
     const setAutoRefresh = (enabled) => {
+      if (!autoRefreshInput) return;
       if (state.refreshTimer) clearInterval(state.refreshTimer);
       state.refreshTimer = null;
       if (liveMode && enabled) {
@@ -2717,22 +3124,25 @@ ${cards}
       }, 1000);
     };
 
+    const cleanupTimers = () => {
+      if (state.liveTimer) clearInterval(state.liveTimer);
+      if (state.refreshTimer) clearInterval(state.refreshTimer);
+      state.liveTimer = null;
+      state.refreshTimer = null;
+    };
+    document.addEventListener('flipperaddon-panel-teardown', cleanupTimers, { once: true });
+
     if (listingExportMode) {
-      listingExportModeEl.style.display = '';
-      if (flipTrackerOnlyMode) {
-        bidControlsEl.style.display = 'none';
-        liveModeEl.style.display = 'none';
-        detectedEl.textContent = 'FlipTracker export mode. Scroll/load your active listings, then scan and download the export.';
-        status('Ready to export active listings for FlipTracker.');
-      }
+      detectedEl.textContent = 'FlipTracker export mode. Scroll/load your active listings, then scan and download the export.';
+      status('Ready to export active listings for FlipTracker.');
       window.setTimeout(scanListingsForExport, 500);
     }
 
-    listingExportScanButton.addEventListener('click', () => {
+    listingExportScanButton?.addEventListener('click', () => {
       const rows = scanListingsForExport();
       status(`Scanned ${rows.length} active listing card(s).`);
     });
-    listingExportCopyButton.addEventListener('click', async () => {
+    listingExportCopyButton?.addEventListener('click', async () => {
       if (!state.listingRows.length) scanListingsForExport();
       if (!state.listingRows.length) {
         status('Nothing to copy yet. Scroll/load listings and scan again.');
@@ -2741,7 +3151,7 @@ ${cards}
       const copied = await writeClipboard(currentListingExportHtml()).catch(() => false);
       status(copied ? `Copied FlipTracker export HTML for ${state.listingRows.length} listing(s).` : 'Clipboard write failed. Use Download Export HTML instead.');
     });
-    listingExportDownloadButton.addEventListener('click', () => {
+    listingExportDownloadButton?.addEventListener('click', () => {
       if (!state.listingRows.length) scanListingsForExport();
       if (!state.listingRows.length) {
         status('Nothing to download yet. Scroll/load listings and scan again.');
@@ -2756,8 +3166,8 @@ ${cards}
     const copyCatalogLots = async (mode) => {
       if (state.busy) return;
       state.busy = true;
-      catalogCopyJsonButton.disabled = true;
-      catalogCopyLlmButton.disabled = true;
+      if (catalogCopyJsonButton) catalogCopyJsonButton.disabled = true;
+      if (catalogCopyLlmButton) catalogCopyLlmButton.disabled = true;
       state.stop = false;
       try {
         status(mode === 'llm' ? 'Scraping catalog for LLM brief...' : 'Scraping catalog for JSON...');
@@ -2786,41 +3196,38 @@ ${cards}
         });
       } finally {
         state.busy = false;
-        catalogCopyJsonButton.disabled = false;
-        catalogCopyLlmButton.disabled = false;
+        if (catalogCopyJsonButton) catalogCopyJsonButton.disabled = false;
+        if (catalogCopyLlmButton) catalogCopyLlmButton.disabled = false;
       }
     };
 
-    catalogCopyJsonButton.addEventListener('click', () => copyCatalogLots('json'));
-    catalogCopyLlmButton.addEventListener('click', () => copyCatalogLots('llm'));
-    debugCopyButton.addEventListener('click', async () => {
+    catalogCopyJsonButton?.addEventListener('click', () => copyCatalogLots('json'));
+    catalogCopyLlmButton?.addEventListener('click', () => copyCatalogLots('llm'));
+    debugCopyButton?.addEventListener('click', async () => {
       const copied = await copyDebugLog();
       status(copied ? `Copied ${getDebugLog().length} debug log entries.` : 'Debug log empty or clipboard failed.');
     });
-    debugClearButton.addEventListener('click', () => {
+    debugClearButton?.addEventListener('click', () => {
       clearDebugLog();
       status('Debug log cleared.');
       debug('debug log cleared from drawer');
     });
 
-    autoRefreshInput.addEventListener('change', (event) => {
+    autoRefreshInput?.addEventListener('change', (event) => {
       setAutoRefresh(event.target.checked);
     });
     if (liveMode) {
-      liveModeEl.style.display = '';
-      autoRefreshInput.checked = false;
-      autoRefreshInput.disabled = true;
       saveAutoRefresh(false);
       detectedEl.textContent = 'Live Mode scans this page in-place; it will not auto-refresh/reload.';
       state.liveTimer = setInterval(renderLive, 750);
       renderLive();
-    } else if (autoRefreshInput.checked) {
+    } else if (autoRefreshInput?.checked) {
       setAutoRefresh(true);
     }
-    panel.querySelector('#hibid-bid-auto-confirm').addEventListener('change', (event) => {
+    panel.querySelector('#hibid-bid-auto-confirm')?.addEventListener('change', (event) => {
       saveAutoConfirm(event.target.checked);
     });
-    panel.querySelector('#hibid-bid-next').addEventListener('click', async () => {
+    panel.querySelector('#hibid-bid-next')?.addEventListener('click', async () => {
       if (state.busy) return;
       const eligible = state.rows.find(row => row.eligible);
       if (!eligible) {
@@ -2834,13 +3241,13 @@ ${cards}
         state.busy = false;
       }
     });
-    liveArmButton.addEventListener('click', () => {
+    liveArmButton?.addEventListener('click', () => {
       state.liveArmed = !state.liveArmed;
       state.stop = false;
       renderLive();
       status(state.liveArmed ? 'Live snipe armed. Use Snipe Now when ready.' : 'Live snipe disarmed.');
     });
-    liveSnipeButton.addEventListener('click', async () => {
+    liveSnipeButton?.addEventListener('click', async () => {
       if (state.busy) return;
       const row = renderLive();
       if (!row?.eligible || !state.liveArmed) {
@@ -2858,8 +3265,8 @@ ${cards}
     const copyLiveLots = async (mode) => {
       if (state.busy) return;
       state.busy = true;
-      liveCopyJsonButton.disabled = true;
-      liveCopyLlmButton.disabled = true;
+      if (liveCopyJsonButton) liveCopyJsonButton.disabled = true;
+      if (liveCopyLlmButton) liveCopyLlmButton.disabled = true;
       try {
         status('Loading all open live lots before copy...');
         const expanded = await expandLivePageLots(status, () => state.stop);
@@ -2889,14 +3296,37 @@ ${cards}
         });
       } finally {
         state.busy = false;
-        liveCopyJsonButton.disabled = false;
-        liveCopyLlmButton.disabled = false;
+        if (liveCopyJsonButton) liveCopyJsonButton.disabled = false;
+        if (liveCopyLlmButton) liveCopyLlmButton.disabled = false;
       }
     };
-    liveCopyJsonButton.addEventListener('click', () => copyLiveLots('json'));
-    liveCopyLlmButton.addEventListener('click', () => copyLiveLots('llm'));
+    liveCopyJsonButton?.addEventListener('click', () => copyLiveLots('json'));
+    liveCopyLlmButton?.addEventListener('click', () => copyLiveLots('llm'));
     resultsEl.addEventListener('click', async (event) => {
       if (state.busy) return;
+      const addButton = event.target.closest('.hiba-add-plan');
+      if (addButton && planEl) {
+        const lotKey = String(addButton.dataset.lot || '');
+        const row = state.rows.find(item => String(item.lot) === lotKey);
+        if (!row) return;
+        const input = Array.from(resultsEl.querySelectorAll('.hiba-max-inline')).find(item => String(item.dataset.lot || '') === lotKey);
+        let nextText = addLotToPlanText(planEl.value, row);
+        try {
+          const parsed = JSON.parse(nextText);
+          const rawMax = String(input?.value || '').trim();
+          const numericMax = rawMax ? Number(rawMax) : NaN;
+          if (Number.isFinite(numericMax) && numericMax > 0) parsed[lotKey].max = numericMax;
+          nextText = JSON.stringify(parsed, null, 2);
+        } catch {
+          // addLotToPlanText already returns valid JSON, so this is only defensive.
+        }
+        planEl.value = nextText;
+        savePlanText(nextText);
+        const rows = scanPlan(getPlan(status), { ...getScanOptions(), includeUnplanned: true }, Array.from(state.lotCache.values()));
+        render(rows);
+        status(`Saved Lot ${lotKey} to max plan${input?.value ? ` at $${input.value}` : ' with no max yet'}.`);
+        return;
+      }
       const button = event.target.closest('.hiba-prepare');
       if (!button) return;
       const row = state.rows[Number(button.dataset.index)];
@@ -2933,10 +3363,31 @@ ${cards}
     let panelClosed = false;
     let lastMountedHref = location.href;
 
+    const teardownPanel = (reason = 'remount') => {
+      const existing = document.getElementById(PANEL_ID);
+      if (!existing) return false;
+      if (shouldTeardownPanelForRebuild(reason)) {
+        document.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason } }));
+      }
+      existing.remove();
+      debug('panel removed for remount', { reason });
+      return true;
+    };
+
     const ensureMounted = (reason = 'unspecified') => {
+      const modeInfo = resolveAssistantMode();
       const allowed = shouldInitOnLocation();
-      debug('ensureMounted', { reason, allowed, ...routeDebug() });
-      if (!allowed || !document.body) return false;
+      debug('ensureMounted', { reason, allowed, mode: modeInfo.mode, ...routeDebug() });
+      if (!document.body) return false;
+      const existingPanel = document.getElementById(PANEL_ID);
+      const existingMode = existingPanel?.dataset?.flipperaddonMode || existingPanel?.querySelector?.('.hiba-drawer')?.dataset?.flipperaddonMode || '';
+      if (!allowed) {
+        teardownPanel(`unsupported:${reason}`);
+        return false;
+      }
+      if (shouldRebuildPanelForMode(existingMode, modeInfo.mode, allowed)) {
+        teardownPanel(`mode-change:${existingMode || 'none'}:${modeInfo.mode}:${reason}`);
+      }
       if (location.href !== lastMountedHref) {
         panelClosed = false;
         lastMountedHref = location.href;
@@ -2966,15 +3417,31 @@ ${cards}
       }
       GM_registerMenuCommand(MENU_COMMANDS[0], () => ensureMounted('menu remount'));
       GM_registerMenuCommand(MENU_COMMANDS[1], async () => {
+        const enabled = !getStoredDebugEnabled();
+        saveDebugEnabled(enabled);
+        const panel = document.getElementById(PANEL_ID);
+        if (panel) {
+          teardownPanel('debug-toggle');
+          init();
+        } else {
+          ensureMounted('menu toggle debug');
+        }
+        try {
+          console.info(DEBUG_PREFIX, `Debug mode ${enabled ? 'enabled' : 'disabled'}`);
+        } catch {
+          // Console logging is best-effort.
+        }
+      });
+      GM_registerMenuCommand(MENU_COMMANDS[2], async () => {
         ensureMounted('menu copy debug');
         const copied = await copyDebugLog();
         debug('menu copy debug result', { copied, entries: getDebugLog().length });
       });
-      GM_registerMenuCommand(MENU_COMMANDS[2], () => {
+      GM_registerMenuCommand(MENU_COMMANDS[3], () => {
         clearDebugLog();
         debug('debug log cleared from menu');
       });
-      GM_registerMenuCommand(MENU_COMMANDS[3], () => {
+      GM_registerMenuCommand(MENU_COMMANDS[4], () => {
         ensureMounted('menu copy lots');
         document.getElementById('hibid-catalog-copy-json')?.click();
       });

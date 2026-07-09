@@ -7,12 +7,19 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function loadCore() {
+function loadCore(options = {}) {
   const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
   const sandbox = {
     console,
     globalThis: {},
   };
+  if (options.storage) {
+    sandbox.GM_getValue = (key, fallback) => options.storage.has(key) ? options.storage.get(key) : fallback;
+    sandbox.GM_setValue = (key, value) => {
+      options.storage.set(key, value);
+      return value;
+    };
+  }
   sandbox.globalThis = sandbox;
   sandbox.__HIBID_BID_ASSISTANT_TEST__ = true;
   vm.runInNewContext(source, sandbox, { filename: 'hibid-bid-assistant.user.js' });
@@ -228,21 +235,169 @@ test('assistant marks partial data-first catalog scrapes incomplete', () => {
   assert.equal(core.isCatalogScrapeComplete(partial), false);
 });
 
-test('assistant panel exposes unified catalog and debug controls', () => {
+test('assistant panel exposes catalog controls and gates debug controls', () => {
   const core = loadCore();
-  const html = core.buildPanelHtml();
+  const html = core.buildPanelHtml({ mode: 'catalog', debugEnabled: true });
 
   assert.match(html, /id="hibid-catalog-copy-json"/);
   assert.match(html, /id="hibid-catalog-copy-llm"/);
   assert.match(html, /id="hibid-debug-copy"/);
   assert.match(html, /id="hibid-debug-clear"/);
-  assert.match(html, /id="hibid-live-copy-json"/);
-  assert.match(html, /id="hibid-live-copy-llm"/);
-  assert.equal(core.DEBUG_PREFIX, '[HiBid Assistant]');
+  assert.doesNotMatch(html, /id="hibid-live-copy-json"/);
+  assert.doesNotMatch(html, /id="hibid-live-copy-llm"/);
+  assert.equal(core.DEBUG_PREFIX, '[FlipperAddon]');
   assert.deepEqual(Array.from(core.MENU_COMMANDS), [
-    'Remount HiBid Assistant',
-    'Copy HiBid Assistant Debug Log',
-    'Clear HiBid Assistant Debug Log',
+    'Remount FlipperAddon',
+    'Toggle FlipperAddon Debug Mode',
+    'Copy FlipperAddon Debug Log',
+    'Clear FlipperAddon Debug Log',
     'Copy HiBid Lots Now',
   ]);
+});
+
+test('assistant is branded as FlipperAddon by ALOS with FlipperAddon menu commands', () => {
+  const core = loadCore();
+
+  assert.equal(core.APP_NAME, 'FlipperAddon by ALOS');
+  assert.equal(core.DEBUG_PREFIX, '[FlipperAddon]');
+  assert.deepEqual(Array.from(core.MENU_COMMANDS), [
+    'Remount FlipperAddon',
+    'Toggle FlipperAddon Debug Mode',
+    'Copy FlipperAddon Debug Log',
+    'Clear FlipperAddon Debug Log',
+    'Copy HiBid Lots Now',
+  ]);
+});
+
+test('assistant mode resolver activates only the current page module', () => {
+  const core = loadCore();
+  const cases = [
+    ['https://hibid.com/newjersey/lots/40196/computers-and-electronics', 'catalog'],
+    ['https://hibid.com/account/watchlist?status=OUTBID', 'catalog'],
+    ['https://hibid.com/livecatalog/752334/the-luxe-edit', 'live'],
+    ['https://www.ebay.com/sh/lst/active', 'fliptracker'],
+    ['https://www.facebook.com/marketplace/you/selling', 'fliptracker'],
+    ['https://hibid.com/help', 'unsupported'],
+  ];
+
+  cases.forEach(([href, mode]) => {
+    assert.equal(core.resolveAssistantMode(new URL(href)).mode, mode, href);
+  });
+});
+
+test('panel markup is active-mode only and keeps debug controls gated', () => {
+  const core = loadCore();
+
+  const catalog = core.buildPanelHtml({ mode: 'catalog', debugEnabled: false });
+  assert.match(catalog, /FlipperAddon by ALOS/);
+  assert.match(catalog, /id="hibid-bid-load"/);
+  assert.match(catalog, /id="hibid-catalog-copy-llm"/);
+  assert.match(catalog, /id="hibid-max-plan-details"/);
+  assert.match(catalog, /data-help="[^"]*max plan/i);
+  assert.doesNotMatch(catalog, /id="hibid-live-snipe"/);
+  assert.doesNotMatch(catalog, /id="fliptracker-listing-download"/);
+  assert.doesNotMatch(catalog, /id="hibid-debug-copy"/);
+
+  const live = core.buildPanelHtml({ mode: 'live', debugEnabled: false });
+  assert.match(live, /id="hibid-live-snipe"/);
+  assert.match(live, /id="hibid-live-copy-llm"/);
+  assert.match(live, /id="hibid-bid-plan-json"/);
+  assert.doesNotMatch(live, /id="hibid-bid-load"/);
+  assert.doesNotMatch(live, /id="hibid-catalog-copy-llm"/);
+  assert.doesNotMatch(live, /id="fliptracker-listing-download"/);
+
+  const fliptracker = core.buildPanelHtml({ mode: 'fliptracker', debugEnabled: true });
+  assert.match(fliptracker, /id="fliptracker-listing-download"/);
+  assert.match(fliptracker, /id="hibid-debug-copy"/);
+  assert.doesNotMatch(fliptracker, /id="hibid-bid-plan-json"/);
+  assert.doesNotMatch(fliptracker, /id="hibid-live-snipe"/);
+});
+
+test('max plan helpers use per-auction storage keys and add blank max entries', () => {
+  const core = loadCore();
+
+  assert.equal(
+    core.getPlanStorageKey(new URL('https://hibid.com/catalog/752334/the-luxe-edit')),
+    'flipperaddon-max-plan-v2:hibid.com:auction:752334'
+  );
+  assert.equal(
+    core.getPlanStorageKey(new URL('https://hibid.com/newjersey/lots/40196/computers-and-electronics')),
+    'flipperaddon-max-plan-v2:hibid.com:auction:40196'
+  );
+
+  const text = core.addLotToPlanText('{}', {
+    lot: '1627sf',
+    title: "Chloe L'eau by Chloe Eau De Toilette Spray",
+  });
+
+  assert.deepEqual(JSON.parse(text), {
+    '1627sf': {
+      max: null,
+      title: "Chloe L'eau by Chloe Eau De Toilette Spray",
+    },
+  });
+});
+
+test('legacy max plan migration only imports into one scoped plan once', () => {
+  const storage = new Map([
+    ['hibid-bid-assistant-plan-v1', JSON.stringify({ 78: { max: 70, title: 'BlueParrott' } })],
+  ]);
+  const core = loadCore({ storage });
+
+  const first = core.getStoredPlanText(new URL('https://hibid.com/catalog/752334/the-luxe-edit'));
+  const second = core.getStoredPlanText(new URL('https://hibid.com/catalog/40196/computers-and-electronics'));
+
+  assert.deepEqual(JSON.parse(first), { 78: { max: 70, title: 'BlueParrott' } });
+  assert.deepEqual(JSON.parse(second), {});
+  assert.equal(storage.get('flipperaddon-legacy-plan-migrated-v1'), true);
+});
+
+test('panel remount policy rebuilds on module changes and unsupported routes', () => {
+  const core = loadCore();
+
+  assert.equal(core.shouldRebuildPanelForMode('catalog', 'catalog', true), false);
+  assert.equal(core.shouldRebuildPanelForMode('catalog', 'live', true), true);
+  assert.equal(core.shouldRebuildPanelForMode('catalog', 'fliptracker', true), true);
+  assert.equal(core.shouldRebuildPanelForMode('catalog', 'unsupported', false), true);
+});
+
+test('panel rebuild reasons that remove a panel require teardown cleanup', () => {
+  const core = loadCore();
+
+  assert.equal(core.shouldTeardownPanelForRebuild('mode-change:catalog:live:urlchange'), true);
+  assert.equal(core.shouldTeardownPanelForRebuild('unsupported:mutation'), true);
+  assert.equal(core.shouldTeardownPanelForRebuild('debug-toggle'), true);
+  assert.equal(core.shouldTeardownPanelForRebuild('noop'), false);
+});
+
+test('LLM auction brief includes the advanced resale coordinator prompt and full lot fields', () => {
+  const core = loadCore();
+  const brief = core.buildLlmAuctionBrief([
+    {
+      lot: '4432i',
+      title: '$499 NEW! MONSTER GI30 PRO HIGH POWER 2000W BLUETOOTH',
+      url: 'https://hibid.com/lot/307763539/4432i',
+      image: 'https://cdn.example.test/4432i.jpg',
+      highBidAmount: 165,
+      nextBidAmount: 170,
+      bidCountNumber: 28,
+      timeLeft: '9h 39m',
+      description: 'Factory sealed speaker',
+      auctionTitle: 'Overstock Product Liquidation NJ W27',
+      buyerPremium: '15%',
+    },
+  ], {
+    title: 'Overstock Product Liquidation NJ W27',
+    url: 'https://hibid.com/newjersey/lots/40196/computers-and-electronics',
+    totalLots: 222,
+  });
+
+  assert.match(brief, /You are an auction resale analysis coordinator/);
+  assert.match(brief, /Coverage first, confirmation second/);
+  assert.match(brief, /Use eBay sold\/completed listings first/);
+  assert.match(brief, /sedan risk/i);
+  assert.match(brief, /Factory sealed speaker/);
+  assert.match(brief, /https:\/\/hibid\.com\/lot\/307763539\/4432i/);
+  assert.match(brief, /https:\/\/cdn\.example\.test\/4432i\.jpg/);
+  assert.match(brief, /"buyerPremium": "15%"/);
 });
