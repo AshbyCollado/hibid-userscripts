@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Safe Bid Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.4.3
+// @version      0.4.5
 // @description  Safely queues HiBid bids and exports active eBay/Facebook Marketplace listings for FlipTracker.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -25,7 +25,7 @@
   'use strict';
 
   const PANEL_ID = 'hibid-bid-assistant-panel';
-  const SCRIPT_VERSION = '0.4.3';
+  const SCRIPT_VERSION = '0.4.5';
   const PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const AUTO_REFRESH_KEY = 'hibid-bid-assistant-auto-refresh-v1';
   const AUTO_CONFIRM_KEY = 'hibid-bid-assistant-auto-confirm-v1';

@@ -4,11 +4,19 @@ Standalone Tampermonkey userscripts for HiBid auction workflows and FlipTracker 
 
 ## Install
 
-Open this URL in a browser with Tampermonkey enabled:
+Open the assistant URL in a browser with Tampermonkey enabled:
 
 https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 
-Tampermonkey updates use the same URL through the script metadata.
+Open the catalog scraper URL separately:
+
+https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
+
+Tampermonkey updates use the same URLs through each script's metadata.
+
+## HiBid catalog scraper
+
+`HiBid Lot Catalog Scraper` is the standalone scraper for `hibid.com/lots*` and `hibid.com/catalog/*` pages. It switches compatible catalog pages to Single Page, scrolls lazy-loaded lots, gathers enriched lot/bid fields, and copies JSON to the clipboard from the `Copy All HiBid Lots` pill. Click the pill again while it is running to request a manual stop.
 
 ## FlipTracker active listing export
 
