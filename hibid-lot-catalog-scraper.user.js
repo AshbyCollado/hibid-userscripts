@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.4.6
+// @version      1.4.7
 // @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
@@ -499,6 +499,7 @@
     let lastCount = -1;
     let stuckChecks = 0;
     let bottomWaits = 0;
+    let sameCountSteps = 0;
 
     scrollToTop();
     await wait(500);
@@ -509,9 +510,29 @@
       if (expectedTotal && expectedTotal < itemsMap.size) expectedTotal = null;
       onProgress?.(progressText(itemsMap.size, expectedTotal, shouldStop?.()));
 
+      if (itemsMap.size === lastCount) sameCountSteps += 1;
+      else sameCountSteps = 0;
+      lastCount = itemsMap.size;
+
       if (shouldStop?.()) break;
 
       if (expectedTotal && itemsMap.size >= expectedTotal) break;
+
+      if (expectedTotal && itemsMap.size < expectedTotal && sameCountSteps >= 8) {
+        const nextPage = findNextPageButton();
+        if (nextPage) {
+          debug('catalog clicking next page after stalled count', { count: itemsMap.size, expectedTotal, label: controlLabel(nextPage), href: controlHref(nextPage) });
+          nextPage.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+          nextPage.click();
+          sameCountSteps = 0;
+          stuckChecks = 0;
+          bottomWaits = 0;
+          await wait(1600);
+          scrollToTop();
+          await wait(650);
+          continue;
+        }
+      }
 
       const maxScrollTop = document.documentElement.scrollHeight - window.innerHeight;
       const currentTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
@@ -527,8 +548,8 @@
           continue;
         }
 
-        if (itemsMap.size === lastCount) stuckChecks += 1;
-        lastCount = itemsMap.size;
+        if (sameCountSteps > 0) stuckChecks += 1;
+        else stuckChecks = 0;
         if (waitingForMore && stuckChecks >= 5) {
           const nextPage = findNextPageButton();
           if (nextPage) {
