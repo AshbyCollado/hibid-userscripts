@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Safe Bid Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.4.3
+// @version      0.4.4
 // @description  Safely queues HiBid bids and exports active eBay/Facebook Marketplace listings for FlipTracker.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -25,7 +25,7 @@
   'use strict';
 
   const PANEL_ID = 'hibid-bid-assistant-panel';
-  const SCRIPT_VERSION = '0.4.3';
+  const SCRIPT_VERSION = '0.4.4';
   const PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const AUTO_REFRESH_KEY = 'hibid-bid-assistant-auto-refresh-v1';
   const AUTO_CONFIRM_KEY = 'hibid-bid-assistant-auto-confirm-v1';
@@ -621,11 +621,13 @@ ${cards}
     extractLivePageLots,
     expandLivePageLots,
     buildLlmAuctionBrief,
+    buildCatalogLotsExportJson,
     parseEbayActiveListingsHtml,
     parseFacebookMarketplaceListingsHtml,
     parseFlipTrackerActiveListingsHtml,
     buildFlipTrackerListingsExportHtml,
     buildPanelHtml,
+    scanCurrentCatalogLots,
     evaluateLiveLot,
     prepareLiveBid,
     findLotOnPage,
@@ -1056,6 +1058,36 @@ ${cards}
     return parseFlipTrackerActiveListingsHtml(document.documentElement?.outerHTML || '', {
       url: location.href
     });
+  }
+
+  function scanCurrentCatalogLots() {
+    const cardLots = uniqueLots(getLotTiles().map(extractLot));
+    const rows = cardLots.length ? cardLots : extractTextLots();
+    return rows.map(lot => ({
+      lot: lot.lot || '',
+      id: lot.id || lot.lot || '',
+      title: lot.title || '',
+      url: lot.url || '',
+      highBid: lot.highBid || '',
+      highBidAmount: lot.highBidAmount ?? null,
+      nextBid: lot.nextBid || '',
+      nextBidAmount: lot.nextBidAmount ?? null,
+      bidCount: lot.bidCount || '',
+      bidCountNumber: lot.bidCountNumber ?? null,
+      timeLeft: lot.timeLeft || '',
+      userBidStatus: lot.userBidStatus || '',
+      status: lot.status || lot.userBidStatus || '',
+      statusClass: lot.statusClass || ''
+    }));
+  }
+
+  function buildCatalogLotsExportJson(lots, meta = {}) {
+    return JSON.stringify({
+      generatedAt: meta.generatedAt || new Date().toISOString(),
+      pageUrl: meta.pageUrl || (typeof location !== 'undefined' ? location.href : ''),
+      count: Array.isArray(lots) ? lots.length : 0,
+      lots: Array.isArray(lots) ? lots : []
+    }, null, 2);
   }
 
   function lotSummary(rows) {
@@ -1574,6 +1606,23 @@ ${cards}
               ${actionButton('hibid-bid-next', 'zap', 'Prepare Next', 'success')}
               ${actionButton('hibid-bid-stop', 'stop', 'Stop', 'danger')}
             </div>
+            <div class="hiba-subsection">
+              <div class="hiba-section-head">
+                <div>
+                  <div class="hiba-kicker">Catalog scrape</div>
+                  <strong>Copy visible lots for research</strong>
+                </div>
+                <span class="hiba-chip neutral" id="hibid-catalog-scrape-count">0 lots</span>
+              </div>
+              <div class="hiba-meta">Scrapes the currently loaded HiBid lots into JSON or the profit-first LLM brief.</div>
+              <div class="hiba-actions">
+                ${actionButton('hibid-catalog-scrape', 'scan', 'Scrape Lots', 'secondary')}
+                ${actionButton('hibid-catalog-copy-json', 'copy', 'Copy JSON', 'secondary')}
+                ${actionButton('hibid-catalog-copy-llm', 'file', 'Copy LLM Brief')}
+                ${actionButton('hibid-catalog-download-json', 'download', 'Download JSON', 'success')}
+              </div>
+              <div id="hibid-catalog-scrape-status" class="hiba-meta">Waiting to scrape.</div>
+            </div>
           </section>
 
           <section id="hibid-live-mode" class="hiba-section" style="display:none">
@@ -1623,6 +1672,7 @@ ${cards}
         #${PANEL_ID} .hiba-tab { display:flex; align-items:center; justify-content:center; gap:6px; min-width:0; color:#94a3b8; background:transparent; border:0; border-radius:8px; padding:7px 5px; font-weight:800; cursor:pointer; }
         #${PANEL_ID} .hiba-tab.active { color:#fff; background:#1d4ed8; box-shadow:0 8px 22px rgba(37,99,235,.24); }
         #${PANEL_ID} .hiba-section { border:1px solid rgba(148,163,184,.16); border-radius:12px; padding:10px; margin-top:9px; background:rgba(15,23,42,.52); }
+        #${PANEL_ID} .hiba-subsection { border-top:1px solid rgba(148,163,184,.16); margin-top:10px; padding-top:10px; }
         #${PANEL_ID} .hiba-section[style*="display:none"] { margin:0; padding:0; border:0; }
         #${PANEL_ID} .hiba-actions { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:9px; }
         #${PANEL_ID} .hiba-actions.compact { margin-top:0; justify-content:flex-end; }
@@ -1714,6 +1764,12 @@ ${cards}
     const listingExportScanButton = panel.querySelector('#fliptracker-listing-scan');
     const listingExportCopyButton = panel.querySelector('#fliptracker-listing-copy');
     const listingExportDownloadButton = panel.querySelector('#fliptracker-listing-download');
+    const catalogScrapeButton = panel.querySelector('#hibid-catalog-scrape');
+    const catalogCopyJsonButton = panel.querySelector('#hibid-catalog-copy-json');
+    const catalogCopyLlmButton = panel.querySelector('#hibid-catalog-copy-llm');
+    const catalogDownloadJsonButton = panel.querySelector('#hibid-catalog-download-json');
+    const catalogScrapeStatusEl = panel.querySelector('#hibid-catalog-scrape-status');
+    const catalogScrapeCountEl = panel.querySelector('#hibid-catalog-scrape-count');
     const liveModeEl = panel.querySelector('#hibid-live-mode');
     const liveStateEl = panel.querySelector('#hibid-live-state');
     const liveArmButton = panel.querySelector('#hibid-live-arm');
@@ -1721,7 +1777,7 @@ ${cards}
     const liveCopyJsonButton = panel.querySelector('#hibid-live-copy-json');
     const liveCopyLlmButton = panel.querySelector('#hibid-live-copy-llm');
     const autoRefreshInput = panel.querySelector('#hibid-bid-auto-refresh');
-    const state = { stop: false, rows: [], busy: false, refreshTimer: null, refreshSeconds: 30, lotCache: new Map(), planFocused: false, lastPlanInputAt: 0, liveArmed: false, liveRow: null, liveTimer: null, listingRows: [] };
+    const state = { stop: false, rows: [], busy: false, refreshTimer: null, refreshSeconds: 30, lotCache: new Map(), planFocused: false, lastPlanInputAt: 0, liveArmed: false, liveRow: null, liveTimer: null, listingRows: [], catalogRows: [] };
     const hibidHost = /hibid\.com$/i.test(location.hostname) || location.hostname === 'bid.ajwillnerauctions.com';
     const flipTrackerOnlyMode = listingExportMode && !hibidHost;
     const activeMode = liveMode ? 'live' : (flipTrackerOnlyMode ? 'fliptracker' : 'catalog');
@@ -1791,6 +1847,27 @@ ${cards}
       renderListingExport(rows);
       return rows;
     };
+
+    const renderCatalogScrape = (rows) => {
+      state.catalogRows = rows;
+      if (catalogScrapeCountEl) catalogScrapeCountEl.textContent = `${rows.length} lot${rows.length === 1 ? '' : 's'}`;
+      if (catalogScrapeStatusEl) {
+        catalogScrapeStatusEl.textContent = rows.length
+          ? `Scraped ${rows.length} loaded lot(s). Copy JSON or the LLM brief for research.`
+          : 'No loaded catalog lots found. Scroll/load lots first, then scrape again.';
+      }
+    };
+
+    const scrapeCatalogLots = () => {
+      const rows = scanCurrentCatalogLots();
+      renderCatalogScrape(rows);
+      return rows;
+    };
+
+    const currentCatalogExportJson = () => buildCatalogLotsExportJson(state.catalogRows, {
+      pageUrl: location.href,
+      generatedAt: new Date().toISOString()
+    });
 
     const loadCurrentOutbidLots = async () => {
       state.lotCache.clear();
@@ -2004,6 +2081,39 @@ ${cards}
       const filename = `FlipTracker-listings-${source}-${safeTimestamp()}.html`;
       downloadTextFile(filename, currentListingExportHtml());
       status(`Downloaded ${filename}. Put it in ImportInbox, then use FlipTracker import.`);
+    });
+
+    catalogScrapeButton.addEventListener('click', () => {
+      const rows = scrapeCatalogLots();
+      status(`Scraped ${rows.length} loaded HiBid lot(s).`);
+    });
+    catalogCopyJsonButton.addEventListener('click', async () => {
+      if (!state.catalogRows.length) scrapeCatalogLots();
+      if (!state.catalogRows.length) {
+        status('Nothing to copy yet. Scroll/load catalog lots and scrape again.');
+        return;
+      }
+      const copied = await writeClipboard(currentCatalogExportJson()).catch(() => false);
+      status(copied ? `Copied catalog JSON for ${state.catalogRows.length} lot(s).` : 'Clipboard write failed. Use Download JSON instead.');
+    });
+    catalogCopyLlmButton.addEventListener('click', async () => {
+      if (!state.catalogRows.length) scrapeCatalogLots();
+      if (!state.catalogRows.length) {
+        status('Nothing to brief yet. Scroll/load catalog lots and scrape again.');
+        return;
+      }
+      const copied = await writeClipboard(buildLlmAuctionBrief(state.catalogRows, liveAuctionContext())).catch(() => false);
+      status(copied ? `Copied LLM brief for ${state.catalogRows.length} catalog lot(s).` : 'Clipboard write failed. Use Copy JSON instead.');
+    });
+    catalogDownloadJsonButton.addEventListener('click', () => {
+      if (!state.catalogRows.length) scrapeCatalogLots();
+      if (!state.catalogRows.length) {
+        status('Nothing to download yet. Scroll/load catalog lots and scrape again.');
+        return;
+      }
+      const filename = `hibid-catalog-lots-${safeTimestamp()}.json`;
+      downloadTextFile(filename, currentCatalogExportJson(), 'application/json;charset=utf-8');
+      status(`Downloaded ${filename}.`);
     });
 
     autoRefreshInput.addEventListener('change', (event) => {

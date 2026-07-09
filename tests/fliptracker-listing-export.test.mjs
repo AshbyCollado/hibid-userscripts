@@ -73,9 +73,42 @@ test('panel markup exposes modern drawer shell and stable controls', () => {
   assert.match(html, /hiba-drawer/);
   assert.match(html, /hiba-launcher/);
   assert.match(html, /id="hibid-bid-load"/);
+  assert.match(html, /id="hibid-catalog-scrape"/);
+  assert.match(html, /id="hibid-catalog-copy-llm"/);
   assert.match(html, /id="hibid-live-copy-llm"/);
   assert.match(html, /id="fliptracker-listing-download"/);
   assert.match(html, /data-mode-tab="live"/);
+});
+
+test('builds catalog lots JSON export for assistant scraper', () => {
+  const core = loadCore();
+  const json = core.buildCatalogLotsExportJson([
+    {
+      lot: '1627sf',
+      title: "Chloe L'eau by Chloe Eau De Toilette Spray",
+      highBidAmount: 38,
+      nextBidAmount: 43,
+      bidCountNumber: 1,
+    },
+  ], {
+    generatedAt: '2026-07-09T00:00:00.000Z',
+    pageUrl: 'https://hibid.com/livecatalog/752334/the-luxe-edit',
+  });
+
+  assert.deepEqual(JSON.parse(json), {
+    generatedAt: '2026-07-09T00:00:00.000Z',
+    pageUrl: 'https://hibid.com/livecatalog/752334/the-luxe-edit',
+    count: 1,
+    lots: [
+      {
+        lot: '1627sf',
+        title: "Chloe L'eau by Chloe Eau De Toilette Spray",
+        highBidAmount: 38,
+        nextBidAmount: 43,
+        bidCountNumber: 1,
+      },
+    ],
+  });
 });
 
 test('parses Facebook Marketplace manager listing cards for FlipTracker export', () => {
