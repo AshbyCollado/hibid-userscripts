@@ -92,6 +92,21 @@ test('standalone scraper finds safe live open-more controls only', () => {
   assert.equal(core.findLiveLoadMoreButton(root), openMore);
 });
 
+test('standalone scraper finds safe catalog next-page controls only', () => {
+  const core = loadCore();
+  const next = makeElement({ text: 'Next', attrs: { href: '/catalog/752334?page=2' } });
+  const bid = makeElement({ text: 'Bid 86.00 USD' });
+  const search = makeElement({ text: 'Search' });
+
+  const root = {
+    querySelectorAll() {
+      return [bid, search, next];
+    },
+  };
+
+  assert.equal(core.findNextPageButton(root), next);
+});
+
 test('standalone scraper exposes debug/menu metadata and stable element IDs', () => {
   const core = loadCore();
 

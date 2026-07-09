@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.4.4
+// @version      1.4.5
 // @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
@@ -454,6 +454,27 @@
     return `Scraping ${count} lots...`;
   }
 
+  function findNextPageButton(root = document) {
+    const candidates = Array.from(root.querySelectorAll?.('a[href], button, [role="button"]') || [])
+      .filter(button => !button.disabled && !button.getAttribute?.('aria-disabled'))
+      .filter(isVisible)
+      .map(button => {
+        const label = controlLabel(button);
+        const href = controlHref(button);
+        let score = 0;
+        if (/\bbid\b|history|watch|unwatch|notes?|close|confirm|share|print|search/i.test(label)) score = -100;
+        else if (/^next$/i.test(textOf(button))) score = 120;
+        else if (/\bnext\b/i.test(label) && /page|pagination|pager/i.test(button.closest?.('[class]')?.getAttribute?.('class') || '')) score = 100;
+        else if (/\bpage=\d+/i.test(href) && /\bnext\b/i.test(label)) score = 80;
+        return { button, score, label, href };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    debug('next page candidates', candidates.map(item => ({ score: item.score, label: item.label, href: item.href })));
+    return candidates[0]?.button || null;
+  }
+
   function pageLooksBusy() {
     const text = textOf(document.body);
     return /\bLoading(?:\.\.\.)?\b/i.test(text)
@@ -507,6 +528,20 @@
 
         if (itemsMap.size === lastCount) stuckChecks += 1;
         lastCount = itemsMap.size;
+        if (waitingForMore && stuckChecks >= 5) {
+          const nextPage = findNextPageButton();
+          if (nextPage) {
+            debug('catalog clicking next page', { count: itemsMap.size, expectedTotal, label: controlLabel(nextPage), href: controlHref(nextPage) });
+            nextPage.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+            nextPage.click();
+            stuckChecks = 0;
+            bottomWaits = 0;
+            await wait(1400);
+            scrollToTop();
+            await wait(600);
+            continue;
+          }
+        }
         if (waitingForMore && stuckChecks < 30) {
           debug('catalog bottom waiting for lazy lots', { count: itemsMap.size, expectedTotal, stuckChecks });
           await wait(500);
@@ -628,6 +663,7 @@
       detectPageMode,
       findCatalogEntryControl,
       findLiveLoadMoreButton,
+      findNextPageButton,
       extractLot,
       extractLivePageLots,
       expandLivePageLots,
