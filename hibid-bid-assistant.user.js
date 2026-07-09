@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Safe Bid Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.4.6
+// @version      0.4.7
 // @description  Safely queues HiBid bids and exports active eBay/Facebook Marketplace listings for FlipTracker.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -1858,6 +1858,7 @@ ${cards}
       }
       debug('status', message);
     };
+    installAssistantCatalogScraperButton(status);
 
     const render = (rows) => {
       state.rows = rows;
@@ -2210,7 +2211,6 @@ ${cards}
     };
     liveCopyJsonButton.addEventListener('click', () => copyLiveLots('json'));
     liveCopyLlmButton.addEventListener('click', () => copyLiveLots('llm'));
-    installAssistantCatalogScraperButton(status);
     resultsEl.addEventListener('click', async (event) => {
       if (state.busy) return;
       const button = event.target.closest('.hiba-prepare');
