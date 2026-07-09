@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.6.5
+// @version      0.6.6
 // @description  Modular resale helper for HiBid catalog/live scraping, LLM exports, safe bid prep, and FlipTracker marketplace exports.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -31,7 +31,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.6.5';
+  const SCRIPT_VERSION = '0.6.6';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -770,6 +770,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     let title = cleanListingTitle(value);
     const prefixes = [
       /^eBay\s*\|\s*/i,
+      /^Item photo\.\s*/i,
+      /^Show Listing Details(?:\s+new)?\.\s*/i,
       /^(?:\d+\s+)?Link\.\s*/i,
       /^Bids:\s*\d+\.\s*/i,
       /^Show Bid History\.\s*/i,
@@ -801,21 +803,50 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function dedupeListings(listings) {
-    const seen = new Set();
+    const seen = new Map();
     const result = [];
     listings.forEach(listing => {
-      const key = [
-        listing.source || '',
-        listing.itemId || '',
-        listing.url || '',
-        String(listing.title || '').toLowerCase(),
-        listing.price ?? ''
-      ].join('|');
-      if (seen.has(key)) return;
-      seen.add(key);
+      const source = listing.source || '';
+      const itemId = listing.itemId || '';
+      const key = itemId
+        ? `${source}|id:${itemId}`
+        : [
+            source,
+            listing.url || '',
+            String(listing.title || '').toLowerCase(),
+            listing.price ?? ''
+          ].join('|');
+      if (seen.has(key)) {
+        const index = seen.get(key);
+        const existing = result[index];
+        const listingScore = listingQuality(listing);
+        const existingScore = listingQuality(existing);
+        if (listingScore > existingScore || (
+          listingScore === existingScore &&
+          Number.isFinite(listing.price) &&
+          Number.isFinite(existing.price) &&
+          listing.price < existing.price
+        )) {
+          result[index] = listing;
+        }
+        return;
+      }
+      seen.set(key, result.length);
       result.push(listing);
     });
     return result;
+  }
+
+  function listingQuality(listing) {
+    let score = 0;
+    const title = String(listing?.title || '');
+    if (title && !/^eBay\s*\|/i.test(title)) score += 20;
+    if (!/Item photo|Show Listing Details|Show Bid History|^Edit$/i.test(title)) score += 20;
+    if (/\/itm\/\d+/i.test(listing?.url || '')) score += 10;
+    if (Number.isFinite(listing?.views)) score += 3;
+    if (Number.isFinite(listing?.watchers)) score += 3;
+    if (listing?.shippingText) score += 1;
+    return score;
   }
 
   function amountFromState(value) {

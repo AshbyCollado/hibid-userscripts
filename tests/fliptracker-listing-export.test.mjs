@@ -69,6 +69,10 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
       <table>
         <thead><tr><th>Item</th><th>Current price</th><th>Available quantity</th><th>Views</th></tr></thead>
         <tbody>
+          <tr data-testid="listing-row-photo">
+            <td><a href="/itm/336677465197">eBay | Item photo. Show Listing Details new. Listing Rcv A Shelf RV DM17 KIT 5 Door Mounting Kit 278234 Pull Out Cabinet</a></td>
+            <td><span>$41.00</span></td>
+          </tr>
           <tr data-testid="listing-row">
             <td><input type="checkbox"></td>
             <td><a href="/sh/lst?mode=ReviseItem&amp;itemId=336677465197&amp;ReturnURL=https%3A%2F%2Fwww.ebay.com%2Fsh%2Flst%2Factive">Edit</a></td>
