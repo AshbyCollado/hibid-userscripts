@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.3.4
+// @version      1.4.0
 // @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
@@ -17,6 +17,7 @@
 // @include      https://*.hibid.com/*
 // @grant        GM_setClipboard
 // @grant        GM.setClipboard
+// @grant        GM_registerMenuCommand
 // ==/UserScript==
 
 (function () {
@@ -24,6 +25,9 @@
 
   const BUTTON_ID = 'hibid-lot-catalog-scraper-copy-button';
   const FALLBACK_ID = 'hibid-lot-catalog-scraper-json';
+  const DEBUG_PREFIX = '[HiBid Lot Catalog Scraper]';
+  const RESUME_KEY = 'hibidLotCatalogScraperResume';
+  const MENU_COMMANDS = ['Mount HiBid scraper button', 'Copy all HiBid lots now'];
   const MAX_STEPS = 1200;
 
   let scrapeState = {
@@ -32,6 +36,15 @@
   };
 
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  function debug(message, data) {
+    try {
+      if (data === undefined) console.debug(DEBUG_PREFIX, message);
+      else console.debug(DEBUG_PREFIX, message, data);
+    } catch (_) {
+      // Debug logging must never break scraping.
+    }
+  }
 
   function textOf(el) {
     return (el?.textContent || '').replace(/\s+/g, ' ').trim();
@@ -46,6 +59,29 @@
 
   function isLiveCatalogPage(loc = location) {
     return /^\/livecatalog\b/i.test(String(loc.pathname || ''));
+  }
+
+  function getAuctionKey(loc = (typeof location !== 'undefined' ? location : { pathname: '' })) {
+    return String(loc.pathname || '').match(/^\/(?:catalog|livecatalog)\/(\d+)/i)?.[1] || '';
+  }
+
+  function getLotTiles(root = document) {
+    return Array.from(root.querySelectorAll?.('app-lot-tile[id^="lot-"]') || []);
+  }
+
+  function hasLiveTextLots(root = document) {
+    const text = textOf(root.body || root.documentElement || root);
+    return /Lot\s+\d+[A-Za-z-]*\s*\|/i.test(text);
+  }
+
+  function detectPageMode(root = document, loc = location) {
+    if (!shouldInitOnLocation(loc)) return 'unsupported';
+    const pathname = String(loc.pathname || '');
+    const tileCount = getLotTiles(root).length;
+    if (/^\/livecatalog\b/i.test(pathname)) return hasLiveTextLots(root) || tileCount ? 'live-catalog-grid' : 'live-catalog-loading';
+    if (/^\/catalog\b/i.test(pathname)) return tileCount ? 'catalog-grid' : (hasLiveTextLots(root) ? 'live-catalog-grid' : 'auction-detail');
+    if (/^\/lots?\b/i.test(pathname)) return tileCount ? 'catalog-grid' : 'catalog-loading';
+    return 'unsupported';
   }
 
   function isVisible(el) {
@@ -66,9 +102,44 @@
     ].join(' ').replace(/\s+/g, ' ').trim();
   }
 
+  function controlHref(el) {
+    return el?.getAttribute?.('href') || el?.href || '';
+  }
+
   function absoluteUrl(href) {
     if (!href) return '';
     return new URL(href, location.origin).href;
+  }
+
+  function findCatalogEntryControl(root = document, loc = (typeof location !== 'undefined' ? location : { pathname: '' })) {
+    const currentAuction = getAuctionKey(loc);
+    const candidates = Array.from(root.querySelectorAll?.('a[href], button, [role="button"], input[type="button"], input[type="submit"]') || [])
+      .filter(button => !button.disabled && !button.getAttribute?.('aria-disabled'))
+      .filter(isVisible)
+      .map(button => {
+        const label = controlLabel(button);
+        const href = controlHref(button);
+        let score = 0;
+
+        if (/shop\s+by\s+category|search|watch\s+list|\bbids?\b|find\s+auctions|sell|help|share|print|map/i.test(label)) {
+          score = -100;
+        } else if (/^view\s+catalog$/i.test(textOf(button))) {
+          score = 120;
+        } else if (/\b(?:view|open|enter)\s+catalog\b/i.test(label)) {
+          score = 110;
+        } else if (/\bcatalog\b/i.test(label) && href && (!currentAuction || href.includes(currentAuction))) {
+          score = 80;
+        } else if (href && /\/(?:catalog|livecatalog)\/\d+/i.test(href) && (!currentAuction || href.includes(currentAuction))) {
+          score = 70;
+        }
+
+        return { button, score, label, href };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    debug('catalog entry candidates', candidates.map(item => ({ score: item.score, label: item.label, href: item.href })));
+    return candidates[0]?.button || null;
   }
 
   function getExpectedTotal() {
@@ -104,7 +175,7 @@
 
   async function waitForLots() {
     for (let i = 0; i < 80; i += 1) {
-      if (document.querySelector('app-lot-tile[id^="lot-"]')) return true;
+      if (getLotTiles().length) return true;
       await wait(250);
     }
     return false;
@@ -120,6 +191,7 @@
     const timeLeftText = textOf(tile.querySelector('.lot-time-left, .lot-time-label, .lot-time-left-container'));
     const nextBidText = textOf(tile.querySelector('.TileDisplayMinBid'));
     const bidButtonText = textOf(tile.querySelector('.lot-bid-button'));
+    const descriptionText = textOf(tile.querySelector('.lot-description, .description, [class*="description"], [class*="lot-notes"]'));
     const bidStatusEl = tile.querySelector(
       '.bid-status.winning, .bid-status.outbid, .bid-status.losing, .bid-status, .lot-tile-bid-status'
     );
@@ -159,6 +231,7 @@
       nextBid: nextBidText,
       nextBidAmount,
       bidButton: bidButtonText,
+      description: descriptionText,
       userBidStatus,
       isWinning: userBidStatus === 'Winning',
       isOutbid: userBidStatus === 'Outbid',
@@ -192,8 +265,8 @@
   function liveAuctionContext(root = document) {
     const text = textOf(root.body || root.documentElement || root);
     return {
-      title: document?.title || '',
-      url: location?.href || '',
+      title: root?.title || (typeof document !== 'undefined' ? document.title : ''),
+      url: typeof location !== 'undefined' ? location.href : '',
       totalLots: numberFromText(text.match(/Total Lots:\s*([\d,]+)/i)?.[1] || ''),
       openLots: numberFromText(text.match(/Open Lots:\s*([\d,]+)/i)?.[1] || '')
     };
@@ -294,17 +367,28 @@
     let stuckSteps = 0;
     let loadMoreClicks = 0;
     let scrolls = 0;
+    let stuckReason = '';
+
+    debug('live expansion started', { context, expectedOpenLots, maxSteps, waitMs });
 
     for (let step = 0; step < maxSteps; step += 1) {
       mergeLots(lotsById, extractLivePageLots(root));
       const countText = expectedOpenLots ? `${lotsById.size}/${expectedOpenLots}` : String(lotsById.size);
       onProgress(`Loading live lots... ${countText}`);
+      debug('live expansion step', { step, count: lotsById.size, expectedOpenLots, loadMoreClicks, scrolls, stuckSteps });
 
-      if (shouldStop()) break;
-      if (expectedOpenLots && lotsById.size >= expectedOpenLots) break;
+      if (shouldStop()) {
+        stuckReason = 'stopped-by-user';
+        break;
+      }
+      if (expectedOpenLots && lotsById.size >= expectedOpenLots) {
+        stuckReason = 'expected-open-lots-reached';
+        break;
+      }
 
       const loadMoreButton = findLiveLoadMoreButton(root);
       if (loadMoreButton) {
+        debug('clicking Open More', { label: controlLabel(loadMoreButton), count: lotsById.size });
         loadMoreButton.scrollIntoView?.({ block: 'center', inline: 'nearest' });
         loadMoreButton.click();
         loadMoreClicks += 1;
@@ -324,19 +408,24 @@
         lastCount = lotsById.size;
       }
 
-      if (stuckSteps >= 5) break;
+      if (stuckSteps >= 5) {
+        stuckReason = 'stuck-no-new-lots';
+        break;
+      }
     }
 
     mergeLots(lotsById, extractLivePageLots(root));
+    if (!stuckReason) stuckReason = 'max-steps-reached';
     const lots = Array.from(lotsById.values()).sort((a, b) => String(a.lot).localeCompare(String(b.lot), undefined, {
       numeric: true,
       sensitivity: 'base'
     }));
-    return { items: lots, expectedTotal: expectedOpenLots, loadMoreClicks, scrolls, stopped: !!shouldStop() };
+    debug('live expansion finished', { count: lots.length, expectedOpenLots, loadMoreClicks, scrolls, stuckReason });
+    return { items: lots, expectedTotal: expectedOpenLots, expectedOpenLots, loadMoreClicks, scrolls, stuckReason, stopped: !!shouldStop() };
   }
 
   function scrapeVisibleLots(itemsMap) {
-    document.querySelectorAll('app-lot-tile[id^="lot-"]').forEach(tile => {
+    getLotTiles().forEach(tile => {
       const lot = extractLot(tile);
       const key = lot.url || lot.id;
       if (key && lot.title) itemsMap.set(key, lot);
@@ -356,7 +445,10 @@
   }
 
   async function scrapeAllLots(onProgress, shouldStop) {
-    if (isLiveCatalogPage()) {
+    const mode = detectPageMode();
+    debug('scrape mode selected', { mode, url: location.href });
+
+    if (mode === 'live-catalog-grid') {
       return expandLivePageLots(onProgress, shouldStop);
     }
 
@@ -436,46 +528,125 @@
     box.select();
   }
 
+  function setButtonStatus(text, color = '#111') {
+    const button = document.getElementById(BUTTON_ID);
+    if (!button) return;
+    button.textContent = text;
+    button.style.backgroundColor = color;
+  }
+
+  function currentResumeValue() {
+    try {
+      return sessionStorage.getItem(RESUME_KEY) || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function setResumeValue(value) {
+    try {
+      if (value) sessionStorage.setItem(RESUME_KEY, value);
+      else sessionStorage.removeItem(RESUME_KEY);
+    } catch (_) {
+      // Session storage may be blocked; scraping should still work manually.
+    }
+  }
+
+  function shouldAutoResume() {
+    const value = currentResumeValue();
+    const auctionKey = getAuctionKey();
+    return Boolean(value && auctionKey && value === auctionKey);
+  }
+
+  function maybeEnterCatalogGrid(onProgress = () => {}) {
+    const mode = detectPageMode();
+    debug('detail recovery check', { mode, url: location.href, auctionKey: getAuctionKey() });
+    if (mode !== 'auction-detail') return false;
+
+    const control = findCatalogEntryControl();
+    if (!control) {
+      debug('auction detail recovery failed: no View Catalog control found');
+      onProgress('No lot grid or View Catalog button found.');
+      return false;
+    }
+
+    const auctionKey = getAuctionKey();
+    if (auctionKey) setResumeValue(auctionKey);
+    const href = controlHref(control);
+    debug('auction detail recovery navigating', { label: controlLabel(control), href, auctionKey });
+    onProgress('Opening catalog grid...');
+    if (href) {
+      location.href = absoluteUrl(href);
+    } else {
+      control.click();
+    }
+    return true;
+  }
+
   if (globalThis.__HIBID_LOT_CATALOG_SCRAPER_TEST__) {
     globalThis.HiBidLotCatalogScraperCore = {
+      BUTTON_ID,
+      FALLBACK_ID,
+      DEBUG_PREFIX,
+      MENU_COMMANDS,
       shouldInitOnLocation,
       isLiveCatalogPage,
+      detectPageMode,
+      findCatalogEntryControl,
       findLiveLoadMoreButton,
+      extractLot,
       extractLivePageLots,
       expandLivePageLots,
       liveAuctionContext,
       moneyFromText,
-      numberFromText
+      numberFromText,
+      maybeEnterCatalogGrid
     };
     return;
   }
 
-  if (!shouldInitOnLocation()) return;
+  debug('boot', { url: location.href, readyState: document.readyState });
+
+  if (!shouldInitOnLocation()) {
+    debug('init blocked', { url: location.href, reason: 'unsupported host/path' });
+    return;
+  }
+
+  debug('init allowed', { url: location.href, mode: detectPageMode() });
 
   async function copyData() {
     const button = document.getElementById(BUTTON_ID);
-    if (!button) return;
+    if (!button) {
+      debug('copy requested but button is not mounted');
+      return;
+    }
 
     if (scrapeState.running) {
       scrapeState.stopRequested = true;
-      button.textContent = 'Stopping...';
-      button.style.backgroundColor = '#9c1b1b';
+      setButtonStatus('Stopping...', '#9c1b1b');
+      debug('stop requested');
       return;
     }
 
     scrapeState.running = true;
     scrapeState.stopRequested = false;
-    button.textContent = 'Starting...';
-    button.style.backgroundColor = '#d32f2f';
+    setButtonStatus('Starting...', '#d32f2f');
+    debug('copy started', { url: location.href, mode: detectPageMode() });
+
+    if (maybeEnterCatalogGrid(message => setButtonStatus(message, '#d32f2f'))) {
+      scrapeState.running = false;
+      scrapeState.stopRequested = false;
+      return;
+    }
 
     const result = await scrapeAllLots(message => {
-      button.textContent = message;
+      setButtonStatus(message, '#d32f2f');
     }, () => scrapeState.stopRequested);
     const data = result.items;
 
     if (data.length === 0) {
-      button.textContent = 'Failed. Try again.';
-      button.style.backgroundColor = '#111';
+      setButtonStatus('Failed. Check console.', '#111');
+      debug('copy failed: no lots', { mode: detectPageMode(), result });
       scrapeState.running = false;
       return;
     }
@@ -484,21 +655,31 @@
     const copied = await writeClipboard(payload).catch(() => false);
     if (!copied) showFallback(payload);
 
-    button.textContent = result.stopped
+    setButtonStatus(result.stopped
       ? (copied ? `Stopped. Copied ${data.length} lots.` : `Stopped at ${data.length}. Select text box.`)
-      : (copied ? `Success! Copied ${data.length} lots.` : `Scraped ${data.length}. Select text box.`);
-    button.style.backgroundColor = '#2e7d32';
+      : (copied ? `Success! Copied ${data.length} lots.` : `Scraped ${data.length}. Select text box.`), '#2e7d32');
+    debug('copy finished', {
+      count: data.length,
+      copied,
+      expectedTotal: result.expectedTotal,
+      expectedOpenLots: result.expectedOpenLots,
+      loadMoreClicks: result.loadMoreClicks,
+      scrolls: result.scrolls,
+      stuckReason: result.stuckReason
+    });
     scrapeState.running = false;
     scrapeState.stopRequested = false;
 
     setTimeout(() => {
-      button.textContent = 'Copy All HiBid Lots';
-      button.style.backgroundColor = '#111';
+      setButtonStatus('Copy All HiBid Lots', '#111');
     }, 5000);
   }
 
   function ensureButton() {
-    if (!shouldInitOnLocation() || !document.body) return;
+    if (!shouldInitOnLocation() || !document.body) {
+      debug('button mount skipped', { hasBody: !!document.body, allowed: shouldInitOnLocation() });
+      return;
+    }
     if (document.getElementById(BUTTON_ID)) return;
 
     const button = document.createElement('button');
@@ -509,13 +690,51 @@
       'position:fixed;left:16px;bottom:16px;z-index:2147483647;padding:12px 16px;border-radius:999px;border:1px solid #fff3;background:#111;color:white;font:600 13px system-ui;box-shadow:0 8px 30px #0008;cursor:pointer;transition:background-color 0.3s;';
     button.addEventListener('click', copyData);
     document.body.appendChild(button);
+    debug('button mounted', { id: BUTTON_ID, mode: detectPageMode() });
+  }
+
+  function maybeAutoResume() {
+    if (!shouldAutoResume()) return;
+    const mode = detectPageMode();
+    debug('auto-resume check', { mode, resume: currentResumeValue(), auctionKey: getAuctionKey() });
+    if (mode === 'auction-detail' || mode === 'catalog-loading' || mode === 'live-catalog-loading') return;
+    setResumeValue('');
+    setTimeout(() => {
+      debug('auto-resume starting copy');
+      copyData();
+    }, 800);
+  }
+
+  function registerMenuCommands() {
+    if (typeof GM_registerMenuCommand !== 'function') {
+      debug('menu commands unavailable');
+      return;
+    }
+    GM_registerMenuCommand(MENU_COMMANDS[0], () => {
+      debug('menu command: mount button');
+      ensureButton();
+      setButtonStatus('Copy All HiBid Lots', '#111');
+    });
+    GM_registerMenuCommand(MENU_COMMANDS[1], () => {
+      debug('menu command: copy all lots');
+      ensureButton();
+      copyData();
+    });
+    debug('menu commands registered', MENU_COMMANDS);
   }
 
   ensureButton();
+  registerMenuCommands();
+  maybeAutoResume();
   setTimeout(ensureButton, 1000);
   setTimeout(ensureButton, 3000);
   setInterval(ensureButton, 5000);
-  new MutationObserver(() => ensureButton()).observe(document.documentElement, {
+  new MutationObserver(() => {
+    const hadButton = !!document.getElementById(BUTTON_ID);
+    ensureButton();
+    if (!hadButton && document.getElementById(BUTTON_ID)) debug('button remounted after DOM mutation');
+    maybeAutoResume();
+  }).observe(document.documentElement, {
     childList: true,
     subtree: true
   });
