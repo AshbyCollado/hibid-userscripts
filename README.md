@@ -16,7 +16,7 @@ Tampermonkey updates use the same URLs through each script's metadata.
 
 ## HiBid catalog scraper
 
-`HiBid Lot Catalog Scraper` is the standalone scraper for `hibid.com/lots*` and `hibid.com/catalog/*` pages. It switches compatible catalog pages to Single Page, scrolls lazy-loaded lots, gathers enriched lot/bid fields, and copies JSON to the clipboard from the `Copy All HiBid Lots` pill. Click the pill again while it is running to request a manual stop.
+`HiBid Lot Catalog Scraper` is the standalone scraper for `hibid.com/lots*`, `hibid.com/catalog/*`, and `hibid.com/livecatalog/*` pages, including HiBid subdomains. It switches compatible catalog pages to Single Page, expands live catalog `Open More` / `Load More` controls, scrolls lazy-loaded lots, gathers enriched lot/bid fields, and copies JSON to the clipboard from the `Copy All HiBid Lots` pill. Click the pill again while it is running to request a manual stop.
 
 ## FlipTracker active listing export
 

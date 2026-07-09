@@ -1,13 +1,18 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0
-// @description  Switches HiBid lot/catalog pages to Single Page, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
+// @version      1.3.1
+// @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @match        https://hibid.com/lots*
 // @match        https://hibid.com/lots/*
 // @match        https://hibid.com/catalog/*
+// @match        https://hibid.com/livecatalog/*
+// @match        https://*.hibid.com/lots*
+// @match        https://*.hibid.com/lots/*
+// @match        https://*.hibid.com/catalog/*
+// @match        https://*.hibid.com/livecatalog/*
 // @grant        GM_setClipboard
 // @grant        GM.setClipboard
 // ==/UserScript==
@@ -28,6 +33,35 @@
 
   function textOf(el) {
     return (el?.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function shouldInitOnLocation(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const pathname = String(loc.pathname || '');
+    if (host !== 'hibid.com' && !host.endsWith('.hibid.com')) return false;
+    return /^\/(?:lots?|catalog|livecatalog)\b/i.test(pathname);
+  }
+
+  function isLiveCatalogPage(loc = location) {
+    return /^\/livecatalog\b/i.test(String(loc.pathname || ''));
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const win = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : null);
+    const style = win?.getComputedStyle ? win.getComputedStyle(el) : null;
+    if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+    return Boolean(el.offsetParent || el.getClientRects?.().length);
+  }
+
+  function controlLabel(el) {
+    return [
+      textOf(el),
+      el?.getAttribute?.('aria-label') || '',
+      el?.getAttribute?.('title') || '',
+      el?.getAttribute?.('class') || '',
+      el?.getAttribute?.('id') || el?.id || ''
+    ].join(' ').replace(/\s+/g, ' ').trim();
   }
 
   function absoluteUrl(href) {
@@ -153,6 +187,152 @@
     return '';
   }
 
+  function liveAuctionContext(root = document) {
+    const text = textOf(root.body || root.documentElement || root);
+    return {
+      title: document?.title || '',
+      url: location?.href || '',
+      totalLots: numberFromText(text.match(/Total Lots:\s*([\d,]+)/i)?.[1] || ''),
+      openLots: numberFromText(text.match(/Open Lots:\s*([\d,]+)/i)?.[1] || '')
+    };
+  }
+
+  function extractLivePageLots(root = document) {
+    const text = textOf(root.body || root.documentElement || root);
+    const chunks = text.split(/(?=Lot\s+\d+[A-Za-z-]*\s*\|)/i);
+    return chunks.map(chunk => {
+      const firstLine = chunk.match(/Lot\s+(\d+[A-Za-z-]*)\s*\|\s*([\s\S]*?)(?=\s+(?:Watch|Unwatch|High Bid:|Current Bid:|Price Realized:|Bidding Closed|Bid\s+[\d,.]+\s*USD)|$)/i);
+      if (!firstLine) return null;
+      const highBid = chunk.match(/(?:High Bid|Current Bid|Price Realized):\s*([\d,.]+\s*USD)/i)?.[1] || '';
+      const nextBid = chunk.match(/\bBid\s+([\d,.]+\s*USD)\b/i)?.[1] || '';
+      const bidCount = chunk.match(/\b\d+\s+Bids?\b/i)?.[0] || '';
+      const timeLeft = chunk.match(/\b\d+\s*(?:d|h|m|s)\b/i)?.[0] || '';
+      const valueHint = chunk.match(/(?:High Bid|Current Bid):\s*[\d,.]+\s*USD\s+([\d,.]+\s*USD)/i)?.[1] || '';
+      const userBidStatus = extractUserBidStatus(chunk);
+      const lot = firstLine[1];
+      return {
+        id: lot,
+        lot,
+        title: firstLine[2].replace(/\s+/g, ' ').trim(),
+        highBid: highBid ? `High Bid: ${highBid}` : '',
+        highBidAmount: moneyFromText(highBid),
+        estimatedValue: moneyFromText(valueHint),
+        bidCount,
+        bidCountNumber: numberFromText(bidCount),
+        timeLeft,
+        nextBid: nextBid ? `Bid ${nextBid}` : '',
+        nextBidAmount: moneyFromText(nextBid),
+        userBidStatus,
+        status: /bidding closed/i.test(chunk) ? 'Bidding Closed' : (/incoming bid/i.test(chunk) ? 'Incoming Bid' : ''),
+        rawText: chunk.replace(/\s+/g, ' ').trim().slice(0, 1200)
+      };
+    }).filter(Boolean);
+  }
+
+  function mergeLots(target, lots) {
+    lots.forEach(lot => {
+      const key = lot?.url || lot?.id || lot?.lot;
+      if (key && lot.title) target.set(String(key), lot);
+    });
+  }
+
+  function findLiveLoadMoreButton(root = document) {
+    const candidates = Array.from(root.querySelectorAll?.('button, [role="button"], a[href], input[type="button"], input[type="submit"]') || [])
+      .filter(button => !button.disabled && !button.getAttribute?.('aria-disabled'))
+      .filter(isVisible)
+      .map(button => {
+        const label = controlLabel(button);
+        let score = 0;
+
+        if (/\bbid\b|history|watch|unwatch|notes?|close|confirm|snipe|catalog|search/i.test(label)) {
+          score = -100;
+        } else if (/\bopen\s+more\b/i.test(label)) {
+          score = 100;
+        } else if (/\b(?:load|show|view)\s+more\b/i.test(label)) {
+          score = 90;
+        } else if (/\bmore\s+lots?\b/i.test(label)) {
+          score = 80;
+        }
+
+        return { button, score };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    return candidates[0]?.button || null;
+  }
+
+  function scrollLiveLots(root = document) {
+    const doc = root?.nodeType === 9 ? root : document;
+    const win = doc?.defaultView || (typeof window !== 'undefined' ? window : null);
+    const scroller = root?.documentElement || doc?.documentElement;
+    const body = root?.body || doc?.body;
+    if (win?.scrollBy) {
+      win.scrollBy({ top: Math.max(700, Math.floor((win.innerHeight || 900) * 0.85)), left: 0, behavior: 'instant' });
+      return true;
+    }
+    if (scroller) {
+      scroller.scrollTop = (scroller.scrollTop || 0) + 700;
+      return true;
+    }
+    if (body) {
+      body.scrollTop = (body.scrollTop || 0) + 700;
+      return true;
+    }
+    return false;
+  }
+
+  async function expandLivePageLots(onProgress = () => {}, shouldStop = () => false, root = document, options = {}) {
+    const maxSteps = options.maxSteps ?? 140;
+    const waitMs = options.waitMs ?? 350;
+    const lotsById = new Map();
+    const context = liveAuctionContext(root);
+    const expectedOpenLots = context.openLots || 0;
+    let lastCount = -1;
+    let stuckSteps = 0;
+    let loadMoreClicks = 0;
+    let scrolls = 0;
+
+    for (let step = 0; step < maxSteps; step += 1) {
+      mergeLots(lotsById, extractLivePageLots(root));
+      const countText = expectedOpenLots ? `${lotsById.size}/${expectedOpenLots}` : String(lotsById.size);
+      onProgress(`Loading live lots... ${countText}`);
+
+      if (shouldStop()) break;
+      if (expectedOpenLots && lotsById.size >= expectedOpenLots) break;
+
+      const loadMoreButton = findLiveLoadMoreButton(root);
+      if (loadMoreButton) {
+        loadMoreButton.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+        loadMoreButton.click();
+        loadMoreClicks += 1;
+        await wait(waitMs);
+        continue;
+      }
+
+      const didScroll = scrollLiveLots(root);
+      if (didScroll) scrolls += 1;
+      await wait(waitMs);
+      mergeLots(lotsById, extractLivePageLots(root));
+
+      if (lotsById.size === lastCount) {
+        stuckSteps += 1;
+      } else {
+        stuckSteps = 0;
+        lastCount = lotsById.size;
+      }
+
+      if (stuckSteps >= 5) break;
+    }
+
+    mergeLots(lotsById, extractLivePageLots(root));
+    const lots = Array.from(lotsById.values()).sort((a, b) => String(a.lot).localeCompare(String(b.lot), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+    return { items: lots, expectedTotal: expectedOpenLots, loadMoreClicks, scrolls, stopped: !!shouldStop() };
+  }
+
   function scrapeVisibleLots(itemsMap) {
     document.querySelectorAll('app-lot-tile[id^="lot-"]').forEach(tile => {
       const lot = extractLot(tile);
@@ -174,6 +354,10 @@
   }
 
   async function scrapeAllLots(onProgress, shouldStop) {
+    if (isLiveCatalogPage()) {
+      return expandLivePageLots(onProgress, shouldStop);
+    }
+
     await waitForLots();
     await enableSinglePage(message => onProgress?.(message));
     await waitForLots();
@@ -250,6 +434,22 @@
     box.select();
   }
 
+  if (globalThis.__HIBID_LOT_CATALOG_SCRAPER_TEST__) {
+    globalThis.HiBidLotCatalogScraperCore = {
+      shouldInitOnLocation,
+      isLiveCatalogPage,
+      findLiveLoadMoreButton,
+      extractLivePageLots,
+      expandLivePageLots,
+      liveAuctionContext,
+      moneyFromText,
+      numberFromText
+    };
+    return;
+  }
+
+  if (!shouldInitOnLocation()) return;
+
   async function copyData() {
     if (scrapeState.running) {
       scrapeState.stopRequested = true;
@@ -300,7 +500,7 @@
   button.type = 'button';
   button.textContent = 'Copy All HiBid Lots';
   button.style.cssText =
-    'position:fixed;right:16px;bottom:16px;z-index:999999;padding:12px 16px;border-radius:999px;border:1px solid #fff3;background:#111;color:white;font:600 13px system-ui;box-shadow:0 8px 30px #0008;cursor:pointer;transition:background-color 0.3s;';
+    'position:fixed;left:16px;bottom:16px;z-index:2147483647;padding:12px 16px;border-radius:999px;border:1px solid #fff3;background:#111;color:white;font:600 13px system-ui;box-shadow:0 8px 30px #0008;cursor:pointer;transition:background-color 0.3s;';
   button.addEventListener('click', copyData);
 
   document.body.appendChild(button);
