@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.6.8
+// @version      0.6.9
 // @description  Modular resale helper for HiBid catalog/live scraping, LLM exports, safe bid prep, and FlipTracker marketplace exports.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -31,7 +31,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.6.8';
+  const SCRIPT_VERSION = '0.6.9';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -789,6 +789,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         }
       });
     }
+    title = title.replace(/^.{0,120}\bListing\.?\s+/i, '').trim();
     return title;
   }
 

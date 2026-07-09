@@ -76,7 +76,7 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
           <tr data-testid="listing-row">
             <td><input type="checkbox"></td>
             <td><a href="/sh/lst?mode=ReviseItem&amp;itemId=336677465197&amp;ReturnURL=https%3A%2F%2Fwww.ebay.com%2Fsh%2Flst%2Factive">Edit</a></td>
-            <td><a href="/itm/336677465197">eBay | Bids: 0 Show Bid History Listing Rcv A Shelf RV DM17 KIT 5 Door Mounting Kit 278234 Pull Out Cabinet</a></td>
+            <td><a href="/itm/336677465197">eBay | Bids: 0. Show Bid History. Listing Rev-A-Shelf RV-DM17 KIT 5 Door Mounting Kit 278234 Pull Out Cabinet</a></td>
             <td><span>$13.05</span><span>$25.00</span></td>
             <td>1</td>
             <td><span>12 views</span><span>2 watchers</span></td>
@@ -94,7 +94,7 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
     {
       source: 'eBay',
       itemId: '336677465197',
-      title: 'Rcv A Shelf RV DM17 KIT 5 Door Mounting Kit 278234 Pull Out Cabinet',
+      title: 'Rev-A-Shelf RV-DM17 KIT 5 Door Mounting Kit 278234 Pull Out Cabinet',
       price: 13.05,
       url: 'https://www.ebay.com/itm/336677465197',
       status: 'Active',
