@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.4.8
-// @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
+// @version      1.4.9
+// @description  Legacy standalone scraper. It stays quiet when the unified HiBid Assistant is active.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @match        https://hibid.com/lots*
@@ -33,6 +33,8 @@
   const BUTTON_ID = 'hibid-lot-catalog-scraper-copy-button';
   const FALLBACK_ID = 'hibid-lot-catalog-scraper-json';
   const DEBUG_PREFIX = '[HiBid Lot Catalog Scraper]';
+  const UNIFIED_ASSISTANT_FLAG = '__HIBID_UNIFIED_ASSISTANT_ACTIVE__';
+  const UNIFIED_ASSISTANT_PANEL_ID = 'hibid-bid-assistant-panel';
   const RESUME_KEY = 'hibidLotCatalogScraperResume';
   const MENU_COMMANDS = ['Mount HiBid scraper button', 'Copy all HiBid lots now'];
   const MAX_STEPS = 1200;
@@ -51,6 +53,13 @@
     } catch (_) {
       // Debug logging must never break scraping.
     }
+  }
+
+  function isUnifiedAssistantActive(root = document) {
+    return Boolean(
+      globalThis[UNIFIED_ASSISTANT_FLAG] ||
+      root.getElementById?.(UNIFIED_ASSISTANT_PANEL_ID)
+    );
   }
 
   function textOf(el) {
@@ -692,6 +701,7 @@
       FALLBACK_ID,
       DEBUG_PREFIX,
       MENU_COMMANDS,
+      isUnifiedAssistantActive,
       shouldInitOnLocation,
       isLiveCatalogPage,
       detectPageMode,
@@ -713,6 +723,10 @@
 
   if (!shouldInitOnLocation()) {
     debug('init blocked', { url: location.href, reason: 'unsupported host/path' });
+    return;
+  }
+  if (isUnifiedAssistantActive()) {
+    debug('init blocked', { url: location.href, reason: 'unified assistant active' });
     return;
   }
 
@@ -780,6 +794,11 @@
   }
 
   function ensureButton() {
+    if (isUnifiedAssistantActive()) {
+      document.getElementById(BUTTON_ID)?.remove();
+      debug('button mount skipped', { reason: 'unified assistant active' });
+      return;
+    }
     if (!shouldInitOnLocation() || !document.body) {
       debug('button mount skipped', { hasBody: !!document.body, allowed: shouldInitOnLocation() });
       return;
@@ -815,11 +834,19 @@
       return;
     }
     GM_registerMenuCommand(MENU_COMMANDS[0], () => {
+      if (isUnifiedAssistantActive()) {
+        debug('menu command blocked: unified assistant active');
+        return;
+      }
       debug('menu command: mount button');
       ensureButton();
       setButtonStatus('Copy All HiBid Lots', '#111');
     });
     GM_registerMenuCommand(MENU_COMMANDS[1], () => {
+      if (isUnifiedAssistantActive()) {
+        debug('menu command blocked: unified assistant active');
+        return;
+      }
       debug('menu command: copy all lots');
       ensureButton();
       copyData();

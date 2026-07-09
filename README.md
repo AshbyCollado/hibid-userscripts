@@ -4,19 +4,19 @@ Standalone Tampermonkey userscripts for HiBid auction workflows and FlipTracker 
 
 ## Install
 
-Open the assistant URL in a browser with Tampermonkey enabled:
+Open the unified assistant URL in a browser with Tampermonkey enabled:
 
 https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 
-Open the catalog scraper URL separately:
-
-https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
-
-Tampermonkey updates use the same URLs through each script's metadata.
+Tampermonkey updates use that same raw GitHub URL through the script metadata. Install from the raw URL, not a one-off copied file, so future version bumps can update.
 
 ## HiBid catalog scraper
 
-`HiBid Lot Catalog Scraper` is the standalone scraper for `hibid.com/lots*`, `hibid.com/catalog/*`, and `hibid.com/livecatalog/*` pages, including HiBid subdomains. It switches compatible catalog pages to Single Page, expands live catalog `Open More` / `Load More` controls, scrolls lazy-loaded lots, gathers enriched lot/bid fields, and copies JSON to the clipboard from the `Copy All HiBid Lots` pill. Click the pill again while it is running to request a manual stop.
+`HiBid Safe Bid Assistant` is the active hosted script. It owns the bottom-right drawer UI, catalog scraping, LLM brief export, safe bid prep, live catalog support, and FlipTracker export.
+
+Catalog scraping is data-first: it reads HiBid's embedded Apollo state when present, follows paginated `apage` results, and falls back to DOM scrolling/open-more collection when state is missing or incomplete. Supported HiBid routes include direct lots/catalog/livecatalog pages, state-prefixed category pages such as `/newjersey/lots/...`, lot detail pages, seller subdomains, and the OUTBID watchlist.
+
+The older `hibid-lot-catalog-scraper.user.js` remains in the repo for legacy reference/tests, but it stays quiet when the unified assistant is active. The assistant also removes legacy floating scraper artifacts when it mounts so only one active UI controls normal HiBid work.
 
 ## FlipTracker active listing export
 

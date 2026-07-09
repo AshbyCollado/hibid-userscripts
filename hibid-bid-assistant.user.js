@@ -1,15 +1,17 @@
 // ==UserScript==
 // @name         HiBid Safe Bid Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.4.7
-// @description  Safely queues HiBid bids and exports active eBay/Facebook Marketplace listings for FlipTracker.
+// @version      0.5.2
+// @description  Unified HiBid assistant for catalog scraping, LLM exports, safe bid prep, live support, and FlipTracker exports.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @match        https://hibid.com/lots*
 // @match        https://hibid.com/lots/*
 // @match        https://hibid.com/catalog/*
+// @match        https://hibid.com/livecatalog/*
 // @match        https://hibid.com/account/watchlist*
 // @match        https://hibid.com/*
+// @match        https://*.hibid.com/*
 // @match        https://bid.ajwillnerauctions.com/ui/auctions/*
 // @match        https://www.ebay.com/sh/lst*
 // @match        https://www.ebay.com/mys/*
@@ -19,28 +21,126 @@
 // @grant        GM_setValue
 // @grant        GM_setClipboard
 // @grant        GM.setClipboard
+// @grant        GM_registerMenuCommand
+// @grant        window.onurlchange
 // ==/UserScript==
 
 (function () {
   'use strict';
 
   const PANEL_ID = 'hibid-bid-assistant-panel';
-  const SCRIPT_VERSION = '0.4.6';
+  const SCRIPT_VERSION = '0.5.2';
   const PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const AUTO_REFRESH_KEY = 'hibid-bid-assistant-auto-refresh-v1';
   const AUTO_CONFIRM_KEY = 'hibid-bid-assistant-auto-confirm-v1';
   const MINIMIZED_KEY = 'hibid-bid-assistant-minimized-v1';
+  const DEBUG_LOG_KEY = 'hibid-bid-assistant-debug-log-v1';
+  const DEBUG_LOG_LIMIT = 200;
   const OUTBID_WATCHLIST_URL = 'https://hibid.com/account/watchlist?status=OUTBID';
+  const LEGACY_SCRAPER_IDS = [
+    'hibid-lot-catalog-scraper-copy-button',
+    'hibid-lot-catalog-scraper-json',
+    'hibid-scraper-copy-button',
+    'hibid-scraper-json'
+  ];
+  const MENU_COMMANDS = [
+    'Remount HiBid Assistant',
+    'Copy HiBid Assistant Debug Log',
+    'Clear HiBid Assistant Debug Log',
+    'Copy HiBid Lots Now'
+  ];
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-  const DEBUG_PREFIX = '[HiBid Safe Bid Assistant]';
+  const DEBUG_PREFIX = '[HiBid Assistant]';
+
+  function safeClone(value) {
+    if (value === undefined) return undefined;
+    try {
+      return JSON.parse(JSON.stringify(value, (_key, item) => {
+        if (typeof item === 'function') return '[function]';
+        if (item && typeof item === 'object') {
+          const ctor = item.constructor?.name || '';
+          if (/^(HTML|SVG|Window|Document|Node)/.test(ctor)) return `[${ctor}]`;
+        }
+        return item;
+      }));
+    } catch {
+      return String(value);
+    }
+  }
+
+  function getDebugLog() {
+    try {
+      const stored = GM_getValue(DEBUG_LOG_KEY, []);
+      return Array.isArray(stored) ? stored : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function setDebugLog(entries) {
+    try {
+      GM_setValue(DEBUG_LOG_KEY, entries.slice(-DEBUG_LOG_LIMIT));
+    } catch {
+      // Tampermonkey storage may be unavailable in tests or blocked pages.
+    }
+  }
+
+  function clearDebugLog() {
+    setDebugLog([]);
+  }
+
+  function formatDebugLog(entries = getDebugLog()) {
+    return entries.map(entry => {
+      const suffix = entry.data === undefined ? '' : ` ${JSON.stringify(entry.data)}`;
+      return `${entry.at} ${entry.version} ${entry.url} ${entry.message}${suffix}`;
+    }).join('\n');
+  }
 
   function debug(message, data) {
+    const entry = {
+      at: new Date().toISOString(),
+      version: SCRIPT_VERSION,
+      url: typeof location !== 'undefined' ? location.href : '',
+      message,
+      data: safeClone(data)
+    };
     try {
       if (data === undefined) console.debug(DEBUG_PREFIX, message);
       else console.debug(DEBUG_PREFIX, message, data);
     } catch {
       // Console logging is best-effort.
     }
+    const log = getDebugLog();
+    log.push(entry);
+    setDebugLog(log);
+  }
+
+  async function copyDebugLog() {
+    const payload = formatDebugLog();
+    if (!payload) return false;
+    return writeClipboard(payload).catch(() => false);
+  }
+
+  function routeDebug(loc = (typeof location !== 'undefined' ? location : null)) {
+    if (!loc) return {};
+    return {
+      href: loc.href,
+      route: resolveHiBidPage(loc),
+      readyState: typeof document !== 'undefined' ? document.readyState : ''
+    };
+  }
+
+  function removeLegacyScraperArtifacts(reason = 'cleanup') {
+    if (typeof document === 'undefined') return 0;
+    let removed = 0;
+    LEGACY_SCRAPER_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.remove();
+      removed += 1;
+    });
+    if (removed) debug('removed legacy scraper artifacts', { reason, removed, ids: LEGACY_SCRAPER_IDS });
+    return removed;
   }
 
   function textOf(el) {
@@ -107,6 +207,77 @@
       el?.getAttribute?.('class') || '',
       el?.getAttribute?.('id') || el?.id || ''
     ].join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function controlHref(el) {
+    return el?.getAttribute?.('href') || el?.href || '';
+  }
+
+  function absoluteUrl(href, base = (typeof location !== 'undefined' ? location.href : 'https://hibid.com/')) {
+    if (!href) return '';
+    try {
+      return new URL(href, base).href;
+    } catch {
+      if (/^https?:\/\//i.test(String(href))) return String(href);
+      const origin = String(base || '').match(/^(https?:\/\/[^/]+)/i)?.[1] || 'https://hibid.com';
+      if (String(href).startsWith('/')) return `${origin}${href}`;
+      return String(href);
+    }
+  }
+
+  function getRootText(root = document) {
+    return textOf(root.body || root.documentElement || root);
+  }
+
+  function getExpectedLotTotal(root = document) {
+    const text = getRootText(root);
+    const totalMatch = text.match(/\bTotal Lots:\s*([\d,]+)/i);
+    if (totalMatch) return Number(totalMatch[1].replace(/,/g, ''));
+
+    const openMatch = text.match(/\bOpen Lots:\s*([\d,]+)/i);
+    if (openMatch) return Number(openMatch[1].replace(/,/g, ''));
+
+    const showingMatch = text.match(/\bShowing\s+[\d,]+\s+to\s+[\d,]+\s+of\s+([\d,]+)\s+lots\b/i);
+    if (showingMatch) return Number(showingMatch[1].replace(/,/g, ''));
+
+    const ofMatch = text.match(/\b(?:of|total)\s+([\d,]+)\s+lots\b/i);
+    if (ofMatch) return Number(ofMatch[1].replace(/,/g, ''));
+    return null;
+  }
+
+  function findCatalogNextPageButton(root = document) {
+    const textNodeType = typeof NodeFilter !== 'undefined' ? NodeFilter.SHOW_TEXT : 4;
+    const walker = root.createTreeWalker?.(root.body || root.documentElement, textNodeType);
+    while (walker) {
+      const node = walker.nextNode();
+      if (!node) break;
+      if (!/^next\s*>?$/i.test((node.textContent || '').trim())) continue;
+      const control = node.parentElement?.closest?.('a[href], button, [role="button"]');
+      if (control && !control.disabled && !control.getAttribute?.('aria-disabled') && isVisible(control)) {
+        debug('catalog next-page text-node control', { label: controlLabel(control), href: controlHref(control) });
+        return control;
+      }
+    }
+
+    const candidates = Array.from(root.querySelectorAll?.('a[href], button, [role="button"]') || [])
+      .filter(button => !button.disabled && !button.getAttribute?.('aria-disabled'))
+      .filter(isVisible)
+      .map(button => {
+        const label = controlLabel(button);
+        const href = controlHref(button);
+        let score = 0;
+        if (/\bbid\b|history|watch|unwatch|notes?|close|confirm|share|print|search/i.test(label)) score = -100;
+        else if (/^next\s*>?$/i.test(textOf(button))) score = 120;
+        else if (/\bnext\b/i.test(label) && /(?:apage|page)=\d+/i.test(href)) score = 110;
+        else if (/\bnext\b/i.test(label) && /page|pagination|pager/i.test(button.closest?.('[class]')?.getAttribute?.('class') || '')) score = 100;
+        else if (/(?:apage|page)=\d+/i.test(href) && /\bnext\b/i.test(label)) score = 80;
+        return { button, score, label, href };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    debug('catalog next-page candidates', candidates.map(item => ({ score: item.score, label: item.label, href: item.href })).slice(0, 10));
+    return candidates[0]?.button || null;
   }
 
   function findBidButton(tile) {
@@ -431,6 +602,324 @@
     return result;
   }
 
+  function amountFromState(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'string') {
+      const parsed = moneyFromText(value) ?? Number(value.replace?.(/,/g, ''));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    if (value && typeof value === 'object') {
+      return amountFromState(value.amount ?? value.value ?? value.current ?? value.bid);
+    }
+    return null;
+  }
+
+  function formatUsd(amount) {
+    return Number.isFinite(amount) ? `${amount.toFixed(2)} USD` : '';
+  }
+
+  function refId(value) {
+    if (typeof value === 'string') return value;
+    return value?.__ref || '';
+  }
+
+  function deref(state, value) {
+    const key = refId(value);
+    return key && state?.[key] ? state[key] : value;
+  }
+
+  function firstDefined(...values) {
+    return values.find(value => value !== undefined && value !== null && value !== '');
+  }
+
+  function apolloLotConnections(state) {
+    return Object.entries(state?.ROOT_QUERY || {}).map(([key, value]) => {
+      const paged = value?.pagedResults || value?.lots?.pagedResults || value?.search?.pagedResults || value;
+      const results = paged?.results || value?.results || [];
+      const refs = [];
+      const seen = new Set();
+
+      function addRef(value) {
+        const key = refId(value);
+        if (!/^Lot:/i.test(key) || seen.has(key)) return;
+        seen.add(key);
+        refs.push(key);
+      }
+
+      if (Array.isArray(results)) results.forEach(addRef);
+      if (!refs.length) return null;
+      return {
+        key,
+        refs,
+        totalCount: Number(firstDefined(paged?.totalCount, paged?.filteredCount, paged?.total, value?.totalCount)),
+        pageLength: Number(firstDefined(paged?.pageLength, paged?.pageSize, paged?.take, refs.length)),
+        pageNumber: Number(firstDefined(paged?.pageNumber, paged?.page, 1))
+      };
+    }).filter(Boolean);
+  }
+
+  function chooseApolloLotConnection(state, options = {}) {
+    const connections = apolloLotConnections(state);
+    if (!connections.length) return null;
+    const expectedTotal = Number(options.expectedTotal);
+    const scored = connections.map(connection => {
+      let score = 0;
+      if (Number.isFinite(expectedTotal) && connection.totalCount === expectedTotal) score += 1000;
+      if (/lotSearch/i.test(connection.key)) score += 250;
+      if (!/featured|hot|recommend|similar|related/i.test(connection.key)) score += 100;
+      if (Number.isFinite(connection.totalCount)) score += Math.min(connection.totalCount, 500) / 10;
+      score += Math.min(connection.refs.length, 100);
+      return { connection, score };
+    }).sort((a, b) => b.score - a.score);
+    debug('apollo lot connections', scored.map(item => ({
+      key: item.connection.key,
+      refs: item.connection.refs.length,
+      totalCount: item.connection.totalCount,
+      pageLength: item.connection.pageLength,
+      pageNumber: item.connection.pageNumber,
+      score: item.score
+    })).slice(0, 10));
+    return scored[0].connection;
+  }
+
+  function collectLotRefsFromApolloState(state, options = {}) {
+    const chosen = chooseApolloLotConnection(state, options);
+    if (chosen) return chosen.refs;
+
+    const refs = [];
+    const seen = new Set();
+
+    function addRef(value) {
+      const key = refId(value);
+      if (!/^Lot:/i.test(key) || seen.has(key)) return;
+      seen.add(key);
+      refs.push(key);
+    }
+
+    if (!refs.length) {
+      Object.keys(state || {}).filter(key => /^Lot:/i.test(key)).forEach(addRef);
+    }
+
+    return refs;
+  }
+
+  function expectedTotalFromApolloState(state, options = {}) {
+    const chosen = chooseApolloLotConnection(state, options);
+    return Number.isFinite(chosen?.totalCount) ? chosen.totalCount : null;
+  }
+
+  function pageLengthFromApolloState(state, options = {}) {
+    const chosen = chooseApolloLotConnection(state, options);
+    return Number.isFinite(chosen?.pageLength) ? chosen.pageLength : null;
+  }
+
+  function normalizeLotUrl(lot, context = {}) {
+    const href = lot.url || lot.lotUrl || lot.itemUrl || lot.href || '';
+    if (href) return absoluteUrl(href, context.url || location.href);
+    const id = firstDefined(lot.id, lot.eventItemId, lot.eventitemId, lot.itemId);
+    const lotNumber = firstDefined(lot.lotNumber, lot.lotNumberExtension, lot.number, id);
+    if (!id && !lotNumber) return '';
+    const slug = encodeURIComponent(String(lotNumber || id).replace(/\s+/g, '-'));
+    return absoluteUrl(`/lot/${encodeURIComponent(String(id || lotNumber))}/${slug}`, context.url || 'https://hibid.com/');
+  }
+
+  function normalizeApolloLot(state, lotRef, context = {}) {
+    const lot = deref(state, lotRef);
+    if (!lot || typeof lot !== 'object') return null;
+    const lotState = lot.lotState || lot.state || {};
+    const auction = deref(state, lot.auction || lot.auctionInfo || lot.event) || {};
+    const id = String(firstDefined(lot.id, lot.eventItemId, lot.eventitemId, lot.itemId, refId(lotRef).replace(/^Lot:/i, '')) || '');
+    const lotNumber = String(firstDefined(lot.lotNumber, lot.lotNumberExtension, lot.number, lot.lot, id) || '');
+    const title = stripHtml(firstDefined(lot.lead, lot.title, lot.name, lot.descriptionShort) || '');
+    if (!lotNumber && !title) return null;
+
+    const highBidAmount = amountFromState(firstDefined(lotState.highBid, lot.highBid, lotState.currentBid, lotState.currentPrice, lot.currentBid));
+    const nextBidAmount = amountFromState(firstDefined(lotState.minBid, lotState.nextBid, lot.minBid, lot.nextBid));
+    const bidCountNumber = Number(firstDefined(lotState.bidCount, lot.bidCount, lotState.bids, lot.bids));
+    const statusText = String(firstDefined(lotState.status, lot.status, lotState.priceRealizedMessage, '') || '');
+    const userBidStatus = extractUserBidStatus(`${statusText} ${lotState.userBidStatus || ''}`);
+    const picture = deref(state, lot.featuredPicture || lot.picture || lot.primaryPicture) || {};
+    const description = stripHtml(firstDefined(lot.description, lot.fullDescription, lot.notes, lot.longDescription) || '');
+
+    return {
+      id,
+      lot: lotNumber,
+      title,
+      url: normalizeLotUrl({ ...lot, id, lotNumber }, context),
+      image: firstDefined(picture.thumbnailLocation, picture.fullSizeLocation, picture.url, picture.src, lot.imageUrl, lot.thumbnailUrl) || '',
+      highBid: Number.isFinite(highBidAmount) ? `High Bid: ${formatUsd(highBidAmount)}` : '',
+      highBidAmount,
+      currentPrice: highBidAmount,
+      currentBid: highBidAmount,
+      nextBid: Number.isFinite(nextBidAmount) ? `Bid ${formatUsd(nextBidAmount)}` : '',
+      nextBidAmount,
+      bidCount: Number.isFinite(bidCountNumber) ? `${bidCountNumber} ${bidCountNumber === 1 ? 'Bid' : 'Bids'}` : '',
+      bidCountNumber: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      timeLeft: String(firstDefined(lotState.timeLeft, lot.timeLeft, lotState.closingTimeText, '') || ''),
+      status: statusText,
+      userBidStatus,
+      isWinning: userBidStatus === 'Winning',
+      isOutbid: userBidStatus === 'Outbid',
+      watched: Boolean(firstDefined(lotState.isWatching, lot.isWatching, lot.watchListed, false)),
+      pictureCount: Number(firstDefined(lot.pictureCount, lotState.pictureCount, 0)) || 0,
+      description,
+      auctionTitle: String(firstDefined(auction.title, auction.name, lot.auctionTitle, '') || ''),
+      buyerPremium: String(firstDefined(auction.buyerPremium, auction.buyersPremium, lot.buyerPremium, '') || '')
+    };
+  }
+
+  function extractHibidApolloLots(apolloState, context = {}) {
+    const state = apolloState?.['apollo.state'] || apolloState?.apollo?.state || apolloState || {};
+    const refs = collectLotRefsFromApolloState(state, { expectedTotal: context.expectedTotal });
+    const unique = new Map();
+    refs.forEach(ref => {
+      const lot = normalizeApolloLot(state, ref, context);
+      const key = lot?.id || lot?.lot || lot?.url;
+      if (key && lot?.title) unique.set(String(key), lot);
+    });
+    return {
+      source: 'hibid-state',
+      items: Array.from(unique.values()),
+      expectedTotal: Number.isFinite(Number(context.expectedTotal)) ? Number(context.expectedTotal) : expectedTotalFromApolloState(state, { expectedTotal: context.expectedTotal }),
+      pageLength: pageLengthFromApolloState(state, { expectedTotal: context.expectedTotal })
+    };
+  }
+
+  function parseHibidStateText(text) {
+    if (!text) return null;
+    try {
+      const parsed = JSON.parse(String(text));
+      return parsed?.['apollo.state'] || parsed?.apollo?.state || parsed;
+    } catch (err) {
+      debug('hibid-state parse failed', { error: err.message });
+      return null;
+    }
+  }
+
+  function extractHibidStateFromDocument(root = document) {
+    const script = root.querySelector?.('script#hibid-state[type="application/json"], script#hibid-state');
+    return parseHibidStateText(script?.textContent || '');
+  }
+
+  function mergeCatalogLots(target, lots) {
+    lots.forEach(lot => {
+      const key = lot?.id || lot?.url || lot?.lot;
+      if (key && lot?.title) target.set(String(key), lot);
+    });
+    return target;
+  }
+
+  function catalogPageUrl(pageNumber, baseHref = (typeof location !== 'undefined' ? location.href : '')) {
+    const url = new URL(baseHref || 'https://hibid.com/');
+    url.searchParams.set('apage', String(pageNumber));
+    return url.href;
+  }
+
+  async function fetchHibidApolloStatePage(pageNumber, baseHref = location.href) {
+    if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') return null;
+    const href = catalogPageUrl(pageNumber, baseHref);
+    debug('hibid-state fetch page start', { pageNumber, href });
+    const response = await fetch(href, {
+      credentials: 'same-origin',
+      cache: 'no-cache'
+    });
+    if (!response.ok) {
+      debug('hibid-state fetch page failed', { pageNumber, href, status: response.status });
+      return null;
+    }
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const state = extractHibidStateFromDocument(doc);
+    debug('hibid-state fetch page parsed', { pageNumber, href, hasState: Boolean(state) });
+    return state;
+  }
+
+  async function scrapeHibidStatePages(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const firstState = extractHibidStateFromDocument(root);
+    if (!firstState) {
+      debug('hibid-state unavailable on current document');
+      return null;
+    }
+
+    const lotsByKey = new Map();
+    const visibleTotal = getExpectedLotTotal(root);
+    const first = extractHibidApolloLots(firstState, { url: location.href, expectedTotal: visibleTotal });
+    mergeCatalogLots(lotsByKey, first.items);
+    const expectedTotal = first.expectedTotal || visibleTotal || first.items.length;
+    const pageLength = first.pageLength || first.items.length || 100;
+    const totalPages = expectedTotal && pageLength ? Math.max(1, Math.ceil(expectedTotal / pageLength)) : 1;
+    let pagesRead = first.items.length ? 1 : 0;
+    let failedPage = null;
+    let stopReason = '';
+    debug('hibid-state first page extracted', {
+      count: lotsByKey.size,
+      expectedTotal,
+      pageLength,
+      totalPages
+    });
+    onProgress(`Reading HiBid page data... ${lotsByKey.size}${expectedTotal ? `/${expectedTotal}` : ''}`);
+
+    for (let page = 2; page <= totalPages; page += 1) {
+      if (shouldStop()) {
+        stopReason = 'user-stop';
+        break;
+      }
+      const state = await fetchHibidApolloStatePage(page).catch(err => {
+        debug('hibid-state page fetch threw', { page, error: err.message });
+        failedPage = page;
+        return null;
+      });
+      if (!state) {
+        failedPage ||= page;
+        stopReason = 'missing-page-state';
+        break;
+      }
+      const pageLots = extractHibidApolloLots(state, { url: catalogPageUrl(page), expectedTotal });
+      if (!pageLots.items.length) {
+        failedPage = page;
+        stopReason = 'empty-page-state';
+        debug('hibid-state page had no lots', { page, expectedTotal });
+        break;
+      }
+      mergeCatalogLots(lotsByKey, pageLots.items);
+      pagesRead += 1;
+      debug('hibid-state page merged', {
+        page,
+        pageLots: pageLots.items.length,
+        count: lotsByKey.size,
+        expectedTotal
+      });
+      onProgress(`Reading HiBid page data... ${lotsByKey.size}${expectedTotal ? `/${expectedTotal}` : ''}`);
+      if (expectedTotal && lotsByKey.size >= expectedTotal) break;
+    }
+
+    const items = Array.from(lotsByKey.values());
+    if (!items.length) return null;
+    const stopped = !!shouldStop() || stopReason === 'user-stop';
+    const incomplete = Boolean(expectedTotal && items.length < expectedTotal && !stopped);
+    return {
+      source: 'hibid-state',
+      items,
+      lots: items,
+      expectedTotal,
+      stopped,
+      incomplete,
+      pageLength,
+      pagesAttempted: totalPages,
+      pagesRead,
+      failedPage,
+      stopReason: stopReason || (incomplete ? 'below-expected-total' : 'complete')
+    };
+  }
+
+  function isCatalogScrapeComplete(result) {
+    if (!result?.items?.length) return false;
+    if (result.stopped) return true;
+    if (result.incomplete) return false;
+    if (!Number.isFinite(result.expectedTotal) || result.expectedTotal <= 0) return true;
+    return result.items.length >= result.expectedTotal;
+  }
+
   function parseEbayActiveListingsHtml(html) {
     const text = String(html || '');
     const chunks = text.split(/(?=<div[^>]+(?:qa-id="active-item-|\bid="active-item-|class="[^"]*active-item))/i);
@@ -604,6 +1093,15 @@ ${cards}
     numberFromText,
     parseBidPlan,
     titleMatches,
+    DEBUG_PREFIX,
+    MENU_COMMANDS,
+    resolveHiBidPage,
+    getExpectedLotTotal,
+    findCatalogNextPageButton,
+    extractHibidApolloLots,
+    extractHibidStateFromDocument,
+    isCatalogScrapeComplete,
+    scrapeCatalogLots,
     findDialog,
     findBidButton,
     findLiveBidButton,
@@ -679,12 +1177,124 @@ ${cards}
     }
   }
 
-  function isWatchlistOutbidPage() {
-    return /\/account\/watchlist/i.test(location.pathname) && /status=OUTBID/i.test(location.search);
+  async function scrapeCatalogLots(status = () => {}, shouldStop = () => false) {
+    debug('catalog scrape start', routeDebug());
+
+    const stateResult = await scrapeHibidStatePages(status, shouldStop).catch(err => {
+      debug('catalog hibid-state scrape failed', { error: err.message });
+      return null;
+    });
+    if (stateResult?.items?.length) {
+      debug('catalog scrape finished from hibid-state', {
+        count: stateResult.items.length,
+        expectedTotal: stateResult.expectedTotal,
+        stopped: stateResult.stopped,
+        incomplete: stateResult.incomplete,
+        stopReason: stateResult.stopReason
+      });
+      if (isCatalogScrapeComplete(stateResult)) return stateResult;
+      status(`HiBid page data incomplete (${stateResult.items.length}/${stateResult.expectedTotal || '?'}); trying visible-page fallback...`);
+      debug('catalog hibid-state incomplete; falling back to DOM', {
+        count: stateResult.items.length,
+        expectedTotal: stateResult.expectedTotal,
+        failedPage: stateResult.failedPage,
+        stopReason: stateResult.stopReason
+      });
+    }
+
+    const itemsMap = new Map();
+    const collect = () => {
+      uniqueLots(getLotTiles().map(extractLot)).forEach(lot => {
+        const key = lot.id || lot.url || lot.lot;
+        if (key && lot.title) itemsMap.set(String(key), lot);
+      });
+      mergeCatalogLots(itemsMap, extractTextLots());
+      return itemsMap.size;
+    };
+
+    await loadLots(status, shouldStop, collect);
+    collect();
+    const items = Array.from(itemsMap.values());
+    const expectedTotal = getExpectedLotTotal();
+    debug('catalog scrape finished from dom fallback', {
+      count: items.length,
+      expectedTotal,
+      stopped: shouldStop()
+    });
+    return {
+      source: 'dom-fallback',
+      items,
+      lots: items,
+      expectedTotal,
+      stopped: !!shouldStop()
+    };
+  }
+
+  function isHiBidHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    return host === 'hibid.com' || host.endsWith('.hibid.com');
+  }
+
+  function pathSegments(loc = location) {
+    return String(loc.pathname || '')
+      .split('/')
+      .map(segment => segment.trim())
+      .filter(Boolean);
+  }
+
+  function resolveHiBidPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const search = String(loc.search || '');
+    const parts = pathSegments(loc);
+
+    if (!isHiBidHost(host)) {
+      return { supported: false, kind: 'unsupported', host, reason: 'unsupported host' };
+    }
+
+    if (parts[0] === 'account' && parts[1] === 'watchlist') {
+      return /status=OUTBID/i.test(search)
+        ? { supported: true, kind: 'watchlist-outbid', host, reason: 'outbid watchlist route' }
+        : { supported: false, kind: 'watchlist', host, reason: 'watchlist is not OUTBID' };
+    }
+
+    if (parts[0] === 'livecatalog') {
+      return { supported: true, kind: 'live', host, auctionId: parts[1] || '', reason: 'livecatalog route' };
+    }
+
+    if (parts[0] === 'catalog') {
+      return { supported: true, kind: 'catalog', host, auctionId: parts[1] || '', reason: 'catalog route' };
+    }
+
+    if (parts[0] === 'lots' || parts[0] === 'lot') {
+      return {
+        supported: true,
+        kind: parts[0] === 'lot' ? 'lot' : 'catalog',
+        host,
+        auctionId: parts[1] || '',
+        reason: `${parts[0]} route`
+      };
+    }
+
+    if (parts[1] === 'lots' || parts[1] === 'lot') {
+      return {
+        supported: true,
+        kind: parts[1] === 'lot' ? 'lot' : 'catalog',
+        host,
+        statePrefix: parts[0] || '',
+        auctionId: parts[2] || '',
+        reason: `state-prefixed ${parts[1]} route`
+      };
+    }
+
+    return { supported: false, kind: 'unsupported', host, reason: 'unsupported HiBid path' };
+  }
+
+  function isWatchlistOutbidPage(loc = location) {
+    return resolveHiBidPage(loc).kind === 'watchlist-outbid';
   }
 
   function isLiveCatalogPage(loc = location) {
-    return /^\/livecatalog\b/i.test(String(loc.pathname || ''));
+    return resolveHiBidPage(loc).kind === 'live';
   }
 
   function isFlipTrackerListingPage(loc = location) {
@@ -710,9 +1320,8 @@ ${cards}
 
     if (isFlipTrackerListingPage(loc)) return true;
 
-    if (host !== 'hibid.com' && !host.endsWith('.hibid.com')) return false;
-    if (/^\/account\/watchlist\b/i.test(pathname)) return /status=OUTBID/i.test(search);
-    return /^\/(?:lots?|catalog|livecatalog|lot)\b/i.test(pathname);
+    if (isHiBidHost(host)) return resolveHiBidPage(loc).supported;
+    return false;
   }
 
   function getLoadTarget(options = {}, loc = location) {
@@ -899,6 +1508,16 @@ ${cards}
       url: location.href,
       totalLots: numberFromText(text.match(/Total Lots:\s*([\d,]+)/i)?.[1] || ''),
       openLots: numberFromText(text.match(/Open Lots:\s*([\d,]+)/i)?.[1] || '')
+    };
+  }
+
+  function catalogAuctionContext(root = document) {
+    return {
+      title: (typeof document !== 'undefined' ? document.title : '') || textOf(root.querySelector?.('h1')) || '',
+      url: typeof location !== 'undefined' ? location.href : '',
+      route: typeof location !== 'undefined' ? resolveHiBidPage(location) : null,
+      totalLots: getExpectedLotTotal(root),
+      openLots: null
     };
   }
 
@@ -1686,6 +2305,12 @@ ${cards}
               ${actionButton('hibid-bid-next', 'zap', 'Prepare Next', 'success')}
               ${actionButton('hibid-bid-stop', 'stop', 'Stop', 'danger')}
             </div>
+            <div class="hiba-actions">
+              ${actionButton('hibid-catalog-copy-json', 'copy', 'Copy Lots JSON', 'secondary')}
+              ${actionButton('hibid-catalog-copy-llm', 'file', 'Copy LLM Brief')}
+              ${actionButton('hibid-debug-copy', 'copy', 'Copy Debug', 'secondary')}
+              ${actionButton('hibid-debug-clear', 'stop', 'Clear Debug', 'danger')}
+            </div>
           </section>
 
           <section id="hibid-live-mode" class="hiba-section" style="display:none">
@@ -1789,6 +2414,7 @@ ${cards}
   }
 
   function createPanel() {
+    removeLegacyScraperArtifacts('createPanel');
     const old = document.getElementById(PANEL_ID);
     if (old) old.remove();
 
@@ -1832,6 +2458,10 @@ ${cards}
     const liveSnipeButton = panel.querySelector('#hibid-live-snipe');
     const liveCopyJsonButton = panel.querySelector('#hibid-live-copy-json');
     const liveCopyLlmButton = panel.querySelector('#hibid-live-copy-llm');
+    const catalogCopyJsonButton = panel.querySelector('#hibid-catalog-copy-json');
+    const catalogCopyLlmButton = panel.querySelector('#hibid-catalog-copy-llm');
+    const debugCopyButton = panel.querySelector('#hibid-debug-copy');
+    const debugClearButton = panel.querySelector('#hibid-debug-clear');
     const autoRefreshInput = panel.querySelector('#hibid-bid-auto-refresh');
     const state = { stop: false, rows: [], busy: false, refreshTimer: null, refreshSeconds: 30, lotCache: new Map(), planFocused: false, lastPlanInputAt: 0, liveArmed: false, liveRow: null, liveTimer: null, listingRows: [] };
     const hibidHost = /hibid\.com$/i.test(location.hostname) || location.hostname === 'bid.ajwillnerauctions.com';
@@ -1858,7 +2488,7 @@ ${cards}
       }
       debug('status', message);
     };
-    installAssistantCatalogScraperButton(status);
+    debug('unified drawer mounted', routeDebug());
 
     const render = (rows) => {
       state.rows = rows;
@@ -1907,15 +2537,18 @@ ${cards}
 
     const loadCurrentOutbidLots = async () => {
       state.lotCache.clear();
-      await loadLots(status, () => state.stop, () => {
-        uniqueLots(getLotTiles().map(extractLot)).forEach(lot => {
-          if (lot.lot) state.lotCache.set(String(lot.lot), lot);
-        });
-        return state.lotCache.size;
+      const result = await scrapeCatalogLots(status, () => state.stop);
+      uniqueLots(result.items || result.lots || []).forEach(lot => {
+        if (lot.lot) state.lotCache.set(String(lot.lot), lot);
       });
       const mergedPlanText = planTextFromLoadedLots(planEl.value, Array.from(state.lotCache.values()));
       planEl.value = mergedPlanText;
       savePlanText(mergedPlanText);
+      debug('load lots merged into plan', {
+        count: state.lotCache.size,
+        source: result.source,
+        expectedTotal: result.expectedTotal
+      });
     };
 
     const isEditingPlan = () => state.planFocused || Date.now() - state.lastPlanInputAt < 5000;
@@ -1999,6 +2632,7 @@ ${cards}
     });
     panel.querySelector('#hibid-bid-close').addEventListener('click', () => {
       if (state.liveTimer) clearInterval(state.liveTimer);
+      document.dispatchEvent(new CustomEvent('hibid-bid-assistant-close'));
       panel.remove();
     });
     panel.querySelector('#hibid-bid-stop').addEventListener('click', () => {
@@ -2117,6 +2751,56 @@ ${cards}
       const filename = `FlipTracker-listings-${source}-${safeTimestamp()}.html`;
       downloadTextFile(filename, currentListingExportHtml());
       status(`Downloaded ${filename}. Put it in ImportInbox, then use FlipTracker import.`);
+    });
+
+    const copyCatalogLots = async (mode) => {
+      if (state.busy) return;
+      state.busy = true;
+      catalogCopyJsonButton.disabled = true;
+      catalogCopyLlmButton.disabled = true;
+      state.stop = false;
+      try {
+        status(mode === 'llm' ? 'Scraping catalog for LLM brief...' : 'Scraping catalog for JSON...');
+        const result = await scrapeCatalogLots(status, () => state.stop);
+        const lots = result.items || result.lots || [];
+        if (!lots.length) {
+          status('No catalog lots found. Copy debug log and check route/data source.');
+          return;
+        }
+        const payload = mode === 'llm'
+          ? buildLlmAuctionBrief(lots, catalogAuctionContext())
+          : JSON.stringify(lots, null, 2);
+        const copied = await writeClipboard(payload).catch(() => false);
+        const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
+        detectedEl.textContent = `Catalog scrape source: ${result.source || 'unknown'} | Lots: ${countText}`;
+        status(copied
+          ? (mode === 'llm' ? `Copied LLM brief for ${countText} lot(s).` : `Copied JSON for ${countText} lot(s).`)
+          : `Scraped ${countText} lot(s), but clipboard failed. Copy debug log.`);
+        debug('catalog lots copied', {
+          mode,
+          count: lots.length,
+          expectedTotal: result.expectedTotal,
+          source: result.source,
+          copied,
+          stopped: result.stopped
+        });
+      } finally {
+        state.busy = false;
+        catalogCopyJsonButton.disabled = false;
+        catalogCopyLlmButton.disabled = false;
+      }
+    };
+
+    catalogCopyJsonButton.addEventListener('click', () => copyCatalogLots('json'));
+    catalogCopyLlmButton.addEventListener('click', () => copyCatalogLots('llm'));
+    debugCopyButton.addEventListener('click', async () => {
+      const copied = await copyDebugLog();
+      status(copied ? `Copied ${getDebugLog().length} debug log entries.` : 'Debug log empty or clipboard failed.');
+    });
+    debugClearButton.addEventListener('click', () => {
+      clearDebugLog();
+      status('Debug log cleared.');
+      debug('debug log cleared from drawer');
     });
 
     autoRefreshInput.addEventListener('change', (event) => {
@@ -2243,22 +2927,76 @@ ${cards}
   }
 
   if (!globalThis.__HIBID_BID_ASSISTANT_TEST__) {
-    const start = () => waitForLotDocument().then(shouldInit => {
-      if (shouldInit) init();
+    globalThis.__HIBID_UNIFIED_ASSISTANT_ACTIVE__ = true;
+    debug('boot', routeDebug());
+
+    let panelClosed = false;
+    let lastMountedHref = location.href;
+
+    const ensureMounted = (reason = 'unspecified') => {
+      const allowed = shouldInitOnLocation();
+      debug('ensureMounted', { reason, allowed, ...routeDebug() });
+      if (!allowed || !document.body) return false;
+      if (location.href !== lastMountedHref) {
+        panelClosed = false;
+        lastMountedHref = location.href;
+        debug('panel close state reset after URL change', { reason, href: lastMountedHref });
+      }
+      if (/^menu\b/i.test(reason)) panelClosed = false;
+      if (panelClosed) {
+        removeLegacyScraperArtifacts(reason);
+        debug('ensureMounted skipped: panel closed for current page', { reason });
+        return false;
+      }
+      removeLegacyScraperArtifacts(reason);
+      if (document.getElementById(PANEL_ID)) return true;
+      init();
+      return true;
+    };
+
+    const mountWhenReady = (reason) => {
+      if (document.body) ensureMounted(reason);
+      else document.addEventListener('DOMContentLoaded', () => ensureMounted(`${reason}:domcontentloaded`), { once: true });
+    };
+
+    const registerMenuCommands = () => {
+      if (typeof GM_registerMenuCommand !== 'function') {
+        debug('menu commands unavailable');
+        return;
+      }
+      GM_registerMenuCommand(MENU_COMMANDS[0], () => ensureMounted('menu remount'));
+      GM_registerMenuCommand(MENU_COMMANDS[1], async () => {
+        ensureMounted('menu copy debug');
+        const copied = await copyDebugLog();
+        debug('menu copy debug result', { copied, entries: getDebugLog().length });
+      });
+      GM_registerMenuCommand(MENU_COMMANDS[2], () => {
+        clearDebugLog();
+        debug('debug log cleared from menu');
+      });
+      GM_registerMenuCommand(MENU_COMMANDS[3], () => {
+        ensureMounted('menu copy lots');
+        document.getElementById('hibid-catalog-copy-json')?.click();
+      });
+      debug('menu commands registered', MENU_COMMANDS);
+    };
+
+    mountWhenReady('boot');
+    registerMenuCommands();
+    document.addEventListener('hibid-bid-assistant-close', () => {
+      panelClosed = true;
+      debug('panel closed for current page');
     });
-    if (document.body) start();
-    else document.addEventListener('DOMContentLoaded', start);
-  }
-
-  async function waitForLotDocument() {
-    if (!shouldInitOnLocation()) return false;
-    if (isFlipTrackerListingPage()) return true;
-
-    for (let i = 0; i < 24; i += 1) {
-      if (getLotTiles().length || extractTextLots().length) return true;
-      await wait(250);
+    setTimeout(() => ensureMounted('timeout 1s'), 1000);
+    setTimeout(() => ensureMounted('timeout 3s'), 3000);
+    if ('onurlchange' in window) {
+      window.addEventListener('urlchange', () => ensureMounted('urlchange'));
     }
-
-    return shouldInitOnLocation();
+    window.addEventListener('popstate', () => ensureMounted('popstate'));
+    window.addEventListener('hashchange', () => ensureMounted('hashchange'));
+    new MutationObserver(() => ensureMounted('mutation')).observe(document.documentElement, {
+      childList: true,
+      subtree: true
+    });
   }
 })();

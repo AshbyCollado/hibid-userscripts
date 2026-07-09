@@ -114,6 +114,8 @@ test('standalone scraper exposes debug/menu metadata and stable element IDs', ()
   assert.equal(core.BUTTON_ID, 'hibid-lot-catalog-scraper-copy-button');
   assert.equal(core.FALLBACK_ID, 'hibid-lot-catalog-scraper-json');
   assert.deepEqual(Array.from(core.MENU_COMMANDS), ['Mount HiBid scraper button', 'Copy all HiBid lots now']);
+  assert.equal(core.isUnifiedAssistantActive({ getElementById: () => null }), false);
+  assert.equal(core.isUnifiedAssistantActive({ getElementById: id => id === 'hibid-bid-assistant-panel' ? {} : null }), true);
 });
 
 test('standalone scraper detects redirected auction detail pages and catalog grids', () => {
