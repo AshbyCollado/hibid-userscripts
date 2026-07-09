@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Safe Bid Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.4.0
+// @version      0.4.1
 // @description  Safely queues HiBid bids and exports active eBay/Facebook Marketplace listings for FlipTracker.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -25,7 +25,7 @@
   'use strict';
 
   const PANEL_ID = 'hibid-bid-assistant-panel';
-  const SCRIPT_VERSION = '0.4.0';
+  const SCRIPT_VERSION = '0.4.1';
   const PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const AUTO_REFRESH_KEY = 'hibid-bid-assistant-auto-refresh-v1';
   const AUTO_CONFIRM_KEY = 'hibid-bid-assistant-auto-confirm-v1';
@@ -631,7 +631,8 @@ ${cards}
     planTextFromLoadedLots,
     scanPlan,
     lotSummary,
-    getStoredAutoConfirm
+    getStoredAutoConfirm,
+    getStoredMinimized
   };
   globalThis.HiBidBidAssistantCore = Core;
 
@@ -1458,9 +1459,9 @@ ${cards}
 
   function getStoredMinimized() {
     try {
-      return Boolean(GM_getValue(MINIMIZED_KEY, false));
+      return Boolean(GM_getValue(MINIMIZED_KEY, true));
     } catch {
-      return false;
+      return true;
     }
   }
 

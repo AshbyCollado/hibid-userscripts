@@ -61,6 +61,11 @@ test('parses active eBay listing cards for FlipTracker export', () => {
   ]);
 });
 
+test('assistant panel defaults to minimized before a stored preference exists', () => {
+  const core = loadCore();
+  assert.equal(core.getStoredMinimized(), true);
+});
+
 test('parses Facebook Marketplace manager listing cards for FlipTracker export', () => {
   const core = loadCore();
   const html = `
