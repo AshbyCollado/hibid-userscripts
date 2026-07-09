@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.6.3
+// @version      0.6.4
 // @description  Modular resale helper for HiBid catalog/live scraping, LLM exports, safe bid prep, and FlipTracker marketplace exports.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -31,7 +31,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.6.3';
+  const SCRIPT_VERSION = '0.6.4';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1121,19 +1121,24 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
     rowChunks.forEach(chunk => {
       if (!/(?:\/itm\/\d+|itemId=\d+|itemid=\d+)/i.test(chunk)) return;
-      const url = normalizeListingUrl(firstMatch(chunk, [
-        /href="([^"]*(?:\/itm\/\d+|itemId=\d+|itemid=\d+)[^"]*)"/i,
-        /data-href="([^"]*(?:\/itm\/\d+|itemId=\d+|itemid=\d+)[^"]*)"/i
-      ]));
-      const itemId = firstMatch(`${url} ${chunk}`, [
+      const anchors = Array.from(chunk.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)).map(match => {
+        const attrs = match[1] || '';
+        const href = decodeHtml(firstMatch(attrs, [/href="([^"]+)"/i, /data-href="([^"]+)"/i]));
+        const text = cleanListingTitle(stripHtml(match[2] || '').replace(/\bopens in new window\b.*$/i, ''));
+        return { href, text };
+      });
+      const itemHref = anchors.find(anchor => /\/itm\/\d+/i.test(anchor.href))?.href || '';
+      const idHref = anchors.find(anchor => /(?:\/itm\/\d+|itemId=\d+|itemid=\d+)/i.test(anchor.href))?.href || '';
+      const itemId = firstMatch(`${itemHref} ${idHref} ${chunk}`, [
         /\/itm\/(\d+)/i,
         /itemId=(\d+)/i,
         /itemid=(\d+)/i
       ]);
-      const title = cleanListingTitle(stripHtml(firstMatch(chunk, [
-        /<a[^>]+href="[^"]*(?:\/itm\/\d+|itemId=\d+|itemid=\d+)[^"]*"[^>]*>([\s\S]*?)<\/a>/i,
-        /aria-label="([^"]+)"/i
-      ])).replace(/\bopens in new window\b.*$/i, ''));
+      const titleAnchor = anchors
+        .filter(anchor => anchor.text && !/^(edit|actions?|sell similar|sell it faster|promote|preview|view|download|upload)$/i.test(anchor.text))
+        .sort((a, b) => b.text.length - a.text.length)[0];
+      const title = titleAnchor?.text || cleanListingTitle(stripHtml(firstMatch(chunk, [/aria-label="([^"]+)"/i])));
+      const url = normalizeListingUrl(itemHref || (itemId ? `/itm/${itemId}` : idHref));
       const price = parseDollarAmount(chunk);
       if (!title || !price) return;
       const rowText = stripHtml(chunk);
