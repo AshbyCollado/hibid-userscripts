@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.4.7
+// @version      1.4.8
 // @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
@@ -456,6 +456,18 @@
   }
 
   function findNextPageButton(root = document) {
+    const walker = root.createTreeWalker?.(root.body || root.documentElement, NodeFilter.SHOW_TEXT);
+    while (walker) {
+      const node = walker.nextNode();
+      if (!node) break;
+      if (!/^next$/i.test((node.textContent || '').trim())) continue;
+      const control = node.parentElement?.closest?.('a[href], button, [role="button"]');
+      if (control && !control.disabled && !control.getAttribute?.('aria-disabled') && isVisible(control)) {
+        debug('next page text-node control', { label: controlLabel(control), href: controlHref(control) });
+        return control;
+      }
+    }
+
     const candidates = Array.from(root.querySelectorAll?.('a[href], button, [role="button"]') || [])
       .filter(button => !button.disabled && !button.getAttribute?.('aria-disabled'))
       .filter(isVisible)
