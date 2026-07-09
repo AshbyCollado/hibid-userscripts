@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.6.2
+// @version      0.6.3
 // @description  Modular resale helper for HiBid catalog/live scraping, LLM exports, safe bid prep, and FlipTracker marketplace exports.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -31,7 +31,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.6.2';
+  const SCRIPT_VERSION = '0.6.3';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1113,6 +1113,49 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return result.items.length >= result.expectedTotal;
   }
 
+  function parseEbaySellerHubTableListingsHtml(html) {
+    const text = String(html || '');
+    const rowChunks = Array.from(text.matchAll(/<tr\b[\s\S]*?<\/tr>/gi)).map(match => match[0])
+      .concat(Array.from(text.matchAll(/<div\b[^>]+role=["']row["'][\s\S]*?(?=<div\b[^>]+role=["']row["']|$)/gi)).map(match => match[0]));
+    const listings = [];
+
+    rowChunks.forEach(chunk => {
+      if (!/(?:\/itm\/\d+|itemId=\d+|itemid=\d+)/i.test(chunk)) return;
+      const url = normalizeListingUrl(firstMatch(chunk, [
+        /href="([^"]*(?:\/itm\/\d+|itemId=\d+|itemid=\d+)[^"]*)"/i,
+        /data-href="([^"]*(?:\/itm\/\d+|itemId=\d+|itemid=\d+)[^"]*)"/i
+      ]));
+      const itemId = firstMatch(`${url} ${chunk}`, [
+        /\/itm\/(\d+)/i,
+        /itemId=(\d+)/i,
+        /itemid=(\d+)/i
+      ]);
+      const title = cleanListingTitle(stripHtml(firstMatch(chunk, [
+        /<a[^>]+href="[^"]*(?:\/itm\/\d+|itemId=\d+|itemid=\d+)[^"]*"[^>]*>([\s\S]*?)<\/a>/i,
+        /aria-label="([^"]+)"/i
+      ])).replace(/\bopens in new window\b.*$/i, ''));
+      const price = parseDollarAmount(chunk);
+      if (!title || !price) return;
+      const rowText = stripHtml(chunk);
+
+      listings.push({
+        source: 'eBay',
+        itemId,
+        title,
+        price,
+        url,
+        status: /inactive|ended|sold/i.test(rowText) ? 'Inactive' : 'Active',
+        listedDateText: firstMatch(rowText, [/\b(Listed\s+(?:today|yesterday|on\s+[^|]+?))(?:\s{2,}|$)/i]),
+        shippingText: firstMatch(rowText, [/(\+\s*Shipping|Free shipping|Buyer pays shipping)/i]),
+        views: parsePlainInteger(firstMatch(rowText, [/\b([\d,]+)\s+Views?\b/i, /\b([\d,]+)\s+View\b/i])),
+        watchers: parsePlainInteger(firstMatch(rowText, [/\b([\d,]+)\s+Watchers?\b/i])),
+        clicks: null,
+      });
+    });
+
+    return dedupeListings(listings);
+  }
+
   function parseEbayActiveListingsHtml(html) {
     const text = String(html || '');
     const chunks = text.split(/(?=<div[^>]+(?:qa-id="active-item-|\bid="active-item-|class="[^"]*active-item))/i);
@@ -1156,7 +1199,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       });
     });
 
-    return dedupeListings(listings);
+    return dedupeListings(listings.concat(parseEbaySellerHubTableListingsHtml(text)));
   }
 
   function parseFacebookMarketplaceListingsHtml(html) {

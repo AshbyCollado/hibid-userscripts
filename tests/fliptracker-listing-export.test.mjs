@@ -61,6 +61,47 @@ test('parses active eBay listing cards for FlipTracker export', () => {
   ]);
 });
 
+test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
+  const core = loadCore();
+  const html = `
+    <main>
+      <h1>Manage active listings (15)</h1>
+      <table>
+        <thead><tr><th>Item</th><th>Current price</th><th>Available quantity</th><th>Views</th></tr></thead>
+        <tbody>
+          <tr data-testid="listing-row">
+            <td><input type="checkbox"></td>
+            <td><a href="/itm/336677465197">Rcv A Shelf RV DM17 KIT 5 Door Mounting Kit 278234 Pull Out Cabinet</a></td>
+            <td><span>$13.05</span><span>$25.00</span></td>
+            <td>1</td>
+            <td><span>12 views</span><span>2 watchers</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </main>
+  `;
+
+  const rows = core.parseFlipTrackerActiveListingsHtml(html, {
+    url: 'https://www.ebay.com/sh/lst/active',
+  });
+
+  assert.deepEqual(plain(rows), [
+    {
+      source: 'eBay',
+      itemId: '336677465197',
+      title: 'Rcv A Shelf RV DM17 KIT 5 Door Mounting Kit 278234 Pull Out Cabinet',
+      price: 13.05,
+      url: 'https://www.ebay.com/itm/336677465197',
+      status: 'Active',
+      listedDateText: '',
+      shippingText: '',
+      views: 12,
+      watchers: 2,
+      clicks: null,
+    },
+  ]);
+});
+
 test('assistant panel defaults to minimized before a stored preference exists', () => {
   const core = loadCore();
   assert.equal(core.getStoredMinimized(), true);
