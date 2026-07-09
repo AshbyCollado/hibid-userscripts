@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.3.3
+// @version      1.3.4
 // @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
@@ -22,8 +22,8 @@
 (function () {
   'use strict';
 
-  const BUTTON_ID = 'hibid-scraper-copy-button';
-  const FALLBACK_ID = 'hibid-scraper-json';
+  const BUTTON_ID = 'hibid-lot-catalog-scraper-copy-button';
+  const FALLBACK_ID = 'hibid-lot-catalog-scraper-json';
   const MAX_STEPS = 1200;
 
   let scrapeState = {
@@ -515,4 +515,8 @@
   setTimeout(ensureButton, 1000);
   setTimeout(ensureButton, 3000);
   setInterval(ensureButton, 5000);
+  new MutationObserver(() => ensureButton()).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
 })();
