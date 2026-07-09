@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.4.2
+// @version      1.4.3
 // @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
@@ -451,6 +451,12 @@
     return `Scraping ${count} lots...`;
   }
 
+  function pageLooksBusy() {
+    const text = textOf(document.body);
+    return /\bLoading(?:\.\.\.)?\b/i.test(text)
+      || Boolean(document.querySelector('.fa-spinner, .spinner, .loading, [class*="loading"], [aria-busy="true"]'));
+  }
+
   async function scrapeAllLots(onProgress, shouldStop) {
     const mode = detectPageMode();
     debug('scrape mode selected', { mode, url: location.href });
@@ -467,6 +473,7 @@
     let expectedTotal = getExpectedTotal();
     let lastCount = -1;
     let stuckChecks = 0;
+    let bottomWaits = 0;
 
     scrollToTop();
     await wait(500);
@@ -485,11 +492,28 @@
       const currentTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
 
       if (currentTop >= maxScrollTop - 4) {
+        const waitingForMore = expectedTotal && itemsMap.size < expectedTotal;
+        if (waitingForMore && pageLooksBusy()) {
+          bottomWaits += 1;
+          stuckChecks = 0;
+          debug('catalog bottom while busy', { count: itemsMap.size, expectedTotal, bottomWaits });
+          await wait(650);
+          window.scrollTo({ top: document.documentElement.scrollHeight, left: 0, behavior: 'instant' });
+          continue;
+        }
+
         if (itemsMap.size === lastCount) stuckChecks += 1;
         lastCount = itemsMap.size;
+        if (waitingForMore && stuckChecks < 30) {
+          debug('catalog bottom waiting for lazy lots', { count: itemsMap.size, expectedTotal, stuckChecks });
+          await wait(500);
+          window.scrollTo({ top: Math.max(0, document.documentElement.scrollHeight - window.innerHeight - 20), left: 0, behavior: 'instant' });
+          continue;
+        }
         if (stuckChecks >= 5) break;
       } else {
         stuckChecks = 0;
+        bottomWaits = 0;
       }
 
       window.scrollBy({ top: Math.max(650, Math.floor(window.innerHeight * 0.9)), left: 0, behavior: 'instant' });
