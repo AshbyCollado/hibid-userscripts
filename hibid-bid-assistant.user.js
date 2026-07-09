@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Safe Bid Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.4.1
+// @version      0.4.2
 // @description  Safely queues HiBid bids and exports active eBay/Facebook Marketplace listings for FlipTracker.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -25,7 +25,7 @@
   'use strict';
 
   const PANEL_ID = 'hibid-bid-assistant-panel';
-  const SCRIPT_VERSION = '0.4.1';
+  const SCRIPT_VERSION = '0.4.2';
   const PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const AUTO_REFRESH_KEY = 'hibid-bid-assistant-auto-refresh-v1';
   const AUTO_CONFIRM_KEY = 'hibid-bid-assistant-auto-confirm-v1';
@@ -625,6 +625,7 @@ ${cards}
     parseFacebookMarketplaceListingsHtml,
     parseFlipTrackerActiveListingsHtml,
     buildFlipTrackerListingsExportHtml,
+    buildPanelHtml,
     evaluateLiveLot,
     prepareLiveBid,
     findLotOnPage,
@@ -1485,114 +1486,210 @@ ${cards}
     }
   }
 
+  function hibaIcon(name) {
+    const icons = {
+      chevron: '<path d="m6 9 6 6 6-6"></path>',
+      close: '<path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>',
+      copy: '<rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>',
+      download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M7 10l5 5 5-5"></path><path d="M12 15V3"></path>',
+      file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path>',
+      list: '<path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path>',
+      radio: '<circle cx="12" cy="12" r="2"></circle><path d="M16.24 7.76a6 6 0 0 1 0 8.49"></path><path d="M7.76 16.24a6 6 0 0 1 0-8.49"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path><path d="M4.93 19.07a10 10 0 0 1 0-14.14"></path>',
+      scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M7 12h10"></path>',
+      shield: '<path d="M20 13c0 5-3.5 7.5-7.7 8.8a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.6a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"></path>',
+      stop: '<rect width="14" height="14" x="5" y="5" rx="2"></rect>',
+      zap: '<path d="M4 14a1 1 0 0 1-.8-1.6l9-10A1 1 0 0 1 14 3v7h6a1 1 0 0 1 .8 1.6l-9 10A1 1 0 0 1 10 21v-7z"></path>'
+    };
+    return `<svg class="hiba-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[name] || icons.shield}</svg>`;
+  }
+
+  function actionButton(id, icon, label, tone = 'primary', extra = '') {
+    return `<button id="${id}" type="button" class="hiba-btn ${tone}" ${extra}>${hibaIcon(icon)}<span>${label}</span></button>`;
+  }
+
+  function buildPanelHtml() {
+    return `
+      <div class="hiba-drawer" role="dialog" aria-label="HiBid Safe Bid Assistant">
+        <div class="hiba-shellbar">
+          <button id="hibid-bid-minimize" type="button" class="hiba-launcher" title="Show assistant" aria-label="Show assistant">
+            <span class="hiba-orb"></span>
+            <span class="hiba-launcher-copy">
+              <span class="hiba-title">HiBid Assistant</span>
+              <span class="hiba-subtitle">Ready</span>
+            </span>
+            <span class="hiba-mode-pill" id="hiba-current-mode-pill">Auto</span>
+            ${hibaIcon('chevron')}
+          </button>
+          <button id="hibid-bid-close" type="button" class="hiba-icon-btn" title="Close assistant" aria-label="Close assistant">${hibaIcon('close')}</button>
+        </div>
+        <div id="hibid-bid-body" class="hiba-body">
+          <div class="hiba-head">
+            <div>
+              <div class="hiba-kicker">Tampermonkey tool</div>
+              <strong>HiBid Safe Bid Assistant v${SCRIPT_VERSION}</strong>
+            </div>
+            <span class="hiba-chip neutral" id="hiba-session-chip">idle</span>
+          </div>
+          <div class="hiba-tabs" role="tablist" aria-label="Assistant modes">
+            <button type="button" class="hiba-tab" data-mode-tab="catalog">${hibaIcon('list')}<span>Catalog</span></button>
+            <button type="button" class="hiba-tab" data-mode-tab="live">${hibaIcon('radio')}<span>Live</span></button>
+            <button type="button" class="hiba-tab" data-mode-tab="fliptracker">${hibaIcon('file')}<span>FlipTracker</span></button>
+          </div>
+
+          <section id="fliptracker-listing-export-mode" class="hiba-section" style="display:none">
+            <div class="hiba-section-head">
+              <div>
+                <div class="hiba-kicker">Listing export</div>
+                <strong>FlipTracker Active Listing Export</strong>
+              </div>
+              <span class="hiba-chip neutral">HTML</span>
+            </div>
+            <div class="hiba-meta">Scrapes visible active eBay/Facebook listing cards and exports an HTML file for FlipTracker ImportInbox.</div>
+            <div class="hiba-actions">
+              ${actionButton('fliptracker-listing-scan', 'scan', 'Scan Listings')}
+              ${actionButton('fliptracker-listing-copy', 'copy', 'Copy HTML', 'secondary')}
+              ${actionButton('fliptracker-listing-download', 'download', 'Download', 'success')}
+            </div>
+            <div id="fliptracker-listing-status" class="hiba-meta">Waiting to scan.</div>
+            <div id="fliptracker-listing-results" class="hiba-results"></div>
+          </section>
+
+          <section id="hibid-bid-controls" class="hiba-section">
+            <div class="hiba-section-head">
+              <div>
+                <div class="hiba-kicker">Max plan</div>
+                <strong>Catalog / Watchlist Scanner</strong>
+              </div>
+              <span class="hiba-chip neutral">safe prep</span>
+            </div>
+            <textarea id="hibid-bid-plan-json" spellcheck="false" class="hiba-plan"></textarea>
+            <div class="hiba-toggle-grid">
+              <label class="hiba-switch"><input id="hibid-bid-outbid-only" type="checkbox"><span>Outbid only</span></label>
+              <label class="hiba-switch"><input id="hibid-bid-auto-refresh" type="checkbox"><span>Auto refresh 30s</span></label>
+              <label class="hiba-switch"><input id="hibid-bid-auto-confirm" type="checkbox"><span>Auto-confirm modals</span></label>
+            </div>
+            <div class="hiba-actions">
+              ${actionButton('hibid-bid-load', 'download', 'Load Lots')}
+              ${actionButton('hibid-bid-scan', 'scan', 'Scan')}
+              ${actionButton('hibid-bid-next', 'zap', 'Prepare Next', 'success')}
+              ${actionButton('hibid-bid-stop', 'stop', 'Stop', 'danger')}
+            </div>
+          </section>
+
+          <section id="hibid-live-mode" class="hiba-section" style="display:none">
+            <div class="hiba-section-head">
+              <div>
+                <div class="hiba-kicker">Live auction</div>
+                <strong>Live Mode</strong>
+              </div>
+              <div class="hiba-actions compact">
+                ${actionButton('hibid-live-arm', 'shield', 'Arm', 'secondary')}
+                ${actionButton('hibid-live-snipe', 'zap', 'Snipe Now', 'success', 'disabled')}
+              </div>
+            </div>
+            <div class="hiba-actions">
+              ${actionButton('hibid-live-copy-json', 'copy', 'Copy Lots JSON', 'secondary')}
+              ${actionButton('hibid-live-copy-llm', 'file', 'Copy LLM Brief')}
+            </div>
+            <div id="hibid-live-state" class="hiba-live-card hiba-meta">Waiting for live lot...</div>
+          </section>
+
+          <div id="hibid-bid-status" class="hiba-statusline">Paste max plan, then Scan.</div>
+          <div id="hibid-bid-detected" class="hiba-detected"></div>
+          <div id="hibid-bid-results" class="hiba-results"></div>
+        </div>
+      </div>
+      <style>
+        #${PANEL_ID} { position:fixed; right:16px; bottom:16px; z-index:999999; width:min(420px, calc(100vw - 24px)); max-height:calc(100vh - 32px); color:#f8fafc; font:13px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing:0; color-scheme:dark; }
+        #${PANEL_ID}, #${PANEL_ID} * { box-sizing:border-box; }
+        #${PANEL_ID}.hiba-minimized { width:min(340px, calc(100vw - 24px)); }
+        #${PANEL_ID} .hiba-drawer { overflow:hidden; border:1px solid rgba(148,163,184,.26); border-radius:14px; background:linear-gradient(180deg,#10141d 0%,#080b11 100%); box-shadow:0 24px 70px rgba(0,0,0,.42), 0 2px 12px rgba(15,23,42,.45); }
+        #${PANEL_ID} .hiba-shellbar { display:flex; align-items:stretch; gap:8px; padding:8px; border-bottom:1px solid rgba(148,163,184,.16); background:rgba(15,23,42,.88); }
+        #${PANEL_ID}.hiba-minimized .hiba-shellbar { border-bottom:0; }
+        #${PANEL_ID} .hiba-launcher { flex:1; min-width:0; display:flex; align-items:center; gap:9px; color:#f8fafc; background:transparent; border:0; border-radius:10px; padding:6px 8px; cursor:pointer; text-align:left; }
+        #${PANEL_ID} .hiba-launcher:hover { background:rgba(148,163,184,.12); }
+        #${PANEL_ID} .hiba-launcher-copy { min-width:0; display:flex; flex-direction:column; gap:1px; }
+        #${PANEL_ID} .hiba-title { font-weight:800; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        #${PANEL_ID} .hiba-subtitle, #${PANEL_ID} .hiba-kicker { color:#94a3b8; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+        #${PANEL_ID} .hiba-orb { width:9px; height:9px; border-radius:999px; background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.14); flex:0 0 auto; }
+        #${PANEL_ID} .hiba-mode-pill, #${PANEL_ID} .hiba-chip { display:inline-flex; align-items:center; min-height:22px; border:1px solid rgba(148,163,184,.24); border-radius:999px; padding:2px 8px; color:#cbd5e1; background:rgba(15,23,42,.78); font-size:11px; font-weight:800; white-space:nowrap; }
+        #${PANEL_ID} .hiba-chip.eligible, #${PANEL_ID} .hiba-chip.success { color:#bbf7d0; background:rgba(22,101,52,.32); border-color:rgba(74,222,128,.34); }
+        #${PANEL_ID} .hiba-chip.skip, #${PANEL_ID} .hiba-chip.danger { color:#fecaca; background:rgba(127,29,29,.34); border-color:rgba(248,113,113,.34); }
+        #${PANEL_ID} .hiba-body { max-height:calc(100vh - 92px); overflow:auto; padding:12px; }
+        #${PANEL_ID} .hiba-head, #${PANEL_ID} .hiba-section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        #${PANEL_ID} .hiba-head { margin-bottom:10px; }
+        #${PANEL_ID} .hiba-head strong, #${PANEL_ID} .hiba-section-head strong { font-size:14px; }
+        #${PANEL_ID} .hiba-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:10px 0; padding:3px; border:1px solid rgba(148,163,184,.18); border-radius:11px; background:rgba(2,6,23,.62); }
+        #${PANEL_ID} .hiba-tab { display:flex; align-items:center; justify-content:center; gap:6px; min-width:0; color:#94a3b8; background:transparent; border:0; border-radius:8px; padding:7px 5px; font-weight:800; cursor:pointer; }
+        #${PANEL_ID} .hiba-tab.active { color:#fff; background:#1d4ed8; box-shadow:0 8px 22px rgba(37,99,235,.24); }
+        #${PANEL_ID} .hiba-section { border:1px solid rgba(148,163,184,.16); border-radius:12px; padding:10px; margin-top:9px; background:rgba(15,23,42,.52); }
+        #${PANEL_ID} .hiba-section[style*="display:none"] { margin:0; padding:0; border:0; }
+        #${PANEL_ID} .hiba-actions { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:9px; }
+        #${PANEL_ID} .hiba-actions.compact { margin-top:0; justify-content:flex-end; }
+        #${PANEL_ID} .hiba-btn, #${PANEL_ID} .hiba-prepare, #${PANEL_ID} .hiba-icon-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid rgba(147,197,253,.28); border-radius:9px; padding:7px 9px; color:#eff6ff; background:#1d4ed8; font-weight:800; cursor:pointer; min-height:34px; }
+        #${PANEL_ID} .hiba-btn.secondary { background:#1f2937; border-color:rgba(148,163,184,.25); color:#e5e7eb; }
+        #${PANEL_ID} .hiba-btn.success, #${PANEL_ID} .hiba-prepare { background:#15803d; border-color:rgba(74,222,128,.28); }
+        #${PANEL_ID} .hiba-btn.danger { background:#991b1b; border-color:rgba(248,113,113,.28); }
+        #${PANEL_ID} .hiba-btn[disabled], #${PANEL_ID} .hiba-prepare[disabled] { background:#27272a; color:#71717a; border-color:rgba(113,113,122,.28); cursor:not-allowed; }
+        #${PANEL_ID} .hiba-icon-btn { flex:0 0 auto; width:34px; padding:0; background:rgba(30,41,59,.88); border-color:rgba(148,163,184,.24); }
+        #${PANEL_ID} .hiba-icon { width:15px; height:15px; flex:0 0 auto; }
+        #${PANEL_ID} .hiba-plan { width:100%; height:128px; margin-top:9px; resize:vertical; color:#f8fafc; background:#020617; border:1px solid rgba(148,163,184,.26); border-radius:10px; padding:9px; font:12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+        #${PANEL_ID} .hiba-toggle-grid { display:grid; grid-template-columns:1fr; gap:6px; margin-top:8px; }
+        #${PANEL_ID} .hiba-switch { display:flex; align-items:center; justify-content:space-between; gap:8px; color:#cbd5e1; background:rgba(2,6,23,.45); border:1px solid rgba(148,163,184,.15); border-radius:9px; padding:7px 9px; font-weight:700; }
+        #${PANEL_ID} .hiba-switch input { width:16px; height:16px; accent-color:#2563eb; }
+        #${PANEL_ID} .hiba-statusline { margin-top:10px; border:1px solid rgba(59,130,246,.24); border-radius:10px; padding:8px 9px; color:#dbeafe; background:rgba(30,64,175,.18); font-weight:700; }
+        #${PANEL_ID} .hiba-detected, #${PANEL_ID} .hiba-meta { color:#94a3b8; font-size:12px; margin-top:6px; }
+        #${PANEL_ID} .hiba-detected { font-family:ui-monospace, SFMono-Regular, Consolas, monospace; }
+        #${PANEL_ID} .hiba-row { border:1px solid rgba(148,163,184,.16); border-radius:11px; padding:9px; margin-top:8px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; background:rgba(2,6,23,.42); }
+        #${PANEL_ID} .hiba-row strong { color:#f8fafc; }
+        #${PANEL_ID} .hiba-status { display:inline-flex; align-items:center; width:max-content; margin-top:5px; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:900; }
+        #${PANEL_ID} .hiba-status.eligible { color:#bbf7d0; background:rgba(22,101,52,.38); }
+        #${PANEL_ID} .hiba-status.skip { color:#fecaca; background:rgba(127,29,29,.34); }
+        #${PANEL_ID} .hiba-live-card { border-radius:10px; padding:9px; background:rgba(2,6,23,.5); border:1px solid rgba(148,163,184,.16); }
+        @media (max-width:520px) { #${PANEL_ID} { right:8px; bottom:8px; width:calc(100vw - 16px); } #${PANEL_ID} .hiba-row { grid-template-columns:1fr; } }
+      </style>
+    `;
+  }
+
+  function setPanelMinimized(panel, minimized) {
+    const body = panel.querySelector('#hibid-bid-body');
+    const button = panel.querySelector('#hibid-bid-minimize');
+    const subtitle = panel.querySelector('.hiba-subtitle');
+    if (body) body.style.display = minimized ? 'none' : '';
+    panel.classList.toggle('hiba-minimized', Boolean(minimized));
+    if (button) {
+      button.setAttribute('title', minimized ? 'Show assistant' : 'Minimize assistant');
+      button.setAttribute('aria-label', minimized ? 'Show assistant' : 'Minimize assistant');
+      const chevron = button.querySelector('.hiba-icon');
+      if (chevron) chevron.style.transform = minimized ? 'rotate(180deg)' : '';
+    }
+    if (subtitle && !subtitle.dataset.statusText) subtitle.textContent = minimized ? 'Click to open' : 'Open drawer';
+  }
+
+  function setActiveModeTab(panel, mode) {
+    panel.querySelectorAll('[data-mode-tab]').forEach(tab => {
+      tab.classList.toggle('active', tab.dataset.modeTab === mode);
+    });
+    const pill = panel.querySelector('#hiba-current-mode-pill');
+    if (pill) {
+      pill.textContent = mode === 'fliptracker' ? 'FlipTracker' : (mode === 'live' ? 'Live' : 'Catalog');
+    }
+  }
+
   function createPanel() {
     const old = document.getElementById(PANEL_ID);
     if (old) old.remove();
 
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
-    panel.style.cssText = [
-      'position:fixed',
-      'left:16px',
-      'bottom:16px',
-      'z-index:999999',
-      'width:520px',
-      'max-height:78vh',
-      'overflow:auto',
-      'background:#111',
-      'color:#fff',
-      'border:1px solid #ffffff33',
-      'border-radius:10px',
-      'box-shadow:0 12px 40px #0008',
-      'font:13px system-ui',
-      'padding:12px'
-    ].join(';');
-
-    panel.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
-        <strong>HiBid Safe Bid Assistant v${SCRIPT_VERSION}</strong>
-        <div style="display:flex;gap:6px;align-items:center">
-          <button id="hibid-bid-minimize" type="button" title="Minimize" style="background:#333;color:#fff;border:1px solid #fff3;border-radius:6px;padding:4px 8px;cursor:pointer">Min</button>
-          <button id="hibid-bid-close" type="button" style="background:#333;color:#fff;border:1px solid #fff3;border-radius:6px;padding:4px 8px;cursor:pointer">Close</button>
-        </div>
-      </div>
-      <div id="hibid-bid-body">
-        <div id="fliptracker-listing-export-mode" style="display:none;border-bottom:1px solid #fff2;margin-bottom:10px;padding-bottom:10px">
-          <strong>FlipTracker Active Listing Export</strong>
-          <div class="hiba-meta" style="margin-top:4px">Scrapes visible active eBay/Facebook listing cards and exports an HTML file for FlipTracker ImportInbox.</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-            <button id="fliptracker-listing-scan" type="button" class="hiba-btn">Scan Listings</button>
-            <button id="fliptracker-listing-copy" type="button" class="hiba-btn">Copy Export HTML</button>
-            <button id="fliptracker-listing-download" type="button" class="hiba-btn">Download Export HTML</button>
-          </div>
-          <div id="fliptracker-listing-status" class="hiba-meta" style="margin-top:8px">Waiting to scan.</div>
-          <div id="fliptracker-listing-results" style="margin-top:8px"></div>
-        </div>
-        <div id="hibid-bid-controls">
-        <textarea id="hibid-bid-plan-json" spellcheck="false" style="width:100%;height:132px;box-sizing:border-box;background:#050505;color:#fff;border:1px solid #fff3;border-radius:8px;padding:8px;font:12px ui-monospace,Consolas,monospace"></textarea>
-        <label style="display:flex;align-items:center;gap:6px;margin-top:8px;color:#ddd">
-          <input id="hibid-bid-outbid-only" type="checkbox">
-          Outbid only
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;margin-top:6px;color:#ddd">
-          <input id="hibid-bid-auto-refresh" type="checkbox">
-          Auto refresh/scan every 30s
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;margin-top:6px;color:#ddd">
-          <input id="hibid-bid-auto-confirm" type="checkbox">
-          Auto-confirm bid modals
-        </label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <button id="hibid-bid-load" type="button" class="hiba-btn">Load Lots</button>
-          <button id="hibid-bid-scan" type="button" class="hiba-btn">Scan</button>
-          <button id="hibid-bid-next" type="button" class="hiba-btn">Prepare Next Eligible</button>
-          <button id="hibid-bid-stop" type="button" class="hiba-btn danger">Stop</button>
-        </div>
-        </div>
-        <div id="hibid-live-mode" style="display:none;border-top:1px solid #fff2;margin-top:10px;padding-top:10px">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-            <strong>Live Mode</strong>
-            <div style="display:flex;gap:8px">
-              <button id="hibid-live-arm" type="button" class="hiba-btn">Arm</button>
-              <button id="hibid-live-snipe" type="button" class="hiba-btn" disabled>Snipe Now</button>
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-            <button id="hibid-live-copy-json" type="button" class="hiba-btn">Copy Visible Lots JSON</button>
-            <button id="hibid-live-copy-llm" type="button" class="hiba-btn">Copy LLM Auction Brief</button>
-          </div>
-          <div id="hibid-live-state" class="hiba-meta" style="margin-top:8px">Waiting for live lot...</div>
-        </div>
-        <div id="hibid-bid-status" style="margin:8px 0;color:#ddd">Paste max plan, then Scan.</div>
-        <div id="hibid-bid-detected" style="margin:8px 0;color:#9ca3af;font:12px ui-monospace,Consolas,monospace"></div>
-        <div id="hibid-bid-results"></div>
-      </div>
-      <style>
-        #${PANEL_ID} .hiba-btn { background:#2563eb;color:#fff;border:1px solid #fff3;border-radius:7px;padding:7px 10px;font-weight:700;cursor:pointer }
-        #${PANEL_ID} .hiba-btn.danger { background:#991b1b }
-        #${PANEL_ID} .hiba-row { border-top:1px solid #fff2;padding:8px 0;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center }
-        #${PANEL_ID} .hiba-meta { color:#bbb;font-size:12px;margin-top:3px }
-        #${PANEL_ID} .hiba-status { font-weight:700 }
-        #${PANEL_ID} .hiba-status.eligible { color:#86efac }
-        #${PANEL_ID} .hiba-status.skip { color:#fca5a5 }
-        #${PANEL_ID} .hiba-prepare { background:#16a34a;color:#fff;border:0;border-radius:7px;padding:7px 10px;font-weight:700;cursor:pointer }
-        #${PANEL_ID} .hiba-prepare[disabled] { background:#444;color:#999;cursor:not-allowed }
-      </style>
-    `;
+    panel.innerHTML = buildPanelHtml();
 
     document.body.appendChild(panel);
     document.getElementById('hibid-bid-plan-json').value = getStoredPlanText();
     document.getElementById('hibid-bid-outbid-only').checked = isWatchlistOutbidPage();
     document.getElementById('hibid-bid-auto-refresh').checked = getStoredAutoRefresh();
     document.getElementById('hibid-bid-auto-confirm').checked = getStoredAutoConfirm();
-    const minimized = getStoredMinimized();
-    if (minimized) {
-      document.getElementById('hibid-bid-body').style.display = 'none';
-      panel.style.width = '320px';
-      const minimizeButton = document.getElementById('hibid-bid-minimize');
-      minimizeButton.textContent = 'Show';
-      minimizeButton.setAttribute('title', 'Restore');
-    }
+    setPanelMinimized(panel, getStoredMinimized());
     return panel;
   }
 
@@ -1625,9 +1722,28 @@ ${cards}
     const liveCopyLlmButton = panel.querySelector('#hibid-live-copy-llm');
     const autoRefreshInput = panel.querySelector('#hibid-bid-auto-refresh');
     const state = { stop: false, rows: [], busy: false, refreshTimer: null, refreshSeconds: 30, lotCache: new Map(), planFocused: false, lastPlanInputAt: 0, liveArmed: false, liveRow: null, liveTimer: null, listingRows: [] };
+    const hibidHost = /hibid\.com$/i.test(location.hostname) || location.hostname === 'bid.ajwillnerauctions.com';
+    const flipTrackerOnlyMode = listingExportMode && !hibidHost;
+    const activeMode = liveMode ? 'live' : (flipTrackerOnlyMode ? 'fliptracker' : 'catalog');
+
+    setActiveModeTab(panel, activeMode);
 
     const status = (message) => {
       statusEl.textContent = message;
+      const chip = panel.querySelector('#hiba-session-chip');
+      const subtitle = panel.querySelector('.hiba-subtitle');
+      const lower = String(message || '').toLowerCase();
+      const tone = lower.includes('stop') || lower.includes('bad json') || lower.includes('failed') || lower.includes('not found')
+        ? 'danger'
+        : (lower.includes('eligible') || lower.includes('copied') || lower.includes('download') || lower.includes('finished') ? 'success' : 'neutral');
+      if (chip) {
+        chip.className = `hiba-chip ${tone}`;
+        chip.textContent = lower.includes('stop') ? 'paused' : (state.busy ? 'busy' : tone === 'success' ? 'ready' : 'idle');
+      }
+      if (subtitle) {
+        subtitle.dataset.statusText = 'true';
+        subtitle.textContent = String(message || 'Ready').replace(/\s+/g, ' ').slice(0, 42);
+      }
       debug('status', message);
     };
 
@@ -1721,7 +1837,8 @@ ${cards}
         <div>Current: ${escapeHtml(currentText)} | Ask: ${escapeHtml(askText)} | Max: $${row.max ?? '-'} | ${escapeHtml(row.bidCount || '')}</div>
         <div class="hiba-status ${row.eligible ? 'eligible' : 'skip'}">${escapeHtml(row.status)} (${armedText})</div>
       `;
-      liveArmButton.textContent = state.liveArmed ? 'Disarm' : 'Arm';
+      const liveArmLabel = liveArmButton.querySelector('span');
+      if (liveArmLabel) liveArmLabel.textContent = state.liveArmed ? 'Disarm' : 'Arm';
       liveSnipeButton.disabled = state.busy || !state.liveArmed || !row.eligible;
       debug('live render', {
         lot: row.lot,
@@ -1751,13 +1868,19 @@ ${cards}
       debug('plan editing input: saved plan text');
     });
 
-    panel.querySelector('#hibid-bid-minimize').addEventListener('click', (event) => {
+    panel.querySelectorAll('[data-mode-tab]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const mode = tab.dataset.modeTab;
+        const target = mode === 'live' ? liveModeEl : (mode === 'fliptracker' ? listingExportModeEl : bidControlsEl);
+        setActiveModeTab(panel, mode);
+        if (target && target.style.display !== 'none') target.scrollIntoView({ block: 'nearest' });
+      });
+    });
+
+    panel.querySelector('#hibid-bid-minimize').addEventListener('click', () => {
       const body = panel.querySelector('#hibid-bid-body');
       const minimized = body.style.display !== 'none';
-      body.style.display = minimized ? 'none' : '';
-      panel.style.width = minimized ? '320px' : '520px';
-      event.currentTarget.textContent = minimized ? 'Show' : 'Min';
-      event.currentTarget.setAttribute('title', minimized ? 'Restore' : 'Minimize');
+      setPanelMinimized(panel, minimized);
       saveMinimized(minimized);
       debug('panel minimize toggled', { minimized });
     });
@@ -1849,7 +1972,7 @@ ${cards}
 
     if (listingExportMode) {
       listingExportModeEl.style.display = '';
-      if (!/hibid\.com$/i.test(location.hostname) && location.hostname !== 'bid.ajwillnerauctions.com') {
+      if (flipTrackerOnlyMode) {
         bidControlsEl.style.display = 'none';
         liveModeEl.style.display = 'none';
         detectedEl.textContent = 'FlipTracker export mode. Scroll/load your active listings, then scan and download the export.';

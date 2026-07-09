@@ -66,6 +66,18 @@ test('assistant panel defaults to minimized before a stored preference exists', 
   assert.equal(core.getStoredMinimized(), true);
 });
 
+test('panel markup exposes modern drawer shell and stable controls', () => {
+  const core = loadCore();
+  const html = core.buildPanelHtml();
+
+  assert.match(html, /hiba-drawer/);
+  assert.match(html, /hiba-launcher/);
+  assert.match(html, /id="hibid-bid-load"/);
+  assert.match(html, /id="hibid-live-copy-llm"/);
+  assert.match(html, /id="fliptracker-listing-download"/);
+  assert.match(html, /data-mode-tab="live"/);
+});
+
 test('parses Facebook Marketplace manager listing cards for FlipTracker export', () => {
   const core = loadCore();
   const html = `
