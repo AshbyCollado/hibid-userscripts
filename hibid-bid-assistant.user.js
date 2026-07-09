@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.6.4
+// @version      0.6.5
 // @description  Modular resale helper for HiBid catalog/live scraping, LLM exports, safe bid prep, and FlipTracker marketplace exports.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -31,7 +31,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.6.4';
+  const SCRIPT_VERSION = '0.6.5';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -766,6 +766,29 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       .trim();
   }
 
+  function cleanEbaySellerHubTitle(value) {
+    let title = cleanListingTitle(value);
+    const prefixes = [
+      /^eBay\s*\|\s*/i,
+      /^(?:\d+\s+)?Link\.\s*/i,
+      /^Bids:\s*\d+\.\s*/i,
+      /^Show Bid History\.\s*/i,
+      /^Listing\.\s*/i,
+    ];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      prefixes.forEach(pattern => {
+        const next = title.replace(pattern, '').trim();
+        if (next !== title) {
+          title = next;
+          changed = true;
+        }
+      });
+    }
+    return title;
+  }
+
   function normalizeListingUrl(value) {
     const url = decodeHtml(value || '').trim();
     if (!url) return '';
@@ -1137,7 +1160,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       const titleAnchor = anchors
         .filter(anchor => anchor.text && !/^(edit|actions?|sell similar|sell it faster|promote|preview|view|download|upload)$/i.test(anchor.text))
         .sort((a, b) => b.text.length - a.text.length)[0];
-      const title = titleAnchor?.text || cleanListingTitle(stripHtml(firstMatch(chunk, [/aria-label="([^"]+)"/i])));
+      const title = cleanEbaySellerHubTitle(titleAnchor?.text || stripHtml(firstMatch(chunk, [/aria-label="([^"]+)"/i])));
       const url = normalizeListingUrl(itemHref || (itemId ? `/itm/${itemId}` : idHref));
       const price = parseDollarAmount(chunk);
       if (!title || !price) return;
