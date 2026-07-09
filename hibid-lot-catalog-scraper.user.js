@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HiBid Lot Catalog Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.3.2
+// @version      1.3.3
 // @description  Switches HiBid catalog pages to Single Page, expands live catalogs, scrolls lazy-loaded lots, and copies enriched lot/bid data to JSON.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-lot-catalog-scraper.user.js
@@ -453,6 +453,9 @@
   if (!shouldInitOnLocation()) return;
 
   async function copyData() {
+    const button = document.getElementById(BUTTON_ID);
+    if (!button) return;
+
     if (scrapeState.running) {
       scrapeState.stopRequested = true;
       button.textContent = 'Stopping...';
@@ -494,16 +497,22 @@
     }, 5000);
   }
 
-  const oldButton = document.getElementById(BUTTON_ID);
-  if (oldButton) oldButton.remove();
+  function ensureButton() {
+    if (!shouldInitOnLocation() || !document.body) return;
+    if (document.getElementById(BUTTON_ID)) return;
 
-  const button = document.createElement('button');
-  button.id = BUTTON_ID;
-  button.type = 'button';
-  button.textContent = 'Copy All HiBid Lots';
-  button.style.cssText =
-    'position:fixed;left:16px;bottom:16px;z-index:2147483647;padding:12px 16px;border-radius:999px;border:1px solid #fff3;background:#111;color:white;font:600 13px system-ui;box-shadow:0 8px 30px #0008;cursor:pointer;transition:background-color 0.3s;';
-  button.addEventListener('click', copyData);
+    const button = document.createElement('button');
+    button.id = BUTTON_ID;
+    button.type = 'button';
+    button.textContent = scrapeState.running ? 'Scraping...' : 'Copy All HiBid Lots';
+    button.style.cssText =
+      'position:fixed;left:16px;bottom:16px;z-index:2147483647;padding:12px 16px;border-radius:999px;border:1px solid #fff3;background:#111;color:white;font:600 13px system-ui;box-shadow:0 8px 30px #0008;cursor:pointer;transition:background-color 0.3s;';
+    button.addEventListener('click', copyData);
+    document.body.appendChild(button);
+  }
 
-  document.body.appendChild(button);
+  ensureButton();
+  setTimeout(ensureButton, 1000);
+  setTimeout(ensureButton, 3000);
+  setInterval(ensureButton, 5000);
 })();
