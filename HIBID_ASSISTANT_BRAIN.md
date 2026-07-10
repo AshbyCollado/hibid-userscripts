@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.6`.
+- Current version: `0.7.7`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -22,8 +22,10 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
   - Controls: Scan Listings, Copy HTML, Download, debug controls only when enabled.
 - `auctionninja`: AuctionNinja sale research and account export pages.
   - Sale catalog controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Auction search controls: Copy Auctions LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Followed-items controls: Copy Watchlist LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Items-won controls: Copy Won Items LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Bid-history controls: Copy Bid History LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Safety: research/export only; no bid clicks, no bid-field writes, no checkout/invoice/payment/account actions.
 - `unsupported`: do not mount.
 
@@ -47,8 +49,10 @@ Mount without waiting for lot tiles on:
 - `https://www.facebook.com/marketplace/you/*`
 - `https://www.facebook.com/marketplace/profile/*`
 - `https://www.auctionninja.com/auctions*`
+- `https://www.auctionninja.com/{state}/{city}/{zip}*`, including `/nj/carteret/07008?miles=50&an=`
 - `https://www.auctionninja.com/followed-items*`
 - `https://www.auctionninja.com/items-won*`
+- `https://www.auctionninja.com/bid-history*`
 - `https://www.auctionninja.com/*/sales/details/*.html*`
 - `https://www.auctionninja.com/*/product/*.html*`
 
@@ -75,8 +79,10 @@ Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/
 
 1. Page mode:
    - `/auctions` is auction-search triage.
+   - `/{state}/{city}/{zip}` is location/nearby auction-search triage.
    - `/followed-items` is account followed/watchlist opportunity review.
    - `/items-won` is account won-items organization.
+   - `/bid-history` is account bid-history review.
    - `/{seller}/sales/details/{sale}.html` is sale catalog research.
    - `/{seller}/product/{item}.html` is item detail research.
 2. Sale context:
@@ -94,9 +100,15 @@ Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/
 5. Account exports:
    - `/followed-items` reads visible dashboard item rows/cards and exports source, page kind, lot, title, item URL, image, sale title/URL, status, current price text/amount, bid count, time text, location, pickup/shipping hints, and raw text.
    - `/items-won` reads visible dashboard item rows/cards and exports the same shared fields, using won/price-realized text when present.
+   - `/bid-history` reads visible dashboard bid-history rows/cards and exports the same shared fields plus `yourBidText` / `yourBid` when visible.
    - Account exports are copy-only; they do not click dashboard controls or mutate watched/won items.
    - Followed LLM briefs focus on active opportunity review, current bid versus profit threshold, sold comps first, and logistics risk.
    - Won-items LLM briefs focus on post-win inventory, listing priority, expected resale, pickup/shipping logistics, profitability after buyer premium/tax, and reconciliation.
+   - Bid-history LLM briefs focus on missed opportunities, overbid risk, recurring seller/category signals, and whether past max bids matched sold comps and profit thresholds.
+6. Auction search exports:
+   - Nearby/search pages read whole sale rows, not lots: sale title/URL, seller/URL, image, location, pickup/shipping, closing time, item count, and raw text.
+   - Prefer background fetches from discovered `marketplace_ajax.php?Page=...` pagination controls; merge sale rows by URL/title and avoid visible-tab clicks unless future guarded fallback is added.
+   - Auction-search LLM briefs rank whole sales for resale potential before drilling into lot catalogs.
 
 ## Legacy Max Plan State
 
@@ -144,7 +156,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.4` adds AuctionNinja `/followed-items` and `/items-won` account export modules with JSON and LLM briefs.
 - Done: `v0.7.5` tightens AuctionNinja account card detection after Waterfox showed dashboard tabs being copied as items.
 - Done: `v0.7.6` infers AuctionNinja account titles when product anchors are image-only/empty and avoids treating model years like `1950s` as countdown text.
-- Pending future: AuctionNinja auction-search triage module.
+- Done: `v0.7.7` adds AuctionNinja `/bid-history` account export and auction-search/nearby-sales export for whole-auction triage.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 
 ## Verification Checklist
@@ -160,6 +172,8 @@ Debug UI and console/log capture are off unless debug mode is enabled.
   - Open `https://www.auctionninja.com/clearinghouseestatesales/sales/details/a-glamorous-upper-west-side-brownstone-with-interiors-by-jonathan-adler-holly-hunt-lorin-marsh-restoration-hardware-arteriors-lighting-and-so-much-more-new-york-ny-referred-shipping-and-delivery-available--17395.html?an=20260709202533`.
   - Open `https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo`.
   - Open `https://www.auctionninja.com/items-won?an=hwfmhr2h2qi`.
+  - Open `https://www.auctionninja.com/bid-history?an=sp2i8ac5q0n`.
+  - Open `https://www.auctionninja.com/nj/carteret/07008?miles=50&an=`.
   - Capture full-window screenshots showing the page and bottom-right launcher/drawer.
   - Confirm each page exposes only its active module.
   - Confirm scrolling, filters, lot links, watch buttons, and bid buttons still work when not actively scraping.

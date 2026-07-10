@@ -454,8 +454,10 @@ test('assistant resolves supported and blocked AuctionNinja route families', () 
   const core = loadCore();
   const cases = [
     ['https://www.auctionninja.com/auctions?an=6av06rjyogk', 'auction-search'],
+    ['https://www.auctionninja.com/nj/carteret/07008?miles=50&an=', 'auction-search'],
     ['https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo', 'followed-items'],
     ['https://www.auctionninja.com/items-won?an=hwfmhr2h2qi', 'items-won'],
+    ['https://www.auctionninja.com/bid-history?an=sp2i8ac5q0n', 'bid-history'],
     ['https://www.auctionninja.com/clearinghouseestatesales/sales/details/example-sale--17395.html?an=20260709202533', 'sale-catalog'],
     ['https://www.auctionninja.com/clearinghouseestatesales/product/example-lot--123456.html', 'item-detail'],
   ];
@@ -880,6 +882,106 @@ Pickup: Saturday 10 AM`,
   assert.equal(items[0].saleTitle, 'Warehouse Finds');
 });
 
+test('assistant extracts AuctionNinja bid history rows for decision review', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    text: 'Antique Brass Floor Lamp',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/product/antique-brass-floor-lamp--777.html' },
+  });
+  const saleLink = makeFakeNode({
+    text: 'Brownstone Downsizing',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/brownstone-downsizing--18077.html' },
+  });
+  const row = makeFakeNode({
+    text: `Brownstone Downsizing
+Antique Brass Floor Lamp
+Lot #: 44
+Your Max Bid: $70.00
+Current Bid
+$52.00
+Outbid
+7 Bids
+Bidding Closed
+New York, NY
+Clearing House Estate Sales`,
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'a[href*="/sales/details/"]': saleLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Bid History (Total: 1)',
+    selectors: {
+      '.account-item-card': [row],
+    },
+  });
+
+  const items = core.extractAuctionNinjaBidHistoryItems(root, new URL('https://www.auctionninja.com/bid-history?an=sp2i8ac5q0n'));
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].pageKind, 'bid-history');
+  assert.equal(items[0].title, 'Antique Brass Floor Lamp');
+  assert.equal(items[0].priceText, 'Current Bid: $52.00');
+  assert.equal(items[0].yourBidText, 'Your Max Bid: $70.00');
+  assert.equal(items[0].yourBid, 70);
+  assert.equal(items[0].status, 'Outbid');
+  assert.equal(items[0].bidCount, 7);
+  assert.equal(items[0].timeText, 'Bidding Closed');
+});
+
+test('assistant extracts AuctionNinja nearby auction search sales', () => {
+  const core = loadCore();
+  const saleLink = makeFakeNode({
+    text: 'Dumont New Jersey Estate Sale',
+    attrs: { href: 'https://www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html' },
+  });
+  const sellerLink = makeFakeNode({
+    text: 'Pink Lady Liquidation',
+    attrs: { href: 'https://www.auctionninja.com/pinkladyliquidation/' },
+  });
+  const image = makeFakeNode({ attrs: { src: 'https://images.example.test/dumont.jpg' } });
+  const row = makeFakeNode({
+    text: `Dumont New Jersey Estate Sale
+Dumont, NJ Local Pickup Only
+Begins to close
+Thu, Jul 16 2026 @ 8:00 PM EDT
+Pink Lady Liquidation
+(561)`,
+    selectors: {
+      'a[href*="/sales/details/"]': saleLink,
+      'a[href]:not([href*="/sales/details/"])': sellerLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: '108 auctions near Carteret, NJ 1 2 3 Next',
+    selectors: {
+      'a[href*="/sales/details/"]': saleLink,
+      '.auction-item': [row],
+    },
+  });
+
+  const sales = core.extractAuctionNinjaAuctionSearchSales(root, new URL('https://www.auctionninja.com/nj/carteret/07008?miles=50&an='));
+
+  assert.deepEqual(plain(sales), [
+    {
+      source: 'AuctionNinja',
+      pageKind: 'auction-search',
+      id: '21001',
+      title: 'Dumont New Jersey Estate Sale',
+      url: 'https://www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html',
+      image: 'https://images.example.test/dumont.jpg',
+      seller: 'Pink Lady Liquidation',
+      sellerUrl: 'https://www.auctionninja.com/pinkladyliquidation/',
+      location: 'Dumont, NJ',
+      shippingText: 'Local Pickup Only',
+      closingText: 'Thu, Jul 16 2026 @ 8:00 PM EDT',
+      itemCount: 561,
+      rawText: 'Dumont New Jersey Estate Sale Dumont, NJ Local Pickup Only Begins to close Thu, Jul 16 2026 @ 8:00 PM EDT Pink Lady Liquidation (561)',
+    },
+  ]);
+});
+
 test('assistant renders AuctionNinja account-page copy controls only', () => {
   const core = loadCore();
   const followed = core.buildPanelHtml({
@@ -892,6 +994,16 @@ test('assistant renders AuctionNinja account-page copy controls only', () => {
     debugEnabled: false,
     route: { kind: 'items-won' },
   });
+  const bidHistory = core.buildPanelHtml({
+    mode: 'auctionninja',
+    debugEnabled: false,
+    route: { kind: 'bid-history' },
+  });
+  const auctionSearch = core.buildPanelHtml({
+    mode: 'auctionninja',
+    debugEnabled: false,
+    route: { kind: 'auction-search' },
+  });
 
   assert.match(followed, /Copy Watchlist LLM/);
   assert.match(followed, /id="auctionninja-account-copy-json"/);
@@ -900,6 +1012,14 @@ test('assistant renders AuctionNinja account-page copy controls only', () => {
   assert.match(won, /Copy Won Items LLM/);
   assert.match(won, /id="auctionninja-account-copy-json"/);
   assert.doesNotMatch(won, /Copy LLM Brief|Sale Catalog Research|Max plan|Prepare Bid|Snipe Now|checkout|invoice|payment/i);
+
+  assert.match(bidHistory, /Copy Bid History LLM/);
+  assert.match(bidHistory, /id="auctionninja-account-copy-json"/);
+  assert.doesNotMatch(bidHistory, /Copy LLM Brief|Sale Catalog Research|Copy Won Items LLM|Max plan|Prepare Bid|Snipe Now|checkout|invoice|payment/i);
+
+  assert.match(auctionSearch, /Copy Auctions LLM/);
+  assert.match(auctionSearch, /id="auctionninja-auctions-copy-json"/);
+  assert.doesNotMatch(auctionSearch, /Copy Watchlist LLM|Copy Won Items LLM|Sale Catalog Research|Max plan|Prepare Bid|Snipe Now|checkout|invoice|payment/i);
 });
 
 test('assistant builds AuctionNinja account briefs and empty account exports', () => {
@@ -939,4 +1059,48 @@ test('assistant builds AuctionNinja account briefs and empty account exports', (
   assert.match(wonBrief, /listing priority/i);
   assert.match(wonBrief, /reconciliation/i);
   assert.match(wonBrief, /"pageKind": "items-won"/);
+
+  const bidBrief = core.buildAuctionNinjaBidHistoryLlmBrief([
+    {
+      source: 'AuctionNinja',
+      pageKind: 'bid-history',
+      lot: '44',
+      title: 'Antique Brass Floor Lamp',
+      priceText: 'Current Bid: $52.00',
+      yourBidText: 'Your Max Bid: $70.00',
+      status: 'Outbid',
+    },
+  ], { source: 'AuctionNinja', pageKind: 'bid-history', title: 'Bid History' });
+
+  assert.match(bidBrief, /bid history review/i);
+  assert.match(bidBrief, /missed opportunities/i);
+  assert.match(bidBrief, /Do not bid from this brief/i);
+  assert.match(bidBrief, /"pageKind": "bid-history"/);
+});
+
+test('assistant builds AuctionNinja auction-search brief for whole-sale triage', () => {
+  const core = loadCore();
+  const brief = core.buildAuctionNinjaAuctionSearchLlmBrief([
+    {
+      source: 'AuctionNinja',
+      pageKind: 'auction-search',
+      title: 'Dumont New Jersey Estate Sale',
+      location: 'Dumont, NJ',
+      shippingText: 'Local Pickup Only',
+      closingText: 'Thu, Jul 16 2026 @ 8:00 PM EDT',
+      itemCount: 561,
+    },
+  ], {
+    source: 'AuctionNinja',
+    pageKind: 'auction-search',
+    title: 'Auction search near Carteret, NJ',
+    url: 'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=',
+    searchLocation: 'Carteret, NJ 07008',
+    miles: '50',
+  });
+
+  assert.match(brief, /whole-auction triage/i);
+  assert.match(brief, /rank sales/i);
+  assert.match(brief, /sold\/completed comps first/i);
+  assert.match(brief, /"pageKind": "auction-search"/);
 });

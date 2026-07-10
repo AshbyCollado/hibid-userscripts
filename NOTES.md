@@ -14,7 +14,7 @@ This repo is the standalone home for FlipperAddon by ALOS, separate from `Deadlo
 
 - Catalog mode: HiBid catalog/category/lot/OUTBID watchlist pages. Owns scraper-first JSON copy and LLM brief export.
 - Live mode: HiBid `livecatalog` pages. Owns live lot expansion plus JSON copy and LLM brief export.
-- AuctionNinja mode: sale catalog pages plus followed-items/items-won account pages. Owns sale terms, account item JSON copy, watchlist LLM brief export, and won-items inventory LLM brief export.
+- AuctionNinja mode: sale catalog pages, auction-search/nearby-sales pages, and followed-items/items-won/bid-history account pages. Owns sale terms, whole-auction search JSON/LLM export, account item JSON copy, watchlist LLM brief export, won-items inventory LLM brief export, and bid-history review export.
 - FlipTracker mode: eBay/Facebook active selling pages. Owns scan/copy/download active-listing export.
 
 Only the active page module should expose controls. Do not bring back the old all-controls-visible drawer.
