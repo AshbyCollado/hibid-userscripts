@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.20
+// @version      0.7.21
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -41,7 +41,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.20';
+  const SCRIPT_VERSION = '0.7.21';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -985,13 +985,139 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     }).filter(Boolean);
   }
 
+  function urlFromLocationLike(loc = (typeof location !== 'undefined' ? location : null)) {
+    try {
+      if (loc instanceof URL) return loc;
+      const href = loc?.href || String(loc || '');
+      return new URL(href || 'https://hibid.com/');
+    } catch {
+      return new URL('https://hibid.com/');
+    }
+  }
+
+  function extractHibidUrlFilters(loc = (typeof location !== 'undefined' ? location : null)) {
+    const url = urlFromLocationLike(loc);
+    const filters = {};
+    ['g', 'q', 'category', 'subCategory', 'apage'].forEach(key => {
+      const value = url.searchParams.get(key);
+      if (value !== null && value !== '') filters[key] = value;
+    });
+
+    const activeFilterKeys = Object.entries(filters).filter(([key, value]) => {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (!normalized) return false;
+      if (key === 'apage') return false;
+      if (key === 'g') return normalized !== '-1';
+      if (key === 'category') return normalized !== 'all';
+      if (key === 'subCategory') return normalized !== 'active';
+      return true;
+    }).map(([key]) => key);
+
+    return {
+      sourceUrl: url.href,
+      filters,
+      activeFilterKeys,
+      hasActiveFilters: activeFilterKeys.length > 0
+    };
+  }
+
+  function extractHibidVisiblePageState(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const filterState = extractHibidUrlFilters(loc);
+    const text = getRootText(root);
+    const noMatches = /\bNo matches found\b/i.test(text) || /\bTry adjusting your filters\b/i.test(text);
+    const expectedTotal = noMatches ? 0 : getExpectedLotTotal(root);
+    let visibleLotCount = null;
+    try {
+      const visibleTiles = root.querySelectorAll?.('app-lot-card, lot-card, .lot-card, [class*="lot-card"], [class*="lotTile"], [class*="lot-tile"]');
+      if (visibleTiles && typeof visibleTiles.length === 'number') visibleLotCount = visibleTiles.length;
+    } catch {
+      visibleLotCount = null;
+    }
+
+    return {
+      ...filterState,
+      noMatches,
+      expectedTotal,
+      visibleLotCount: noMatches ? 0 : visibleLotCount
+    };
+  }
+
+  function normalizedFilterText(value) {
+    return decodeURIComponent(String(value || ''))
+      .replace(/\+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function apolloKeyMatchesActiveFilters(key, visibleState) {
+    if (!visibleState?.hasActiveFilters) return true;
+    const normalizedKey = normalizedFilterText(key);
+    return visibleState.activeFilterKeys.every(filterKey => {
+      const value = normalizedFilterText(visibleState.filters?.[filterKey]);
+      if (!value) return true;
+      return normalizedKey.includes(value);
+    });
+  }
+
+  function shouldGuardApolloForVisibleState(visibleState) {
+    return Boolean(visibleState?.noMatches || visibleState?.hasActiveFilters);
+  }
+
+  function apolloConnectionMatchesVisibleState(connection, options = {}) {
+    const visibleState = options.visibleState;
+    if (!visibleState) return { ok: true };
+    if (visibleState.noMatches) return { ok: false, reason: 'visible-no-matches' };
+    if (!visibleState.hasActiveFilters) return { ok: true };
+
+    const hasExpectedTotal = options.expectedTotal !== null
+      && options.expectedTotal !== undefined
+      && Number.isFinite(Number(options.expectedTotal));
+    const expectedTotal = Number(options.expectedTotal);
+    const hasVisibleExpected = visibleState.expectedTotal !== null
+      && visibleState.expectedTotal !== undefined
+      && Number.isFinite(Number(visibleState.expectedTotal));
+    if (hasExpectedTotal && connection.totalCount === expectedTotal) return { ok: true };
+    if (hasVisibleExpected && connection.totalCount === Number(visibleState.expectedTotal)) {
+      return { ok: true };
+    }
+    if (apolloKeyMatchesActiveFilters(connection.key, visibleState)) return { ok: true };
+    return { ok: false, reason: 'active-filter-mismatch' };
+  }
+
   function chooseApolloLotConnection(state, options = {}) {
     const connections = apolloLotConnections(state);
     if (!connections.length) return null;
+    const hasExpectedTotal = options.expectedTotal !== null
+      && options.expectedTotal !== undefined
+      && Number.isFinite(Number(options.expectedTotal));
     const expectedTotal = Number(options.expectedTotal);
-    const scored = connections.map(connection => {
+    const rejected = [];
+    const allowed = connections.filter(connection => {
+      const match = apolloConnectionMatchesVisibleState(connection, options);
+      if (!match.ok) {
+        rejected.push({
+          key: connection.key,
+          refs: connection.refs.length,
+          totalCount: connection.totalCount,
+          reason: match.reason
+        });
+        return false;
+      }
+      return true;
+    });
+    if (!allowed.length) {
+      debug('apollo lot connections rejected for visible filters', {
+        filters: options.visibleState?.filters || {},
+        noMatches: Boolean(options.visibleState?.noMatches),
+        rejected: rejected.slice(0, 10)
+      });
+      return null;
+    }
+    const scored = allowed.map(connection => {
       let score = 0;
-      if (Number.isFinite(expectedTotal) && connection.totalCount === expectedTotal) score += 1000;
+      if (hasExpectedTotal && connection.totalCount === expectedTotal) score += 1000;
+      if (apolloKeyMatchesActiveFilters(connection.key, options.visibleState)) score += 750;
       if (/lotSearch/i.test(connection.key)) score += 250;
       if (!/featured|hot|recommend|similar|related/i.test(connection.key)) score += 100;
       if (Number.isFinite(connection.totalCount)) score += Math.min(connection.totalCount, 500) / 10;
@@ -1006,12 +1132,14 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       pageNumber: item.connection.pageNumber,
       score: item.score
     })).slice(0, 10));
+    if (rejected.length) debug('apollo lot connections skipped', rejected.slice(0, 10));
     return scored[0].connection;
   }
 
   function collectLotRefsFromApolloState(state, options = {}) {
     const chosen = chooseApolloLotConnection(state, options);
     if (chosen) return chosen.refs;
+    if (shouldGuardApolloForVisibleState(options.visibleState)) return [];
 
     const refs = [];
     const seen = new Set();
@@ -1032,11 +1160,14 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function expectedTotalFromApolloState(state, options = {}) {
     const chosen = chooseApolloLotConnection(state, options);
+    if (!chosen && options.visibleState?.noMatches) return 0;
+    if (!chosen && shouldGuardApolloForVisibleState(options.visibleState)) return null;
     return Number.isFinite(chosen?.totalCount) ? chosen.totalCount : null;
   }
 
   function pageLengthFromApolloState(state, options = {}) {
     const chosen = chooseApolloLotConnection(state, options);
+    if (!chosen && shouldGuardApolloForVisibleState(options.visibleState)) return null;
     return Number.isFinite(chosen?.pageLength) ? chosen.pageLength : null;
   }
 
@@ -1097,18 +1228,26 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function extractHibidApolloLots(apolloState, context = {}) {
     const state = apolloState?.['apollo.state'] || apolloState?.apollo?.state || apolloState || {};
-    const refs = collectLotRefsFromApolloState(state, { expectedTotal: context.expectedTotal });
+    const selectionOptions = { expectedTotal: context.expectedTotal, visibleState: context.visibleState };
+    const refs = collectLotRefsFromApolloState(state, selectionOptions);
     const unique = new Map();
     refs.forEach(ref => {
       const lot = normalizeApolloLot(state, ref, context);
       const key = lot?.id || lot?.lot || lot?.url;
       if (key && lot?.title) unique.set(String(key), lot);
     });
+    const rejectedSource = !refs.length && shouldGuardApolloForVisibleState(context.visibleState) ? 'filter-mismatch' : '';
+    const hasExpectedFromContext = context.expectedTotal !== null
+      && context.expectedTotal !== undefined
+      && Number.isFinite(Number(context.expectedTotal));
+    const expectedFromContext = Number(context.expectedTotal);
     return {
       source: 'hibid-state',
       items: Array.from(unique.values()),
-      expectedTotal: Number.isFinite(Number(context.expectedTotal)) ? Number(context.expectedTotal) : expectedTotalFromApolloState(state, { expectedTotal: context.expectedTotal }),
-      pageLength: pageLengthFromApolloState(state, { expectedTotal: context.expectedTotal })
+      expectedTotal: hasExpectedFromContext ? expectedFromContext : expectedTotalFromApolloState(state, selectionOptions),
+      pageLength: pageLengthFromApolloState(state, selectionOptions),
+      rejectedSource,
+      stopReason: rejectedSource ? (context.visibleState?.noMatches ? 'visible-no-matches' : 'filter-mismatch') : ''
     };
   }
 
@@ -1162,6 +1301,25 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   async function scrapeHibidStatePages(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const visibleState = extractHibidVisiblePageState(root, typeof location !== 'undefined' ? location : null);
+    debug('hibid visible page state', visibleState);
+    if (visibleState.noMatches) {
+      return {
+        source: 'visible-page-state',
+        items: [],
+        lots: [],
+        expectedTotal: 0,
+        stopped: false,
+        incomplete: false,
+        pageLength: 0,
+        pagesAttempted: 0,
+        pagesRead: 0,
+        failedPage: null,
+        stopReason: 'visible-no-matches',
+        visibleState
+      };
+    }
+
     const firstState = extractHibidStateFromDocument(root);
     if (!firstState) {
       debug('hibid-state unavailable on current document');
@@ -1169,8 +1327,16 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     }
 
     const lotsByKey = new Map();
-    const visibleTotal = getExpectedLotTotal(root);
-    const first = extractHibidApolloLots(firstState, { url: location.href, expectedTotal: visibleTotal });
+    const visibleTotal = visibleState.expectedTotal;
+    const first = extractHibidApolloLots(firstState, { url: location.href, expectedTotal: visibleTotal, visibleState });
+    if (first.rejectedSource && visibleState.hasActiveFilters) {
+      debug('hibid-state first page rejected for active filters', {
+        rejectedSource: first.rejectedSource,
+        stopReason: first.stopReason,
+        visibleState
+      });
+      return null;
+    }
     mergeCatalogLots(lotsByKey, first.items);
     const expectedTotal = first.expectedTotal || visibleTotal || first.items.length;
     const pageLength = first.pageLength || first.items.length || 100;
@@ -1201,7 +1367,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         stopReason = 'missing-page-state';
         break;
       }
-      const pageLots = extractHibidApolloLots(state, { url: catalogPageUrl(page), expectedTotal });
+      const pageLots = extractHibidApolloLots(state, { url: catalogPageUrl(page), expectedTotal, visibleState });
       if (!pageLots.items.length) {
         failedPage = page;
         stopReason = 'empty-page-state';
@@ -1235,7 +1401,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       pagesAttempted: totalPages,
       pagesRead,
       failedPage,
-      stopReason: stopReason || (incomplete ? 'below-expected-total' : 'complete')
+      stopReason: stopReason || (incomplete ? 'below-expected-total' : 'complete'),
+      visibleState
     };
   }
 
@@ -1245,6 +1412,30 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (result.incomplete) return false;
     if (!Number.isFinite(result.expectedTotal) || result.expectedTotal <= 0) return true;
     return result.items.length >= result.expectedTotal;
+  }
+
+  function validateCatalogExportAgainstVisibleState(result, visibleState) {
+    const items = result?.items || result?.lots || [];
+    if (!visibleState) return { ok: true };
+    if (visibleState.noMatches && items.length) {
+      return { ok: false, reason: 'visible-no-matches-with-exported-lots' };
+    }
+    const hasVisibleExpected = visibleState.expectedTotal !== null
+      && visibleState.expectedTotal !== undefined
+      && Number.isFinite(Number(visibleState.expectedTotal));
+    const hasResultExpected = result?.expectedTotal !== null
+      && result?.expectedTotal !== undefined
+      && Number.isFinite(Number(result?.expectedTotal));
+    const visibleExpected = Number(visibleState.expectedTotal);
+    const resultExpected = Number(result?.expectedTotal);
+    if (visibleState.hasActiveFilters && hasVisibleExpected && hasResultExpected
+      && visibleExpected !== resultExpected && String(result?.source || '').includes('hibid')) {
+      return { ok: false, reason: 'filtered-count-mismatch' };
+    }
+    if (visibleState.hasActiveFilters && result?.rejectedSource === 'filter-mismatch') {
+      return { ok: false, reason: 'filtered-source-mismatch' };
+    }
+    return { ok: true };
   }
 
   function parseEbaySellerHubTableListingsHtml(html) {
@@ -1517,8 +1708,10 @@ ${cards}
     saveAarResearchSettings,
     getSiteShortcuts,
     findAuctionNinjaNextPageControl,
+    extractHibidVisiblePageState,
     extractHibidApolloLots,
     extractHibidStateFromDocument,
+    validateCatalogExportAgainstVisibleState,
     isCatalogScrapeComplete,
     scrapeCatalogLots,
     findDialog,
@@ -1838,10 +2031,26 @@ ${cards}
       return scrapeAjWillnerListings(status, shouldStop);
     }
 
+    const visibleState = extractHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null);
+    if (visibleState.noMatches) {
+      debug('catalog scrape stopped at visible no-match state', visibleState);
+      return {
+        source: 'visible-page-state',
+        items: [],
+        lots: [],
+        expectedTotal: 0,
+        stopped: false,
+        incomplete: false,
+        stopReason: 'visible-no-matches',
+        visibleState
+      };
+    }
+
     const stateResult = await scrapeHibidStatePages(status, shouldStop).catch(err => {
       debug('catalog hibid-state scrape failed', { error: err.message });
       return null;
     });
+    if (stateResult?.stopReason === 'visible-no-matches') return stateResult;
     if (stateResult?.items?.length) {
       debug('catalog scrape finished from hibid-state', {
         count: stateResult.items.length,
@@ -1873,7 +2082,7 @@ ${cards}
     await loadLots(status, shouldStop, collect);
     collect();
     const items = Array.from(itemsMap.values());
-    const expectedTotal = getExpectedLotTotal();
+    const expectedTotal = visibleState.expectedTotal ?? getExpectedLotTotal();
     debug('catalog scrape finished from dom fallback', {
       count: items.length,
       expectedTotal,
@@ -1884,7 +2093,8 @@ ${cards}
       items,
       lots: items,
       expectedTotal,
-      stopped: !!shouldStop()
+      stopped: !!shouldStop(),
+      visibleState
     };
   }
 
@@ -6387,8 +6597,43 @@ ${cards}
       try {
         status(mode === 'llm' ? 'Scraping catalog for LLM brief...' : 'Scraping catalog for JSON...');
         const result = await scrapeCatalogLots(status, () => state.stop);
+        if (!result) {
+          status('No catalog lots found. Copy debug log and check route/data source.');
+          return;
+        }
         const lots = result.items || result.lots || [];
+        const visibleState = result.visibleState || extractHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null);
+        const validation = validateCatalogExportAgainstVisibleState(result, visibleState);
+        if (!validation.ok) {
+          debug('catalog export blocked by visible-state guard', {
+            reason: validation.reason,
+            source: result.source || 'unknown',
+            count: lots.length,
+            expectedTotal: result.expectedTotal,
+            visibleState
+          });
+          status('Blocked stale HiBid export; current filters do not match copied lots.');
+          return;
+        }
         if (!lots.length) {
+          if (visibleState?.noMatches) {
+            if (mode === 'json') {
+              const copiedEmpty = await writeClipboard('[]').catch(() => false);
+              debug('catalog empty filtered JSON copied', {
+                copied: copiedEmpty,
+                source: result.source || 'visible-page-state',
+                visibleState
+              });
+              status(copiedEmpty ? 'Copied JSON for 0 lot(s). Current filters have no matches.' : 'No lots match current filters, and clipboard failed.');
+              return;
+            }
+            debug('catalog empty filtered LLM copy skipped', {
+              source: result.source || 'visible-page-state',
+              visibleState
+            });
+            status('No lots match current filters.');
+            return;
+          }
           status('No catalog lots found. Copy debug log and check route/data source.');
           return;
         }

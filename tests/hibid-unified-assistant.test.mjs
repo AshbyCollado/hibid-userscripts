@@ -331,6 +331,167 @@ test('assistant ignores stray Apollo lot connections when visible total identifi
   assert.deepEqual(plain(result.items.map(lot => lot.id)), ['main']);
 });
 
+test('assistant fails closed when filtered HiBid page has no matches but Apollo has broad catalog data', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');
+  const root = {
+    body: { textContent: 'Quick Search No matches found. Try adjusting your filters or Browse All Lots' },
+    documentElement: { textContent: 'Quick Search No matches found. Try adjusting your filters or Browse All Lots' },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const visibleState = core.extractHibidVisiblePageState(root, loc);
+  const apolloState = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 455,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:card' }, { __ref: 'Lot:jewelry' }],
+        },
+      },
+    },
+    'Lot:card': {
+      id: 'card',
+      lotNumber: '236',
+      lead: '2004 Topps Chrome #55 Rose/Lebron /500 PSA 8!',
+      lotState: { highBid: 175, minBid: 180, bidCount: 12, status: 'OPEN' },
+    },
+    'Lot:jewelry': {
+      id: 'jewelry',
+      lotNumber: '27003',
+      lead: 'Curb Link Bracelet in 14k Yellow Gold',
+      lotState: { highBid: 1975, minBid: 2000, bidCount: 33, status: 'OPEN' },
+    },
+  };
+
+  assert.equal(visibleState.noMatches, true);
+  assert.equal(visibleState.hasActiveFilters, true);
+  assert.deepEqual(plain(visibleState.filters), { g: '-1', q: 'lebron' });
+
+  const result = core.extractHibidApolloLots(apolloState, {
+    url: loc.href,
+    visibleState,
+  });
+
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(result.expectedTotal, 0);
+  assert.equal(result.rejectedSource, 'filter-mismatch');
+});
+
+test('assistant uses filtered HiBid Apollo connection when it matches active search text', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');
+  const root = {
+    body: { textContent: 'Quick Search lebron' },
+    documentElement: { textContent: 'Quick Search lebron' },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const visibleState = core.extractHibidVisiblePageState(root, loc);
+  const apolloState = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 455,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:jewelry' }],
+        },
+      },
+      'lotSearch({"q":"lebron","g":"-1","apage":1})': {
+        pagedResults: {
+          totalCount: 1,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:lebron' }],
+        },
+      },
+    },
+    'Lot:jewelry': {
+      id: 'jewelry',
+      lotNumber: '27003',
+      lead: 'Curb Link Bracelet in 14k Yellow Gold',
+      lotState: { highBid: 1975, minBid: 2000, bidCount: 33, status: 'OPEN' },
+    },
+    'Lot:lebron': {
+      id: 'lebron',
+      lotNumber: '236',
+      lead: '2004 Topps Chrome #55 Rose/Lebron /500 PSA 8!',
+      lotState: { highBid: 175, minBid: 180, bidCount: 12, status: 'OPEN' },
+    },
+  };
+
+  const result = core.extractHibidApolloLots(apolloState, {
+    url: loc.href,
+    visibleState,
+  });
+
+  assert.equal(result.expectedTotal, 1);
+  assert.deepEqual(plain(result.items.map(lot => lot.id)), ['lebron']);
+});
+
+test('assistant rejects ambiguous HiBid Apollo data on active filtered pages', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Quick Search lebron' },
+    documentElement: { textContent: 'Quick Search lebron' },
+    querySelectorAll() {
+      return [];
+    },
+  }, loc);
+  const apolloState = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 455,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:jewelry' }],
+        },
+      },
+    },
+    'Lot:jewelry': {
+      id: 'jewelry',
+      lotNumber: '27003',
+      lead: 'Curb Link Bracelet in 14k Yellow Gold',
+      lotState: { highBid: 1975, minBid: 2000, bidCount: 33, status: 'OPEN' },
+    },
+  };
+
+  const result = core.extractHibidApolloLots(apolloState, {
+    url: loc.href,
+    visibleState,
+  });
+
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(result.rejectedSource, 'filter-mismatch');
+});
+
+test('assistant rejects contradictory HiBid exports against visible no-match state', () => {
+  const core = loadCore();
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'No matches found. Try adjusting your filters.' },
+    documentElement: { textContent: 'No matches found. Try adjusting your filters.' },
+    querySelectorAll() {
+      return [];
+    },
+  }, new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron'));
+
+  assert.deepEqual(plain(core.validateCatalogExportAgainstVisibleState({
+    source: 'hibid-state',
+    items: [{ id: 'broad', title: 'Broad stale lot' }],
+    expectedTotal: 455,
+  }, visibleState)), {
+    ok: false,
+    reason: 'visible-no-matches-with-exported-lots',
+  });
+});
+
 test('assistant marks partial data-first catalog scrapes incomplete', () => {
   const core = loadCore();
   const complete = {
