@@ -472,6 +472,45 @@ test('assistant rejects ambiguous HiBid Apollo data on active filtered pages', (
   assert.equal(result.rejectedSource, 'filter-mismatch');
 });
 
+test('assistant does not accept broad Apollo totals as proof of search-filter matches', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 to 100 of 138 lots Lot 1 Kids Toy Lot 2 Generic Watch' },
+    documentElement: { textContent: 'Showing 1 to 100 of 138 lots Lot 1 Kids Toy Lot 2 Generic Watch' },
+    querySelectorAll() {
+      return [];
+    },
+  }, loc);
+  const apolloState = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 138,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:toy' }],
+        },
+      },
+    },
+    'Lot:toy': {
+      id: 'toy',
+      lotNumber: '1',
+      lead: 'Kids Toy',
+      lotState: { highBid: 6, minBid: 8, bidCount: 1, status: 'OPEN' },
+    },
+  };
+
+  const result = core.extractHibidApolloLots(apolloState, {
+    url: loc.href,
+    expectedTotal: 138,
+    visibleState,
+  });
+
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(result.rejectedSource, 'filter-mismatch');
+});
+
 test('assistant rejects contradictory HiBid exports against visible no-match state', () => {
   const core = loadCore();
   const visibleState = core.extractHibidVisiblePageState({
@@ -489,6 +528,26 @@ test('assistant rejects contradictory HiBid exports against visible no-match sta
   }, visibleState)), {
     ok: false,
     reason: 'visible-no-matches-with-exported-lots',
+  });
+});
+
+test('assistant blocks DOM fallback exports when search-filtered lots do not match the query', () => {
+  const core = loadCore();
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 to 100 of 138 lots Lot 1 Kids Toy Lot 2 Generic Watch' },
+    documentElement: { textContent: 'Showing 1 to 100 of 138 lots Lot 1 Kids Toy Lot 2 Generic Watch' },
+    querySelectorAll() {
+      return [];
+    },
+  }, new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron'));
+
+  assert.deepEqual(plain(core.validateCatalogExportAgainstVisibleState({
+    source: 'dom-fallback',
+    items: [{ id: 'toy', title: 'Kids Toy' }],
+    expectedTotal: 138,
+  }, visibleState)), {
+    ok: false,
+    reason: 'filtered-search-results-do-not-match-query',
   });
 });
 

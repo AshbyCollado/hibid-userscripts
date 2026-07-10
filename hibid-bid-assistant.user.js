@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.21
+// @version      0.7.22
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -41,7 +41,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.21';
+  const SCRIPT_VERSION = '0.7.22';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1070,6 +1070,10 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (visibleState.noMatches) return { ok: false, reason: 'visible-no-matches' };
     if (!visibleState.hasActiveFilters) return { ok: true };
 
+    const requiresKeyMatch = visibleState.activeFilterKeys.includes('q');
+    if (apolloKeyMatchesActiveFilters(connection.key, visibleState)) return { ok: true };
+    if (requiresKeyMatch) return { ok: false, reason: 'active-search-filter-mismatch' };
+
     const hasExpectedTotal = options.expectedTotal !== null
       && options.expectedTotal !== undefined
       && Number.isFinite(Number(options.expectedTotal));
@@ -1081,7 +1085,6 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (hasVisibleExpected && connection.totalCount === Number(visibleState.expectedTotal)) {
       return { ok: true };
     }
-    if (apolloKeyMatchesActiveFilters(connection.key, visibleState)) return { ok: true };
     return { ok: false, reason: 'active-filter-mismatch' };
   }
 
@@ -1414,6 +1417,22 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return result.items.length >= result.expectedTotal;
   }
 
+  function catalogItemsMatchVisibleSearch(items, visibleState) {
+    const query = normalizedFilterText(visibleState?.filters?.q || '');
+    if (!query) return true;
+    const terms = query.split(/\s+/).filter(Boolean);
+    if (!terms.length || !items?.length) return true;
+    return items.every(item => {
+      const text = normalizedFilterText([
+        item?.title,
+        item?.description,
+        item?.rawText,
+        item?.lot
+      ].filter(Boolean).join(' '));
+      return terms.every(term => text.includes(term));
+    });
+  }
+
   function validateCatalogExportAgainstVisibleState(result, visibleState) {
     const items = result?.items || result?.lots || [];
     if (!visibleState) return { ok: true };
@@ -1431,6 +1450,12 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (visibleState.hasActiveFilters && hasVisibleExpected && hasResultExpected
       && visibleExpected !== resultExpected && String(result?.source || '').includes('hibid')) {
       return { ok: false, reason: 'filtered-count-mismatch' };
+    }
+    if (visibleState.activeFilterKeys?.includes('q')
+      && String(result?.source || '') !== 'hibid-state'
+      && items.length
+      && !catalogItemsMatchVisibleSearch(items, visibleState)) {
+      return { ok: false, reason: 'filtered-search-results-do-not-match-query' };
     }
     if (visibleState.hasActiveFilters && result?.rejectedSource === 'filter-mismatch') {
       return { ok: false, reason: 'filtered-source-mismatch' };
