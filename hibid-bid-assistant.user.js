@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.26
+// @version      0.7.27
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -41,7 +41,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.26';
+  const SCRIPT_VERSION = '0.7.27';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1514,6 +1514,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return { ok: true };
   }
 
+  function validateScraperCompleteness(result, reason) {
+    if (result?.incomplete) return { ok: false, reason };
+    return { ok: true };
+  }
+
   function trimRowsToExpectedTotal(rows, expectedTotal) {
     const total = Number(expectedTotal);
     if (!Number.isFinite(total) || total <= 0 || !Array.isArray(rows) || rows.length <= total) {
@@ -1534,6 +1539,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       && String(result.context.saleId) !== String(route.saleId)) {
       return { ok: false, reason: 'auctionninja-sale-id-mismatch' };
     }
+    const completeValidation = validateScraperCompleteness(result, 'auctionninja-incomplete');
+    if (!completeValidation.ok) return completeValidation;
     const countValidation = validateScraperResultCount(result, 'auctionninja-count-exceeds-expected');
     if (!countValidation.ok) return countValidation;
     return { ok: true };
@@ -1555,6 +1562,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         return { ok: false, reason: 'aar-auction-id-mismatch' };
       }
     }
+    const completeValidation = validateScraperCompleteness(result, 'aar-incomplete');
+    if (!completeValidation.ok) return completeValidation;
     const countValidation = validateScraperResultCount(result, 'aar-count-exceeds-expected');
     if (!countValidation.ok) return countValidation;
     return { ok: true };
@@ -1587,6 +1596,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         return { ok: false, reason: 'govdeals-asset-id-mismatch' };
       }
     }
+    const completeValidation = validateScraperCompleteness(result, 'govdeals-incomplete');
+    if (!completeValidation.ok) return completeValidation;
     const countValidation = validateScraperResultCount(result, 'govdeals-count-exceeds-expected');
     if (!countValidation.ok) return countValidation;
     return { ok: true };
@@ -1630,6 +1641,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       if (looksAjWillner || looksOtherAuctionSource) return { ok: false, reason: 'catalog-source-mismatch' };
     }
 
+    const completeValidation = validateScraperCompleteness(result, 'catalog-incomplete');
+    if (!completeValidation.ok) return completeValidation;
     const countValidation = validateScraperResultCount(result, 'catalog-count-exceeds-expected');
     if (!countValidation.ok) return countValidation;
     return { ok: true };
@@ -1645,6 +1658,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (sourceText && !/hibid|live/.test(sourceText)) {
       return { ok: false, reason: 'live-source-mismatch' };
     }
+    const completeValidation = validateScraperCompleteness(result, 'live-incomplete');
+    if (!completeValidation.ok) return completeValidation;
     const countValidation = validateScraperResultCount(result, 'live-count-exceeds-expected');
     if (!countValidation.ok) return countValidation;
     return { ok: true };
@@ -2340,6 +2355,7 @@ ${cards}
       lots: items,
       expectedTotal,
       stopped: !!shouldStop(),
+      incomplete: Boolean(expectedTotal && items.length < expectedTotal),
       visibleState
     };
   }
@@ -5012,6 +5028,7 @@ ${cards}
       numeric: true,
       sensitivity: 'base'
     }));
+    const incomplete = Boolean(expectedOpenLots && lots.length < expectedOpenLots);
     return {
       source: 'hibid-live-dom',
       context,
@@ -5019,6 +5036,8 @@ ${cards}
       items: lots,
       expectedTotal: expectedOpenLots || null,
       expectedOpenLots,
+      incomplete,
+      stopReason: incomplete ? 'below-expected-open-lots' : 'complete',
       loadMoreClicks,
       scrolls
     };

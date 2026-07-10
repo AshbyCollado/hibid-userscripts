@@ -595,6 +595,17 @@ test('assistant blocks AuctionNinja exports from the wrong active page kind', ()
     ok: false,
     reason: 'auctionninja-count-exceeds-expected',
   });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-auction-search-dom',
+    context: { source: 'AuctionNinja', pageKind: 'auction-search', totalSales: 3 },
+    items: [{ source: 'AuctionNinja', pageKind: 'auction-search', title: 'Partial Sale' }],
+    expectedTotal: 3,
+    incomplete: true,
+  }, 'auctionninja', { kind: 'auction-search' })), {
+    ok: false,
+    reason: 'auctionninja-incomplete',
+  });
 });
 
 test('assistant blocks AAR exports from the wrong route or auction id', () => {
@@ -625,6 +636,17 @@ test('assistant blocks AAR exports from the wrong route or auction id', () => {
   }, 'aar', { kind: 'aar-auction-list' })), {
     ok: true,
   });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'aar-dom',
+    context: { source: 'AAR Auctions', pageKind: 'aar-auction-list' },
+    sales: [{ source: 'AAR Auctions', pageKind: 'aar-auction-list', auctionId: '8563', title: 'Partial Auction Calendar Entry' }],
+    expectedTotal: 2,
+    incomplete: true,
+  }, 'aar', { kind: 'aar-auction-list' })), {
+    ok: false,
+    reason: 'aar-incomplete',
+  });
 });
 
 test('assistant blocks GovDeals exports from the wrong route or URL filters', () => {
@@ -654,6 +676,17 @@ test('assistant blocks GovDeals exports from the wrong route or URL filters', ()
     listings: [{ source: 'GovDeals', pageKind: 'govdeals-new-listings', title: 'Nearby Asset' }],
   }, 'govdeals', { kind: 'govdeals-new-listings', zipcode: '07008', miles: '25' })), {
     ok: true,
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'govdeals-dom',
+    context: { source: 'GovDeals', pageKind: 'govdeals-new-listings', zipcode: '07008', miles: '25' },
+    listings: [{ source: 'GovDeals', pageKind: 'govdeals-new-listings', title: 'Partial Nearby Asset' }],
+    expectedTotal: 2,
+    incomplete: true,
+  }, 'govdeals', { kind: 'govdeals-new-listings', zipcode: '07008', miles: '25' })), {
+    ok: false,
+    reason: 'govdeals-incomplete',
   });
 });
 
@@ -688,6 +721,17 @@ test('assistant blocks catalog and live exports from the wrong active route', ()
   });
 
   assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'ajwillner-virtual-list',
+    context: { source: 'ajwillner', pageKind: 'catalog' },
+    items: [{ source: 'ajwillner', title: 'Partial AJ lot', url: 'https://bid.ajwillnerauctions.com/ui/auctions/164037/24887841' }],
+    expectedTotal: 866,
+    incomplete: true,
+  }, 'catalog', { kind: 'catalog', source: 'ajwillner', auctionId: '164037' })), {
+    ok: false,
+    reason: 'catalog-incomplete',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
     source: 'hibid-live-dom',
     context: { source: 'hibid', pageKind: 'live' },
     lots: [{ lot: '1627sf', title: 'Chloe Eau De Toilette' }],
@@ -716,6 +760,17 @@ test('assistant blocks catalog and live exports from the wrong active route', ()
   }, 'live', { kind: 'live', source: 'hibid', auctionId: '752334' })), {
     ok: false,
     reason: 'live-count-exceeds-expected',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'hibid-live-dom',
+    context: { source: 'hibid', pageKind: 'live' },
+    lots: [{ source: 'hibid', pageKind: 'live', lot: '1', title: 'Live Lot 1' }],
+    expectedTotal: 3,
+    incomplete: true,
+  }, 'live', { kind: 'live', source: 'hibid', auctionId: '752334' })), {
+    ok: false,
+    reason: 'live-incomplete',
   });
 });
 
