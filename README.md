@@ -1,6 +1,6 @@
 # FlipperAddon by ALOS
 
-Hosted Tampermonkey userscript for resale workflows across HiBid, eBay selling pages, and Facebook Marketplace selling pages.
+Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
 
 ## Install
 
@@ -14,26 +14,12 @@ Tampermonkey updates use that same raw GitHub URL through the script metadata. I
 
 `FlipperAddon by ALOS` is the single active hosted script. It starts minimized in the bottom-right corner and shows only the module for the page you are actually on:
 
-- HiBid catalog/category/watchlist pages: catalog scrape, max-plan editor, safe bid prep, JSON copy, and resale LLM brief.
-- HiBid livecatalog pages: live current-lot monitor, manual-fire Snipe Now, live JSON copy, and resale LLM brief.
-- eBay/Facebook selling pages: FlipTracker active listing export.
+- HiBid catalog/category/watchlist pages: copy JSON and resale LLM brief.
+- HiBid livecatalog pages: expand/copy live lot JSON and resale LLM brief.
+- AuctionNinja sale catalog pages: copy sale terms plus lot JSON or resale LLM brief.
+- eBay/Facebook selling pages: FlipTracker active listing copy/download export.
 
 The older `hibid-lot-catalog-scraper.user.js` remains in the repo for legacy reference/tests, but normal use should install only `hibid-bid-assistant.user.js`.
-
-## Max Plan
-
-Catalog and live modes share the same format:
-
-```json
-{
-  "1627sf": {
-    "max": 40,
-    "title": "optional title words"
-  }
-}
-```
-
-Plans are stored per auction when an auction ID is available. A lot saved with `"max": null` is remembered but not eligible to bid until a max is entered.
 
 ## LLM Brief
 
@@ -62,6 +48,10 @@ Workflow:
 4. Click `Download`.
 5. Put the downloaded `FlipTracker-listings-*.html` file into `C:\Users\ashby\Documents\MarketplaceScraper\ImportInbox`.
 6. In FlipTracker, run the import/review flow.
+
+## Scraper-First UI
+
+FlipperAddon starts as a small bottom-right pill. Opening it shows only the current page's export actions. Copy buttons do not render lot previews in the drawer; they copy the payload and show a short toast. The Stop button appears while a scrape/export is running.
 
 ## Tests
 

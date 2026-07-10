@@ -7,20 +7,21 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.1`.
-- UI: bottom-right minimized launcher plus dark drawer. It starts minimized every mount.
+- Current version: `0.7.2`.
+- UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
+- Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
 
 ## Module Map
 
 - `catalog`: HiBid catalog/category/lot/OUTBID watchlist and AJ Willner auction pages.
-  - Controls: max plan, Load Lots, Scan, Prepare Next, Stop, Copy Lots JSON, Copy LLM Brief.
+  - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
 - `live`: HiBid `/livecatalog/...` pages.
-  - Controls: max plan, Auto-confirm, Arm, Snipe Now, Stop, Copy Lots JSON, Copy LLM Brief.
+  - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
 - `fliptracker`: eBay and Facebook active selling pages.
-  - Controls: Scan Listings, Copy HTML, Download.
+  - Controls: Scan Listings, Copy HTML, Download, debug controls only when enabled.
 - `auctionninja`: AuctionNinja sale research pages.
-  - Controls: max plan notes, Load Catalog, Copy Lots JSON, Copy LLM Brief, Stop.
+  - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Safety: research/export only; no bid clicks, no bid-field writes, no checkout/invoice/payment/account actions.
 - `unsupported`: do not mount.
 
@@ -87,13 +88,11 @@ Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/
    - Keep safe page/next control clicks as last-resort fallback only; reject bid, checkout, invoice, payment, account, watch/follow, search, sort, and per-page controls.
    - Stop with a debug reason when counts drift, no safe next control exists, or max steps are reached.
 
-## Max Plan State
+## Legacy Max Plan State
 
-- Store max plans per auction when possible: `flipperaddon-max-plan-v2:<host>:auction:<id>`.
-- Store AuctionNinja plans by sale/item/page: `flipperaddon-max-plan-v2:www.auctionninja.com:auctionninja:sale:<id>`.
+- Old max-plan data remains in storage for compatibility and tests, but scraper-first UI does not render or use max-plan controls.
+- Historical storage keys include `flipperaddon-max-plan-v2:<host>:auction:<id>` and `flipperaddon-max-plan-v2:www.auctionninja.com:auctionninja:sale:<id>`.
 - Migrate from legacy `hibid-bid-assistant-plan-v1` on first read.
-- `max: null` means saved but not eligible.
-- Assistant rows expose Add/Save Plan first. Direct page-card injection is a future task.
 
 ## Debugging
 
@@ -129,12 +128,11 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: add AuctionNinja drawer module with research-only controls.
 - Done: add AuctionNinja JSON and LLM brief export with sale terms ahead of lot data.
 - Done: add tests for AuctionNinja routes, blocked account pages, range parsing, sale context, lot parsing, and active-mode UI.
-- Done: Waterfox verified AuctionNinja sale catalog drawer on `v0.7.1`, copied LLM brief for `106/106` lots, and confirmed page scrolling still works under the drawer.
-- Pending future: inject Add to Max Plan near HiBid watch controls on page cards.
+- Done: prior Waterfox verified AuctionNinja sale catalog drawer, copied LLM brief for `106/106` lots, and confirmed page scrolling still works under the drawer.
+- Done: `v0.7.2` scraper-first cleanup removes bid watcher/max-plan UI, result previews, and bulky minimized launcher copy.
 - Pending future: AuctionNinja auction-search triage module.
 - Pending future: AuctionNinja items-won inventory/reconciliation module.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
-- Pending future: richer visual max-plan table editing beyond inline row saves and raw JSON.
 
 ## Verification Checklist
 

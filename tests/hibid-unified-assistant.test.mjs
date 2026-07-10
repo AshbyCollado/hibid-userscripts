@@ -265,14 +265,18 @@ test('assistant marks partial data-first catalog scrapes incomplete', () => {
   assert.equal(core.isCatalogScrapeComplete(partial), false);
 });
 
-test('assistant panel exposes catalog controls and gates debug controls', () => {
+test('assistant panel exposes scraper-first catalog controls and gates debug controls', () => {
   const core = loadCore();
   const html = core.buildPanelHtml({ mode: 'catalog', debugEnabled: true });
 
   assert.match(html, /id="hibid-catalog-copy-json"/);
   assert.match(html, /id="hibid-catalog-copy-llm"/);
+  assert.match(html, /id="hibid-scraper-stop"/);
   assert.match(html, /id="hibid-debug-copy"/);
   assert.match(html, /id="hibid-debug-clear"/);
+  assert.doesNotMatch(html, /Prepare Bid|Prepare Next|Snipe Now|Auto-confirm|Max plan|hibid-max-plan-details|hibid-bid-plan-json/);
+  assert.doesNotMatch(html, /id="hibid-bid-results"/);
+  assert.match(html, /id="flipperaddon-toast"/);
   assert.doesNotMatch(html, /id="hibid-live-copy-json"/);
   assert.doesNotMatch(html, /id="hibid-live-copy-llm"/);
   assert.equal(core.DEBUG_PREFIX, '[FlipperAddon]');
@@ -315,32 +319,42 @@ test('assistant mode resolver activates only the current page module', () => {
   });
 });
 
-test('panel markup is active-mode only and keeps debug controls gated', () => {
+test('panel markup is active-mode only, scraper-first, and keeps debug controls gated', () => {
   const core = loadCore();
 
   const catalog = core.buildPanelHtml({ mode: 'catalog', debugEnabled: false });
   assert.match(catalog, /FlipperAddon by ALOS/);
-  assert.match(catalog, /id="hibid-bid-load"/);
   assert.match(catalog, /id="hibid-catalog-copy-llm"/);
-  assert.match(catalog, /id="hibid-max-plan-details"/);
-  assert.match(catalog, /data-help="[^"]*max plan/i);
+  assert.match(catalog, /id="hibid-catalog-copy-json"/);
+  assert.match(catalog, /id="hibid-scraper-stop"/);
+  assert.doesNotMatch(catalog, /id="hibid-bid-load"/);
+  assert.doesNotMatch(catalog, /id="hibid-bid-scan"/);
+  assert.doesNotMatch(catalog, /id="hibid-bid-next"/);
   assert.doesNotMatch(catalog, /id="hibid-live-snipe"/);
+  assert.doesNotMatch(catalog, /id="hibid-max-plan-details"|id="hibid-bid-plan-json"|Max plan/);
   assert.doesNotMatch(catalog, /id="fliptracker-listing-download"/);
   assert.doesNotMatch(catalog, /id="hibid-debug-copy"/);
+  assert.doesNotMatch(catalog, /id="hibid-bid-results"/);
 
   const live = core.buildPanelHtml({ mode: 'live', debugEnabled: false });
-  assert.match(live, /id="hibid-live-snipe"/);
   assert.match(live, /id="hibid-live-copy-llm"/);
-  assert.match(live, /id="hibid-bid-plan-json"/);
+  assert.match(live, /id="hibid-live-copy-json"/);
+  assert.match(live, /id="hibid-scraper-stop"/);
+  assert.doesNotMatch(live, /id="hibid-live-snipe"/);
+  assert.doesNotMatch(live, /id="hibid-live-arm"/);
+  assert.doesNotMatch(live, /id="hibid-bid-plan-json"|Max plan|Auto-confirm/);
   assert.doesNotMatch(live, /id="hibid-bid-load"/);
   assert.doesNotMatch(live, /id="hibid-catalog-copy-llm"/);
   assert.doesNotMatch(live, /id="fliptracker-listing-download"/);
+  assert.doesNotMatch(live, /id="hibid-bid-results"/);
 
   const fliptracker = core.buildPanelHtml({ mode: 'fliptracker', debugEnabled: true });
   assert.match(fliptracker, /id="fliptracker-listing-download"/);
   assert.match(fliptracker, /id="hibid-debug-copy"/);
   assert.doesNotMatch(fliptracker, /id="hibid-bid-plan-json"/);
   assert.doesNotMatch(fliptracker, /id="hibid-live-snipe"/);
+  assert.doesNotMatch(fliptracker, /id="hibid-bid-results"/);
+  assert.doesNotMatch(fliptracker, /fliptracker-listing-results/);
 });
 
 test('max plan helpers use per-auction storage keys and add blank max entries', () => {
@@ -621,19 +635,22 @@ Bid Now`,
   assert.equal(JSON.stringify(lots).includes('Bid Now'), false);
 });
 
-test('assistant renders AuctionNinja-only drawer controls and brief context', () => {
+test('assistant renders AuctionNinja scraper-only drawer controls and brief context', () => {
   const core = loadCore();
   const html = core.buildPanelHtml({ mode: 'auctionninja', debugEnabled: false });
 
   assert.match(html, /AuctionNinja/);
   assert.match(html, /id="auctionninja-catalog-copy-json"/);
   assert.match(html, /id="auctionninja-catalog-copy-llm"/);
-  assert.match(html, /id="auctionninja-catalog-stop"/);
-  assert.match(html, /id="hibid-max-plan-details"/);
+  assert.match(html, /id="hibid-scraper-stop"/);
+  assert.doesNotMatch(html, /id="auctionninja-catalog-load"/);
+  assert.doesNotMatch(html, /id="hibid-max-plan-details"|id="hibid-bid-plan-json"|Max plan/);
   assert.doesNotMatch(html, /id="hibid-bid-next"/);
   assert.doesNotMatch(html, /id="hibid-live-snipe"/);
   assert.doesNotMatch(html, /id="fliptracker-listing-download"/);
   assert.doesNotMatch(html, /id="hibid-debug-copy"/);
+  assert.doesNotMatch(html, /id="hibid-bid-results"/);
+  assert.match(html, /id="flipperaddon-toast"/);
 
   const brief = core.buildAuctionNinjaLlmBrief([
     {

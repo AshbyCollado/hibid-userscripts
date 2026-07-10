@@ -12,18 +12,18 @@ This repo is the standalone home for FlipperAddon by ALOS, separate from `Deadlo
 
 ## Modules
 
-- Catalog mode: HiBid catalog/category/lot/OUTBID watchlist pages. Owns catalog scrape, max plan, safe bid prep, JSON copy, and LLM brief.
-- Live mode: HiBid `livecatalog` pages. Owns live current-lot evaluation, manual-fire Snipe Now, live scrape, JSON copy, and LLM brief.
+- Catalog mode: HiBid catalog/category/lot/OUTBID watchlist pages. Owns scraper-first JSON copy and LLM brief export.
+- Live mode: HiBid `livecatalog` pages. Owns live lot expansion plus JSON copy and LLM brief export.
+- AuctionNinja mode: sale catalog pages. Owns sale terms, lot JSON copy, and LLM brief export.
 - FlipTracker mode: eBay/Facebook active selling pages. Owns scan/copy/download active-listing export.
 
 Only the active page module should expose controls. Do not bring back the old all-controls-visible drawer.
 
-## Max Plans
+## Legacy Max Plans
 
-- Storage is per auction when an auction ID is available: `flipperaddon-max-plan-v2:<host>:auction:<id>`.
+- Old max-plan storage stays for compatibility/tests, but the normal UI does not render max-plan editing or bidding actions.
+- Historical storage is per auction when an auction ID is available: `flipperaddon-max-plan-v2:<host>:auction:<id>`.
 - The old global `hibid-bid-assistant-plan-v1` key is legacy-migrated on first read.
-- A row with `max: null` is saved but not eligible.
-- Keep the raw JSON editor behind the Max plan dropdown; surface row-level Add/Save Plan buttons in the drawer first.
 
 ## LLM Brief
 

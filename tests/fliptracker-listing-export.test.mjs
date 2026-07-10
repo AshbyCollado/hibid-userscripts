@@ -118,11 +118,16 @@ test('panel markup exposes modern drawer shell and stable controls', () => {
 
   assert.match(html, /hiba-drawer/);
   assert.match(html, /hiba-launcher/);
-  assert.match(html, /FlipperAddon by ALOS/);
+  assert.match(html, /FlipperAddon/);
+  assert.doesNotMatch(html, /hiba-subtitle/);
+  assert.doesNotMatch(html, /id="hiba-current-mode-pill"/);
   assert.match(html, /id="fliptracker-listing-download"/);
   assert.match(html, /data-mode-tab="fliptracker"/);
   assert.doesNotMatch(html, /id="hibid-bid-load"/);
   assert.doesNotMatch(html, /id="hibid-live-copy-llm"/);
+  assert.doesNotMatch(html, /id="hibid-bid-results"/);
+  assert.doesNotMatch(html, /id="fliptracker-listing-results"/);
+  assert.match(html, /id="flipperaddon-toast"/);
 });
 
 test('parses Facebook Marketplace manager listing cards for FlipTracker export', () => {

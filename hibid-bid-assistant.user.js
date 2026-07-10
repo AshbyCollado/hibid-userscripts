@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.1
-// @description  Modular resale helper for HiBid catalog/live scraping, LLM exports, safe bid prep, and FlipTracker marketplace exports.
+// @version      0.7.2
+// @description  Modular resale scraper/exporter for HiBid, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @match        https://hibid.com/lots*
@@ -32,12 +32,11 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.1';
+  const SCRIPT_VERSION = '0.7.2';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
   const AUTO_REFRESH_KEY = 'flipperaddon-auto-refresh-v1';
-  const AUTO_CONFIRM_KEY = 'flipperaddon-auto-confirm-v1';
   const MINIMIZED_KEY = 'flipperaddon-minimized-v1';
   const DEBUG_ENABLED_KEY = 'flipperaddon-debug-enabled-v1';
   const DEBUG_LOG_KEY = 'flipperaddon-debug-log-v1';
@@ -1510,7 +1509,6 @@ ${cards}
     shouldTeardownPanelForRebuild,
     scanPlan,
     lotSummary,
-    getStoredAutoConfirm,
     getStoredMinimized,
     getStoredDebugEnabled
   };
@@ -2821,195 +2819,16 @@ ${cards}
     return null;
   }
 
-  async function prepareBid(row, status, rerender, shouldStop = () => false) {
-    const plan = getPlan(status);
-    const options = getScanOptions();
-    debug('prepare-bid start', { row, options, plannedLots: Object.keys(plan) });
-    if (findDialog()) {
-      status('A HiBid dialog is already open. Review or close it before preparing another bid.');
-      debug('prepare-bid blocked: existing dialog');
-      return;
-    }
-
-    const freshRows = scanPlan(plan, options);
-    let fresh = freshRows.find(item => String(item.lot) === String(row.lot));
-
-    if ((!fresh || !fresh.tile) && plan[String(row.lot)]) {
-      const found = await findLotOnPage(row.lot, status, shouldStop);
-      if (found) {
-        const decision = evaluateLot(found, plan[String(row.lot)], options);
-        fresh = { ...found, max: plan[String(row.lot)].max, expectedTitle: plan[String(row.lot)].title, ...decision };
-      }
-    }
-
-    if (!fresh || !fresh.tile) {
-      status(`Lot ${row.lot} not found.`);
-      debug('prepare-bid blocked: lot not found', { lot: row.lot });
-      return;
-    }
-    if (!fresh.eligible) {
-      status(`Lot ${row.lot} skipped: ${fresh.status}.`);
-      debug('prepare-bid blocked: ineligible', { lot: row.lot, status: fresh.status, fresh });
-      rerender(freshRows);
-      return;
-    }
-    if (!fresh.bidButton || !isVisible(fresh.bidButton)) {
-      status(`Lot ${row.lot} has no active bid button.`);
-      debug('prepare-bid blocked: missing/hidden bid button', { lot: row.lot, hasButton: Boolean(fresh.bidButton), fresh });
-      rerender(freshRows);
-      return;
-    }
-
-    debug('prepare-bid clicking bid button', {
-      lot: row.lot,
-      nextBid: fresh.nextBid,
-      nextBidAmount: fresh.nextBidAmount,
-      buttonText: textOf(fresh.bidButton),
-      autoConfirmChecked: Boolean(document.getElementById('hibid-bid-auto-confirm')?.checked)
-    });
-    fresh.tile.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    await wait(450);
-
-    fresh.bidButton.click();
-
-    const autoConfirm = Boolean(document.getElementById('hibid-bid-auto-confirm')?.checked);
-    if (autoConfirm) {
-      status(`Prepared Lot ${row.lot} at ${fresh.nextBid}. Waiting for confirmation dialog...`);
-    } else {
-      status(`Prepared Lot ${row.lot} at ${fresh.nextBid}. Confirm manually if HiBid asks.`);
-    }
-
-    let dialogOpened = false;
-    for (let i = 0; i < 60; i += 1) {
-      await wait(150);
-      const confirmSurface = findConfirmSurface();
-      const dialog = confirmSurface?.surface || findDialog();
-      debug('prepare-bid confirm wait tick', {
-        lot: row.lot,
-        tick: i + 1,
-        hasConfirmSurface: Boolean(confirmSurface),
-        hasDialog: Boolean(dialog),
-        autoConfirm
-      });
-      if (autoConfirm && dialog && !confirmSurface) {
-        debug('prepare-bid saw non-confirm dialog; continuing to wait', {
-          lot: row.lot,
-          tick: i + 1,
-          dialogText: textOf(dialog).slice(0, 300)
-        });
-        continue;
-      }
-      if (dialog || confirmSurface) {
-        dialogOpened = true;
-        if (dialog?.style) {
-          dialog.style.outline = '4px solid #f5c542';
-          dialog.style.boxShadow = '0 0 0 9999px rgba(0,0,0,.22)';
-        }
-        
-        if (autoConfirm) {
-          status(`Lot ${row.lot}: Clicked place bid, auto-confirming...`);
-          const confirmBtn = confirmSurface?.button || null;
-          if (confirmBtn) {
-            debug('prepare-bid clicking confirm button', {
-              lot: row.lot,
-              buttonLabel: buttonLabel(confirmBtn),
-              buttonText: textOf(confirmBtn)
-            });
-            confirmBtn.click();
-            status(`Lot ${row.lot}: Auto-confirm clicked. Waiting for dialog to close...`);
-            
-            // Wait for dialog to close
-            let closed = false;
-            for (let j = 0; j < 60; j += 1) {
-              await wait(150);
-              const stillOpen = findConfirmSurface() || findDialog();
-              debug('prepare-bid close wait tick', {
-                lot: row.lot,
-                tick: j + 1,
-                stillOpen: Boolean(stillOpen)
-              });
-              if (!stillOpen) {
-                closed = true;
-                break;
-              }
-            }
-            if (closed) {
-              status(`Lot ${row.lot} bid placed and confirmed at ${fresh.nextBid}!`);
-            } else {
-              status(`Lot ${row.lot}: Clicked confirm, but confirmation modal did not close. Please check.`);
-            }
-          } else {
-            status(`Lot ${row.lot}: Confirmation surface opened, but no confirm button matched. Please confirm manually.`);
-            debug('prepare-bid blocked: confirm surface without matched button', {
-              lot: row.lot,
-              dialogText: textOf(dialog).slice(0, 500)
-            });
-          }
-        } else {
-          status(`Lot ${row.lot}: HiBid confirmation is open. Review and click the site confirmation yourself.`);
-        }
-        break;
-      }
-    }
-
-    if (!dialogOpened) {
-      if (autoConfirm) {
-        status(`Lot ${row.lot}: Bid button clicked, but no HiBid confirmation surface appeared.`);
-        debug('prepare-bid failed: no confirmation surface appeared', { lot: row.lot });
-      } else {
-        status(`Lot ${row.lot}: Bid button clicked. No confirmation modal appeared.`);
-        debug('prepare-bid clicked without confirmation surface', { lot: row.lot });
-      }
-    }
+  async function prepareBid(row, status) {
+    debug('bid action blocked: scraper-first mode', { lot: row?.lot });
+    status?.('Bidding actions are removed in scraper-first mode.');
+    return false;
   }
 
-  async function prepareLiveBid(row, status, shouldStop = () => false, root = document) {
-    if (shouldStop()) {
-      status('Live snipe stopped before bidding.');
-      debug('live snipe stopped before fresh check', { lot: row?.lot });
-      return;
-    }
-
-    const fresh = extractLiveAuctionState(root);
-    const planEntry = {
-      max: row?.max,
-      title: row?.expectedTitle || row?.title || ''
-    };
-    if (String(fresh.lot || '') !== String(row?.lot || '')) {
-      status(`Live snipe blocked: current live lot is ${fresh.lot || 'unknown'}, not Lot ${row?.lot}.`);
-      debug('live snipe blocked: lot changed', { requestedLot: row?.lot, freshLot: fresh.lot, fresh });
-      return;
-    }
-
-    const decision = evaluateLiveLot(fresh, planEntry);
-    debug('live snipe fresh decision', { lot: fresh.lot, decision, max: planEntry.max, nextBidAmount: fresh.nextBidAmount });
-    if (!decision.eligible) {
-      status(`Live Lot ${row?.lot} skipped: ${decision.status}.`);
-      return;
-    }
-
-    fresh.bidButton.click();
-    const autoConfirm = Boolean(document.getElementById('hibid-bid-auto-confirm')?.checked);
-    if (!autoConfirm) {
-      status(`Live Lot ${fresh.lot}: bid button clicked at ${fresh.nextBid || fresh.nextBidAmount}. Confirm manually if HiBid asks.`);
-      debug('live snipe clicked bid button; manual confirm mode', { lot: fresh.lot, nextBid: fresh.nextBid });
-      return;
-    }
-
-    status(`Live Lot ${fresh.lot}: bid button clicked, waiting for confirmation...`);
-    for (let i = 0; i < 60; i += 1) {
-      await wait(150);
-      const confirmSurface = findConfirmSurface(root === document ? document : globalThis.document || document);
-      debug('live snipe confirm wait tick', { lot: fresh.lot, tick: i + 1, hasConfirmSurface: Boolean(confirmSurface) });
-      if (!confirmSurface?.button) continue;
-      confirmSurface.button.click();
-      status(`Live Lot ${fresh.lot}: auto-confirm clicked at ${fresh.nextBid || fresh.nextBidAmount}.`);
-      debug('live snipe auto-confirm clicked', { lot: fresh.lot, buttonLabel: buttonLabel(confirmSurface.button) });
-      return;
-    }
-
-    status(`Live Lot ${fresh.lot}: no confirmation button found after bid click. Check HiBid manually.`);
-    debug('live snipe confirm not found', { lot: fresh.lot });
+  async function prepareLiveBid(row, status) {
+    debug('live bid action blocked: scraper-first mode', { lot: row?.lot });
+    status?.('Live bidding actions are removed in scraper-first mode.');
+    return false;
   }
 
   function defaultPlanText() {
@@ -3154,22 +2973,6 @@ ${cards}
     }
   }
 
-  function getStoredAutoConfirm() {
-    try {
-      return Boolean(GM_getValue(AUTO_CONFIRM_KEY, false));
-    } catch {
-      return false;
-    }
-  }
-
-  function saveAutoConfirm(value) {
-    try {
-      GM_setValue(AUTO_CONFIRM_KEY, Boolean(value));
-    } catch {
-      // Tampermonkey storage may be unavailable in tests.
-    }
-  }
-
   function getStoredMinimized() {
     try {
       return Boolean(GM_getValue(MINIMIZED_KEY, true));
@@ -3235,10 +3038,10 @@ ${cards}
 
   function renderModeTabs(mode) {
     const meta = {
-      catalog: { label: 'Catalog', icon: 'list', help: 'Catalog mode loads visible or outbid HiBid lots, edits max plans, copies JSON, and builds the resale LLM brief.' },
-      live: { label: 'Live', icon: 'radio', help: 'Live mode watches the current HiBid live lot and lets you manually fire a bid if the ask is within your saved max.' },
+      catalog: { label: 'HiBid', icon: 'list', help: 'HiBid scraper mode copies catalog or watchlist lots as JSON or an LLM brief.' },
+      live: { label: 'HiBid Live', icon: 'radio', help: 'HiBid live scraper mode expands visible live lots and copies JSON or an LLM brief.' },
       fliptracker: { label: 'FlipTracker', icon: 'file', help: 'FlipTracker mode exports visible eBay or Facebook selling listings for import/review.' },
-      auctionninja: { label: 'AuctionNinja', icon: 'list', help: 'AuctionNinja mode scrapes sale catalogs for resale research, max notes, JSON, and a terms-aware LLM brief without touching bid controls.' },
+      auctionninja: { label: 'AuctionNinja', icon: 'list', help: 'AuctionNinja mode copies sale catalogs as JSON or a terms-aware LLM brief without touching bid controls.' },
       unsupported: { label: 'Unsupported', icon: 'shield', help: 'This page is not supported by FlipperAddon.' }
     };
     const active = meta[mode] || meta.catalog;
@@ -3246,21 +3049,6 @@ ${cards}
       <div class="hiba-tabs" role="tablist" aria-label="Active FlipperAddon module">
         <button type="button" class="hiba-tab active" data-mode-tab="${escapeHtml(mode)}"${helpAttrs(active.help)} disabled>${hibaIcon(active.icon)}<span>${active.label}</span></button>
       </div>
-    `;
-  }
-
-  function renderMaxPlanEditor() {
-    return `
-      <details id="hibid-max-plan-details" class="hiba-details">
-        <summary data-help="Open this to edit the lot-number to maximum-bid plan. Null means saved, but not allowed to bid yet.">Max plan</summary>
-        <div class="hiba-meta">Format: {"1627sf":{"max":40,"title":"optional title words"}}. Leave max null to save a lot for later without making it eligible.</div>
-        <textarea id="hibid-bid-plan-json" spellcheck="false" class="hiba-plan" placeholder='{
-  "1627sf": {
-    "max": 40,
-    "title": "Chloe"
-  }
-}'></textarea>
-      </details>
     `;
   }
 
@@ -3280,26 +3068,14 @@ ${cards}
         <div class="hiba-section-head">
           <div>
             <div class="hiba-kicker">HiBid catalog</div>
-            <strong>Catalog / Watchlist Scanner</strong>
+            <strong>Catalog Export</strong>
           </div>
-          <span class="hiba-chip neutral">max plan</span>
-        </div>
-        <div class="hiba-meta">Load lots, set a max per lot, then prepare only rows that are still under your max. This module is for catalog, category, lot, and OUTBID watchlist pages.</div>
-        ${renderMaxPlanEditor()}
-        <div class="hiba-toggle-grid">
-          <label class="hiba-switch"${helpAttrs('Only show and prepare lots where the page says you are outbid.')}><input id="hibid-bid-outbid-only" type="checkbox"><span>Outbid only</span></label>
-          <label class="hiba-switch"${helpAttrs('Refresh the outbid/watchlist scan every 30 seconds, pausing while you type.')}><input id="hibid-bid-auto-refresh" type="checkbox"><span>Auto refresh 30s</span></label>
-          <label class="hiba-switch"${helpAttrs('When checked, FlipperAddon clicks only strongly matched HiBid confirm bid buttons after you prepare/fire a bid.')}><input id="hibid-bid-auto-confirm" type="checkbox"><span>Auto-confirm modals</span></label>
+          <span class="hiba-chip neutral">scraper</span>
         </div>
         <div class="hiba-actions">
-          ${actionButton('hibid-bid-load', 'download', 'Load Lots', 'primary', '', 'Scrape the current catalog or OUTBID watchlist and merge lots into the max plan with blank max values.')}
-          ${actionButton('hibid-bid-scan', 'scan', 'Scan', 'primary', '', 'Evaluate current visible or loaded lots against your max plan.')}
-          ${actionButton('hibid-bid-next', 'zap', 'Prepare Next', 'success', '', 'Click the next eligible bid button after a fresh scan.')}
-          ${actionButton('hibid-bid-stop', 'stop', 'Stop', 'danger', '', 'Stop scraping, auto refresh, or pending bid preparation.')}
-        </div>
-        <div class="hiba-actions">
-          ${actionButton('hibid-catalog-copy-json', 'copy', 'Copy Lots JSON', 'secondary', '', 'Copy scraped HiBid lots as JSON for manual use.')}
           ${actionButton('hibid-catalog-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Copy the full resale-analysis prompt plus scraped lot JSON for a desktop LLM.')}
+          ${actionButton('hibid-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy scraped HiBid lots as JSON for manual use.')}
+          ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current scrape/export work.')}
         </div>
         ${renderDebugActions(debugEnabled)}
       </section>
@@ -3312,26 +3088,16 @@ ${cards}
         <div class="hiba-section-head">
           <div>
             <div class="hiba-kicker">HiBid live</div>
-            <strong>Live Snipe Assistant</strong>
+            <strong>Live Export</strong>
           </div>
-          <span class="hiba-chip neutral">manual fire</span>
-        </div>
-        <div class="hiba-meta">Live mode does not reload the page. It watches the current live lot, compares the ask to your max plan, and enables Snipe Now only when eligible.</div>
-        ${renderMaxPlanEditor()}
-        <div class="hiba-toggle-grid">
-          <label class="hiba-switch"${helpAttrs('When checked, FlipperAddon clicks only strongly matched HiBid confirm bid buttons after Snipe Now opens a confirm surface.')}><input id="hibid-bid-auto-confirm" type="checkbox"><span>Auto-confirm modals</span></label>
+          <span class="hiba-chip neutral">scraper</span>
         </div>
         <div class="hiba-actions">
-          ${actionButton('hibid-live-arm', 'shield', 'Arm', 'secondary', '', 'Arm or disarm manual live sniping for the current eligible live lot.')}
-          ${actionButton('hibid-live-snipe', 'zap', 'Snipe Now', 'success', 'disabled', 'Fresh-check the current live lot and click its bid control if the ask is still under max.')}
-          ${actionButton('hibid-bid-stop', 'stop', 'Stop', 'danger', '', 'Disarm live mode and stop pending activity.')}
-        </div>
-        <div class="hiba-actions">
-          ${actionButton('hibid-live-copy-json', 'copy', 'Copy Lots JSON', 'secondary', '', 'Expand visible live lots and copy their JSON.')}
           ${actionButton('hibid-live-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Expand visible live lots and copy the resale-analysis prompt plus lot JSON.')}
+          ${actionButton('hibid-live-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Expand visible live lots and copy their JSON.')}
+          ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current scrape/export work.')}
         </div>
         ${renderDebugActions(debugEnabled)}
-        <div id="hibid-live-state" class="hiba-live-card hiba-meta">Waiting for live lot...</div>
       </section>
     `;
   }
@@ -3346,13 +3112,10 @@ ${cards}
           </div>
           <span class="hiba-chip neutral">research only</span>
         </div>
-        <div class="hiba-meta">Scrapes AuctionNinja sale terms and lot cards for resale research. This module never clicks bid, checkout, invoice, payment, or account controls.</div>
-        ${renderMaxPlanEditor()}
         <div class="hiba-actions">
-          ${actionButton('auctionninja-catalog-load', 'download', 'Load Catalog', 'primary', '', 'Scrape the current AuctionNinja catalog and merge lot numbers into the local max plan with blank max values.')}
-          ${actionButton('auctionninja-catalog-copy-json', 'copy', 'Copy Lots JSON', 'secondary', '', 'Copy the current AuctionNinja sale catalog as normalized JSON.')}
           ${actionButton('auctionninja-catalog-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Copy the resale-analysis prompt plus AuctionNinja sale terms and lot JSON.')}
-          ${actionButton('auctionninja-catalog-stop', 'stop', 'Stop', 'danger', '', 'Stop guarded catalog loading or copy/export work.')}
+          ${actionButton('auctionninja-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy the current AuctionNinja sale catalog as normalized JSON.')}
+          ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop guarded catalog loading or copy/export work.')}
         </div>
         ${renderDebugActions(debugEnabled)}
       </section>
@@ -3369,7 +3132,6 @@ ${cards}
           </div>
           <span class="hiba-chip neutral">HTML</span>
         </div>
-        <div class="hiba-meta">Scrapes visible active eBay/Facebook selling cards and exports an HTML file for FlipTracker ImportInbox. Scroll or load more listings first if needed.</div>
         <div class="hiba-actions">
           ${actionButton('fliptracker-listing-scan', 'scan', 'Scan Listings', 'primary', '', 'Read the currently visible eBay or Facebook active selling listings.')}
           ${actionButton('fliptracker-listing-copy', 'copy', 'Copy HTML', 'secondary', '', 'Copy the FlipTracker import HTML to the clipboard.')}
@@ -3377,7 +3139,6 @@ ${cards}
         </div>
         ${renderDebugActions(debugEnabled)}
         <div id="fliptracker-listing-status" class="hiba-meta">Waiting to scan.</div>
-        <div id="fliptracker-listing-results" class="hiba-results"></div>
       </section>
     `;
   }
@@ -3402,17 +3163,12 @@ ${cards}
   function buildPanelHtml(options = {}) {
     const mode = options.mode || (typeof location !== 'undefined' ? resolveAssistantMode(location).mode : 'catalog') || 'catalog';
     const debugEnabled = options.debugEnabled ?? getStoredDebugEnabled();
-    const modeLabel = modeLabelFor(mode);
     return `
       <div class="hiba-drawer" role="dialog" aria-label="${APP_NAME}" data-flipperaddon-mode="${escapeHtml(mode)}">
         <div class="hiba-shellbar">
           <button id="hibid-bid-minimize" type="button" class="hiba-launcher" title="Show assistant" aria-label="Show assistant">
             <span class="hiba-orb"></span>
-            <span class="hiba-launcher-copy">
-              <span class="hiba-title">${APP_NAME}</span>
-              <span class="hiba-subtitle">Ready</span>
-            </span>
-            <span class="hiba-mode-pill" id="hiba-current-mode-pill">${modeLabel}</span>
+            <span class="hiba-title">${APP_SHORT_NAME}</span>
             ${hibaIcon('chevron')}
           </button>
           <button id="hibid-bid-close" type="button" class="hiba-icon-btn" title="Close assistant" aria-label="Close assistant">${hibaIcon('close')}</button>
@@ -3422,38 +3178,34 @@ ${cards}
             <div>
               <div class="hiba-kicker">by ALOS</div>
               <strong>${APP_SHORT_NAME} v${SCRIPT_VERSION}</strong>
-              <div class="hiba-meta">A modular resale cockpit for the people: HiBid, AuctionNinja, eBay, and Facebook resale workflows.</div>
             </div>
             <span class="hiba-chip neutral" id="hiba-session-chip">idle</span>
           </div>
           ${renderModeTabs(mode)}
           ${renderActiveSection(mode, debugEnabled)}
-          <div id="hibid-bid-status" class="hiba-statusline">Open the active module, then scan or export.</div>
-          <div id="hibid-bid-detected" class="hiba-detected"></div>
-          <div id="hibid-bid-results" class="hiba-results"></div>
+          <div id="flipperaddon-toast" class="hiba-toast" role="status" aria-live="polite"></div>
         </div>
       </div>
       <style>
-        #${PANEL_ID} { position:fixed; right:16px; bottom:16px; z-index:999999; width:min(420px, calc(100vw - 24px)); max-height:calc(100vh - 32px); color:#f8fafc; font:13px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing:0; color-scheme:dark; }
+        #${PANEL_ID} { position:fixed; right:14px; bottom:14px; z-index:999999; width:min(356px, calc(100vw - 24px)); max-height:calc(100vh - 28px); color:#f8fafc; font:13px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing:0; color-scheme:dark; }
         #${PANEL_ID}, #${PANEL_ID} * { box-sizing:border-box; }
-        #${PANEL_ID}.hiba-minimized { width:min(340px, calc(100vw - 24px)); }
-        #${PANEL_ID} .hiba-drawer { overflow:hidden; border:1px solid rgba(148,163,184,.26); border-radius:14px; background:linear-gradient(180deg,#10141d 0%,#080b11 100%); box-shadow:0 24px 70px rgba(0,0,0,.42), 0 2px 12px rgba(15,23,42,.45); }
-        #${PANEL_ID} .hiba-shellbar { display:flex; align-items:stretch; gap:8px; padding:8px; border-bottom:1px solid rgba(148,163,184,.16); background:rgba(15,23,42,.88); }
+        #${PANEL_ID}.hiba-minimized { width:min(188px, calc(100vw - 24px)); }
+        #${PANEL_ID} .hiba-drawer { overflow:hidden; border:1px solid rgba(148,163,184,.24); border-radius:13px; background:#0b1020; box-shadow:0 16px 45px rgba(0,0,0,.36), 0 2px 10px rgba(15,23,42,.4); }
+        #${PANEL_ID} .hiba-shellbar { display:flex; align-items:stretch; gap:6px; padding:7px; border-bottom:1px solid rgba(148,163,184,.14); background:rgba(15,23,42,.92); }
         #${PANEL_ID}.hiba-minimized .hiba-shellbar { border-bottom:0; }
-        #${PANEL_ID} .hiba-launcher { flex:1; min-width:0; display:flex; align-items:center; gap:9px; color:#f8fafc; background:transparent; border:0; border-radius:10px; padding:6px 8px; cursor:pointer; text-align:left; }
+        #${PANEL_ID} .hiba-launcher { flex:1; min-width:0; display:flex; align-items:center; gap:8px; color:#f8fafc; background:transparent; border:0; border-radius:9px; padding:6px 7px; cursor:pointer; text-align:left; }
         #${PANEL_ID} .hiba-launcher:hover { background:rgba(148,163,184,.12); }
-        #${PANEL_ID} .hiba-launcher-copy { min-width:0; display:flex; flex-direction:column; gap:1px; }
-        #${PANEL_ID} .hiba-title { font-weight:800; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        #${PANEL_ID} .hiba-subtitle, #${PANEL_ID} .hiba-kicker { color:#94a3b8; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+        #${PANEL_ID} .hiba-title { min-width:0; font-weight:800; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        #${PANEL_ID} .hiba-kicker { color:#94a3b8; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
         #${PANEL_ID} .hiba-orb { width:9px; height:9px; border-radius:999px; background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.14); flex:0 0 auto; }
         #${PANEL_ID} .hiba-mode-pill, #${PANEL_ID} .hiba-chip { display:inline-flex; align-items:center; min-height:22px; border:1px solid rgba(148,163,184,.24); border-radius:999px; padding:2px 8px; color:#cbd5e1; background:rgba(15,23,42,.78); font-size:11px; font-weight:800; white-space:nowrap; }
         #${PANEL_ID} .hiba-chip.eligible, #${PANEL_ID} .hiba-chip.success { color:#bbf7d0; background:rgba(22,101,52,.32); border-color:rgba(74,222,128,.34); }
         #${PANEL_ID} .hiba-chip.skip, #${PANEL_ID} .hiba-chip.danger { color:#fecaca; background:rgba(127,29,29,.34); border-color:rgba(248,113,113,.34); }
-        #${PANEL_ID} .hiba-body { max-height:calc(100vh - 92px); overflow:auto; padding:12px; }
+        #${PANEL_ID} .hiba-body { max-height:calc(100vh - 82px); overflow:auto; padding:10px; }
         #${PANEL_ID} .hiba-head, #${PANEL_ID} .hiba-section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
         #${PANEL_ID} .hiba-head { margin-bottom:10px; }
         #${PANEL_ID} .hiba-head strong, #${PANEL_ID} .hiba-section-head strong { font-size:14px; }
-        #${PANEL_ID} .hiba-tabs { display:grid; grid-template-columns:1fr; gap:6px; margin:10px 0; padding:3px; border:1px solid rgba(148,163,184,.18); border-radius:11px; background:rgba(2,6,23,.62); }
+        #${PANEL_ID} .hiba-tabs { display:grid; grid-template-columns:1fr; gap:6px; margin:8px 0; padding:3px; border:1px solid rgba(148,163,184,.18); border-radius:11px; background:rgba(2,6,23,.62); }
         #${PANEL_ID} .hiba-tab { display:flex; align-items:center; justify-content:center; gap:6px; min-width:0; color:#94a3b8; background:transparent; border:0; border-radius:8px; padding:7px 5px; font-weight:800; cursor:pointer; }
         #${PANEL_ID} .hiba-tab.active { color:#fff; background:#1d4ed8; box-shadow:0 8px 22px rgba(37,99,235,.24); cursor:default; }
         #${PANEL_ID} .hiba-section { border:1px solid rgba(148,163,184,.16); border-radius:12px; padding:10px; margin-top:9px; background:rgba(15,23,42,.52); }
@@ -3473,9 +3225,10 @@ ${cards}
         #${PANEL_ID} .hiba-toggle-grid { display:grid; grid-template-columns:1fr; gap:6px; margin-top:8px; }
         #${PANEL_ID} .hiba-switch { display:flex; align-items:center; justify-content:space-between; gap:8px; color:#cbd5e1; background:rgba(2,6,23,.45); border:1px solid rgba(148,163,184,.15); border-radius:9px; padding:7px 9px; font-weight:700; }
         #${PANEL_ID} .hiba-switch input { width:16px; height:16px; accent-color:#2563eb; }
-        #${PANEL_ID} .hiba-statusline { margin-top:10px; border:1px solid rgba(59,130,246,.24); border-radius:10px; padding:8px 9px; color:#dbeafe; background:rgba(30,64,175,.18); font-weight:700; }
-        #${PANEL_ID} .hiba-detected, #${PANEL_ID} .hiba-meta { color:#94a3b8; font-size:12px; margin-top:6px; }
-        #${PANEL_ID} .hiba-detected { font-family:ui-monospace, SFMono-Regular, Consolas, monospace; }
+        #${PANEL_ID} .hiba-toast { position:absolute; left:10px; right:10px; bottom:10px; z-index:2; pointer-events:none; opacity:0; transform:translateY(8px); transition:opacity .16s ease, transform .16s ease; border-radius:10px; padding:8px 10px; background:rgba(15,23,42,.96); border:1px solid rgba(96,165,250,.35); color:#eff6ff; font-weight:850; box-shadow:0 12px 28px rgba(0,0,0,.34); }
+        #${PANEL_ID} .hiba-toast.show { opacity:1; transform:translateY(0); }
+        #${PANEL_ID} .hiba-toast.danger { border-color:rgba(248,113,113,.4); color:#fee2e2; }
+        #${PANEL_ID} .hiba-meta { color:#94a3b8; font-size:12px; margin-top:6px; }
         #${PANEL_ID} .hiba-row { border:1px solid rgba(148,163,184,.16); border-radius:11px; padding:9px; margin-top:8px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; background:rgba(2,6,23,.42); }
         #${PANEL_ID} .hiba-row strong { color:#f8fafc; }
         #${PANEL_ID} .hiba-row-actions { display:grid; grid-template-columns:76px 86px 104px; gap:6px; align-items:center; }
@@ -3485,7 +3238,7 @@ ${cards}
         #${PANEL_ID} .hiba-status.eligible { color:#bbf7d0; background:rgba(22,101,52,.38); }
         #${PANEL_ID} .hiba-status.skip { color:#fecaca; background:rgba(127,29,29,.34); }
         #${PANEL_ID} .hiba-live-card { border-radius:10px; padding:9px; background:rgba(2,6,23,.5); border:1px solid rgba(148,163,184,.16); }
-        @media (max-width:520px) { #${PANEL_ID} { right:8px; bottom:8px; width:calc(100vw - 16px); } #${PANEL_ID} .hiba-row { grid-template-columns:1fr; } #${PANEL_ID} .hiba-row-actions { grid-template-columns:1fr; } }
+        @media (max-width:520px) { #${PANEL_ID} { right:8px; bottom:8px; width:min(356px, calc(100vw - 16px)); } #${PANEL_ID}.hiba-minimized { width:min(188px, calc(100vw - 16px)); } #${PANEL_ID} .hiba-row { grid-template-columns:1fr; } #${PANEL_ID} .hiba-row-actions { grid-template-columns:1fr; } }
       </style>
     `;
   }
@@ -3493,7 +3246,6 @@ ${cards}
   function setPanelMinimized(panel, minimized) {
     const body = panel.querySelector('#hibid-bid-body');
     const button = panel.querySelector('#hibid-bid-minimize');
-    const subtitle = panel.querySelector('.hiba-subtitle');
     if (body) body.style.display = minimized ? 'none' : '';
     panel.classList.toggle('hiba-minimized', Boolean(minimized));
     if (button) {
@@ -3502,17 +3254,12 @@ ${cards}
       const chevron = button.querySelector('.hiba-icon');
       if (chevron) chevron.style.transform = minimized ? 'rotate(180deg)' : '';
     }
-    if (subtitle && !subtitle.dataset.statusText) subtitle.textContent = minimized ? 'Click to open' : 'Open drawer';
   }
 
   function setActiveModeTab(panel, mode) {
     panel.querySelectorAll('[data-mode-tab]').forEach(tab => {
       tab.classList.toggle('active', tab.dataset.modeTab === mode);
     });
-    const pill = panel.querySelector('#hiba-current-mode-pill');
-    if (pill) {
-      pill.textContent = modeLabelFor(mode);
-    }
   }
 
   function createPanel(mode = resolveAssistantMode().mode, debugEnabled = getStoredDebugEnabled()) {
@@ -3526,14 +3273,6 @@ ${cards}
     panel.innerHTML = buildPanelHtml({ mode, debugEnabled });
 
     document.body.appendChild(panel);
-    const planInput = panel.querySelector('#hibid-bid-plan-json');
-    if (planInput) planInput.value = getStoredPlanText();
-    const outbidInput = panel.querySelector('#hibid-bid-outbid-only');
-    if (outbidInput) outbidInput.checked = isWatchlistOutbidPage();
-    const autoRefreshInput = panel.querySelector('#hibid-bid-auto-refresh');
-    if (autoRefreshInput) autoRefreshInput.checked = getStoredAutoRefresh();
-    const autoConfirmInput = panel.querySelector('#hibid-bid-auto-confirm');
-    if (autoConfirmInput) autoConfirmInput.checked = getStoredAutoConfirm();
     setPanelMinimized(panel, true);
     return panel;
   }
@@ -3548,44 +3287,36 @@ ${cards}
     const assistantMode = resolveAssistantMode();
     const activeMode = assistantMode.mode === 'unsupported' ? 'catalog' : assistantMode.mode;
     const panel = createPanel(activeMode, getStoredDebugEnabled());
-    const statusEl = panel.querySelector('#hibid-bid-status');
-    const detectedEl = panel.querySelector('#hibid-bid-detected');
-    const resultsEl = panel.querySelector('#hibid-bid-results');
-    const planEl = panel.querySelector('#hibid-bid-plan-json');
+    const toastEl = panel.querySelector('#flipperaddon-toast');
     const liveMode = activeMode === 'live';
     const listingExportMode = activeMode === 'fliptracker';
-    const catalogMode = activeMode === 'catalog';
     const auctionNinjaMode = activeMode === 'auctionninja';
     const bidControlsEl = panel.querySelector('#hibid-bid-controls');
     const listingExportModeEl = panel.querySelector('#fliptracker-listing-export-mode');
     const listingExportStatusEl = panel.querySelector('#fliptracker-listing-status');
-    const listingExportResultsEl = panel.querySelector('#fliptracker-listing-results');
     const listingExportScanButton = panel.querySelector('#fliptracker-listing-scan');
     const listingExportCopyButton = panel.querySelector('#fliptracker-listing-copy');
     const listingExportDownloadButton = panel.querySelector('#fliptracker-listing-download');
-    const liveModeEl = panel.querySelector('#hibid-live-mode');
-    const liveStateEl = panel.querySelector('#hibid-live-state');
-    const liveArmButton = panel.querySelector('#hibid-live-arm');
-    const liveSnipeButton = panel.querySelector('#hibid-live-snipe');
     const liveCopyJsonButton = panel.querySelector('#hibid-live-copy-json');
     const liveCopyLlmButton = panel.querySelector('#hibid-live-copy-llm');
     const catalogCopyJsonButton = panel.querySelector('#hibid-catalog-copy-json');
     const catalogCopyLlmButton = panel.querySelector('#hibid-catalog-copy-llm');
     const auctionNinjaModeEl = panel.querySelector('#auctionninja-catalog-mode');
-    const auctionNinjaLoadButton = panel.querySelector('#auctionninja-catalog-load');
     const auctionNinjaCopyJsonButton = panel.querySelector('#auctionninja-catalog-copy-json');
     const auctionNinjaCopyLlmButton = panel.querySelector('#auctionninja-catalog-copy-llm');
-    const auctionNinjaStopButton = panel.querySelector('#auctionninja-catalog-stop');
+    const scraperStopButton = panel.querySelector('#hibid-scraper-stop');
     const debugCopyButton = panel.querySelector('#hibid-debug-copy');
     const debugClearButton = panel.querySelector('#hibid-debug-clear');
-    const autoRefreshInput = panel.querySelector('#hibid-bid-auto-refresh');
-    const state = { stop: false, rows: [], busy: false, refreshTimer: null, refreshSeconds: 30, lotCache: new Map(), planFocused: false, lastPlanInputAt: 0, liveArmed: false, liveRow: null, liveTimer: null, listingRows: [] };
+    const state = { stop: false, rows: [], busy: false, listingRows: [], toastTimer: null };
     setActiveModeTab(panel, activeMode);
+    const setScrapingBusy = (busy) => {
+      state.busy = Boolean(busy);
+      if (scraperStopButton) scraperStopButton.style.display = busy ? '' : 'none';
+    };
+    setScrapingBusy(false);
 
     const status = (message) => {
-      statusEl.textContent = message;
       const chip = panel.querySelector('#hiba-session-chip');
-      const subtitle = panel.querySelector('.hiba-subtitle');
       const lower = String(message || '').toLowerCase();
       const tone = lower.includes('stop') || lower.includes('bad json') || lower.includes('failed') || lower.includes('not found')
         ? 'danger'
@@ -3594,9 +3325,13 @@ ${cards}
         chip.className = `hiba-chip ${tone}`;
         chip.textContent = lower.includes('stop') ? 'paused' : (state.busy ? 'busy' : tone === 'success' ? 'ready' : 'idle');
       }
-      if (subtitle) {
-        subtitle.dataset.statusText = 'true';
-        subtitle.textContent = String(message || 'Ready').replace(/\s+/g, ' ').slice(0, 42);
+      if (toastEl) {
+        clearTimeout(state.toastTimer);
+        toastEl.textContent = String(message || '').replace(/\s+/g, ' ').slice(0, 92);
+        toastEl.className = `hiba-toast show ${tone === 'danger' ? 'danger' : ''}`.trim();
+        state.toastTimer = setTimeout(() => {
+          toastEl.classList.remove('show');
+        }, tone === 'danger' ? 3600 : 2200);
       }
       debug('status', message);
     };
@@ -3604,65 +3339,23 @@ ${cards}
 
     const render = (rows) => {
       state.rows = rows;
-      const cardLots = uniqueLots(getLotTiles().map(extractLot));
-      const textLots = cardLots.length ? [] : extractTextLots();
-      const allLots = cardLots.length ? cardLots : textLots;
-      detectedEl.textContent = `Detected ${cardLots.length} unique live lot(s), ${textLots.length} text lot(s), ${state.lotCache.size} cached lot(s). Visible lots: ${lotSummary(allLots) || '-'}`;
-      resultsEl.innerHTML = rows.map((row, index) => `
-        <div class="hiba-row">
-          <div>
-            <div><strong>Lot ${row.lot}</strong> | ${escapeHtml(row.title || '(missing)')}</div>
-            <div class="hiba-meta">Current: ${row.highBid || '-'} | Next: ${row.nextBid || '-'} | Max: $${row.max ?? '-'} | Your: ${row.userBidStatus || '-'} | ${row.bidCount || ''} | ${row.timeLeft || ''}</div>
-            <div class="hiba-status ${row.eligible ? 'eligible' : 'skip'}">${row.status}</div>
-          </div>
-          <div class="hiba-row-actions">
-            <input class="hiba-max-inline" data-lot="${escapeHtml(row.lot)}" type="number" min="0" step="0.01" value="${row.max ?? ''}" placeholder="max" title="Your maximum hammer bid for this lot.">
-            <button type="button" class="hiba-add-plan" data-lot="${escapeHtml(row.lot)}" title="Add or update this lot in the max plan.">${row.max ? 'Save Max' : 'Add Plan'}</button>
-            <button type="button" class="hiba-prepare" data-index="${index}" ${row.eligible ? '' : 'disabled'}>Prepare Bid</button>
-          </div>
-        </div>
-      `).join('');
+      debug('rows evaluated without preview render', { count: rows.length });
     };
 
     const renderListingExport = (rows) => {
       state.listingRows = rows;
-      listingExportStatusEl.textContent = rows.length
+      if (listingExportStatusEl) listingExportStatusEl.textContent = rows.length
         ? `Found ${rows.length} active listing card(s). Download the export, then scan/import it in FlipTracker.`
         : 'No active listing cards found. Scroll/load more listings, then scan again.';
-      listingExportResultsEl.innerHTML = rows.slice(0, 8).map(row => `
-        <div class="hiba-row" style="grid-template-columns:1fr">
-          <div>
-            <div><strong>${escapeHtml(row.source || 'Listing')}</strong> | ${escapeHtml(row.title || '(missing title)')}</div>
-            <div class="hiba-meta">$${Number(row.price || 0).toFixed(2)} | ${escapeHtml(row.status || '')} | Views: ${row.views ?? '-'} | Watchers: ${row.watchers ?? '-'} | Clicks: ${row.clicks ?? '-'}</div>
-            <div class="hiba-meta">${escapeHtml(row.url || '')}</div>
-          </div>
-        </div>
-      `).join('') + (rows.length > 8 ? `<div class="hiba-meta">Showing 8 of ${rows.length} listing(s).</div>` : '');
-    };
-
-    const readPlanMaxLabel = (lot) => {
-      if (!lot || !planEl) return '-';
-      try {
-        const plan = parseBidPlan(planEl.value);
-        const entry = plan[String(lot)];
-        return entry?.max ? `$${entry.max}` : '-';
-      } catch {
-        return '-';
-      }
     };
 
     const renderAuctionNinjaLots = (rows, context = {}) => {
       state.rows = rows;
-      detectedEl.textContent = `AuctionNinja sale: ${context.title || document.title || '-'} | Lots: ${rows.length}${context.buyerPremium ? ` | Premium: ${context.buyerPremium}` : ''}`;
-      resultsEl.innerHTML = rows.slice(0, 12).map(row => `
-        <div class="hiba-row" style="grid-template-columns:1fr">
-          <div>
-            <div><strong>Lot ${escapeHtml(row.lot || '-')}</strong> | ${escapeHtml(row.title || '(missing title)')}</div>
-            <div class="hiba-meta">Current: ${escapeHtml(row.highBid || '-')} | Max note: ${escapeHtml(readPlanMaxLabel(row.lot))} | ${escapeHtml(row.timeLeft || row.status || '')}</div>
-            <div class="hiba-meta">${escapeHtml(row.url || '')}</div>
-          </div>
-        </div>
-      `).join('') + (rows.length > 12 ? `<div class="hiba-meta">Showing 12 of ${rows.length} AuctionNinja lot(s).</div>` : '');
+      debug('auctionninja rows captured without preview render', {
+        count: rows.length,
+        title: context.title || document.title || '',
+        buyerPremium: context.buyerPremium || ''
+      });
     };
 
     const currentListingExportHtml = () => buildFlipTrackerListingsExportHtml(state.listingRows, {
@@ -3676,93 +3369,10 @@ ${cards}
       return rows;
     };
 
-    const loadCurrentOutbidLots = async () => {
-      state.lotCache.clear();
-      const result = await scrapeCatalogLots(status, () => state.stop);
-      uniqueLots(result.items || result.lots || []).forEach(lot => {
-        if (lot.lot) state.lotCache.set(String(lot.lot), lot);
-      });
-      const mergedPlanText = planTextFromLoadedLots(planEl.value, Array.from(state.lotCache.values()));
-      planEl.value = mergedPlanText;
-      savePlanText(mergedPlanText);
-      debug('load lots merged into plan', {
-        count: state.lotCache.size,
-        source: result.source,
-        expectedTotal: result.expectedTotal
-      });
-    };
-
-    const isEditingPlan = () => state.planFocused || Date.now() - state.lastPlanInputAt < 5000;
-    const getLivePlan = () => {
-      try {
-        return parseBidPlan(planEl.value);
-      } catch (err) {
-        status(`Bad JSON: ${err.message}`);
-        return {};
-      }
-    };
-
-    const renderLive = () => {
-      if (!liveMode || !liveStateEl) return null;
-      const liveState = extractLiveAuctionState();
-      const plan = getLivePlan();
-      const planEntry = liveState.lot ? plan[String(liveState.lot)] : null;
-      const decision = evaluateLiveLot(liveState, planEntry);
-      const row = {
-        ...liveState,
-        ...decision,
-        max: planEntry?.max ?? null,
-        expectedTitle: planEntry?.title || ''
-      };
-      state.liveRow = row;
-
-      const armedText = state.liveArmed ? 'armed' : 'not armed';
-      const askText = row.nextBid || (Number.isFinite(row.nextBidAmount) ? `${row.nextBidAmount} USD` : '-');
-      const currentText = row.currentBid || row.highBid || '-';
-      liveStateEl.innerHTML = `
-        <div><strong>Lot ${escapeHtml(row.lot || '-')}</strong> | ${escapeHtml(row.title || '(waiting)')}</div>
-        <div>Current: ${escapeHtml(currentText)} | Ask: ${escapeHtml(askText)} | Max: $${row.max ?? '-'} | ${escapeHtml(row.bidCount || '')}</div>
-        <div class="hiba-status ${row.eligible ? 'eligible' : 'skip'}">${escapeHtml(row.status)} (${armedText})</div>
-      `;
-      const liveArmLabel = liveArmButton?.querySelector('span');
-      if (liveArmLabel) liveArmLabel.textContent = state.liveArmed ? 'Disarm' : 'Arm';
-      if (liveSnipeButton) liveSnipeButton.disabled = state.busy || !state.liveArmed || !row.eligible;
-      debug('live render', {
-        lot: row.lot,
-        title: row.title,
-        status: row.status,
-        eligible: row.eligible,
-        armed: state.liveArmed,
-        max: row.max,
-        nextBidAmount: row.nextBidAmount
-      });
-      return row;
-    };
-
-    if (planEl) {
-      planEl.addEventListener('focus', () => {
-        state.planFocused = true;
-        debug('plan editing focus');
-      });
-      planEl.addEventListener('blur', () => {
-        state.planFocused = false;
-        state.lastPlanInputAt = Date.now();
-        savePlanText(planEl.value);
-        debug('plan editing blur');
-      });
-      planEl.addEventListener('input', () => {
-        state.lastPlanInputAt = Date.now();
-        savePlanText(planEl.value);
-        debug('plan editing input: saved plan text');
-      });
-    }
-
     panel.querySelectorAll('[data-mode-tab]').forEach(tab => {
       tab.addEventListener('click', () => {
         const mode = tab.dataset.modeTab;
-        const target = mode === 'live'
-          ? liveModeEl
-          : (mode === 'fliptracker' ? listingExportModeEl : (mode === 'auctionninja' ? auctionNinjaModeEl : bidControlsEl));
+        const target = mode === 'fliptracker' ? listingExportModeEl : (mode === 'auctionninja' ? auctionNinjaModeEl : bidControlsEl);
         setActiveModeTab(panel, mode);
         if (target && target.style.display !== 'none') target.scrollIntoView({ block: 'nearest' });
       });
@@ -3776,108 +3386,16 @@ ${cards}
       debug('panel minimize toggled', { minimized });
     });
     panel.querySelector('#hibid-bid-close').addEventListener('click', () => {
-      cleanupTimers();
       document.dispatchEvent(new CustomEvent('hibid-bid-assistant-close'));
       panel.remove();
     });
-    panel.querySelector('#hibid-bid-stop')?.addEventListener('click', () => {
+    scraperStopButton?.addEventListener('click', () => {
       state.stop = true;
-      if (autoRefreshInput) autoRefreshInput.checked = false;
-      if (state.refreshTimer) clearInterval(state.refreshTimer);
-      state.refreshTimer = null;
-      state.liveArmed = false;
-      renderLive();
-      status('Stop requested.');
+      status('Stopped.');
+      debug('scraper stop requested');
     });
-    auctionNinjaStopButton?.addEventListener('click', () => {
-      state.stop = true;
-      status('AuctionNinja catalog loading stopped.');
-      debug('auctionninja stop requested');
-    });
-    panel.querySelector('#hibid-bid-load')?.addEventListener('click', async () => {
-      state.stop = false;
-      const target = getLoadTarget(getScanOptions());
-      if (target) {
-        status('Opening OUTBID watchlist...');
-        location.href = target;
-        return;
-      }
-      await loadCurrentOutbidLots();
-      const rows = scanPlan(getPlan(status), { ...getScanOptions(), includeUnplanned: true }, Array.from(state.lotCache.values()));
-      render(rows);
-      status(`Load finished. Replaced plan with ${state.lotCache.size} loaded OUTBID lot(s).`);
-    });
-    panel.querySelector('#hibid-bid-scan')?.addEventListener('click', () => {
-      const plan = getPlan(status);
-      const rows = scanPlan(plan, { ...getScanOptions(), includeUnplanned: true }, Array.from(state.lotCache.values()));
-      render(rows);
-      const plannedCount = Object.keys(plan).length;
-      const loadedCount = rows.filter(row => row.status === 'loaded from OUTBID - add max').length;
-      status(`${rows.filter(row => row.eligible).length} eligible / ${plannedCount} planned. ${loadedCount} loaded without max. ${rows.filter(row => row.status === 'not found').length} not found.`);
-    });
-    const setAutoRefresh = (enabled) => {
-      if (!autoRefreshInput) return;
-      if (state.refreshTimer) clearInterval(state.refreshTimer);
-      state.refreshTimer = null;
-      if (liveMode && enabled) {
-        autoRefreshInput.checked = false;
-        saveAutoRefresh(false);
-        status('Auto refresh/reload is disabled on live auction pages. Live Mode scans in-place.');
-        debug('auto-refresh blocked on live page');
-        return;
-      }
-      saveAutoRefresh(enabled);
-      if (!enabled) {
-        status('Auto refresh off.');
-        return;
-      }
-
-      state.stop = false;
-      state.refreshSeconds = 30;
-      status('Auto refresh on. It loads/scans now, then refreshes every 30s.');
-      if (isWatchlistOutbidPage()) {
-        loadCurrentOutbidLots().then(() => {
-          const rows = scanPlan(getPlan(status), { ...getScanOptions(), includeUnplanned: true }, Array.from(state.lotCache.values()));
-          render(rows);
-        });
-      } else {
-        const rows = scanPlan(getPlan(status), { ...getScanOptions(), includeUnplanned: true }, Array.from(state.lotCache.values()));
-        render(rows);
-      }
-      state.refreshTimer = setInterval(() => {
-        if (isEditingPlan()) {
-          state.refreshSeconds = 30;
-          status('Auto refresh paused while editing max plan.');
-          debug('auto-refresh paused: editing plan');
-          return;
-        }
-        if (state.busy || findDialog()) {
-          status('Auto refresh paused while a bid dialog/action is open.');
-          debug('auto-refresh paused: busy/dialog', { busy: state.busy, hasDialog: Boolean(findDialog()) });
-          return;
-        }
-        state.refreshSeconds -= 1;
-        if (state.refreshSeconds > 0) {
-          status(`Auto refresh in ${state.refreshSeconds}s.`);
-          return;
-        }
-        savePlanText(planEl.value);
-        debug('auto-refresh saved plan before reload');
-        status('Refreshing watchlist...');
-        location.reload();
-      }, 1000);
-    };
-
-    const cleanupTimers = () => {
-      if (state.liveTimer) clearInterval(state.liveTimer);
-      if (state.refreshTimer) clearInterval(state.refreshTimer);
-      state.liveTimer = null;
-      state.refreshTimer = null;
-    };
-    document.addEventListener('flipperaddon-panel-teardown', cleanupTimers, { once: true });
 
     if (listingExportMode) {
-      detectedEl.textContent = 'FlipTracker export mode. Scroll/load your active listings, then scan and download the export.';
       status('Ready to export active listings for FlipTracker.');
       window.setTimeout(scanListingsForExport, 500);
     }
@@ -3920,9 +3438,8 @@ ${cards}
 
     const scrapeAuctionNinjaForUi = async (mode) => {
       if (state.busy) return null;
-      state.busy = true;
+      setScrapingBusy(true);
       state.stop = false;
-      if (auctionNinjaLoadButton) auctionNinjaLoadButton.disabled = true;
       if (auctionNinjaCopyJsonButton) auctionNinjaCopyJsonButton.disabled = true;
       if (auctionNinjaCopyLlmButton) auctionNinjaCopyLlmButton.disabled = true;
       try {
@@ -3931,7 +3448,12 @@ ${cards}
         const lots = result.items || result.lots || [];
         renderAuctionNinjaLots(lots, result.context);
         const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
-        detectedEl.textContent = `AuctionNinja scrape source: ${result.source || 'unknown'} | Lots: ${countText} | Stop: ${result.stopReason || '-'}`;
+        debug('auctionninja scrape summary', {
+          source: result.source || 'unknown',
+          count: lots.length,
+          expectedTotal: result.expectedTotal,
+          stopReason: result.stopReason || '-'
+        });
         if (!lots.length) {
           status('No AuctionNinja lots found. Enable debug and copy logs if this page has cards.');
           return result;
@@ -3945,22 +3467,11 @@ ${cards}
         });
         return result;
       } finally {
-        state.busy = false;
-        if (auctionNinjaLoadButton) auctionNinjaLoadButton.disabled = false;
+        setScrapingBusy(false);
         if (auctionNinjaCopyJsonButton) auctionNinjaCopyJsonButton.disabled = false;
         if (auctionNinjaCopyLlmButton) auctionNinjaCopyLlmButton.disabled = false;
       }
     };
-
-    auctionNinjaLoadButton?.addEventListener('click', async () => {
-      const result = await scrapeAuctionNinjaForUi('plan');
-      const lots = result?.items || result?.lots || [];
-      if (!lots.length || !planEl) return;
-      const mergedPlanText = planTextFromLoadedLots(planEl.value, lots);
-      planEl.value = mergedPlanText;
-      savePlanText(mergedPlanText);
-      status(`Loaded ${lots.length}${result.expectedTotal ? `/${result.expectedTotal}` : ''} AuctionNinja lot(s) into local max notes.`);
-    });
 
     auctionNinjaCopyJsonButton?.addEventListener('click', async () => {
       const result = await scrapeAuctionNinjaForUi('json');
@@ -3986,7 +3497,7 @@ ${cards}
 
     const copyCatalogLots = async (mode) => {
       if (state.busy) return;
-      state.busy = true;
+      setScrapingBusy(true);
       if (catalogCopyJsonButton) catalogCopyJsonButton.disabled = true;
       if (catalogCopyLlmButton) catalogCopyLlmButton.disabled = true;
       state.stop = false;
@@ -4003,7 +3514,11 @@ ${cards}
           : JSON.stringify(lots, null, 2);
         const copied = await writeClipboard(payload).catch(() => false);
         const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
-        detectedEl.textContent = `Catalog scrape source: ${result.source || 'unknown'} | Lots: ${countText}`;
+        debug('catalog scrape summary', {
+          source: result.source || 'unknown',
+          count: lots.length,
+          expectedTotal: result.expectedTotal
+        });
         status(copied
           ? (mode === 'llm' ? `Copied LLM brief for ${countText} lot(s).` : `Copied JSON for ${countText} lot(s).`)
           : `Scraped ${countText} lot(s), but clipboard failed. Copy debug log.`);
@@ -4016,7 +3531,7 @@ ${cards}
           stopped: result.stopped
         });
       } finally {
-        state.busy = false;
+        setScrapingBusy(false);
         if (catalogCopyJsonButton) catalogCopyJsonButton.disabled = false;
         if (catalogCopyLlmButton) catalogCopyLlmButton.disabled = false;
       }
@@ -4034,60 +3549,16 @@ ${cards}
       debug('debug log cleared from drawer');
     });
 
-    autoRefreshInput?.addEventListener('change', (event) => {
-      setAutoRefresh(event.target.checked);
-    });
     if (liveMode) {
       saveAutoRefresh(false);
-      detectedEl.textContent = 'Live Mode scans this page in-place; it will not auto-refresh/reload.';
-      state.liveTimer = setInterval(renderLive, 750);
-      renderLive();
-    } else if (autoRefreshInput?.checked) {
-      setAutoRefresh(true);
+      status('Ready to copy live lots.');
     }
-    panel.querySelector('#hibid-bid-auto-confirm')?.addEventListener('change', (event) => {
-      saveAutoConfirm(event.target.checked);
-    });
-    panel.querySelector('#hibid-bid-next')?.addEventListener('click', async () => {
-      if (state.busy) return;
-      const eligible = state.rows.find(row => row.eligible);
-      if (!eligible) {
-        status('No eligible row. Scan first.');
-        return;
-      }
-      state.busy = true;
-      try {
-        await prepareBid(eligible, status, render, () => state.stop);
-      } finally {
-        state.busy = false;
-      }
-    });
-    liveArmButton?.addEventListener('click', () => {
-      state.liveArmed = !state.liveArmed;
-      state.stop = false;
-      renderLive();
-      status(state.liveArmed ? 'Live snipe armed. Use Snipe Now when ready.' : 'Live snipe disarmed.');
-    });
-    liveSnipeButton?.addEventListener('click', async () => {
-      if (state.busy) return;
-      const row = renderLive();
-      if (!row?.eligible || !state.liveArmed) {
-        status(`Live snipe blocked: ${row?.status || 'not ready'}.`);
-        return;
-      }
-      state.busy = true;
-      try {
-        await prepareLiveBid(row, status, () => state.stop);
-      } finally {
-        state.busy = false;
-        renderLive();
-      }
-    });
     const copyLiveLots = async (mode) => {
       if (state.busy) return;
-      state.busy = true;
+      setScrapingBusy(true);
       if (liveCopyJsonButton) liveCopyJsonButton.disabled = true;
       if (liveCopyLlmButton) liveCopyLlmButton.disabled = true;
+      state.stop = false;
       try {
         status('Loading all open live lots before copy...');
         const expanded = await expandLivePageLots(status, () => state.stop);
@@ -4116,50 +3587,13 @@ ${cards}
           copied
         });
       } finally {
-        state.busy = false;
+        setScrapingBusy(false);
         if (liveCopyJsonButton) liveCopyJsonButton.disabled = false;
         if (liveCopyLlmButton) liveCopyLlmButton.disabled = false;
       }
     };
     liveCopyJsonButton?.addEventListener('click', () => copyLiveLots('json'));
     liveCopyLlmButton?.addEventListener('click', () => copyLiveLots('llm'));
-    resultsEl.addEventListener('click', async (event) => {
-      if (state.busy) return;
-      const addButton = event.target.closest('.hiba-add-plan');
-      if (addButton && planEl) {
-        const lotKey = String(addButton.dataset.lot || '');
-        const row = state.rows.find(item => String(item.lot) === lotKey);
-        if (!row) return;
-        const input = Array.from(resultsEl.querySelectorAll('.hiba-max-inline')).find(item => String(item.dataset.lot || '') === lotKey);
-        let nextText = addLotToPlanText(planEl.value, row);
-        try {
-          const parsed = JSON.parse(nextText);
-          const rawMax = String(input?.value || '').trim();
-          const numericMax = rawMax ? Number(rawMax) : NaN;
-          if (Number.isFinite(numericMax) && numericMax > 0) parsed[lotKey].max = numericMax;
-          nextText = JSON.stringify(parsed, null, 2);
-        } catch {
-          // addLotToPlanText already returns valid JSON, so this is only defensive.
-        }
-        planEl.value = nextText;
-        savePlanText(nextText);
-        const rows = scanPlan(getPlan(status), { ...getScanOptions(), includeUnplanned: true }, Array.from(state.lotCache.values()));
-        render(rows);
-        status(`Saved Lot ${lotKey} to max plan${input?.value ? ` at $${input.value}` : ' with no max yet'}.`);
-        return;
-      }
-      const button = event.target.closest('.hiba-prepare');
-      if (!button) return;
-      const row = state.rows[Number(button.dataset.index)];
-      if (row) {
-        state.busy = true;
-        try {
-          await prepareBid(row, status, render, () => state.stop);
-        } finally {
-          state.busy = false;
-        }
-      }
-    });
   }
 
   function escapeHtml(value) {
