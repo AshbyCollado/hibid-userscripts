@@ -14,7 +14,7 @@ Tampermonkey updates use that same raw GitHub URL through the script metadata. I
 
 `FlipperAddon by ALOS` is the single active hosted script. It starts minimized in the bottom-right corner and shows only the module for the page you are actually on:
 
-- HiBid catalog/category/watchlist pages: copy JSON and resale LLM brief.
+- HiBid catalog/category/watchlist/current-bids pages: copy JSON and resale LLM brief, including OUTBID watchlist and WINNING/OUTBID current bids.
 - HiBid livecatalog pages: expand/copy live lot JSON and resale LLM brief.
 - AuctionNinja sale catalog pages: copy sale terms plus lot JSON or resale LLM brief.
 - AuctionNinja followed-items, items-won, and bid-history pages: copy account item JSON or page-specific LLM briefs for watchlist triage, won-item inventory planning, or bid-history review.

@@ -99,6 +99,8 @@ test('assistant shared route resolver covers HiBid route families', () => {
     ['https://hibid.com/newjersey/lots/40196/computers-and-electronics', 'catalog'],
     ['https://seuyco.hibid.com/catalog/752334/the-luxe-edit', 'catalog'],
     ['https://hibid.com/account/watchlist?status=OUTBID', 'watchlist-outbid'],
+    ['https://hibid.com/account/currentbids?status=WINNING', 'currentbids-winning'],
+    ['https://hibid.com/account/currentbids?status=OUTBID', 'currentbids-outbid'],
   ];
 
   cases.forEach(([href, kind]) => {
@@ -109,6 +111,8 @@ test('assistant shared route resolver covers HiBid route families', () => {
   });
 
   assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/watchlist')), false);
+  assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/currentbids')), false);
+  assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/currentbids?status=CLOSED')), false);
   assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/help')), false);
 });
 
@@ -608,6 +612,43 @@ test('assistant blocks AuctionNinja exports from the wrong active page kind', ()
   });
 });
 
+test('assistant supports HiBid winning and outbid current-bids exports only', () => {
+  const core = loadCore();
+  const winning = core.resolveAssistantMode(new URL('https://hibid.com/account/currentbids?status=WINNING'));
+  const outbid = core.resolveAssistantMode(new URL('https://hibid.com/account/currentbids?status=OUTBID'));
+
+  assert.equal(winning.mode, 'catalog');
+  assert.equal(winning.source, 'hibid');
+  assert.equal(winning.route.kind, 'currentbids-winning');
+  assert.equal(outbid.mode, 'catalog');
+  assert.equal(outbid.source, 'hibid');
+  assert.equal(outbid.route.kind, 'currentbids-outbid');
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'dom-fallback',
+    items: [{ lot: '26', title: 'Air Purifier', userBidStatus: 'Winning' }],
+  }, 'catalog', winning.route)), {
+    ok: true,
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-account-dom',
+    context: { source: 'AuctionNinja', pageKind: 'followed-items' },
+    items: [{ source: 'AuctionNinja', pageKind: 'followed-items', title: 'Wrong Site' }],
+  }, 'catalog', outbid.route)), {
+    ok: false,
+    reason: 'catalog-source-mismatch',
+  });
+
+  const winningHtml = core.buildPanelHtml({ mode: 'catalog', route: winning.route, debugEnabled: false });
+  const outbidHtml = core.buildPanelHtml({ mode: 'catalog', route: outbid.route, debugEnabled: false });
+  assert.match(winningHtml, /Winning Bids Export/);
+  assert.match(winningHtml, /class="hiba-chip neutral">winning</);
+  assert.match(outbidHtml, /Outbid Bids Export/);
+  assert.match(outbidHtml, /class="hiba-chip neutral">outbid</);
+  assert.doesNotMatch(`${winningHtml}${outbidHtml}`, /Prepare Bid|Snipe Now|Auto-confirm|Max plan/i);
+});
+
 test('assistant blocks AAR exports from the wrong route or auction id', () => {
   const core = loadCore();
 
@@ -898,6 +939,8 @@ test('assistant mode resolver activates only the current page module', () => {
   const cases = [
     ['https://hibid.com/newjersey/lots/40196/computers-and-electronics', 'catalog'],
     ['https://hibid.com/account/watchlist?status=OUTBID', 'catalog'],
+    ['https://hibid.com/account/currentbids?status=WINNING', 'catalog'],
+    ['https://hibid.com/account/currentbids?status=OUTBID', 'catalog'],
     ['https://hibid.com/livecatalog/752334/the-luxe-edit', 'live'],
     ['https://www.ebay.com/sh/lst/active', 'fliptracker'],
     ['https://www.facebook.com/marketplace/you/selling', 'fliptracker'],

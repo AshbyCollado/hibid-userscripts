@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.27
+// @version      0.7.28
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -10,6 +10,7 @@
 // @match        https://hibid.com/catalog/*
 // @match        https://hibid.com/livecatalog/*
 // @match        https://hibid.com/account/watchlist*
+// @match        https://hibid.com/account/currentbids*
 // @match        https://hibid.com/*
 // @match        https://*.hibid.com/*
 // @match        https://bid.ajwillnerauctions.com/ui/auctions/*
@@ -41,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.27';
+  const SCRIPT_VERSION = '0.7.28';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1613,7 +1614,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function validateCatalogExportAgainstRoute(result, route = {}) {
     const routeKind = String(route?.kind || '').trim();
-    if (routeKind && !['catalog', 'watchlist-outbid', 'lot'].includes(routeKind)) {
+    if (routeKind && !['catalog', 'watchlist-outbid', 'currentbids-winning', 'currentbids-outbid', 'lot'].includes(routeKind)) {
       return { ok: false, reason: 'catalog-route-mismatch' };
     }
     const routeSource = String(route?.source || '').trim().toLowerCase();
@@ -4605,6 +4606,21 @@ ${cards}
         : { supported: false, kind: 'watchlist', host, reason: 'watchlist is not OUTBID' };
     }
 
+    if (parts[0] === 'account' && parts[1] === 'currentbids') {
+      const status = String(
+        loc.searchParams?.get?.('status')
+        || search.match(/[?&]status=([^&]+)/i)?.[1]
+        || ''
+      ).trim().toUpperCase();
+      if (status === 'WINNING') {
+        return { supported: true, kind: 'currentbids-winning', host, status, reason: 'winning current bids route' };
+      }
+      if (status === 'OUTBID') {
+        return { supported: true, kind: 'currentbids-outbid', host, status, reason: 'outbid current bids route' };
+      }
+      return { supported: false, kind: 'currentbids', host, status, reason: 'current bids status is not WINNING or OUTBID' };
+    }
+
     if (parts[0] === 'livecatalog') {
       return { supported: true, kind: 'live', host, auctionId: parts[1] || '', reason: 'livecatalog route' };
     }
@@ -6027,15 +6043,24 @@ ${cards}
 
   function renderCatalogSection(debugEnabled, route = {}) {
     const isAjWillner = isAjWillnerRoute(route);
-    const kicker = isAjWillner ? 'AJ Willner' : 'HiBid catalog';
-    const title = isAjWillner ? 'AJ Willner Catalog Export' : 'Catalog Export';
-    const chip = isAjWillner ? 'virtual list' : 'scraper';
+    const isWinningBids = route?.kind === 'currentbids-winning';
+    const isOutbidBids = route?.kind === 'currentbids-outbid';
+    const isAccountBids = isWinningBids || isOutbidBids || route?.kind === 'watchlist-outbid';
+    const kicker = isAjWillner ? 'AJ Willner' : (isAccountBids ? 'HiBid account' : 'HiBid catalog');
+    const title = isAjWillner
+      ? 'AJ Willner Catalog Export'
+      : (isWinningBids ? 'Winning Bids Export' : (isOutbidBids ? 'Outbid Bids Export' : 'Catalog Export'));
+    const chip = isAjWillner ? 'virtual list' : (isWinningBids ? 'winning' : (isOutbidBids ? 'outbid' : 'scraper'));
     const llmHelp = isAjWillner
       ? 'Copy the resale-analysis prompt plus scraped AJ Willner listing JSON for a desktop LLM.'
-      : 'Copy the full resale-analysis prompt plus scraped lot JSON for a desktop LLM.';
+      : (isAccountBids
+        ? 'Copy the resale-analysis prompt plus visible HiBid account bid lots for a desktop LLM.'
+        : 'Copy the full resale-analysis prompt plus scraped lot JSON for a desktop LLM.');
     const jsonHelp = isAjWillner
       ? 'Copy scraped AJ Willner auction listings as JSON for manual use.'
-      : 'Copy scraped HiBid lots as JSON for manual use.';
+      : (isAccountBids
+        ? 'Copy visible HiBid account bid lots as JSON for manual use.'
+        : 'Copy scraped HiBid lots as JSON for manual use.');
     return `
       <section id="hibid-bid-controls" class="hiba-section" data-module="catalog">
         <div class="hiba-section-head">

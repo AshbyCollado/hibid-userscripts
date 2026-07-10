@@ -12,7 +12,7 @@ This repo is the standalone home for FlipperAddon by ALOS, separate from `Deadlo
 
 ## Modules
 
-- Catalog mode: HiBid catalog/category/lot/OUTBID watchlist pages. Owns scraper-first JSON copy and LLM brief export.
+- Catalog mode: HiBid catalog/category/lot/OUTBID watchlist pages plus WINNING/OUTBID current-bids pages. Owns scraper-first JSON copy and LLM brief export.
 - Live mode: HiBid `livecatalog` pages. Owns live lot expansion plus JSON copy and LLM brief export.
 - AuctionNinja mode: sale catalog pages, auction-search/nearby-sales pages, and followed-items/items-won/bid-history account pages. Owns sale terms, whole-auction search JSON/LLM export, account item JSON copy, watchlist LLM brief export, won-items inventory LLM brief export, and bid-history review export.
 - AAR Auctions mode: auction calendar and catalog pages. Owns auction-list JSON/LLM export, catalog-lot JSON/LLM export, and persisted origin/radius settings for LLM-side distance verification.

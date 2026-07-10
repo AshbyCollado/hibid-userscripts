@@ -51,6 +51,8 @@ Mount without waiting for lot tiles on:
 - `https://hibid.com/lot/*`
 - `https://hibid.com/*/lot/*`
 - `https://hibid.com/account/watchlist?status=OUTBID`
+- `https://hibid.com/account/currentbids?status=WINNING`
+- `https://hibid.com/account/currentbids?status=OUTBID`
 - `https://*.hibid.com/catalog/*`
 - `https://*.hibid.com/lot/*`
 - `https://*.hibid.com/account/watchlist?status=OUTBID`
@@ -228,6 +230,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.16` adds AAR Auctions calendar/catalog scraper exports with persisted origin/radius research settings and distance-agent LLM briefs.
 - Done: `v0.7.17` adds GovDeals seller, new-listings, and asset exports with safe asset-detail enrichment and distance-aware LLM briefs.
 - Done: `v0.7.18` tightens GovDeals real-grid parsing: browser URL filters, compact card fields, visible result counts, and carousel trimming.
+- Done: `v0.7.28` adds HiBid `/account/currentbids?status=WINNING` and `/account/currentbids?status=OUTBID` as scraper-only account exports.
 - Done: `v0.7.19` tightens GovDeals seller pages: `Search Results` counts, sellerName context, and possessive-title compact card parsing.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 
