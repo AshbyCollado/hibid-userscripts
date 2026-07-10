@@ -2139,11 +2139,28 @@ Pink Lady Liquidation
       'img': image,
     },
   });
+  const duplicateTrackedSaleLink = makeFakeNode({
+    text: 'Dumont New Jersey Estate Sale',
+    attrs: { href: 'https://www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html?an=20260710124520' },
+  });
+  const duplicateTrackedRow = makeFakeNode({
+    text: `Dumont New Jersey Estate Sale
+Dumont, NJ Local Pickup Only
+Begins to close
+Thu, Jul 16 2026 @ 8:00 PM EDT
+Pink Lady Liquidation
+561 Lots`,
+    selectors: {
+      'a[href*="/sales/details/"]': duplicateTrackedSaleLink,
+      'a[href]:not([href*="/sales/details/"])': sellerLink,
+      'img': image,
+    },
+  });
   const root = makeFakeNode({
     text: '108 auctions near Carteret, NJ 1 2 3 Next',
     selectors: {
       'a[href*="/sales/details/"]': saleLink,
-      '.auction-item': [row],
+      '.auction-item': [row, duplicateTrackedRow],
     },
   });
 

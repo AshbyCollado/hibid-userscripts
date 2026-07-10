@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.24
+// @version      0.7.25
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -41,7 +41,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.24';
+  const SCRIPT_VERSION = '0.7.25';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -2287,6 +2287,22 @@ ${cards}
     return match?.[1] || '';
   }
 
+  function canonicalAuctionNinjaSaleUrl(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    try {
+      const parsed = new URL(raw, 'https://www.auctionninja.com/');
+      if (!isAuctionNinjaHost(parsed.hostname) || !/\/sales\/details\//i.test(parsed.pathname)) {
+        return parsed.href;
+      }
+      parsed.search = '';
+      parsed.hash = '';
+      return parsed.href;
+    } catch {
+      return raw.replace(/[?#].*$/, '');
+    }
+  }
+
   function isAuctionNinjaHost(hostname) {
     const host = String(hostname || '').toLowerCase();
     return host === 'auctionninja.com' || host === 'www.auctionninja.com';
@@ -3066,12 +3082,12 @@ ${cards}
     getAuctionNinjaAuctionSearchCards(root).forEach(card => {
       const rawText = textOf(card);
       const saleLink = findBestAuctionNinjaSaleLink(card) || card.querySelector?.('a[href*="/sales/details/"]') || (/\/sales\/details\//i.test(controlHref(card)) ? card : null);
-      const url = absoluteUrl(controlHref(saleLink), base);
+      const url = canonicalAuctionNinjaSaleUrl(absoluteUrl(controlHref(saleLink), base));
       const title = extractAuctionNinjaAuctionSearchTitle(card, saleLink, url);
       const sellerLink = card.querySelector?.('a[href]:not([href*="/sales/details/"])');
       const sellerUrl = absoluteUrl(controlHref(sellerLink), base);
       const seller = normalizeAuctionNinjaTitle(textOf(sellerLink));
-      const key = url || `${title}:${rawText.slice(0, 80)}`;
+      const key = canonicalAuctionNinjaSaleUrl(url) || `${title}:${rawText.slice(0, 80)}`;
       if (!key || seen.has(key) || !title) return;
       seen.add(key);
       const itemCountMatch = rawText.match(/\b(\d{1,6})\s+Lots?\b/i);
@@ -4315,7 +4331,7 @@ ${cards}
 
   function mergeAuctionNinjaSales(target, sales) {
     sales.forEach(sale => {
-      const key = sale.url || sale.id || sale.title;
+      const key = canonicalAuctionNinjaSaleUrl(sale.url) || sale.id || sale.title;
       if (key && sale.title) target.set(String(key), sale);
     });
     return target;
