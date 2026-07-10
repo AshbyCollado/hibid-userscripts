@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.12
+// @version      0.7.14
 // @description  Modular resale scraper/exporter for HiBid, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -37,7 +37,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.12';
+  const SCRIPT_VERSION = '0.7.14';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -51,7 +51,9 @@
     'hibid-lot-catalog-scraper-copy-button',
     'hibid-lot-catalog-scraper-json',
     'hibid-scraper-copy-button',
-    'hibid-scraper-json'
+    'hibid-scraper-json',
+    'auction-scraper-copy-button',
+    'auction-scraper-json'
   ];
   const MENU_COMMANDS = [
     'Remount FlipperAddon',
@@ -1478,6 +1480,11 @@ ${cards}
     extractAuctionNinjaWonItems,
     extractAuctionNinjaBidHistoryItems,
     extractAuctionNinjaAuctionSearchSales,
+    findAjWillnerScrollContainer,
+    getAjWillnerScrollStepSize,
+    getAjWillnerExpectedTotal,
+    extractAjWillnerVisibleListings,
+    scrapeAjWillnerListings,
     scrapeAuctionNinjaCatalogLots,
     scrapeAuctionNinjaAccountItems,
     scrapeAuctionNinjaAuctionSearchSales,
@@ -1587,8 +1594,226 @@ ${cards}
     }
   }
 
+  function isAjWillnerHost(hostname = (typeof location !== 'undefined' ? location.hostname : '')) {
+    return String(hostname || '').toLowerCase() === 'bid.ajwillnerauctions.com';
+  }
+
+  function findAjWillnerScrollContainer(root = document) {
+    const known = root.querySelector?.('[data-testid="auction-list-scroll"]');
+    if (known && known.scrollHeight > known.clientHeight) return known;
+
+    const legacyGrid = root.querySelector?.('.ReactVirtualized__Grid');
+    if (legacyGrid && legacyGrid.scrollHeight > legacyGrid.clientHeight) return legacyGrid;
+
+    return Array.from(root.querySelectorAll?.('div') || [])
+      .filter(el => el.scrollHeight > el.clientHeight + 100)
+      .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0] || null;
+  }
+
+  function getAjWillnerScrollStepSize(scrollContainer = {}) {
+    const clientHeight = Number(scrollContainer?.clientHeight) || 700;
+    return Math.max(180, Math.min(360, Math.ceil(clientHeight * 0.42)));
+  }
+
+  function getAjWillnerExpectedTotal(root = document, scrollContainer = null) {
+    const text = `${textOf(scrollContainer)} ${getRootText(root)}`;
+    const foundMatch = text.match(/(\d[\d,]*)\s+items\s+found/i);
+    if (foundMatch) return Number(foundMatch[1].replace(/,/g, ''));
+    const itemMatch = text.match(/\b(\d[\d,]*)\s+items\b/i);
+    return itemMatch ? Number(itemMatch[1].replace(/,/g, '')) : null;
+  }
+
+  function parseAjWillnerTitle(value) {
+    const text = textOf({ textContent: value });
+    const match = text.match(/^#?\s*([A-Za-z0-9.-]+)\s*(?:\u2022|\||-)\s*(.+)$/);
+    if (!match) return { lot: '', title: text.replace(/^#\s*/, '') };
+    return {
+      lot: match[1],
+      title: match[2].replace(/\s+/g, ' ').trim()
+    };
+  }
+
+  function descriptionTextOf(el) {
+    const html = el?.innerHTML || '';
+    if (/<br\s*\/?>/i.test(html)) {
+      return decodeHtml(html)
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]+>/g, ' ')
+        .split(/\n+/)
+        .map(line => line.replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+    }
+    return textOf(el);
+  }
+
+  function pickAjWillnerImage(card, base) {
+    const direct = pickFirstImage(card, base);
+    if (direct) return direct;
+
+    const source = card.querySelector?.('source[srcset], img[srcset]');
+    const srcset = source?.getAttribute?.('srcset') || '';
+    const candidate = srcset
+      .split(',')
+      .map(part => part.trim().split(/\s+/)[0])
+      .filter(Boolean)
+      .pop();
+    return candidate ? absoluteUrl(candidate, base) : '';
+  }
+
+  function extractAjWillnerVisibleListings(root = document, loc = location) {
+    const base = loc?.href || 'https://bid.ajwillnerauctions.com/';
+    const cards = Array.from(root.querySelectorAll?.('[data-testid^="list-item-"]') || [])
+      .filter(card => /^list-item-\d+$/i.test(card.getAttribute?.('data-testid') || ''));
+
+    return cards.map(card => {
+      const testId = card.getAttribute?.('data-testid') || '';
+      const id = testId.replace(/^list-item-/i, '');
+      const linkEl = card.querySelector?.('.titleLink[href], a.titleLink[href], a[href*="/ui/auctions/"]');
+      const titleEl = card.querySelector?.('.titleLink h1, h1');
+      const titleParts = parseAjWillnerTitle(textOf(titleEl) || textOf(linkEl));
+      const href = linkEl?.getAttribute?.('href') || linkEl?.href || '';
+      const bidText = textOf(card.querySelector?.('.bidsLine span, .bidsLine'));
+      const highBid = bidText || (textOf(card).match(/\b(?:High|Current)\s+bid\s+\$?[\d,]+(?:\.\d{2})?/i)?.[0] || '');
+      const status = textOf(card.querySelector?.(`[data-testid="${testId}-status-stripe"]`));
+      const rawText = textOf(card);
+      const statusText = status || (rawText.match(/\bENDS\s+[\w\s]+?(?=\s+#|\s+Lot|\s*$)/i)?.[0] || '');
+      const timeLeft = statusText.replace(/^ENDS\s*/i, '').trim();
+      const watchedEl = card.querySelector?.('[data-testid^="star-item-"] input:checked, input[type="checkbox"]:checked, [aria-label*="Unwatch"], [title*="Unwatch"]');
+      const userBidStatus = extractUserBidStatus(rawText);
+      if (!href || !titleParts.title) return null;
+
+      return {
+        source: 'ajwillner',
+        id,
+        lot: titleParts.lot || id,
+        title: titleParts.title,
+        url: absoluteUrl(href, base),
+        image: pickAjWillnerImage(card, base),
+        description: descriptionTextOf(card.querySelector?.('.description')),
+        highBid,
+        highBidAmount: moneyFromText(highBid),
+        currentPrice: moneyFromText(highBid),
+        currentBid: moneyFromText(highBid),
+        nextBid: '',
+        nextBidAmount: null,
+        bidCount: textOf(card.querySelector?.('[class*="bidCount"], [data-testid*="bid-count"]')),
+        bidCountNumber: numberFromText(textOf(card.querySelector?.('[class*="bidCount"], [data-testid*="bid-count"]'))),
+        timeLeft,
+        status: statusText,
+        userBidStatus,
+        isWinning: userBidStatus === 'Winning',
+        isOutbid: userBidStatus === 'Outbid',
+        watched: Boolean(watchedEl),
+        rawText: rawText.slice(0, 1600)
+      };
+    }).filter(Boolean);
+  }
+
+  async function scrapeAjWillnerListings(status = () => {}, shouldStop = () => false, root = document, loc = location) {
+    debug('AJ Willner scrape start', routeDebug());
+    const scrollContainer = findAjWillnerScrollContainer(root);
+    const itemsMap = new Map();
+    let expectedTotal = getAjWillnerExpectedTotal(root, scrollContainer);
+    let lastCount = -1;
+    let stuckAtBottomChecks = 0;
+    let scrollSteps = 0;
+
+    const collect = () => {
+      extractAjWillnerVisibleListings(root, loc).forEach(item => {
+        const key = item.url || item.id || item.lot;
+        if (key && item.title) itemsMap.set(String(key), item);
+      });
+      expectedTotal = expectedTotal || getAjWillnerExpectedTotal(root, scrollContainer);
+      return itemsMap.size;
+    };
+
+    collect();
+
+    if (!scrollContainer) {
+      const items = Array.from(itemsMap.values());
+      debug('AJ Willner scrape no scroll container', { count: items.length, expectedTotal });
+      return {
+        source: 'ajwillner-visible-dom',
+        items,
+        lots: items,
+        expectedTotal,
+        stopped: !!shouldStop(),
+        incomplete: Boolean(expectedTotal && items.length < expectedTotal),
+        stopReason: 'no scroll container'
+      };
+    }
+
+    const dispatchScroll = () => {
+      if (!scrollContainer.dispatchEvent || typeof Event !== 'function') return;
+      scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
+    };
+
+    scrollContainer.scrollTop = 0;
+    dispatchScroll();
+    await wait(700);
+
+    for (let step = 0; step < 500; step += 1) {
+      if (shouldStop()) break;
+      const count = collect();
+      status(expectedTotal ? `Loading AJ Willner lots... ${count}/${expectedTotal}` : `Loading AJ Willner lots... ${count}`);
+      debug('AJ Willner scroll step', {
+        step,
+        count,
+        expectedTotal,
+        scrollTop: scrollContainer.scrollTop,
+        scrollHeight: scrollContainer.scrollHeight,
+        clientHeight: scrollContainer.clientHeight
+      });
+
+      if (expectedTotal && count >= expectedTotal) break;
+
+      const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+      const currentTop = scrollContainer.scrollTop || 0;
+      const atBottom = currentTop >= Math.max(0, maxScrollTop - 2);
+      if (atBottom) {
+        if (count === lastCount) stuckAtBottomChecks += 1;
+        lastCount = count;
+        if (stuckAtBottomChecks >= 3) break;
+      } else {
+        stuckAtBottomChecks = 0;
+      }
+
+      const stepSize = getAjWillnerScrollStepSize(scrollContainer);
+      const nextTop = Math.min(maxScrollTop, currentTop + stepSize);
+      if (nextTop === currentTop && stuckAtBottomChecks >= 2) break;
+
+      scrollContainer.scrollTop = nextTop;
+      dispatchScroll();
+      scrollSteps += 1;
+      await wait(190);
+    }
+
+    collect();
+    const items = Array.from(itemsMap.values());
+    const stopped = !!shouldStop();
+    const incomplete = Boolean(expectedTotal && items.length < expectedTotal);
+    const stopReason = stopped ? 'stopped by user' : (incomplete ? 'virtual list ended before expected total' : 'complete');
+    debug('AJ Willner scrape finished', { count: items.length, expectedTotal, stopped, incomplete, stopReason, scrollSteps });
+    return {
+      source: 'ajwillner-virtual-list',
+      items,
+      lots: items,
+      expectedTotal,
+      stopped,
+      incomplete,
+      stopReason,
+      scrollSteps
+    };
+  }
+
   async function scrapeCatalogLots(status = () => {}, shouldStop = () => false) {
     debug('catalog scrape start', routeDebug());
+
+    if (isAjWillnerHost(typeof location !== 'undefined' ? location.hostname : '')) {
+      return scrapeAjWillnerListings(status, shouldStop);
+    }
 
     const stateResult = await scrapeHibidStatePages(status, shouldStop).catch(err => {
       debug('catalog hibid-state scrape failed', { error: err.message });
@@ -2871,7 +3096,7 @@ ${cards}
         mode: 'catalog',
         source: 'ajwillner',
         reason: 'AJ Willner auction route',
-        route: { supported: true, kind: 'catalog', host, auctionId: getAjWillnerAuctionId(loc), reason: 'AJ Willner auction route' }
+        route: { supported: true, kind: 'catalog', source: 'ajwillner', host, auctionId: getAjWillnerAuctionId(loc), reason: 'AJ Willner auction route' }
       };
     }
 
@@ -3084,11 +3309,17 @@ ${cards}
   }
 
   function catalogAuctionContext(root = document) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const isAjWillner = loc && isAjWillnerHost(loc.hostname);
+    const route = loc
+      ? (isAjWillner ? resolveAssistantMode(loc).route : resolveHiBidPage(loc))
+      : null;
     return {
       title: (typeof document !== 'undefined' ? document.title : '') || textOf(root.querySelector?.('h1')) || '',
-      url: typeof location !== 'undefined' ? location.href : '',
-      route: typeof location !== 'undefined' ? resolveHiBidPage(location) : null,
-      totalLots: getExpectedLotTotal(root),
+      url: loc ? loc.href : '',
+      route,
+      source: isAjWillner ? 'ajwillner' : 'hibid',
+      totalLots: isAjWillner ? getAjWillnerExpectedTotal(root, findAjWillnerScrollContainer(root)) : getExpectedLotTotal(root),
       openLots: null
     };
   }
@@ -3825,9 +4056,16 @@ ${cards}
     return 'Catalog';
   }
 
-  function renderModeTabs(mode) {
+  function isAjWillnerRoute(route = {}) {
+    return route?.source === 'ajwillner' || route?.host === 'bid.ajwillnerauctions.com';
+  }
+
+  function renderModeTabs(mode, route = {}) {
+    const isAjWillner = mode === 'catalog' && isAjWillnerRoute(route);
     const meta = {
-      catalog: { label: 'HiBid', icon: 'list', help: 'HiBid scraper mode copies catalog or watchlist lots as JSON or an LLM brief.' },
+      catalog: isAjWillner
+        ? { label: 'AJ Willner', icon: 'list', help: 'AJ Willner scraper mode copies virtual auction listings as JSON or an LLM brief.' }
+        : { label: 'HiBid', icon: 'list', help: 'HiBid scraper mode copies catalog or watchlist lots as JSON or an LLM brief.' },
       live: { label: 'HiBid Live', icon: 'radio', help: 'HiBid live scraper mode expands visible live lots and copies JSON or an LLM brief.' },
       fliptracker: { label: 'FlipTracker', icon: 'file', help: 'FlipTracker mode exports visible eBay or Facebook selling listings for import/review.' },
       auctionninja: { label: 'AuctionNinja', icon: 'list', help: 'AuctionNinja mode copies sale catalogs as JSON or a terms-aware LLM brief without touching bid controls.' },
@@ -3851,19 +4089,29 @@ ${cards}
     `;
   }
 
-  function renderCatalogSection(debugEnabled) {
+  function renderCatalogSection(debugEnabled, route = {}) {
+    const isAjWillner = isAjWillnerRoute(route);
+    const kicker = isAjWillner ? 'AJ Willner' : 'HiBid catalog';
+    const title = isAjWillner ? 'AJ Willner Catalog Export' : 'Catalog Export';
+    const chip = isAjWillner ? 'virtual list' : 'scraper';
+    const llmHelp = isAjWillner
+      ? 'Copy the resale-analysis prompt plus scraped AJ Willner listing JSON for a desktop LLM.'
+      : 'Copy the full resale-analysis prompt plus scraped lot JSON for a desktop LLM.';
+    const jsonHelp = isAjWillner
+      ? 'Copy scraped AJ Willner auction listings as JSON for manual use.'
+      : 'Copy scraped HiBid lots as JSON for manual use.';
     return `
       <section id="hibid-bid-controls" class="hiba-section" data-module="catalog">
         <div class="hiba-section-head">
           <div>
-            <div class="hiba-kicker">HiBid catalog</div>
-            <strong>Catalog Export</strong>
+            <div class="hiba-kicker">${kicker}</div>
+            <strong>${title}</strong>
           </div>
-          <span class="hiba-chip neutral">scraper</span>
+          <span class="hiba-chip neutral">${chip}</span>
         </div>
         <div class="hiba-actions">
-          ${actionButton('hibid-catalog-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Copy the full resale-analysis prompt plus scraped lot JSON for a desktop LLM.')}
-          ${actionButton('hibid-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy scraped HiBid lots as JSON for manual use.')}
+          ${actionButton('hibid-catalog-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', llmHelp)}
+          ${actionButton('hibid-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', jsonHelp)}
           ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current scrape/export work.')}
         </div>
         ${renderDebugActions(debugEnabled)}
@@ -3978,7 +4226,7 @@ ${cards}
     if (mode === 'live') return renderLiveSection(debugEnabled);
     if (mode === 'fliptracker') return renderFlipTrackerSection(debugEnabled);
     if (mode === 'auctionninja') return renderAuctionNinjaSection(debugEnabled, route);
-    return renderCatalogSection(debugEnabled);
+    return renderCatalogSection(debugEnabled, route);
   }
 
   function shouldRebuildPanelForMode(existingMode, nextMode, allowed = true, panelExists = false) {
@@ -4013,7 +4261,7 @@ ${cards}
             </div>
             <span class="hiba-chip neutral" id="hiba-session-chip">idle</span>
           </div>
-          ${renderModeTabs(mode)}
+          ${renderModeTabs(mode, route)}
           ${renderActiveSection(mode, debugEnabled, route)}
           <div id="flipperaddon-toast" class="hiba-toast" role="status" aria-live="polite"></div>
         </div>

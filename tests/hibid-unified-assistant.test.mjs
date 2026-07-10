@@ -112,6 +112,22 @@ test('assistant shared route resolver covers HiBid route families', () => {
   assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/help')), false);
 });
 
+test('assistant resolves AJ Willner auction pages as source-aware catalog exports', () => {
+  const core = loadCore();
+  const loc = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');
+  const mode = core.resolveAssistantMode(loc);
+
+  assert.equal(core.shouldInitOnLocation(loc), true);
+  assert.equal(mode.mode, 'catalog');
+  assert.equal(mode.source, 'ajwillner');
+  assert.equal(mode.route.auctionId, '164037');
+
+  const html = core.buildPanelHtml({ mode: 'catalog', route: mode.route, debugEnabled: false });
+  assert.match(html, /AJ Willner/);
+  assert.match(html, /AJ Willner Catalog Export/);
+  assert.doesNotMatch(html, />HiBid catalog</);
+});
+
 test('assistant parses HiBid showing totals and safe next-page controls', () => {
   const core = loadCore();
   const next = makeElement({ text: 'Next >', attrs: { href: '?apage=2' } });
@@ -201,6 +217,74 @@ test('assistant extracts enriched lots from embedded HiBid Apollo state', () => 
       buyerPremium: '15%',
     },
   ]);
+});
+
+test('assistant extracts AJ Willner virtual-list cards as catalog lots', () => {
+  const core = loadCore();
+  const link = makeFakeNode({
+    text: '#32 \u2022 Rowe "Moore" Upholstered Sofa',
+    attrs: { href: '/ui/auctions/164037/24887841' },
+  });
+  const title = makeFakeNode({ text: '#32 \u2022 Rowe "Moore" Upholstered Sofa' });
+  const description = makeFakeNode({
+    text: 'Quantity: 1\nDimensions: 93W x 40D x 33H\nMSRP: $4,639',
+  });
+  const bid = makeFakeNode({ text: 'High bid $100' });
+  const status = makeFakeNode({ text: 'ENDS 4d 10h 18min' });
+  const image = makeFakeNode({ attrs: { src: 'https://images.example.test/sofa.jpg' } });
+  const card = makeFakeNode({
+    text: 'ENDS 4d 10h 18min #32 \u2022 Rowe "Moore" Upholstered Sofa Quantity: 1 Dimensions: 93W x 40D x 33H MSRP: $4,639 High bid $100',
+    attrs: { 'data-testid': 'list-item-24887841' },
+    selectors: {
+      '.titleLink[href]': link,
+      '.titleLink h1': title,
+      '.description': description,
+      '.bidsLine': bid,
+      '[data-testid="list-item-24887841-status-stripe"]': status,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: '866 items found in Active',
+    selectors: {
+      '[data-testid^="list-item-"]': [card],
+    },
+  });
+
+  const lots = core.extractAjWillnerVisibleListings(root, new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active'));
+
+  assert.deepEqual(plain(lots), [
+    {
+      source: 'ajwillner',
+      id: '24887841',
+      lot: '32',
+      title: 'Rowe "Moore" Upholstered Sofa',
+      url: 'https://bid.ajwillnerauctions.com/ui/auctions/164037/24887841',
+      image: 'https://images.example.test/sofa.jpg',
+      description: 'Quantity: 1 Dimensions: 93W x 40D x 33H MSRP: $4,639',
+      highBid: 'High bid $100',
+      highBidAmount: 100,
+      currentPrice: 100,
+      currentBid: 100,
+      nextBid: '',
+      nextBidAmount: null,
+      bidCount: '',
+      bidCountNumber: null,
+      timeLeft: '4d 10h 18min',
+      status: 'ENDS 4d 10h 18min',
+      userBidStatus: '',
+      isWinning: false,
+      isOutbid: false,
+      watched: false,
+      rawText: 'ENDS 4d 10h 18min #32 \u2022 Rowe "Moore" Upholstered Sofa Quantity: 1 Dimensions: 93W x 40D x 33H MSRP: $4,639 High bid $100',
+    },
+  ]);
+});
+
+test('assistant uses an overlapping AJ Willner virtual-scroll stride', () => {
+  const core = loadCore();
+  assert.equal(core.getAjWillnerScrollStepSize({ clientHeight: 857 }), 360);
+  assert.equal(core.getAjWillnerScrollStepSize({ clientHeight: 300 }), 180);
 });
 
 test('assistant ignores stray Apollo lot connections when visible total identifies the main list', () => {

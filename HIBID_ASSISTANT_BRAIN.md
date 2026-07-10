@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.12`.
+- Current version: `0.7.14`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -74,6 +74,17 @@ Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/
 3. Fallback:
    - If embedded state is missing or state pagination is incomplete, scan visible DOM tiles/text, scroll, and use safe next/open-more controls.
    - Avoid `_ngcontent-*` attributes; they are Angular build artifacts.
+
+### AJ Willner
+
+1. Route/source:
+   - `https://bid.ajwillnerauctions.com/ui/auctions/*` mounts as `catalog` mode with source `ajwillner`, not HiBid.
+   - The compact drawer labels the active module as `AJ Willner` and reuses the same `Copy LLM Brief` / `Copy JSON` controls.
+2. Virtual-list scraper:
+   - The lot grid is virtualized; use `[data-testid="auction-list-scroll"]` first, then `.ReactVirtualized__Grid`, then the largest scrollable `div`.
+   - Visible lot cards are `[data-testid^="list-item-"]`, filtered to exact IDs like `list-item-24887841` so status stripes are not mistaken for cards.
+   - Extract title/lot from `.titleLink h1`, URL from `.titleLink[href]`, description from `.description`, bid from `.bidsLine`, status from the matching `*-status-stripe`, and image from `img`/`srcset`.
+   - Scroll the virtual container with an overlapping capped stride, merge by URL/id/lot, and stop when the parsed `866 items found` style total is reached or the virtual list stops producing new cards.
 
 ### AuctionNinja
 
