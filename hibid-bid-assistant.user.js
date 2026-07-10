@@ -1832,6 +1832,7 @@ ${cards}
 
   function getAuctionNinjaAccountCards(root = document) {
     const selectors = [
+      'a[href*="/product/"]',
       '.account-item-card',
       '.dashboard-item',
       '.followed-item',
@@ -1855,19 +1856,45 @@ ${cards}
     const cards = [];
     const seen = new Set();
     selectors.forEach(selector => {
-      Array.from(root?.querySelectorAll?.(selector) || []).forEach(card => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(seed => {
+        const card = findAuctionNinjaAccountCardFromSeed(seed);
         if (!card || seen.has(card)) return;
         const raw = textOf(card);
         const hasProductLink = Boolean(card.querySelector?.('a[href*="/product/"]'));
-        const looksLikeAccountItem = hasProductLink
-          || /Lot\s*#|Current Bid|Price Realized|Won|Following|Watched|Outbid|Bidding Closed/i.test(raw);
-        const looksLikeShellOnly = /Dashboard|Invoices|Payment|Settings|Logout/i.test(raw) && !hasProductLink && !/Lot\s*#/i.test(raw);
+        const looksLikeAccountItem = hasProductLink && /Lot\s*#|Current Bid|Starting Bid|Price Realized|Won|Following|Watched|Outbid|Bidding Closed|Your Max Bid/i.test(raw);
+        const looksLikeShellOnly = /Dashboard|Invoices|Payment|Settings|Logout/i.test(raw) && !/Lot\s*#|Current Bid|Starting Bid|Price Realized/i.test(raw);
         if (!raw || !looksLikeAccountItem || looksLikeShellOnly) return;
         seen.add(card);
         cards.push(card);
       });
     });
     return cards;
+  }
+
+  function findAuctionNinjaAccountCardFromSeed(seed) {
+    if (!seed) return null;
+    let best = null;
+    let bestScore = -Infinity;
+    let el = seed;
+    for (let depth = 0; el && depth < 9; depth += 1, el = el.parentElement) {
+      const raw = textOf(el);
+      const productLinks = Array.from(el.querySelectorAll?.('a[href*="/product/"]') || []);
+      if (!productLinks.length) continue;
+      let score = 0;
+      if (productLinks.length === 1) score += 30;
+      else score -= productLinks.length * 15;
+      if (/\bLot\s*#/i.test(raw)) score += 45;
+      if (/\b(?:Current Bid|Starting Bid|High Bid|Price Realized|Your Max Bid)\b/i.test(raw)) score += 45;
+      if (/\b(?:Won|Following|Watched|Outbid|High Bidder|Bidding Closed)\b/i.test(raw)) score += 20;
+      if (parseAuctionNinjaAccountTimeText(raw)) score += 10;
+      if (/\b(?:Dashboard|Invoices|Account|Support|Logout|Saved Searches)\b/i.test(raw)) score -= 60;
+      if (raw.length > 2500) score -= 80;
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    }
+    return bestScore > 35 ? best : null;
   }
 
   function formatAuctionNinjaAccountMoneyLabel(label, value) {
@@ -1951,7 +1978,7 @@ ${cards}
 
     getAuctionNinjaAccountCards(root).forEach(card => {
       const rawText = textOf(card);
-      const itemLink = card.querySelector?.('a[href*="/product/"]') || card.querySelector?.('a[href]');
+      const itemLink = card.querySelector?.('a[href*="/product/"]');
       const saleLink = card.querySelector?.('a[href*="/sales/details/"]');
       const url = absoluteUrl(controlHref(itemLink), base);
       const saleUrl = absoluteUrl(controlHref(saleLink), base);
