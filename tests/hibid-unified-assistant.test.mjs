@@ -960,7 +960,7 @@ Used/See Description`,
   const root = makeFakeNode({
     text: `Rutgers University
 Piscataway, NJ
-Showing 1-1 of 1
+13 Search Results in Rutgers University, NJ
 Trailer with 6 Current Designs Crosswind Kayaks`,
     selectors: {
       'h1': makeFakeNode({ text: 'Rutgers University' }),
@@ -979,11 +979,12 @@ Trailer with 6 Current Designs Crosswind Kayaks`,
     source: 'GovDeals',
     pageKind: 'govdeals-seller',
     title: 'Rutgers University',
+    sellerName: 'Rutgers University',
     seller: 'Rutgers University',
     sellerSlug: 'rutgers',
     url: 'https://www.govdeals.com/en/rutgers',
     locationHint: 'Piscataway, NJ',
-    visibleCount: 1,
+    visibleCount: 13,
   });
   assert.deepEqual(plain(listings), [
     {
@@ -1091,14 +1092,25 @@ Current Tools Conduit Organizer`,
 test('assistant parses compact GovDeals card text from the real new-listings grid', () => {
   const core = loadCore();
   const compactText = 'New ListingOnline AuctionLot of 5 Dell Optiplex 7070 i5-9500Edison, New Jersey, USAUSD 10.006D10H(July 16, 2026 12:44 PM EDT)Lot#: 7529-6874 Watch';
+  const possessiveText = "New ListingOnline AuctionLot of 3 Microsoft Surface Book 3'sEdison, New Jersey, USAUSD 215.005D14H(July 15, 2026 04:35 PM EDT)Lot#: 7529-6816 Watch";
   const assetLink = makeFakeNode({
     text: compactText,
     attrs: { href: '/en/asset/6874/7529' },
+  });
+  const possessiveAssetLink = makeFakeNode({
+    text: possessiveText,
+    attrs: { href: '/en/asset/6816/7529' },
   });
   const card = makeFakeNode({
     text: compactText,
     selectors: {
       'a[href*="/asset/"]': assetLink,
+    },
+  });
+  const possessiveCard = makeFakeNode({
+    text: possessiveText,
+    selectors: {
+      'a[href*="/asset/"]': possessiveAssetLink,
     },
   });
   const root = makeFakeNode({
@@ -1143,6 +1155,18 @@ ${compactText}`,
     location: 'Edison, New Jersey, USA',
     url: 'https://www.govdeals.com/en/asset/6874/7529',
   });
+
+  const possessiveListing = core.extractGovDealsListings(makeFakeNode({
+    text: possessiveText,
+    selectors: {
+      'article': [possessiveCard],
+      'a[href*="/asset/"]': possessiveAssetLink,
+    },
+  }), browserLoc, 'govdeals-seller')[0];
+  assert.equal(possessiveListing.title, "Lot of 3 Microsoft Surface Book 3's");
+  assert.equal(possessiveListing.location, 'Edison, New Jersey, USA');
+  assert.equal(possessiveListing.currentBid, 'USD 215.00');
+  assert.equal(possessiveListing.lotNumber, '7529-6816');
 });
 
 test('assistant extracts GovDeals asset detail fields for enrichment', () => {
