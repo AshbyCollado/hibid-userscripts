@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.16`.
+- Current version: `0.7.17`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -32,6 +32,12 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
   - Catalog controls: Copy Catalog LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Research settings: collapsed origin/radius editor persisted under `flipperaddon-aar-research-settings-v1`, default `Edison, NJ 08817` and `100` miles.
   - Safety: research/export only; no bid, register, payment, invoice, login, or account actions.
+- `govdeals`: GovDeals seller, new-listings, and asset export pages.
+  - Seller controls: Copy Seller LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - New-listings controls: Copy Listings LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Asset controls: Copy Asset LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Distance context: reuses shared persisted origin/radius defaults and preserves GovDeals URL zipcode/miles filters.
+  - Safety: research/export only; no bid, offer, cart, checkout, payment, registration, login, invoice, or account actions.
 - `unsupported`: do not mount.
 
 ## Route Map
@@ -62,10 +68,15 @@ Mount without waiting for lot tiles on:
 - `https://www.auctionninja.com/*/product/*.html*`
 - `https://aarauctions.com/auctions*`
 - `https://aarauctions.com/servlet/Search.do?auctionId=*`
+- `https://www.govdeals.com/en/{seller}`
+- `https://www.govdeals.com/en/new-listings/filters*`
+- `https://www.govdeals.com/en/asset/{assetId}/{accountId}`
+- `https://www.govdeals.com/asset/{assetId}/{accountId}`
 
 Do not mount on generic HiBid account/help/search pages unless a resolver case is added and tested.
 Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/settings, support, login/logout, or generic account pages.
 Do not mount on AAR login, register, account, payment, invoice, checkout, or bid routes.
+Do not mount on GovDeals login, register, account, cart, checkout, payment, invoice, bid, or offer routes.
 
 ## Scraper Flow
 
@@ -147,6 +158,21 @@ Do not mount on AAR login, register, account, payment, invoice, checkout, or bid
    - AAR LLM briefs include a required `Distance Agent` instruction to verify distance with live map/search results, not assumptions.
    - Spreadsheet output must include `distance_miles`, `distance_proof_url`, `distance_status`, and `assigned_agent`.
 
+### GovDeals
+
+1. Page mode:
+   - `/en/{seller}` is seller/storefront listing export, for example `/en/rutgers`.
+   - `/en/new-listings/filters?...` is nearby/new-listings export and preserves URL `zipcode` and `miles`.
+   - `/en/asset/{assetId}/{accountId}` and `/asset/{assetId}/{accountId}` are direct asset export/enrichment routes.
+2. Listings:
+   - Extract asset ID/account ID, lot number, title, URL, image, seller, category, condition/status, current bid, bid count, close time, location, distance text, pickup/shipping hints, description/specs when visible, and raw text.
+   - Use visible DOM first. If fields are thin and browser fetch/DOMParser is available, fetch same-origin asset detail pages only for missing fields, capped and stoppable.
+3. Briefs:
+   - Reuse the full resale coordinator prompt.
+   - Include GovDeals safety boundary and shared origin/radius settings.
+   - Require live map/search proof before recommending a listing as in range.
+   - Spreadsheet output must include `distance_miles`, `distance_proof_url`, `distance_status`, and `assigned_agent`.
+
 ## Legacy Max Plan State
 
 - Old max-plan data remains in storage for compatibility and tests, but scraper-first UI does not render or use max-plan controls.
@@ -200,6 +226,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.11` recovers AuctionNinja auction-search sale titles when the only sale-details anchor text is a count marker such as `(9)`.
 - Done: `v0.7.12` exposes the boot canary on `unsafeWindow` so Selenium/page-context checks can confirm `window.__HIBID_UNIFIED_ASSISTANT_ACTIVE__ === true`.
 - Done: `v0.7.16` adds AAR Auctions calendar/catalog scraper exports with persisted origin/radius research settings and distance-agent LLM briefs.
+- Done: `v0.7.17` adds GovDeals seller, new-listings, and asset exports with safe asset-detail enrichment and distance-aware LLM briefs.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 
 ## Verification Checklist
@@ -219,11 +246,14 @@ Debug UI and console/log capture are off unless debug mode is enabled.
   - Open `https://www.auctionninja.com/nj/carteret/07008?miles=50&an=`.
   - Open `https://aarauctions.com/auctions/`.
   - Open `https://aarauctions.com/servlet/Search.do?auctionId=8563`.
+  - Open `https://www.govdeals.com/en/rutgers`.
+  - Open `https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25`.
   - Capture full-window screenshots showing the page and bottom-right launcher/drawer.
   - Confirm each page exposes only its active module.
   - Confirm scrolling, filters, lot links, watch buttons, and bid buttons still work when not actively scraping.
   - For AuctionNinja, confirm sale, followed, and won pages never expose or click bid/checkout/payment/invoice/account mutation actions.
   - For AAR Auctions, confirm the drawer shows only calendar/catalog copy controls, research settings persist, and bid/register/payment routes do not mount.
+  - For GovDeals, confirm seller/new-listings/asset pages expose only copy controls and do not click bid, offer, cart, checkout, payment, login, registration, or account controls.
 
 ## Known Pitfalls
 
@@ -233,4 +263,5 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Closed catalog price realized text is auction result data, not an eBay sold comp.
 - AuctionNinja catalogs can change while closing; `1-40 of N` may drift. Treat drift as a debug-visible stop reason, not a silent success.
 - AAR calendar cards are WordPress/Divi HTML, while catalogs are servlet-rendered tables/text; keep route-specific parsers instead of trying to reuse HiBid or AuctionNinja selectors.
+- GovDeals can block simple HTTP clients; verify from the real browser context and prefer in-page DOM/network observation over raw fetch tooling.
 - Do not treat "opened the page" as verification. Verification means observed UI plus route/debug/count evidence.

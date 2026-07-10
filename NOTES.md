@@ -16,6 +16,7 @@ This repo is the standalone home for FlipperAddon by ALOS, separate from `Deadlo
 - Live mode: HiBid `livecatalog` pages. Owns live lot expansion plus JSON copy and LLM brief export.
 - AuctionNinja mode: sale catalog pages, auction-search/nearby-sales pages, and followed-items/items-won/bid-history account pages. Owns sale terms, whole-auction search JSON/LLM export, account item JSON copy, watchlist LLM brief export, won-items inventory LLM brief export, and bid-history review export.
 - AAR Auctions mode: auction calendar and catalog pages. Owns auction-list JSON/LLM export, catalog-lot JSON/LLM export, and persisted origin/radius settings for LLM-side distance verification.
+- GovDeals mode: seller/storefront pages, new-listings filter pages, and direct asset pages. Owns listing/asset JSON copy and LLM briefs with shared origin/radius plus URL zipcode/miles context.
 - FlipTracker mode: eBay/Facebook active selling pages. Owns scan/copy/download active-listing export.
 
 Only the active page module should expose controls. Do not bring back the old all-controls-visible drawer.
@@ -30,7 +31,7 @@ Only the active page module should expose controls. Do not bring back the old al
 
 `buildLlmAuctionBrief(...)` is the durable insertion point for resale instructions. It must include the full auction-resale coordinator prompt and enriched lot JSON, including URLs, image, description, bids, auction title, and buyer premium where available.
 
-AAR-specific LLM briefs must pass through persisted research settings, defaulting to `Edison, NJ 08817` and `100` miles, and must require live map/search proof before recommending an AAR auction or lot as in-range.
+AAR and GovDeals LLM briefs must pass through persisted research settings, defaulting to `Edison, NJ 08817` and `100` miles, and must require live map/search proof before recommending an auction, listing, or asset as in-range. GovDeals new-listings briefs must also preserve URL filters such as `zipcode` and `miles`.
 
 ## Debug
 

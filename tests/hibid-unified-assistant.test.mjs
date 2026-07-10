@@ -876,6 +876,338 @@ test('assistant renders AAR copy controls and research settings only', () => {
   assert.doesNotMatch(catalogHtml, /Copy Auctions LLM|Prepare Bid|Snipe Now|Max plan|checkout|payment/i);
 });
 
+test('assistant resolves supported and blocked GovDeals route families', () => {
+  const core = loadCore();
+  const seller = new URL('https://www.govdeals.com/en/rutgers');
+  const search = new URL('https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25');
+  const asset = new URL('https://www.govdeals.com/en/asset/43147/7484');
+
+  assert.deepEqual(plain(core.resolveGovDealsPage(seller)), {
+    supported: true,
+    kind: 'govdeals-seller',
+    host: 'www.govdeals.com',
+    sellerSlug: 'rutgers',
+    reason: 'GovDeals seller route',
+  });
+  assert.deepEqual(plain(core.resolveGovDealsPage(search)), {
+    supported: true,
+    kind: 'govdeals-new-listings',
+    host: 'www.govdeals.com',
+    zipcode: '07008',
+    miles: '25',
+    reason: 'GovDeals new listings route',
+  });
+  assert.deepEqual(plain(core.resolveGovDealsPage(asset)), {
+    supported: true,
+    kind: 'govdeals-asset',
+    host: 'www.govdeals.com',
+    assetId: '43147',
+    accountId: '7484',
+    reason: 'GovDeals asset route',
+  });
+  assert.equal(core.shouldInitOnLocation(seller), true);
+  assert.equal(core.shouldInitOnLocation(search), true);
+  assert.equal(core.shouldInitOnLocation(asset), true);
+  assert.equal(core.resolveAssistantMode(seller).mode, 'govdeals');
+  assert.equal(core.resolveAssistantMode(search).source, 'govdeals');
+
+  [
+    'https://www.govdeals.com/en/login',
+    'https://www.govdeals.com/en/register',
+    'https://www.govdeals.com/en/account',
+    'https://www.govdeals.com/en/cart',
+    'https://www.govdeals.com/en/checkout',
+    'https://www.govdeals.com/en/payment',
+    'https://www.govdeals.com/en/bid/43147/7484',
+    'https://www.govdeals.com/en/offer/43147/7484',
+  ].forEach((href) => {
+    const url = new URL(href);
+    assert.equal(core.resolveGovDealsPage(url).supported, false, href);
+    assert.equal(core.shouldInitOnLocation(url), false, href);
+  });
+});
+
+test('assistant extracts GovDeals seller context and visible listings', () => {
+  const core = loadCore();
+  const assetLink = makeFakeNode({
+    text: 'Trailer with 6 Current Designs Crosswind Kayaks',
+    attrs: { href: '/en/asset/43147/7484' },
+  });
+  const sellerLink = makeFakeNode({
+    text: 'Rutgers University',
+    attrs: { href: '/en/rutgers' },
+  });
+  const image = makeFakeNode({
+    attrs: { src: '/photos/43147-main.jpg', alt: 'Kayak trailer' },
+  });
+  const card = makeFakeNode({
+    text: `Trailer with 6 Current Designs Crosswind Kayaks
+Rutgers University
+Asset ID 43147
+Lot Number 7484-43147
+Current Bid $1,250.00
+9 Bids
+Ends Jul 14, 2026 8:05 PM ET
+Item Location: Piscataway, New Jersey 08854
+Shipping Available
+Used/See Description`,
+    selectors: {
+      'a[href*="/asset/"]': assetLink,
+      'a[href*="/en/rutgers"]': sellerLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: `Rutgers University
+Piscataway, NJ
+Showing 1-1 of 1
+Trailer with 6 Current Designs Crosswind Kayaks`,
+    selectors: {
+      'h1': makeFakeNode({ text: 'Rutgers University' }),
+      'a[href*="/asset/"]': assetLink,
+      'a[href*="/en/rutgers"]': sellerLink,
+      'article': [card],
+    },
+  });
+  root.title = 'Rutgers University | GovDeals';
+  const loc = new URL('https://www.govdeals.com/en/rutgers');
+
+  const context = core.extractGovDealsSellerContext(root, loc);
+  const listings = core.extractGovDealsListings(root, loc, 'govdeals-seller');
+
+  assert.deepEqual(plain(context), {
+    source: 'GovDeals',
+    pageKind: 'govdeals-seller',
+    title: 'Rutgers University',
+    seller: 'Rutgers University',
+    sellerSlug: 'rutgers',
+    url: 'https://www.govdeals.com/en/rutgers',
+    locationHint: 'Piscataway, NJ',
+    visibleCount: 1,
+  });
+  assert.deepEqual(plain(listings), [
+    {
+      source: 'GovDeals',
+      pageKind: 'govdeals-seller',
+      assetId: '43147',
+      accountId: '7484',
+      lotNumber: '7484-43147',
+      title: 'Trailer with 6 Current Designs Crosswind Kayaks',
+      url: 'https://www.govdeals.com/en/asset/43147/7484',
+      image: 'https://www.govdeals.com/photos/43147-main.jpg',
+      seller: 'Rutgers University',
+      sellerUrl: 'https://www.govdeals.com/en/rutgers',
+      category: '',
+      status: 'Used/See Description',
+      currentBid: '$1,250.00',
+      currentBidAmount: 1250,
+      bidCount: '9 Bids',
+      bidCountNumber: 9,
+      closeTime: 'Jul 14, 2026 8:05 PM ET',
+      location: 'Piscataway, New Jersey 08854',
+      distanceText: '',
+      shippingText: 'Shipping Available',
+      pickupText: '',
+      condition: 'Used/See Description',
+      specs: {},
+      description: '',
+      rawText: 'Trailer with 6 Current Designs Crosswind Kayaks Rutgers University Asset ID 43147 Lot Number 7484-43147 Current Bid $1,250.00 9 Bids Ends Jul 14, 2026 8:05 PM ET Item Location: Piscataway, New Jersey 08854 Shipping Available Used/See Description',
+    },
+  ]);
+});
+
+test('assistant extracts GovDeals new-listings search context and listing cards', () => {
+  const core = loadCore();
+  const assetLink = makeFakeNode({
+    text: 'Current Tools Conduit Organizer',
+    attrs: { href: '/asset/132/25567' },
+  });
+  const image = makeFakeNode({ attrs: { src: 'https://cdn.govdeals.test/132.jpg' } });
+  const card = makeFakeNode({
+    text: `Computers and Electronics
+Current Tools Conduit Organizer
+Seller: Borough of Carteret
+Asset ID 132
+Lot Number 25567-132
+Current Bid: $58.00 USD
+15 Bids
+Ends: Jul 12, 2026 6:00 PM ET
+Location: Carteret, NJ 07008
+Distance: 2.1 miles
+Local Pickup Only
+Condition Used/See Description`,
+    selectors: {
+      'a[href*="/asset/"]': assetLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: `New Listings
+Filters Zipcode 07008 Miles 25
+Sort Latest
+Showing 1 to 1 of 1
+Current Tools Conduit Organizer`,
+    selectors: {
+      'h1': makeFakeNode({ text: 'New Listings' }),
+      'article': [card],
+      'a[href*="/asset/"]': assetLink,
+    },
+  });
+  root.title = 'New Listings | GovDeals';
+  const loc = new URL('https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25');
+
+  const context = core.extractGovDealsSearchContext(root, loc);
+  const listings = core.extractGovDealsListings(root, loc, 'govdeals-new-listings');
+
+  assert.equal(context.source, 'GovDeals');
+  assert.equal(context.pageKind, 'govdeals-new-listings');
+  assert.equal(context.zipcode, '07008');
+  assert.equal(context.miles, '25');
+  assert.equal(context.visibleCount, 1);
+  assert.equal(listings.length, 1);
+  assert.deepEqual(plain({
+    title: listings[0].title,
+    category: listings[0].category,
+    seller: listings[0].seller,
+    currentBid: listings[0].currentBid,
+    bidCount: listings[0].bidCount,
+    location: listings[0].location,
+    distanceText: listings[0].distanceText,
+    pickupText: listings[0].pickupText,
+    status: listings[0].status,
+  }), {
+    title: 'Current Tools Conduit Organizer',
+    category: 'Computers and Electronics',
+    seller: 'Borough of Carteret',
+    currentBid: '$58.00 USD',
+    bidCount: '15 Bids',
+    location: 'Carteret, NJ 07008',
+    distanceText: '2.1 miles',
+    pickupText: 'Local Pickup Only',
+    status: 'Used/See Description',
+  });
+});
+
+test('assistant extracts GovDeals asset detail fields for enrichment', () => {
+  const core = loadCore();
+  const root = makeFakeNode({
+    text: `Trailer with 6 Current Designs Crosswind Kayaks
+Asset ID 43147
+Lot Number 7484-43147
+Manufacturer Current Designs
+Model Crosswind
+Condition Used/See Description
+Current Bid $1,250.00
+Bids 9
+Item Location: Piscataway, New Jersey 08854
+OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer.
+Pickup only by appointment.`,
+    selectors: {
+      'h1': makeFakeNode({ text: 'Trailer with 6 Current Designs Crosswind Kayaks' }),
+      'img': makeFakeNode({ attrs: { src: '/images/kayak.jpg' } }),
+    },
+  });
+  root.title = 'Trailer with 6 Current Designs Crosswind Kayaks | GovDeals';
+
+  const asset = core.extractGovDealsAssetDetail(root, new URL('https://www.govdeals.com/en/asset/43147/7484'));
+
+  assert.deepEqual(plain(asset), {
+    source: 'GovDeals',
+    pageKind: 'govdeals-asset',
+    assetId: '43147',
+    accountId: '7484',
+    lotNumber: '7484-43147',
+    title: 'Trailer with 6 Current Designs Crosswind Kayaks',
+    url: 'https://www.govdeals.com/en/asset/43147/7484',
+    image: 'https://www.govdeals.com/images/kayak.jpg',
+    seller: '',
+    sellerUrl: '',
+    category: '',
+    status: 'Used/See Description',
+    currentBid: '$1,250.00',
+    currentBidAmount: 1250,
+    bidCount: '9',
+    bidCountNumber: 9,
+    closeTime: '',
+    location: 'Piscataway, New Jersey 08854',
+    distanceText: '',
+    shippingText: '',
+    pickupText: 'Pickup only by appointment.',
+    condition: 'Used/See Description',
+    specs: {
+      Manufacturer: 'Current Designs',
+      Model: 'Crosswind',
+      Condition: 'Used/See Description',
+    },
+    description: 'OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer.',
+    rawText: 'Trailer with 6 Current Designs Crosswind Kayaks Asset ID 43147 Lot Number 7484-43147 Manufacturer Current Designs Model Crosswind Condition Used/See Description Current Bid $1,250.00 Bids 9 Item Location: Piscataway, New Jersey 08854 OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer. Pickup only by appointment.',
+  });
+});
+
+test('assistant builds GovDeals distance-aware briefs and renders scraper-only UI', () => {
+  const storage = new Map();
+  const core = loadCore({ storage });
+  const settings = core.getAarResearchSettings();
+  const listings = [
+    {
+      source: 'GovDeals',
+      pageKind: 'govdeals-new-listings',
+      title: 'Current Tools Conduit Organizer',
+      url: 'https://www.govdeals.com/asset/132/25567',
+      currentBid: '$58.00 USD',
+      location: 'Carteret, NJ 07008',
+      distanceText: '2.1 miles',
+    },
+  ];
+  const context = {
+    source: 'GovDeals',
+    pageKind: 'govdeals-new-listings',
+    title: 'New Listings',
+    url: 'https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25',
+    zipcode: '07008',
+    miles: '25',
+    visibleCount: 1,
+  };
+
+  const brief = core.buildGovDealsLlmBrief(listings, context, settings);
+  const sellerHtml = core.buildPanelHtml({
+    mode: 'govdeals',
+    debugEnabled: false,
+    route: { kind: 'govdeals-seller' },
+  });
+  const searchHtml = core.buildPanelHtml({
+    mode: 'govdeals',
+    debugEnabled: false,
+    route: { kind: 'govdeals-new-listings' },
+  });
+  const assetHtml = core.buildPanelHtml({
+    mode: 'govdeals',
+    debugEnabled: false,
+    route: { kind: 'govdeals-asset' },
+  });
+
+  assert.match(brief, /You are an auction resale analysis coordinator/);
+  assert.match(brief, /GovDeals safety boundary/i);
+  assert.match(brief, /Edison, NJ 08817/);
+  assert.match(brief, /100 miles/i);
+  assert.match(brief, /zipcode.*07008/is);
+  assert.match(brief, /distance_miles/);
+  assert.match(brief, /distance_proof_url/);
+  assert.match(brief, /live map\/search proof/i);
+  assert.match(brief, /Current Tools Conduit Organizer/);
+
+  assert.match(sellerHtml, /Copy Seller LLM/);
+  assert.match(sellerHtml, /id="govdeals-seller-copy-json"/);
+  assert.match(searchHtml, /Copy Listings LLM/);
+  assert.match(searchHtml, /id="govdeals-listings-copy-json"/);
+  assert.match(assetHtml, /Copy Asset LLM/);
+  assert.match(assetHtml, /id="govdeals-asset-copy-json"/);
+  [sellerHtml, searchHtml, assetHtml].forEach((html) => {
+    assert.match(html, /GovDeals/);
+    assert.doesNotMatch(html, /Prepare Bid|Snipe Now|Auto-confirm|Max plan|checkout|payment|offer|cart/i);
+  });
+});
+
 test('assistant parses AuctionNinja catalog ranges for guarded loading', () => {
   const core = loadCore();
 
