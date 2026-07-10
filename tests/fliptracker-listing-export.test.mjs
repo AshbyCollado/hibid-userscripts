@@ -207,3 +207,33 @@ test('builds a FlipTracker import HTML export with metadata and listing cards', 
   assert.match(html, /Omega 1000 Centrifugal Juicer/);
   assert.match(html, /https:\/\/www\.ebay\.com\/itm\/336677465197/);
 });
+
+test('blocks FlipTracker exports when current route source does not match rows', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'fliptracker-dom',
+    context: { source: 'eBay', pageKind: 'fliptracker' },
+    listings: [{ source: 'eBay', title: 'Active eBay listing', price: 40 }],
+  }, 'fliptracker', { kind: 'fliptracker-ebay', source: 'ebay' })), {
+    ok: true,
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'fliptracker-dom',
+    context: { source: 'Facebook Marketplace', pageKind: 'fliptracker' },
+    listings: [{ source: 'Facebook Marketplace', title: 'Marketplace listing', price: 40 }],
+  }, 'fliptracker', { kind: 'fliptracker-ebay', source: 'ebay' })), {
+    ok: false,
+    reason: 'fliptracker-source-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'fliptracker-dom',
+    context: { source: 'eBay', pageKind: 'fliptracker' },
+    listings: [{ source: 'eBay', title: 'Active eBay listing', price: 40 }],
+  }, 'fliptracker', { kind: 'fliptracker-facebook', source: 'facebook' })), {
+    ok: false,
+    reason: 'fliptracker-source-mismatch',
+  });
+});

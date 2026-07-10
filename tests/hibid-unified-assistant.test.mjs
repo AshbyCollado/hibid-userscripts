@@ -657,6 +657,68 @@ test('assistant blocks GovDeals exports from the wrong route or URL filters', ()
   });
 });
 
+test('assistant blocks catalog and live exports from the wrong active route', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'hibid-state',
+    context: { source: 'hibid', pageKind: 'catalog' },
+    items: [{ title: 'HiBid stale lot' }],
+  }, 'catalog', { kind: 'catalog', source: 'ajwillner', auctionId: '164037' })), {
+    ok: false,
+    reason: 'catalog-source-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'ajwillner-virtual-list',
+    context: { source: 'ajwillner', pageKind: 'catalog' },
+    items: [{ source: 'ajwillner', title: 'AJ stale lot' }],
+  }, 'catalog', { kind: 'catalog', source: 'hibid', auctionId: '757032' })), {
+    ok: false,
+    reason: 'catalog-source-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'ajwillner-virtual-list',
+    context: { source: 'ajwillner', pageKind: 'catalog' },
+    items: [{ source: 'ajwillner', title: 'Wrong AJ auction lot', url: 'https://bid.ajwillnerauctions.com/ui/auctions/999999/24887841' }],
+  }, 'catalog', { kind: 'catalog', source: 'ajwillner', auctionId: '164037' })), {
+    ok: false,
+    reason: 'catalog-auction-id-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'hibid-live-dom',
+    context: { source: 'hibid', pageKind: 'live' },
+    lots: [{ lot: '1627sf', title: 'Chloe Eau De Toilette' }],
+    expectedTotal: 1,
+  }, 'live', { kind: 'live', source: 'hibid', auctionId: '752334' })), {
+    ok: true,
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'dom-fallback',
+    context: { source: 'hibid', pageKind: 'catalog' },
+    lots: [{ lot: '1', title: 'Catalog Lot' }],
+  }, 'live', { kind: 'catalog', source: 'hibid', auctionId: '752334' })), {
+    ok: false,
+    reason: 'live-route-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'hibid-live-dom',
+    context: { source: 'hibid', pageKind: 'live' },
+    lots: [
+      { source: 'hibid', pageKind: 'live', lot: '1', title: 'Live Lot 1' },
+      { source: 'hibid', pageKind: 'live', lot: '2', title: 'Live Lot 2' },
+    ],
+    expectedTotal: 1,
+  }, 'live', { kind: 'live', source: 'hibid', auctionId: '752334' })), {
+    ok: false,
+    reason: 'live-count-exceeds-expected',
+  });
+});
+
 test('assistant marks partial data-first catalog scrapes incomplete', () => {
   const core = loadCore();
   const complete = {
@@ -789,6 +851,21 @@ test('assistant mode resolver activates only the current page module', () => {
 
   cases.forEach(([href, mode]) => {
     assert.equal(core.resolveAssistantMode(new URL(href)).mode, mode, href);
+  });
+
+  assert.deepEqual(plain(core.resolveAssistantMode(new URL('https://www.ebay.com/sh/lst/active')).route), {
+    supported: true,
+    kind: 'fliptracker-ebay',
+    source: 'ebay',
+    host: 'www.ebay.com',
+    reason: 'eBay active listing export route',
+  });
+  assert.deepEqual(plain(core.resolveAssistantMode(new URL('https://www.facebook.com/marketplace/you/selling')).route), {
+    supported: true,
+    kind: 'fliptracker-facebook',
+    source: 'facebook',
+    host: 'www.facebook.com',
+    reason: 'Facebook Marketplace listing export route',
   });
 });
 

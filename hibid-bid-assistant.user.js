@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.25
+// @version      0.7.26
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -41,7 +41,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.25';
+  const SCRIPT_VERSION = '0.7.26';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1592,9 +1592,90 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return { ok: true };
   }
 
+  function rowSourcesFromResult(result) {
+    return uniqueNonEmpty([
+      result?.source,
+      result?.context?.source,
+      ...scraperResultRows(result).map(row => row?.source),
+    ]);
+  }
+
+  function validateCatalogExportAgainstRoute(result, route = {}) {
+    const routeKind = String(route?.kind || '').trim();
+    if (routeKind && !['catalog', 'watchlist-outbid', 'lot'].includes(routeKind)) {
+      return { ok: false, reason: 'catalog-route-mismatch' };
+    }
+    const routeSource = String(route?.source || '').trim().toLowerCase();
+    const rowSources = rowSourcesFromResult(result);
+    const sourceText = rowSources.join(' ').toLowerCase();
+    const looksAjWillner = /ajwillner|aj\s+willner/.test(sourceText);
+    const looksOtherAuctionSource = /auctionninja|aar auctions|govdeals|facebook|ebay/.test(sourceText);
+
+    if (routeSource === 'ajwillner') {
+      if (!looksAjWillner) return { ok: false, reason: 'catalog-source-mismatch' };
+      const expectedAuctionId = String(route?.auctionId || '').trim();
+      if (expectedAuctionId) {
+        const rowAuctionIds = uniqueNonEmpty([
+          result?.context?.auctionId,
+          ...scraperResultRows(result).flatMap(row => [
+            row?.auctionId,
+            firstMatch(row?.url || '', [/\/ui\/auctions\/(\d+)/i])
+          ])
+        ]);
+        if (rowAuctionIds.length && rowAuctionIds.some(auctionId => auctionId !== expectedAuctionId)) {
+          return { ok: false, reason: 'catalog-auction-id-mismatch' };
+        }
+      }
+    } else if (routeSource === 'hibid' || !routeSource) {
+      if (looksAjWillner || looksOtherAuctionSource) return { ok: false, reason: 'catalog-source-mismatch' };
+    }
+
+    const countValidation = validateScraperResultCount(result, 'catalog-count-exceeds-expected');
+    if (!countValidation.ok) return countValidation;
+    return { ok: true };
+  }
+
+  function validateLiveExportAgainstRoute(result, route = {}) {
+    if (String(route?.kind || '') !== 'live') return { ok: false, reason: 'live-route-mismatch' };
+    const pageKinds = scraperResultPageKinds(result);
+    if (pageKinds.length && pageKinds.some(kind => kind !== 'live')) {
+      return { ok: false, reason: 'live-page-kind-mismatch' };
+    }
+    const sourceText = rowSourcesFromResult(result).join(' ').toLowerCase();
+    if (sourceText && !/hibid|live/.test(sourceText)) {
+      return { ok: false, reason: 'live-source-mismatch' };
+    }
+    const countValidation = validateScraperResultCount(result, 'live-count-exceeds-expected');
+    if (!countValidation.ok) return countValidation;
+    return { ok: true };
+  }
+
+  function normalizeFlipTrackerSource(value) {
+    const text = String(value || '').toLowerCase();
+    if (/facebook|marketplace/.test(text)) return 'facebook';
+    if (/ebay/.test(text)) return 'ebay';
+    return '';
+  }
+
+  function validateFlipTrackerExportAgainstRoute(result, route = {}) {
+    const expectedSource = normalizeFlipTrackerSource(route?.source || route?.kind);
+    if (!expectedSource) return { ok: true };
+    const rowSources = rowSourcesFromResult(result).map(normalizeFlipTrackerSource).filter(Boolean);
+    if (!rowSources.length && scraperResultRows(result).length) {
+      return { ok: false, reason: 'fliptracker-source-mismatch' };
+    }
+    if (rowSources.some(source => source !== expectedSource)) {
+      return { ok: false, reason: 'fliptracker-source-mismatch' };
+    }
+    return { ok: true };
+  }
+
   function validateScraperExportAgainstRoute(result, mode = '', route = {}) {
     if (!result) return { ok: true };
     const normalizedMode = String(mode || '').toLowerCase();
+    if (normalizedMode === 'catalog' || normalizedMode === 'hibid-catalog' || normalizedMode === 'ajwillner') return validateCatalogExportAgainstRoute(result, route);
+    if (normalizedMode === 'live' || normalizedMode === 'hibid-live') return validateLiveExportAgainstRoute(result, route);
+    if (normalizedMode === 'fliptracker') return validateFlipTrackerExportAgainstRoute(result, route);
     if (normalizedMode === 'auctionninja') return validateAuctionNinjaExportAgainstRoute(result, route);
     if (normalizedMode === 'aar') return validateAarExportAgainstRoute(result, route);
     if (normalizedMode === 'govdeals') return validateGovDealsExportAgainstRoute(result, route);
@@ -1827,6 +1908,7 @@ ${cards}
     DEBUG_PREFIX,
     MENU_COMMANDS,
     resolveHiBidPage,
+    resolveFlipTrackerPage,
     resolveAuctionNinjaPage,
     resolveAarAuctionsPage,
     resolveGovDealsPage,
@@ -4559,6 +4641,18 @@ ${cards}
     return false;
   }
 
+  function resolveFlipTrackerPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const pathname = String(loc.pathname || '');
+    if (host === 'www.ebay.com' && (/^\/sh\/lst\b/i.test(pathname) || /^\/mys\//i.test(pathname))) {
+      return { supported: true, kind: 'fliptracker-ebay', source: 'ebay', host, reason: 'eBay active listing export route' };
+    }
+    if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/(?:you|profile)\b/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-facebook', source: 'facebook', host, reason: 'Facebook Marketplace listing export route' };
+    }
+    return { supported: false, kind: 'unsupported', source: 'unknown', host, reason: 'unsupported FlipTracker listing route' };
+  }
+
   function shouldInitOnLocation(loc = location) {
     const host = String(loc.hostname || '').toLowerCase();
     const pathname = String(loc.pathname || '');
@@ -4592,7 +4686,8 @@ ${cards}
     }
 
     if (isFlipTrackerListingPage(loc)) {
-      return { supported: true, mode: 'fliptracker', source: 'marketplace', reason: 'active listing export route', route: null };
+      const route = resolveFlipTrackerPage(loc);
+      return { supported: true, mode: 'fliptracker', source: route.source, reason: route.reason, route };
     }
 
     if (isAuctionNinjaHost(host)) {
@@ -4785,6 +4880,8 @@ ${cards}
       const userBidStatus = extractUserBidStatus(chunk);
       const lot = firstLine[1];
       return {
+        source: 'hibid',
+        pageKind: 'live',
         id: lot,
         lot,
         title: firstLine[2].replace(/\s+/g, ' ').trim(),
@@ -4806,6 +4903,8 @@ ${cards}
   function liveAuctionContext(root = document) {
     const text = textOf(root.body || root.documentElement || root);
     return {
+      source: 'hibid',
+      pageKind: 'live',
       title: text.match(/\bThe Luxe Edit\b/i)?.[0] || document.title || '',
       url: location.href,
       totalLots: numberFromText(text.match(/Total Lots:\s*([\d,]+)/i)?.[1] || ''),
@@ -4913,7 +5012,16 @@ ${cards}
       numeric: true,
       sensitivity: 'base'
     }));
-    return { lots, expectedOpenLots, loadMoreClicks, scrolls };
+    return {
+      source: 'hibid-live-dom',
+      context,
+      lots,
+      items: lots,
+      expectedTotal: expectedOpenLots || null,
+      expectedOpenLots,
+      loadMoreClicks,
+      scrolls
+    };
   }
 
   function buildLlmAuctionBrief(lots, context = liveAuctionContext()) {
@@ -6202,6 +6310,7 @@ ${cards}
     const auctionNinjaAuctionSearchMode = auctionNinjaKind === 'auction-search';
     const aarKind = aarMode ? (activeRoute?.kind || '') : '';
     const govDealsKind = govDealsMode ? (activeRoute?.kind || '') : '';
+    const currentActiveRoute = () => resolveAssistantMode().route || activeRoute || {};
     const bidControlsEl = panel.querySelector('#hibid-bid-controls');
     const listingExportModeEl = panel.querySelector('#fliptracker-listing-export-mode');
     const listingExportStatusEl = panel.querySelector('#fliptracker-listing-status');
@@ -6475,21 +6584,42 @@ ${cards}
       const rows = scanListingsForExport();
       status(`Scanned ${rows.length} active listing card(s).`);
     });
+    const validateListingRowsForCurrentRoute = (rows) => {
+      const validation = validateScraperExportAgainstRoute({
+        source: 'fliptracker-dom',
+        context: { source: rows[0]?.source || '', pageKind: 'fliptracker', url: location.href },
+        listings: rows
+      }, 'fliptracker', currentActiveRoute());
+      if (!validation.ok) {
+        debug('fliptracker export blocked by route guard', {
+          reason: validation.reason,
+          route: currentActiveRoute(),
+          rowSources: uniqueNonEmpty(rows.map(row => row.source)),
+          count: rows.length
+        });
+        status('Blocked stale FlipTracker export; current page does not match scanned rows.');
+        return false;
+      }
+      return true;
+    };
+
     listingExportCopyButton?.addEventListener('click', async () => {
-      if (!state.listingRows.length) scanListingsForExport();
+      scanListingsForExport();
       if (!state.listingRows.length) {
         status('Nothing to copy yet. Scroll/load listings and scan again.');
         return;
       }
+      if (!validateListingRowsForCurrentRoute(state.listingRows)) return;
       const copied = await writeClipboard(currentListingExportHtml()).catch(() => false);
       status(copied ? `Copied FlipTracker export HTML for ${state.listingRows.length} listing(s).` : 'Clipboard write failed. Use Download Export HTML instead.');
     });
     listingExportDownloadButton?.addEventListener('click', () => {
-      if (!state.listingRows.length) scanListingsForExport();
+      scanListingsForExport();
       if (!state.listingRows.length) {
         status('Nothing to download yet. Scroll/load listings and scan again.');
         return;
       }
+      if (!validateListingRowsForCurrentRoute(state.listingRows)) return;
       const source = state.listingRows[0]?.source === 'eBay' ? 'ebay' : 'facebook';
       const filename = `FlipTracker-listings-${source}-${safeTimestamp()}.html`;
       downloadTextFile(filename, currentListingExportHtml());
@@ -6840,6 +6970,19 @@ ${cards}
           status('Blocked stale HiBid export; current filters do not match copied lots.');
           return;
         }
+        const routeValidation = validateScraperExportAgainstRoute(result, 'catalog', currentActiveRoute());
+        if (!routeValidation.ok) {
+          debug('catalog export blocked by route guard', {
+            reason: routeValidation.reason,
+            route: currentActiveRoute(),
+            source: result.source || 'unknown',
+            rowSources: uniqueNonEmpty(lots.map(row => row.source)),
+            count: lots.length,
+            expectedTotal: result.expectedTotal
+          });
+          status('Blocked stale catalog export; current page does not match copied lots.');
+          return;
+        }
         if (!lots.length) {
           if (visibleState?.noMatches) {
             if (mode === 'json') {
@@ -6915,6 +7058,18 @@ ${cards}
       try {
         status('Loading all open live lots before copy...');
         const expanded = await expandLivePageLots(status, () => state.stop);
+        const validation = validateScraperExportAgainstRoute(expanded, 'live', currentActiveRoute());
+        if (!validation.ok) {
+          debug('live export blocked by route guard', {
+            reason: validation.reason,
+            route: currentActiveRoute(),
+            source: expanded.source || 'unknown',
+            count: expanded.lots?.length || 0,
+            expectedOpenLots: expanded.expectedOpenLots || null
+          });
+          status('Blocked stale live export; current page does not match copied lots.');
+          return;
+        }
         const lots = expanded.lots;
         if (!lots.length) {
           status('No live lots found to copy yet.');
