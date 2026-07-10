@@ -525,7 +525,7 @@ test('assistant discovers AuctionNinja catalog pagination URLs without product o
     attrs: { href: 'https://www.auctionninja.com/payment-methods' },
   });
   const root = makeFakeNode({
-    text: '1-20 of 106 items',
+    text: '1-40 of 106 items',
     selectors: {
       'a[href': [activePage, productLink, page3, accountLink, page2],
     },
@@ -533,6 +533,26 @@ test('assistant discovers AuctionNinja catalog pagination URLs without product o
 
   assert.deepEqual(plain(core.findAuctionNinjaCatalogPageUrls(root, new URL('https://www.auctionninja.com/seller/sales/details/example--17395.html'))), [
     'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=2#items',
+    'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=3#items',
+  ]);
+});
+
+test('assistant backfills AuctionNinja catalog pages when opened mid-catalog', () => {
+  const core = loadCore();
+  const root = makeFakeNode({
+    text: '41-80 of 106 items',
+    selectors: {
+      'a[href': [
+        makeFakeNode({
+          text: '3',
+          attrs: { href: 'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=3#items' },
+        }),
+      ],
+    },
+  });
+
+  assert.deepEqual(plain(core.findAuctionNinjaCatalogPageUrls(root, new URL('https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=2#items'))), [
+    'https://www.auctionninja.com/seller/sales/details/example--17395.html#items',
     'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=3#items',
   ]);
 });

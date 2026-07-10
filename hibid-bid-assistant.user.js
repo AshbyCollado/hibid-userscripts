@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.2
+// @version      0.7.3
 // @description  Modular resale scraper/exporter for HiBid, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -32,7 +32,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.2';
+  const SCRIPT_VERSION = '0.7.3';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1848,11 +1848,41 @@ ${cards}
     }
   }
 
+  function auctionNinjaCatalogPageUrl(base, page) {
+    const url = new URL(base, 'https://www.auctionninja.com/');
+    if (Number(page) <= 1) {
+      url.searchParams.delete('Page');
+      url.searchParams.delete('page');
+      url.searchParams.delete('p');
+      url.searchParams.delete('pagenum');
+    } else {
+      url.searchParams.set('Page', String(page));
+    }
+    url.hash = 'items';
+    return url.href;
+  }
+
+  function getAuctionNinjaCatalogPaginationInfo(range, base) {
+    const requestedPage = getAuctionNinjaPageNumber(base);
+    if (!range) {
+      return { currentPage: requestedPage || 1, pageSize: 40, totalPages: requestedPage || 1 };
+    }
+
+    let pageSize = Math.max(1, range.pageSize || 40);
+    if (requestedPage > 1 && range.start > 1) {
+      const inferred = Math.round((range.start - 1) / (requestedPage - 1));
+      if (Number.isFinite(inferred) && inferred > 0) pageSize = inferred;
+    }
+    const currentPageFromRange = Math.floor(Math.max(0, range.start - 1) / pageSize) + 1;
+    const currentPage = Math.max(1, requestedPage || currentPageFromRange, currentPageFromRange);
+    const totalPages = range.total ? Math.ceil(range.total / pageSize) : currentPage;
+    return { currentPage, pageSize, totalPages };
+  }
+
   function findAuctionNinjaCatalogPageUrls(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
     const base = getAuctionNinjaBaseUrl(root, loc);
     const range = parseAuctionNinjaCatalogRange(textOf(root?.body || root?.documentElement || root));
-    const currentPageFromRange = range ? Math.ceil(range.end / Math.max(1, range.pageSize)) : 0;
-    const currentPage = Math.max(currentPageFromRange || 1, getAuctionNinjaPageNumber(base));
+    const { currentPage, totalPages } = getAuctionNinjaCatalogPaginationInfo(range, base);
     const anchors = Array.from(root?.querySelectorAll?.('.auction-paging a[href], .paging-deta a[href], a[href*="Page="], a[href*="page="]') || []);
     const pages = new Map();
 
@@ -1870,20 +1900,17 @@ ${cards}
       const route = resolveAuctionNinjaPage(url);
       if (!route.supported || route.kind !== 'sale-catalog') return;
       const page = getAuctionNinjaPageNumber(url);
-      if (page <= currentPage) return;
+      if (page === currentPage) return;
       pages.set(page, url.href);
     });
 
-    if (!pages.size && range?.total && !range.complete) {
+    if (range?.total) {
       try {
         const route = resolveAuctionNinjaPage(new URL(base));
         if (route.supported && route.kind === 'sale-catalog') {
-          const totalPages = Math.ceil(range.total / Math.max(1, range.pageSize));
-          for (let page = currentPage + 1; page <= totalPages; page += 1) {
-            const url = new URL(base);
-            url.searchParams.set('Page', String(page));
-            url.hash = 'items';
-            pages.set(page, url.href);
+          for (let page = 1; page <= totalPages; page += 1) {
+            if (page === currentPage || pages.has(page)) continue;
+            pages.set(page, auctionNinjaCatalogPageUrl(base, page));
           }
         }
       } catch {

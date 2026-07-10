@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.2`.
+- Current version: `0.7.3`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -130,6 +130,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: add tests for AuctionNinja routes, blocked account pages, range parsing, sale context, lot parsing, and active-mode UI.
 - Done: prior Waterfox verified AuctionNinja sale catalog drawer, copied LLM brief for `106/106` lots, and confirmed page scrolling still works under the drawer.
 - Done: `v0.7.2` scraper-first cleanup removes bid watcher/max-plan UI, result previews, and bulky minimized launcher copy.
+- Done: `v0.7.3` fixes AuctionNinja exports opened mid-catalog so page 1 is backfilled and full sale counts can be copied.
 - Pending future: AuctionNinja auction-search triage module.
 - Pending future: AuctionNinja items-won inventory/reconciliation module.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
