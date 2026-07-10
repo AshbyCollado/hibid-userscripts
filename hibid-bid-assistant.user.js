@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.7
+// @version      0.7.8
 // @description  Modular resale scraper/exporter for HiBid, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -32,7 +32,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.7';
+  const SCRIPT_VERSION = '0.7.8';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -2142,14 +2142,15 @@ ${cards}
     for (let depth = 0; el && depth < 9; depth += 1, el = el.parentElement) {
       const raw = textOf(el);
       const saleLinks = Array.from(el.querySelectorAll?.('a[href*="/sales/details/"]') || []);
-      if (!saleLinks.length) continue;
+      const uniqueSaleHrefs = new Set(saleLinks.map(link => controlHref(link)).filter(Boolean));
+      if (!uniqueSaleHrefs.size) continue;
       let score = 0;
-      if (saleLinks.length === 1) score += 35;
-      else score -= saleLinks.length * 14;
+      if (uniqueSaleHrefs.size === 1) score += 35;
+      else score -= uniqueSaleHrefs.size * 14;
       if (/Begins\s+to\s+close/i.test(raw)) score += 40;
       if (normalizeAuctionNinjaSearchLocation(raw)) score += 20;
       if (parseAuctionNinjaShippingText(raw)) score += 15;
-      if (/\(\s*\d+\s*\)/.test(raw)) score += 8;
+      if (/\b\d+\s+Lots?\b/i.test(raw) || /\(\s*\d+\s*\)/.test(raw)) score += 8;
       if (/Find a Seller|Top Auction Locations|Bidder Login|Seller Login/i.test(raw)) score -= 90;
       if (raw.length > 2200) score -= 70;
       if (score > bestScore) {
@@ -2158,6 +2159,21 @@ ${cards}
       }
     }
     return bestScore > 30 ? best : null;
+  }
+
+  function findBestAuctionNinjaSaleLink(card) {
+    const links = Array.from(card?.querySelectorAll?.('a[href*="/sales/details/"]') || []);
+    const candidates = links.map(link => {
+      const label = normalizeAuctionNinjaTitle(textOf(link));
+      let score = 0;
+      if (label) score += 20;
+      if (label.length >= 18) score += 30;
+      if (/\b(?:sale|auction|estate|collection|jewelry|vintage|antiques?|decor|furniture|collectibles?)\b/i.test(label)) score += 18;
+      if (/^\d+\s+Lots?$/i.test(label) || !label) score -= 80;
+      if (/bid now|view|details/i.test(label)) score -= 25;
+      return { link, label, score };
+    }).sort((a, b) => b.score - a.score);
+    return candidates[0]?.score > -20 ? candidates[0].link : (links[0] || null);
   }
 
   function getAuctionNinjaAuctionSearchCards(root = document) {
@@ -2177,7 +2193,7 @@ ${cards}
     const seen = new Set();
     selectors.forEach(selector => {
       Array.from(root?.querySelectorAll?.(selector) || []).forEach(seed => {
-        const card = findAuctionNinjaAuctionSearchCardFromSeed(seed) || (String(selector).includes('/sales/details/') ? seed : null);
+        const card = findAuctionNinjaAuctionSearchCardFromSeed(seed);
         if (!card || seen.has(card)) return;
         const raw = textOf(card);
         const hasSaleLink = Boolean(card.querySelector?.('a[href*="/sales/details/"]')) || /\/sales\/details\//i.test(controlHref(card));
@@ -2214,7 +2230,7 @@ ${cards}
 
     getAuctionNinjaAuctionSearchCards(root).forEach(card => {
       const rawText = textOf(card);
-      const saleLink = card.querySelector?.('a[href*="/sales/details/"]') || (/\/sales\/details\//i.test(controlHref(card)) ? card : null);
+      const saleLink = findBestAuctionNinjaSaleLink(card) || card.querySelector?.('a[href*="/sales/details/"]') || (/\/sales\/details\//i.test(controlHref(card)) ? card : null);
       const url = absoluteUrl(controlHref(saleLink), base);
       const title = normalizeAuctionNinjaTitle(textOf(saleLink) || rawText.split(/\b(?:Begins to close|Local Pickup|Shipping|Pickup Only)\b/i)[0] || titleFromAuctionNinjaProductUrl(url));
       const sellerLink = card.querySelector?.('a[href]:not([href*="/sales/details/"])');
@@ -2223,7 +2239,7 @@ ${cards}
       const key = url || `${title}:${rawText.slice(0, 80)}`;
       if (!key || seen.has(key) || !title) return;
       seen.add(key);
-      const itemCountMatch = rawText.match(/\(\s*(\d{1,6})\s*\)(?!\s*%)/);
+      const itemCountMatch = rawText.match(/\b(\d{1,6})\s+Lots?\b/i);
       sales.push({
         source: 'AuctionNinja',
         pageKind: 'auction-search',

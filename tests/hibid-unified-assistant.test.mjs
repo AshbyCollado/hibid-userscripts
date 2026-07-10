@@ -935,6 +935,10 @@ test('assistant extracts AuctionNinja nearby auction search sales', () => {
     text: 'Dumont New Jersey Estate Sale',
     attrs: { href: 'https://www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html' },
   });
+  const countLink = makeFakeNode({
+    text: '561 Lots',
+    attrs: { href: 'https://www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html' },
+  });
   const sellerLink = makeFakeNode({
     text: 'Pink Lady Liquidation',
     attrs: { href: 'https://www.auctionninja.com/pinkladyliquidation/' },
@@ -946,9 +950,9 @@ Dumont, NJ Local Pickup Only
 Begins to close
 Thu, Jul 16 2026 @ 8:00 PM EDT
 Pink Lady Liquidation
-(561)`,
+561 Lots`,
     selectors: {
-      'a[href*="/sales/details/"]': saleLink,
+      'a[href*="/sales/details/"]': [countLink, saleLink],
       'a[href]:not([href*="/sales/details/"])': sellerLink,
       'img': image,
     },
@@ -977,7 +981,7 @@ Pink Lady Liquidation
       shippingText: 'Local Pickup Only',
       closingText: 'Thu, Jul 16 2026 @ 8:00 PM EDT',
       itemCount: 561,
-      rawText: 'Dumont New Jersey Estate Sale Dumont, NJ Local Pickup Only Begins to close Thu, Jul 16 2026 @ 8:00 PM EDT Pink Lady Liquidation (561)',
+      rawText: 'Dumont New Jersey Estate Sale Dumont, NJ Local Pickup Only Begins to close Thu, Jul 16 2026 @ 8:00 PM EDT Pink Lady Liquidation 561 Lots',
     },
   ]);
 });
