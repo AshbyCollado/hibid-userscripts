@@ -34,7 +34,7 @@
   const FALLBACK_ID = 'hibid-lot-catalog-scraper-json';
   const DEBUG_PREFIX = '[HiBid Lot Catalog Scraper]';
   const UNIFIED_ASSISTANT_FLAG = '__HIBID_UNIFIED_ASSISTANT_ACTIVE__';
-  const UNIFIED_ASSISTANT_PANEL_ID = 'hibid-bid-assistant-panel';
+  const UNIFIED_ASSISTANT_PANEL_IDS = ['flipperaddon-panel', 'hibid-bid-assistant-panel'];
   const RESUME_KEY = 'hibidLotCatalogScraperResume';
   const MENU_COMMANDS = ['Mount HiBid scraper button', 'Copy all HiBid lots now'];
   const MAX_STEPS = 1200;
@@ -58,7 +58,7 @@
   function isUnifiedAssistantActive(root = document) {
     return Boolean(
       globalThis[UNIFIED_ASSISTANT_FLAG] ||
-      root.getElementById?.(UNIFIED_ASSISTANT_PANEL_ID)
+      UNIFIED_ASSISTANT_PANEL_IDS.some(id => root.getElementById?.(id))
     );
   }
 

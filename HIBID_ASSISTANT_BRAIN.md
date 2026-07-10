@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.9`.
+- Current version: `0.7.10`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -159,6 +159,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.7` adds AuctionNinja `/bid-history` account export and auction-search/nearby-sales export for whole-auction triage.
 - Done: `v0.7.8` fixes AuctionNinja auction-search title selection when cards repeat sale links for image/count/title targets.
 - Done: `v0.7.9` adds explicit AuctionNinja account/search match metadata and a window-load remount retry for account dashboard reliability.
+- Done: `v0.7.10` gives FlipperAddon a unique panel ID so stale enabled assistant copies cannot remove the current UI.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 
 ## Verification Checklist
