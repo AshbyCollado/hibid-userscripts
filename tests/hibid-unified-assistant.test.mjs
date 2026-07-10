@@ -11,6 +11,7 @@ function loadCore(options = {}) {
   const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
   const sandbox = {
     console,
+    URL,
     globalThis: {},
   };
   if (options.storage) {
@@ -37,6 +38,35 @@ function makeElement({ text = '', attrs = {}, disabled = false } = {}) {
     },
     closest() {
       return null;
+    },
+  };
+}
+
+function makeFakeNode({ text = '', attrs = {}, selectors = {} } = {}) {
+  const bySelector = new Map(Object.entries(selectors));
+  const findMatch = (selector) => {
+    for (const [pattern, value] of bySelector.entries()) {
+      if (selector.includes(pattern)) return value;
+    }
+    return null;
+  };
+
+  return {
+    textContent: text,
+    href: attrs.href || '',
+    src: attrs.src || '',
+    alt: attrs.alt || '',
+    getAttribute(name) {
+      return attrs[name] || '';
+    },
+    querySelector(selector) {
+      const match = findMatch(selector);
+      return Array.isArray(match) ? (match[0] || null) : match;
+    },
+    querySelectorAll(selector) {
+      const match = findMatch(selector);
+      if (!match) return [];
+      return Array.isArray(match) ? match : [match];
     },
   };
 }
@@ -404,4 +434,226 @@ test('LLM auction brief includes the advanced resale coordinator prompt and full
   assert.match(brief, /https:\/\/hibid\.com\/lot\/307763539\/4432i/);
   assert.match(brief, /https:\/\/cdn\.example\.test\/4432i\.jpg/);
   assert.match(brief, /"buyerPremium": "15%"/);
+});
+
+test('assistant resolves supported and blocked AuctionNinja route families', () => {
+  const core = loadCore();
+  const cases = [
+    ['https://www.auctionninja.com/auctions?an=6av06rjyogk', 'auction-search'],
+    ['https://www.auctionninja.com/items-won?an=hwfmhr2h2qi', 'items-won'],
+    ['https://www.auctionninja.com/clearinghouseestatesales/sales/details/example-sale--17395.html?an=20260709202533', 'sale-catalog'],
+    ['https://www.auctionninja.com/clearinghouseestatesales/product/example-lot--123456.html', 'item-detail'],
+  ];
+
+  cases.forEach(([href, kind]) => {
+    const url = new URL(href);
+    const resolved = core.resolveAuctionNinjaPage(url);
+    assert.equal(resolved.supported, true, href);
+    assert.equal(resolved.kind, kind, href);
+    assert.equal(core.shouldInitOnLocation(url), true, href);
+    assert.equal(core.resolveAssistantMode(url).mode, 'auctionninja', href);
+    assert.equal(core.resolveAssistantMode(url).source, 'auctionninja', href);
+  });
+
+  [
+    'https://www.auctionninja.com/account',
+    'https://www.auctionninja.com/invoices',
+    'https://www.auctionninja.com/payment-methods',
+    'https://www.auctionninja.com/checkout',
+    'https://www.auctionninja.com/support',
+  ].forEach((href) => {
+    const url = new URL(href);
+    assert.equal(core.resolveAuctionNinjaPage(url).supported, false, href);
+    assert.equal(core.shouldInitOnLocation(url), false, href);
+  });
+});
+
+test('assistant parses AuctionNinja catalog ranges for guarded loading', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.parseAuctionNinjaCatalogRange('1-40 of 60 items')), {
+    start: 1,
+    end: 40,
+    total: 60,
+    pageSize: 40,
+    complete: false,
+  });
+  assert.deepEqual(plain(core.parseAuctionNinjaCatalogRange('41-60 of 60 items')), {
+    start: 41,
+    end: 60,
+    total: 60,
+    pageSize: 20,
+    complete: true,
+  });
+  assert.equal(core.parseAuctionNinjaCatalogRange('no count here'), null);
+});
+
+test('assistant discovers AuctionNinja catalog pagination URLs without product or account links', () => {
+  const core = loadCore();
+  const page2 = makeFakeNode({
+    text: '2',
+    attrs: { href: 'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=2#items' },
+  });
+  const page3 = makeFakeNode({
+    text: '3',
+    attrs: { href: 'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=3#items' },
+  });
+  const activePage = makeFakeNode({
+    text: '1',
+    attrs: { class: 'active' },
+  });
+  const productLink = makeFakeNode({
+    text: 'Lot 2',
+    attrs: { href: 'https://www.auctionninja.com/seller/product/example-lot--123.html' },
+  });
+  const accountLink = makeFakeNode({
+    text: 'Payment',
+    attrs: { href: 'https://www.auctionninja.com/payment-methods' },
+  });
+  const root = makeFakeNode({
+    text: '1-20 of 106 items',
+    selectors: {
+      'a[href': [activePage, productLink, page3, accountLink, page2],
+    },
+  });
+
+  assert.deepEqual(plain(core.findAuctionNinjaCatalogPageUrls(root, new URL('https://www.auctionninja.com/seller/sales/details/example--17395.html'))), [
+    'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=2#items',
+    'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=3#items',
+  ]);
+});
+
+test('assistant extracts AuctionNinja sale context including terms and pickup friction', () => {
+  const core = loadCore();
+  const title = 'A Glamorous Upper West Side Brownstone With Interiors By Jonathan Adler';
+  const root = makeFakeNode({
+    text: `${title}
+Moving & Estate Sales, Online Auction
+Auction Location:
+New York, NY
+Clearing House Estate Sales
+Shipping Available
+Private Residence
+New York, New York 10024
+When to Pickup
+Saturday, 7/11, 12:00 pm to 3:00 pm
+About the Sale
+Hedge Auctions New York presents curated contents of an elegant Upper West Side brownstone.
+Special Instructions
+Local Pick Up
+Date: Saturday, June 11th From 12PM - 3PM
+Items not picked up within this timeframe are forfeited without refund.
+Auction Manager
+Hedge Auctions New York | (914) 458-2420 | bid@hedge-auctions.com
+Buyer's Premium
+Bidding increment chart
+18%
+Item Catalog`,
+    selectors: {
+      'h1': makeFakeNode({ text: title }),
+      'link[rel="canonical"]': makeFakeNode({ attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/example--17395.html' } }),
+    },
+  });
+
+  const context = core.extractAuctionNinjaSaleContext(root, new URL('https://www.auctionninja.com/clearinghouseestatesales/sales/details/example--17395.html'));
+
+  assert.equal(context.source, 'AuctionNinja');
+  assert.equal(context.title, title);
+  assert.equal(context.seller, 'Clearing House Estate Sales');
+  assert.equal(context.location, 'New York, NY');
+  assert.equal(context.buyerPremium, '18%');
+  assert.match(context.pickupWindow, /Saturday, 7\/11/);
+  assert.match(context.shipping, /Shipping Available/);
+  assert.match(context.specialInstructions, /Items not picked up/);
+});
+
+test('assistant extracts AuctionNinja lot cards without treating bid controls as actions', () => {
+  const core = loadCore();
+  const lotLink = makeFakeNode({
+    text: "An Antique French Mahogany Sideboard, C. 1930's.",
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/product/sideboard--555.html' },
+  });
+  const image = makeFakeNode({
+    attrs: {
+      src: 'https://images.example.test/sideboard.jpg',
+      alt: 'An Antique French Mahogany Sideboard',
+    },
+  });
+  const card = makeFakeNode({
+    text: `Current Bid
+$920.00
+3 minutes 40 seconds left
+An Antique French Mahogany Sideboard, C. 1930's.
+Lot #: 16
+Bid Now`,
+    selectors: {
+      'a[href*="/product/"]': lotLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: '1-40 of 60 items',
+    selectors: {
+      '.search-catalog-item-box': [card],
+    },
+  });
+
+  const lots = core.extractAuctionNinjaCatalogLots(root);
+
+  assert.deepEqual(plain(lots), [
+    {
+      source: 'AuctionNinja',
+      id: '555',
+      lot: '16',
+      title: "An Antique French Mahogany Sideboard, C. 1930's.",
+      url: 'https://www.auctionninja.com/clearinghouseestatesales/product/sideboard--555.html',
+      image: 'https://images.example.test/sideboard.jpg',
+      highBid: 'Current Bid: $920.00',
+      highBidAmount: 920,
+      currentPrice: 920,
+      currentBid: 920,
+      timeLeft: '3 minutes 40 seconds left',
+      status: '',
+      description: '',
+      watched: false,
+    },
+  ]);
+  assert.equal(JSON.stringify(lots).includes('Bid Now'), false);
+});
+
+test('assistant renders AuctionNinja-only drawer controls and brief context', () => {
+  const core = loadCore();
+  const html = core.buildPanelHtml({ mode: 'auctionninja', debugEnabled: false });
+
+  assert.match(html, /AuctionNinja/);
+  assert.match(html, /id="auctionninja-catalog-copy-json"/);
+  assert.match(html, /id="auctionninja-catalog-copy-llm"/);
+  assert.match(html, /id="auctionninja-catalog-stop"/);
+  assert.match(html, /id="hibid-max-plan-details"/);
+  assert.doesNotMatch(html, /id="hibid-bid-next"/);
+  assert.doesNotMatch(html, /id="hibid-live-snipe"/);
+  assert.doesNotMatch(html, /id="fliptracker-listing-download"/);
+  assert.doesNotMatch(html, /id="hibid-debug-copy"/);
+
+  const brief = core.buildAuctionNinjaLlmBrief([
+    {
+      source: 'AuctionNinja',
+      lot: '16',
+      title: "An Antique French Mahogany Sideboard, C. 1930's.",
+      highBidAmount: 920,
+      timeLeft: '3 minutes 40 seconds left',
+    },
+  ], {
+    source: 'AuctionNinja',
+    title: 'Upper West Side Brownstone',
+    buyerPremium: '18%',
+    pickupWindow: 'Saturday, 7/11, 12:00 pm to 3:00 pm',
+    shipping: 'Shipping Available',
+    specialInstructions: 'Items not picked up within this timeframe are forfeited without refund.',
+  });
+
+  assert.match(brief, /AuctionNinja sale terms/i);
+  assert.match(brief, /buyer premium: 18%/i);
+  assert.match(brief, /Saturday, 7\/11/);
+  assert.match(brief, /sold\/completed comps first, profit second, hunches last/i);
 });
