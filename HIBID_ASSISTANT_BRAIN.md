@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.17`.
+- Current version: `0.7.18`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -227,6 +227,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.12` exposes the boot canary on `unsafeWindow` so Selenium/page-context checks can confirm `window.__HIBID_UNIFIED_ASSISTANT_ACTIVE__ === true`.
 - Done: `v0.7.16` adds AAR Auctions calendar/catalog scraper exports with persisted origin/radius research settings and distance-agent LLM briefs.
 - Done: `v0.7.17` adds GovDeals seller, new-listings, and asset exports with safe asset-detail enrichment and distance-aware LLM briefs.
+- Done: `v0.7.18` tightens GovDeals real-grid parsing: browser URL filters, compact card fields, visible result counts, and carousel trimming.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 
 ## Verification Checklist

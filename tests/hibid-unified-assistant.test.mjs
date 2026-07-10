@@ -1088,6 +1088,63 @@ Current Tools Conduit Organizer`,
   });
 });
 
+test('assistant parses compact GovDeals card text from the real new-listings grid', () => {
+  const core = loadCore();
+  const compactText = 'New ListingOnline AuctionLot of 5 Dell Optiplex 7070 i5-9500Edison, New Jersey, USAUSD 10.006D10H(July 16, 2026 12:44 PM EDT)Lot#: 7529-6874 Watch';
+  const assetLink = makeFakeNode({
+    text: compactText,
+    attrs: { href: '/en/asset/6874/7529' },
+  });
+  const card = makeFakeNode({
+    text: compactText,
+    selectors: {
+      'a[href*="/asset/"]': assetLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: `44 Results for New Listings
+${compactText}`,
+    selectors: {
+      'article': [card],
+      'a[href*="/asset/"]': assetLink,
+    },
+  });
+  root.title = 'New Surplus Inventory Listings for Sale | GovDeals';
+  const browserLoc = {
+    href: 'https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25',
+    hostname: 'www.govdeals.com',
+    pathname: '/en/new-listings/filters',
+  };
+
+  const route = core.resolveGovDealsPage(browserLoc);
+  const context = core.extractGovDealsSearchContext(root, browserLoc);
+  const listings = core.extractGovDealsListings(root, browserLoc, 'govdeals-new-listings');
+
+  assert.equal(route.zipcode, '07008');
+  assert.equal(route.miles, '25');
+  assert.equal(context.zipcode, '07008');
+  assert.equal(context.miles, '25');
+  assert.equal(context.visibleCount, 44);
+  assert.equal(listings.length, 1);
+  assert.deepEqual(plain({
+    title: listings[0].title,
+    lotNumber: listings[0].lotNumber,
+    currentBid: listings[0].currentBid,
+    currentBidAmount: listings[0].currentBidAmount,
+    closeTime: listings[0].closeTime,
+    location: listings[0].location,
+    url: listings[0].url,
+  }), {
+    title: 'Lot of 5 Dell Optiplex 7070 i5-9500',
+    lotNumber: '7529-6874',
+    currentBid: 'USD 10.00',
+    currentBidAmount: 10,
+    closeTime: '6D10H(July 16, 2026 12:44 PM EDT)',
+    location: 'Edison, New Jersey, USA',
+    url: 'https://www.govdeals.com/en/asset/6874/7529',
+  });
+});
+
 test('assistant extracts GovDeals asset detail fields for enrichment', () => {
   const core = loadCore();
   const root = makeFakeNode({
