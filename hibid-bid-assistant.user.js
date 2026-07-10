@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.5
+// @version      0.7.6
 // @description  Modular resale scraper/exporter for HiBid, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -32,7 +32,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.5';
+  const SCRIPT_VERSION = '0.7.6';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1627,8 +1627,11 @@ ${cards}
   }
 
   function productIdFromAuctionNinjaUrl(url) {
-    const match = String(url || '').match(/--([A-Za-z0-9-]+)\.html(?:[?#].*)?$/i);
-    return match?.[1] || '';
+    const value = String(url || '');
+    const stableId = value.match(/--([A-Za-z0-9-]+)\.html(?:[?#].*)?$/i);
+    if (stableId) return stableId[1];
+    const slugId = value.match(/-([A-Za-z0-9]+)\.html(?:[?#].*)?$/i);
+    return slugId?.[1] || '';
   }
 
   function saleIdFromAuctionNinjaUrl(url) {
@@ -1695,6 +1698,9 @@ ${cards}
     return String(value || '')
       .replace(/\bBid Now\b/gi, '')
       .replace(/\bLot\s*#\s*:?\s*[A-Za-z0-9.-]+\b/gi, '')
+      .replace(/\b(?:Current Bid|Starting Bid|High Bid|Price Realized|Your Max Bid)\b\s*:?\s*\$?\d[\d,]*(?:\.\d{2})?/gi, '')
+      .replace(/\b(?:\d+\s+(?:days?|hours?|minutes?|seconds?)\s*){1,4}left\b/gi, '')
+      .replace(/\b(?:HIGH BIDDER|Following|Watched|Watching|Outbid|Winning|Won|Bidding Closed)\b/gi, '')
       .replace(/\s+/g, ' ')
       .trim();
   }
@@ -1936,8 +1942,10 @@ ${cards}
 
   function parseAuctionNinjaAccountTimeText(raw) {
     const text = String(raw || '').replace(/\s+/g, ' ').trim();
-    return text.match(/\b\d+\s*(?:d|h|m|s)\b/i)?.[0]
+    return text.match(/\b(?:\d+\s+(?:days?|hours?|minutes?|seconds?)\s*){1,4}left\b/i)?.[0]
+      || text.match(/\b\d+\s+days?\s+\d+\s+hours?\s+left\b/i)?.[0]
       || text.match(/\b\d+\s+(?:days?|hours?|minutes?|seconds?)\s+left\b/i)?.[0]
+      || text.match(/(?:^|\s)(\d{1,3}\s*(?:d|h|m|s))\b/i)?.[1]
       || text.match(/\bBidding\s+Closed\b/i)?.[0]
       || '';
   }
@@ -1960,15 +1968,48 @@ ${cards}
     return text.match(/\bPickup\s*:\s*.+?(?=\s+(?:Shipping|Location|Seller|Sale|Won|Following|Watched|Outbid|Current Bid|Price Realized)\b|$)/i)?.[0]?.trim() || '';
   }
 
-  function inferAuctionNinjaAccountTitle(raw, linkText = '') {
+  function titleFromAuctionNinjaProductUrl(url) {
+    const filename = String(url || '').split('/').pop() || '';
+    const slug = filename
+      .replace(/\.html(?:[?#].*)?$/i, '')
+      .replace(/--[A-Za-z0-9-]+$/i, '')
+      .replace(/-\d+$/i, '')
+      .replace(/-/g, ' ')
+      .trim();
+    if (!slug) return '';
+    return normalizeAuctionNinjaTitle(slug.replace(/\b([a-z])/g, letter => letter.toUpperCase()));
+  }
+
+  function cleanupAuctionNinjaAccountLeadText(value) {
+    return String(value || '')
+      .replace(/if\s*\([^{}]*\)\s*\{[^{}]*\}/gi, ' ')
+      .replace(/\b(?:Current Bid|Starting Bid|High Bid|Price Realized)\b\s*:?\s*\$?\d[\d,]*(?:\.\d{2})?/gi, ' ')
+      .replace(/\bYour Max Bid\b\s*:?\s*\$?\d[\d,]*(?:\.\d{2})?/gi, ' ')
+      .replace(/\b(?:\d+\s+(?:days?|hours?|minutes?|seconds?)\s*){1,4}left\b/gi, ' ')
+      .replace(/(?:^|\s)\d{1,3}\s*(?:d|h|m|s)\b/gi, ' ')
+      .replace(/\b(?:HIGH BIDDER|Following|Watched|Watching|Outbid|Winning|Won|Bidding Closed)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function inferAuctionNinjaAccountTitle(raw, linkText = '', saleTitle = '', url = '') {
     const linked = normalizeAuctionNinjaTitle(linkText);
     if (linked) return linked;
     const text = String(raw || '').replace(/\s+/g, ' ').trim();
-    return normalizeAuctionNinjaTitle(
-      text.match(/Lot\s*#\s*:?\s*[A-Za-z0-9.-]+\s+(.+?)\s+(?:Current Bid|High Bid|Price Realized|Won|Following|Watched|Outbid|Shipping|Pickup|$)/i)?.[1]
-      || text.match(/(?:Current Bid|Price Realized)\s+\$?\d[\d,.]*\s+(.+?)\s+Lot\s*#/i)?.[1]
+    const beforeLot = cleanupAuctionNinjaAccountLeadText(text.split(/\bLot\s*#/i)[0] || '');
+    const normalizedSaleTitle = normalizeAuctionNinjaTitle(saleTitle);
+    let fromCard = beforeLot;
+    if (normalizedSaleTitle) {
+      const saleIndex = fromCard.toLowerCase().indexOf(normalizedSaleTitle.toLowerCase());
+      if (saleIndex >= 0) fromCard = fromCard.slice(0, saleIndex).trim();
+    }
+    const inferred = normalizeAuctionNinjaTitle(
+      fromCard
+      || text.match(/Lot\s*#\s*:?\s*[A-Za-z0-9.-]+\s+(.+?)\s+(?:Current Bid|High Bid|Price Realized|Won|Following|Watched|Outbid|Shipping|Pickup|$)/i)?.[1]
+      || text.match(/(?:Current Bid|Price Realized)\s*\$?\d[\d,.]*\s+(.+?)\s+Lot\s*#/i)?.[1]
       || ''
     );
+    return inferred || titleFromAuctionNinjaProductUrl(url);
   }
 
   function extractAuctionNinjaAccountItems(root = document, loc = (typeof location !== 'undefined' ? location : null), kind = 'followed-items') {
@@ -1982,7 +2023,8 @@ ${cards}
       const saleLink = card.querySelector?.('a[href*="/sales/details/"]');
       const url = absoluteUrl(controlHref(itemLink), base);
       const saleUrl = absoluteUrl(controlHref(saleLink), base);
-      const title = inferAuctionNinjaAccountTitle(rawText, textOf(itemLink));
+      const saleTitle = normalizeAuctionNinjaTitle(textOf(saleLink));
+      const title = inferAuctionNinjaAccountTitle(rawText, textOf(itemLink), saleTitle, url);
       const lot = rawText.match(/\bLot\s*#\s*:?\s*([A-Za-z0-9.-]+)/i)?.[1] || '';
       const id = productIdFromAuctionNinjaUrl(url);
       const key = url || id || `${lot}:${title}`;
@@ -1999,7 +2041,7 @@ ${cards}
         title,
         url,
         image: pickFirstImage(card, base),
-        saleTitle: normalizeAuctionNinjaTitle(textOf(saleLink)),
+        saleTitle,
         saleUrl,
         seller: '',
         status: parseAuctionNinjaAccountStatus(rawText, kind),

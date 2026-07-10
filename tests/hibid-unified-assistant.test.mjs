@@ -758,6 +758,85 @@ Following`,
   ]);
 });
 
+test('assistant infers AuctionNinja account titles when product links have no readable text', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    text: '',
+    attrs: { href: 'https://www.auctionninja.com/timeless-treasures-estate-sales/product/9pc-media-tower-audiosource-nikko-panasonic-dbx-nakamichi-985797.html' },
+  });
+  const saleLink = makeFakeNode({
+    text: 'Levittown - Online Estate Sale - Fiction Books, Womens Clothing, Outdo...',
+    attrs: { href: 'https://www.auctionninja.com/timeless-treasures-estate-sales/sales/details/levittown-online-estate-sale--3667.html' },
+  });
+  const row = makeFakeNode({
+    text: `Current Bid$5.00
+Your Max Bid: $150.00
+21 hours 17 minutes left
+HIGH BIDDER
+if(document.getElementById("MAXBIDID_3667_985797")){ document.getElementById("MAXBIDID_3667_985797").style.color="#21732E"; }
+9pc Media Tower- AudioSource, Nikko, Panasonic, DBX, Nakamichi
+Levittown - Online Estate Sale - Fiction Books, Womens Clothing, Outdo...
+Lot #: 178
+Bid Now
+Timeless Treasures Estate Sales
+Levittown, New York`,
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'a[href*="/sales/details/"]': saleLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Items I am following (Total: 1)',
+    selectors: {
+      '.account-item-card': [row],
+    },
+  });
+
+  const items = core.extractAuctionNinjaFollowedItems(root, new URL('https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo'));
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, '9pc Media Tower- AudioSource, Nikko, Panasonic, DBX, Nakamichi');
+  assert.equal(items[0].timeText, '21 hours 17 minutes left');
+});
+
+test('assistant does not treat item model years as AuctionNinja countdown text', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    text: '',
+    attrs: { href: 'https://www.auctionninja.com/the-pickers-alley/product/voigtlnder-perkeo-i-folding-camera-1950s-4347245.html' },
+  });
+  const saleLink = makeFakeNode({
+    text: "Grandma's Attic - Christmas in July! Holiday Decor, Vintage, Collectib...",
+    attrs: { href: 'https://www.auctionninja.com/the-pickers-alley/sales/details/grandmas-attic--20000.html' },
+  });
+  const row = makeFakeNode({
+    text: `Current Bid$5.00
+3 days 21 hours left
+Voigtlnder Perkeo I Folding Camera - 1950s
+Grandma's Attic - Christmas in July! Holiday Decor, Vintage, Collectib...
+Lot #: 4
+Bid Now
+The Pickers Alley
+Morganville, New Jersey`,
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'a[href*="/sales/details/"]': saleLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Items I am following (Total: 1)',
+    selectors: {
+      '.account-item-card': [row],
+    },
+  });
+
+  const items = core.extractAuctionNinjaFollowedItems(root, new URL('https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo'));
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, 'Voigtlnder Perkeo I Folding Camera - 1950s');
+  assert.equal(items[0].timeText, '3 days 21 hours left');
+});
+
 test('assistant extracts AuctionNinja won item rows for inventory export', () => {
   const core = loadCore();
   const itemLink = makeFakeNode({
