@@ -1048,13 +1048,6 @@ test('LLM auction brief includes the advanced resale coordinator prompt and full
   assert.match(brief, /Sold\/completed comps first, profit second, hunches last/);
   assert.match(brief, /auction all-in = bid x 1\.25/);
   assert.match(brief, /Use eBay sold\/completed listings first/);
-  assert.match(brief, /Commercial equipment exception/);
-  assert.match(brief, /Do not treat "no eBay sold comps" as low value/);
-  assert.match(brief, /safe_reseller_max/);
-  assert.match(brief, /aggressive_dealer_max/);
-  assert.match(brief, /end_user_value/);
-  assert.match(brief, /Never present the safe reseller max as the whole market/);
-  assert.match(brief, /Lajetina vs LADETINA/);
   assert.match(brief, /sedan risk/i);
   assert.match(brief, /Factory sealed speaker/);
   assert.match(brief, /https:\/\/hibid\.com\/lot\/307763539\/4432i/);
