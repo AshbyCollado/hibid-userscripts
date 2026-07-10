@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.23
+// @version      0.7.24
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -41,7 +41,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.23';
+  const SCRIPT_VERSION = '0.7.24';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1464,12 +1464,21 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function scraperResultRows(result) {
-    return [
+    const rows = [
       ...(Array.isArray(result?.items) ? result.items : []),
       ...(Array.isArray(result?.lots) ? result.lots : []),
       ...(Array.isArray(result?.sales) ? result.sales : []),
       ...(Array.isArray(result?.listings) ? result.listings : []),
     ].filter(Boolean);
+    const seen = new Set();
+    return rows.filter(row => {
+      const key = typeof row === 'object' && row !== null
+        ? row
+        : String(row);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   function uniqueNonEmpty(values) {
@@ -1481,6 +1490,36 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       result?.context?.pageKind,
       ...scraperResultRows(result).map(row => row?.pageKind),
     ]);
+  }
+
+  function expectedTotalFromScraperResult(result) {
+    const candidates = [
+      result?.expectedTotal,
+      result?.context?.expectedTotal,
+      result?.context?.totalSales,
+      result?.context?.visibleCount,
+    ];
+    for (const value of candidates) {
+      const total = Number(value);
+      if (Number.isFinite(total) && total > 0) return total;
+    }
+    return null;
+  }
+
+  function validateScraperResultCount(result, reason) {
+    const expectedTotal = expectedTotalFromScraperResult(result);
+    if (!expectedTotal) return { ok: true };
+    const rows = scraperResultRows(result);
+    if (rows.length > expectedTotal) return { ok: false, reason };
+    return { ok: true };
+  }
+
+  function trimRowsToExpectedTotal(rows, expectedTotal) {
+    const total = Number(expectedTotal);
+    if (!Number.isFinite(total) || total <= 0 || !Array.isArray(rows) || rows.length <= total) {
+      return { rows: Array.isArray(rows) ? rows : [], trimmed: false, originalCount: Array.isArray(rows) ? rows.length : 0 };
+    }
+    return { rows: rows.slice(0, total), trimmed: true, originalCount: rows.length };
   }
 
   function validateAuctionNinjaExportAgainstRoute(result, route = {}) {
@@ -1495,6 +1534,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       && String(result.context.saleId) !== String(route.saleId)) {
       return { ok: false, reason: 'auctionninja-sale-id-mismatch' };
     }
+    const countValidation = validateScraperResultCount(result, 'auctionninja-count-exceeds-expected');
+    if (!countValidation.ok) return countValidation;
     return { ok: true };
   }
 
@@ -1514,6 +1555,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         return { ok: false, reason: 'aar-auction-id-mismatch' };
       }
     }
+    const countValidation = validateScraperResultCount(result, 'aar-count-exceeds-expected');
+    if (!countValidation.ok) return countValidation;
     return { ok: true };
   }
 
@@ -1544,6 +1587,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         return { ok: false, reason: 'govdeals-asset-id-mismatch' };
       }
     }
+    const countValidation = validateScraperResultCount(result, 'govdeals-count-exceeds-expected');
+    if (!countValidation.ok) return countValidation;
     return { ok: true };
   }
 
@@ -4343,17 +4388,29 @@ ${cards}
         : (context.totalSales && salesByKey.size >= context.totalSales ? 'expected-total-reached' : 'visible-or-fetch-complete');
     }
     if (shouldStop()) stopReason = 'stopped-by-user';
-    const sales = Array.from(salesByKey.values()).sort((a, b) => String(a.closingText || a.title).localeCompare(String(b.closingText || b.title), undefined, {
+    let sales = Array.from(salesByKey.values());
+    const expectedTotal = context.totalSales || sales.length;
+    const capped = trimRowsToExpectedTotal(sales, expectedTotal);
+    if (capped.trimmed) {
+      debug('auctionninja auction-search trimmed to expected total', {
+        originalCount: capped.originalCount,
+        expectedTotal,
+        currentUrl: context.url || ''
+      });
+      sales = capped.rows;
+      stopReason = 'trimmed-to-expected-total';
+    }
+    sales = sales.sort((a, b) => String(a.closingText || a.title).localeCompare(String(b.closingText || b.title), undefined, {
       numeric: true,
       sensitivity: 'base'
     }));
-    debug('auctionninja auction-search scrape finished', { sales: sales.length, expectedTotal: context.totalSales || sales.length, steps, stopReason });
+    debug('auctionninja auction-search scrape finished', { sales: sales.length, expectedTotal, steps, stopReason });
     return {
       source: 'auctionninja-auction-search-dom',
       context,
       items: sales,
       sales,
-      expectedTotal: context.totalSales || sales.length,
+      expectedTotal,
       stopped: shouldStop(),
       stopReason,
       incomplete: context.totalSales ? sales.length < context.totalSales : false,

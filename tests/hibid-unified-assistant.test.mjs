@@ -570,6 +570,31 @@ test('assistant blocks AuctionNinja exports from the wrong active page kind', ()
   }, 'auctionninja', { kind: 'bid-history' })), {
     ok: true,
   });
+
+  const sharedSales = [{ source: 'AuctionNinja', pageKind: 'auction-search', title: 'Single Search Result' }];
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-auction-search-dom',
+    context: { source: 'AuctionNinja', pageKind: 'auction-search', totalSales: 1 },
+    items: sharedSales,
+    sales: sharedSales,
+    expectedTotal: 1,
+  }, 'auctionninja', { kind: 'auction-search' })), {
+    ok: true,
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-auction-search-dom',
+    context: { source: 'AuctionNinja', pageKind: 'auction-search', totalSales: 2 },
+    items: [
+      { source: 'AuctionNinja', pageKind: 'auction-search', title: 'Sale 1' },
+      { source: 'AuctionNinja', pageKind: 'auction-search', title: 'Sale 2' },
+      { source: 'AuctionNinja', pageKind: 'auction-search', title: 'Stale Extra Sale' },
+    ],
+    expectedTotal: 2,
+  }, 'auctionninja', { kind: 'auction-search' })), {
+    ok: false,
+    reason: 'auctionninja-count-exceeds-expected',
+  });
 });
 
 test('assistant blocks AAR exports from the wrong route or auction id', () => {
