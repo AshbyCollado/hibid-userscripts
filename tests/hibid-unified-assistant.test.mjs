@@ -454,6 +454,7 @@ test('assistant resolves supported and blocked AuctionNinja route families', () 
   const core = loadCore();
   const cases = [
     ['https://www.auctionninja.com/auctions?an=6av06rjyogk', 'auction-search'],
+    ['https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo', 'followed-items'],
     ['https://www.auctionninja.com/items-won?an=hwfmhr2h2qi', 'items-won'],
     ['https://www.auctionninja.com/clearinghouseestatesales/sales/details/example-sale--17395.html?an=20260709202533', 'sale-catalog'],
     ['https://www.auctionninja.com/clearinghouseestatesales/product/example-lot--123456.html', 'item-detail'],
@@ -693,4 +694,170 @@ test('assistant renders AuctionNinja scraper-only drawer controls and brief cont
   assert.match(brief, /buyer premium: 18%/i);
   assert.match(brief, /Saturday, 7\/11/);
   assert.match(brief, /sold\/completed comps first, profit second, hunches last/i);
+});
+
+test('assistant extracts AuctionNinja followed item rows for watchlist export', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    text: 'Chloe Eau De Toilette Spray',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/product/chloe-spray--243760.html' },
+  });
+  const saleLink = makeFakeNode({
+    text: 'The Luxe Edit',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/the-luxe-edit--17395.html' },
+  });
+  const image = makeFakeNode({ attrs: { src: 'https://images.example.test/chloe.jpg' } });
+  const row = makeFakeNode({
+    text: `The Luxe Edit
+Chloe Eau De Toilette Spray
+Lot #: 1627sf
+Current Bid
+$38.00
+1 Bid
+10s
+Shipping Available
+New York, NY
+Following`,
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'a[href*="/sales/details/"]': saleLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Items I am following',
+    selectors: {
+      '.account-item-card': [row],
+    },
+  });
+
+  const items = core.extractAuctionNinjaFollowedItems(root, new URL('https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo'));
+
+  assert.deepEqual(plain(items), [
+    {
+      source: 'AuctionNinja',
+      pageKind: 'followed-items',
+      id: '243760',
+      lot: '1627sf',
+      title: 'Chloe Eau De Toilette Spray',
+      url: 'https://www.auctionninja.com/clearinghouseestatesales/product/chloe-spray--243760.html',
+      image: 'https://images.example.test/chloe.jpg',
+      saleTitle: 'The Luxe Edit',
+      saleUrl: 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/the-luxe-edit--17395.html',
+      seller: '',
+      status: 'Following',
+      priceText: 'Current Bid: $38.00',
+      price: 38,
+      bidCount: 1,
+      timeText: '10s',
+      location: 'New York, NY',
+      shippingText: 'Shipping Available',
+      pickupText: '',
+      rawText: 'The Luxe Edit Chloe Eau De Toilette Spray Lot #: 1627sf Current Bid $38.00 1 Bid 10s Shipping Available New York, NY Following',
+    },
+  ]);
+});
+
+test('assistant extracts AuctionNinja won item rows for inventory export', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    text: 'Smart Cat Feeder - 6-L Dispenser',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/product/smart-cat-feeder--10016.html' },
+  });
+  const saleLink = makeFakeNode({
+    text: 'Warehouse Finds',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/warehouse-finds--18000.html' },
+  });
+  const row = makeFakeNode({
+    text: `Warehouse Finds
+Smart Cat Feeder - 6-L Dispenser
+Lot #: 16
+Price Realized:
+$8.00
+Won
+Shipping Available
+Pickup: Saturday 10 AM`,
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'a[href*="/sales/details/"]': saleLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Items Won (Total: 1) 2026 Quick Search',
+    selectors: {
+      '.account-item-card': [row],
+    },
+  });
+
+  const items = core.extractAuctionNinjaWonItems(root, new URL('https://www.auctionninja.com/items-won?an=hwfmhr2h2qi'));
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].pageKind, 'items-won');
+  assert.equal(items[0].title, 'Smart Cat Feeder - 6-L Dispenser');
+  assert.equal(items[0].priceText, 'Price Realized: $8.00');
+  assert.equal(items[0].price, 8);
+  assert.equal(items[0].status, 'Won');
+  assert.equal(items[0].pickupText, 'Pickup: Saturday 10 AM');
+  assert.equal(items[0].saleTitle, 'Warehouse Finds');
+});
+
+test('assistant renders AuctionNinja account-page copy controls only', () => {
+  const core = loadCore();
+  const followed = core.buildPanelHtml({
+    mode: 'auctionninja',
+    debugEnabled: false,
+    route: { kind: 'followed-items' },
+  });
+  const won = core.buildPanelHtml({
+    mode: 'auctionninja',
+    debugEnabled: false,
+    route: { kind: 'items-won' },
+  });
+
+  assert.match(followed, /Copy Watchlist LLM/);
+  assert.match(followed, /id="auctionninja-account-copy-json"/);
+  assert.doesNotMatch(followed, /Copy LLM Brief|Sale Catalog Research|Max plan|Prepare Bid|Snipe Now|checkout|invoice|payment/i);
+
+  assert.match(won, /Copy Won Items LLM/);
+  assert.match(won, /id="auctionninja-account-copy-json"/);
+  assert.doesNotMatch(won, /Copy LLM Brief|Sale Catalog Research|Max plan|Prepare Bid|Snipe Now|checkout|invoice|payment/i);
+});
+
+test('assistant builds AuctionNinja account briefs and empty account exports', () => {
+  const core = loadCore();
+  const emptyRoot = makeFakeNode({ text: 'Items I am following DASHBOARD' });
+
+  assert.deepEqual(plain(core.extractAuctionNinjaFollowedItems(emptyRoot, new URL('https://www.auctionninja.com/followed-items'))), []);
+  assert.deepEqual(plain(core.extractAuctionNinjaWonItems(emptyRoot, new URL('https://www.auctionninja.com/items-won'))), []);
+
+  const followedBrief = core.buildAuctionNinjaFollowedItemsLlmBrief([
+    {
+      source: 'AuctionNinja',
+      pageKind: 'followed-items',
+      lot: '1627sf',
+      title: 'Chloe Eau De Toilette Spray',
+      priceText: 'Current Bid: $38.00',
+      timeText: '10s',
+    },
+  ], { source: 'AuctionNinja', pageKind: 'followed-items', title: 'Items I am following' });
+  const wonBrief = core.buildAuctionNinjaWonItemsLlmBrief([
+    {
+      source: 'AuctionNinja',
+      pageKind: 'items-won',
+      lot: '16',
+      title: 'Smart Cat Feeder',
+      priceText: 'Price Realized: $8.00',
+      status: 'Won',
+    },
+  ], { source: 'AuctionNinja', pageKind: 'items-won', title: 'Items Won' });
+
+  assert.match(followedBrief, /You are an auction resale analysis coordinator/);
+  assert.match(followedBrief, /active opportunity review/i);
+  assert.match(followedBrief, /Do not bid from this brief/i);
+  assert.match(followedBrief, /"pageKind": "followed-items"/);
+
+  assert.match(wonBrief, /post-win inventory/i);
+  assert.match(wonBrief, /listing priority/i);
+  assert.match(wonBrief, /reconciliation/i);
+  assert.match(wonBrief, /"pageKind": "items-won"/);
 });

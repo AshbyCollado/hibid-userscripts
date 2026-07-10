@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.3`.
+- Current version: `0.7.4`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -20,8 +20,10 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
   - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
 - `fliptracker`: eBay and Facebook active selling pages.
   - Controls: Scan Listings, Copy HTML, Download, debug controls only when enabled.
-- `auctionninja`: AuctionNinja sale research pages.
-  - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
+- `auctionninja`: AuctionNinja sale research and account export pages.
+  - Sale catalog controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Followed-items controls: Copy Watchlist LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Items-won controls: Copy Won Items LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Safety: research/export only; no bid clicks, no bid-field writes, no checkout/invoice/payment/account actions.
 - `unsupported`: do not mount.
 
@@ -45,6 +47,7 @@ Mount without waiting for lot tiles on:
 - `https://www.facebook.com/marketplace/you/*`
 - `https://www.facebook.com/marketplace/profile/*`
 - `https://www.auctionninja.com/auctions*`
+- `https://www.auctionninja.com/followed-items*`
 - `https://www.auctionninja.com/items-won*`
 - `https://www.auctionninja.com/*/sales/details/*.html*`
 - `https://www.auctionninja.com/*/product/*.html*`
@@ -72,6 +75,7 @@ Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/
 
 1. Page mode:
    - `/auctions` is auction-search triage.
+   - `/followed-items` is account followed/watchlist opportunity review.
    - `/items-won` is account won-items organization.
    - `/{seller}/sales/details/{sale}.html` is sale catalog research.
    - `/{seller}/product/{item}.html` is item detail research.
@@ -87,6 +91,12 @@ Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/
    - Prefer catalog pagination URLs such as `?Page=2#items`, fetch them in the background, parse with `DOMParser`, and merge lots without taking over the visible tab.
    - Keep safe page/next control clicks as last-resort fallback only; reject bid, checkout, invoice, payment, account, watch/follow, search, sort, and per-page controls.
    - Stop with a debug reason when counts drift, no safe next control exists, or max steps are reached.
+5. Account exports:
+   - `/followed-items` reads visible dashboard item rows/cards and exports source, page kind, lot, title, item URL, image, sale title/URL, status, current price text/amount, bid count, time text, location, pickup/shipping hints, and raw text.
+   - `/items-won` reads visible dashboard item rows/cards and exports the same shared fields, using won/price-realized text when present.
+   - Account exports are copy-only; they do not click dashboard controls or mutate watched/won items.
+   - Followed LLM briefs focus on active opportunity review, current bid versus profit threshold, sold comps first, and logistics risk.
+   - Won-items LLM briefs focus on post-win inventory, listing priority, expected resale, pickup/shipping logistics, profitability after buyer premium/tax, and reconciliation.
 
 ## Legacy Max Plan State
 
@@ -131,8 +141,8 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: prior Waterfox verified AuctionNinja sale catalog drawer, copied LLM brief for `106/106` lots, and confirmed page scrolling still works under the drawer.
 - Done: `v0.7.2` scraper-first cleanup removes bid watcher/max-plan UI, result previews, and bulky minimized launcher copy.
 - Done: `v0.7.3` fixes AuctionNinja exports opened mid-catalog so page 1 is backfilled and full sale counts can be copied.
+- Done: `v0.7.4` adds AuctionNinja `/followed-items` and `/items-won` account export modules with JSON and LLM briefs.
 - Pending future: AuctionNinja auction-search triage module.
-- Pending future: AuctionNinja items-won inventory/reconciliation module.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 
 ## Verification Checklist
@@ -146,10 +156,12 @@ Debug UI and console/log capture are off unless debug mode is enabled.
   - Open `https://hibid.com/livecatalog/752334/the-luxe-edit`.
   - Open eBay/Facebook active selling pages.
   - Open `https://www.auctionninja.com/clearinghouseestatesales/sales/details/a-glamorous-upper-west-side-brownstone-with-interiors-by-jonathan-adler-holly-hunt-lorin-marsh-restoration-hardware-arteriors-lighting-and-so-much-more-new-york-ny-referred-shipping-and-delivery-available--17395.html?an=20260709202533`.
+  - Open `https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo`.
+  - Open `https://www.auctionninja.com/items-won?an=hwfmhr2h2qi`.
   - Capture full-window screenshots showing the page and bottom-right launcher/drawer.
   - Confirm each page exposes only its active module.
   - Confirm scrolling, filters, lot links, watch buttons, and bid buttons still work when not actively scraping.
-  - For AuctionNinja, confirm the drawer never exposes or clicks bid/checkout/payment/invoice actions.
+  - For AuctionNinja, confirm sale, followed, and won pages never expose or click bid/checkout/payment/invoice/account mutation actions.
 
 ## Known Pitfalls
 

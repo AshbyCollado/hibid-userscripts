@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.3
+// @version      0.7.4
 // @description  Modular resale scraper/exporter for HiBid, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -32,7 +32,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.3';
+  const SCRIPT_VERSION = '0.7.4';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1469,8 +1469,13 @@ ${cards}
     findAuctionNinjaCatalogPageUrls,
     extractAuctionNinjaSaleContext,
     extractAuctionNinjaCatalogLots,
+    extractAuctionNinjaFollowedItems,
+    extractAuctionNinjaWonItems,
     scrapeAuctionNinjaCatalogLots,
+    scrapeAuctionNinjaAccountItems,
     buildAuctionNinjaLlmBrief,
+    buildAuctionNinjaFollowedItemsLlmBrief,
+    buildAuctionNinjaWonItemsLlmBrief,
     findAuctionNinjaNextPageControl,
     extractHibidApolloLots,
     extractHibidStateFromDocument,
@@ -1649,6 +1654,10 @@ ${cards}
       return { supported: false, kind: 'blocked-account', host, reason: 'blocked account/payment route' };
     }
 
+    if (parts[0] === 'followed-items') {
+      return { supported: true, kind: 'followed-items', host, reason: 'followed items route' };
+    }
+
     if (parts[0] === 'items-won') {
       return { supported: true, kind: 'items-won', host, reason: 'items won route' };
     }
@@ -1819,6 +1828,174 @@ ${cards}
       numeric: true,
       sensitivity: 'base'
     }));
+  }
+
+  function getAuctionNinjaAccountCards(root = document) {
+    const selectors = [
+      '.account-item-card',
+      '.dashboard-item',
+      '.followed-item',
+      '.favorite-item',
+      '.watchlist-item',
+      '.item-won',
+      '.won-item',
+      '.bid-item',
+      '.my-account-item',
+      '[class*="followed"][class*="item"]',
+      '[class*="favorite"][class*="item"]',
+      '[class*="watch"][class*="item"]',
+      '[class*="won"][class*="item"]',
+      '[class*="account"][class*="item"]',
+      '[class*="product"][class*="box"]',
+      '[class*="item"][class*="box"]',
+      'article',
+      'li',
+      'tr'
+    ];
+    const cards = [];
+    const seen = new Set();
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(card => {
+        if (!card || seen.has(card)) return;
+        const raw = textOf(card);
+        const hasProductLink = Boolean(card.querySelector?.('a[href*="/product/"]'));
+        const looksLikeAccountItem = hasProductLink
+          || /Lot\s*#|Current Bid|Price Realized|Won|Following|Watched|Outbid|Bidding Closed/i.test(raw);
+        const looksLikeShellOnly = /Dashboard|Invoices|Payment|Settings|Logout/i.test(raw) && !hasProductLink && !/Lot\s*#/i.test(raw);
+        if (!raw || !looksLikeAccountItem || looksLikeShellOnly) return;
+        seen.add(card);
+        cards.push(card);
+      });
+    });
+    return cards;
+  }
+
+  function formatAuctionNinjaAccountMoneyLabel(label, value) {
+    const cleanLabel = String(label || '').replace(/\s+/g, ' ').trim();
+    const raw = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!cleanLabel || !raw) return '';
+    const amount = raw.startsWith('$') || /\bUSD\b/i.test(raw) ? raw : `$${raw}`;
+    return `${cleanLabel}: ${amount}`;
+  }
+
+  function parseAuctionNinjaAccountPriceText(raw, kind) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    const labels = kind === 'items-won'
+      ? ['Price Realized', 'Lot Won', 'Won For', 'Sold For', 'Current Bid', 'High Bid']
+      : ['Current Bid', 'High Bid', 'Price Realized', 'Sold For', 'Starting Bid'];
+    for (const label of labels) {
+      const pattern = new RegExp(`\\b${label}\\b\\s*:?\\s*(\\$?\\d[\\d,]*(?:\\.\\d{2})?(?:\\s*USD)?)`, 'i');
+      const match = text.match(pattern);
+      if (match) return formatAuctionNinjaAccountMoneyLabel(label, match[1]);
+    }
+    const money = moneyLabelFromText(text);
+    if (!money) return '';
+    return formatAuctionNinjaAccountMoneyLabel(kind === 'items-won' ? 'Price Realized' : 'Current Bid', money);
+  }
+
+  function parseAuctionNinjaAccountStatus(raw, kind) {
+    const text = String(raw || '');
+    if (kind === 'items-won') {
+      if (/\bWon\b/i.test(text)) return 'Won';
+      if (/Price\s+Realized|Sold/i.test(text)) return 'Sold';
+    }
+    if (/\bFollowing\b/i.test(text)) return 'Following';
+    if (/\bWatched\b|\bWatching\b/i.test(text)) return 'Watching';
+    if (/\bOutbid\b/i.test(text)) return 'Outbid';
+    if (/\bWinning\b/i.test(text)) return 'Winning';
+    if (/Bidding\s+Closed/i.test(text)) return 'Bidding Closed';
+    return '';
+  }
+
+  function parseAuctionNinjaAccountTimeText(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    return text.match(/\b\d+\s*(?:d|h|m|s)\b/i)?.[0]
+      || text.match(/\b\d+\s+(?:days?|hours?|minutes?|seconds?)\s+left\b/i)?.[0]
+      || text.match(/\bBidding\s+Closed\b/i)?.[0]
+      || '';
+  }
+
+  function parseAuctionNinjaLocationText(raw) {
+    const text = String(raw || '')
+      .replace(/\b(?:Shipping Available|Shipping Not Available|Shipping Only|Local Pickup Only|Local Pick Up|Pickup Only|Referred Shipping(?: AND Delivery)? Available)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text.match(/\b[A-Z][A-Za-z .'-]+,\s+[A-Z]{2}\b/)?.[0] || '';
+  }
+
+  function parseAuctionNinjaShippingText(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    return text.match(/\b(?:Shipping Available|Shipping Not Available|Shipping Only|Local Pickup Only|Local Pick Up|Pickup Only|Referred Shipping(?: AND Delivery)? Available)\b/i)?.[0] || '';
+  }
+
+  function parseAuctionNinjaPickupText(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    return text.match(/\bPickup\s*:\s*.+?(?=\s+(?:Shipping|Location|Seller|Sale|Won|Following|Watched|Outbid|Current Bid|Price Realized)\b|$)/i)?.[0]?.trim() || '';
+  }
+
+  function inferAuctionNinjaAccountTitle(raw, linkText = '') {
+    const linked = normalizeAuctionNinjaTitle(linkText);
+    if (linked) return linked;
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    return normalizeAuctionNinjaTitle(
+      text.match(/Lot\s*#\s*:?\s*[A-Za-z0-9.-]+\s+(.+?)\s+(?:Current Bid|High Bid|Price Realized|Won|Following|Watched|Outbid|Shipping|Pickup|$)/i)?.[1]
+      || text.match(/(?:Current Bid|Price Realized)\s+\$?\d[\d,.]*\s+(.+?)\s+Lot\s*#/i)?.[1]
+      || ''
+    );
+  }
+
+  function extractAuctionNinjaAccountItems(root = document, loc = (typeof location !== 'undefined' ? location : null), kind = 'followed-items') {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.auctionninja.com/');
+    const items = [];
+    const seen = new Set();
+
+    getAuctionNinjaAccountCards(root).forEach(card => {
+      const rawText = textOf(card);
+      const itemLink = card.querySelector?.('a[href*="/product/"]') || card.querySelector?.('a[href]');
+      const saleLink = card.querySelector?.('a[href*="/sales/details/"]');
+      const url = absoluteUrl(controlHref(itemLink), base);
+      const saleUrl = absoluteUrl(controlHref(saleLink), base);
+      const title = inferAuctionNinjaAccountTitle(rawText, textOf(itemLink));
+      const lot = rawText.match(/\bLot\s*#\s*:?\s*([A-Za-z0-9.-]+)/i)?.[1] || '';
+      const id = productIdFromAuctionNinjaUrl(url);
+      const key = url || id || `${lot}:${title}`;
+      if (!key || seen.has(key) || (!title && !url)) return;
+      seen.add(key);
+
+      const priceText = parseAuctionNinjaAccountPriceText(rawText, kind);
+      const bidCountMatch = rawText.match(/(?:^|[^#:])\b(\d+)\s+Bids?\b(?!\s*Now)/i);
+      items.push({
+        source: 'AuctionNinja',
+        pageKind: kind,
+        id,
+        lot,
+        title,
+        url,
+        image: pickFirstImage(card, base),
+        saleTitle: normalizeAuctionNinjaTitle(textOf(saleLink)),
+        saleUrl,
+        seller: '',
+        status: parseAuctionNinjaAccountStatus(rawText, kind),
+        priceText,
+        price: moneyFromText(priceText),
+        bidCount: bidCountMatch ? Number(bidCountMatch[1].replace(/,/g, '')) : null,
+        timeText: parseAuctionNinjaAccountTimeText(rawText),
+        location: parseAuctionNinjaLocationText(rawText),
+        shippingText: parseAuctionNinjaShippingText(rawText),
+        pickupText: parseAuctionNinjaPickupText(rawText),
+        rawText
+      });
+    });
+
+    return items;
+  }
+
+  function extractAuctionNinjaFollowedItems(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    return extractAuctionNinjaAccountItems(root, loc, 'followed-items');
+  }
+
+  function extractAuctionNinjaWonItems(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    return extractAuctionNinjaAccountItems(root, loc, 'items-won');
   }
 
   function mergeAuctionNinjaLots(target, lots) {
@@ -2090,6 +2267,63 @@ ${cards}
       stopReason,
       incomplete: expectedTotal ? lots.length < expectedTotal : false,
       pageSteps: steps
+    };
+  }
+
+  function extractAuctionNinjaAccountContext(kind = 'followed-items', root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const raw = textOf(root?.body || root?.documentElement || root);
+    const labels = {
+      'followed-items': 'AuctionNinja Followed Items',
+      'items-won': 'AuctionNinja Items Won'
+    };
+    const title = String(root?.title || '')
+      .replace(/\s*\|\s*AuctionNinja.*$/i, '')
+      .trim()
+      || raw.match(/\b(Items\s+(?:I am following|Won)|Followed\s+Items)\b/i)?.[1]
+      || labels[kind]
+      || 'AuctionNinja Account Export';
+    return {
+      source: 'AuctionNinja',
+      pageKind: kind,
+      title,
+      url: loc?.href || (typeof location !== 'undefined' ? location.href : ''),
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  async function scrapeAuctionNinjaAccountItems(kind = 'followed-items', onProgress = () => {}, shouldStop = () => false, root = document) {
+    const normalizedKind = kind === 'items-won' ? 'items-won' : 'followed-items';
+    const context = extractAuctionNinjaAccountContext(normalizedKind, root);
+    if (shouldStop()) {
+      return {
+        source: 'auctionninja-account-dom',
+        context,
+        items: [],
+        expectedTotal: 0,
+        stopped: true,
+        stopReason: 'stopped-by-user'
+      };
+    }
+
+    onProgress(`Reading AuctionNinja ${normalizedKind === 'items-won' ? 'won items' : 'followed items'}...`);
+    const items = normalizedKind === 'items-won'
+      ? extractAuctionNinjaWonItems(root)
+      : extractAuctionNinjaFollowedItems(root);
+    const stopReason = items.length ? 'visible-dom-complete' : 'no-account-items-found';
+    debug('auctionninja account scrape finished', {
+      kind: normalizedKind,
+      count: items.length,
+      stopReason,
+      title: context.title || ''
+    });
+    return {
+      source: 'auctionninja-account-dom',
+      context,
+      items,
+      expectedTotal: items.length,
+      stopped: shouldStop(),
+      stopReason,
+      incomplete: false
     };
   }
 
@@ -2563,6 +2797,48 @@ ${cards}
       'Full lot data JSON:',
       JSON.stringify(lots, null, 2)
     ].join('\n');
+  }
+
+  function buildAuctionNinjaAccountLlmBrief(items, context = {}, kind = 'followed-items') {
+    const pageKind = kind === 'items-won' ? 'items-won' : 'followed-items';
+    const task = pageKind === 'items-won'
+      ? [
+        'AuctionNinja account task: post-win inventory and resale planning.',
+        'Prioritize listing priority, expected resale range, pickup/shipping logistics, profitability after buyer premium and tax, and reconciliation against what was actually won.'
+      ]
+      : [
+        'AuctionNinja account task: active opportunity review for watched/followed items.',
+        'Review current bid versus profit threshold, pickup/logistics risk, sedan-fit risk, and sold comps first before calling anything a buy.'
+      ];
+    const boundary = [
+      'AuctionNinja account safety boundary:',
+      'Do not bid from this brief. Do not click bid, checkout, invoice, payment, settings, or account-changing controls.',
+      'Use this export only for resale analysis, planning, listing prep, and manual decision support.'
+    ].join('\n');
+
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      ...task,
+      '',
+      boundary,
+      '',
+      'AuctionNinja account context:',
+      JSON.stringify(context, null, 2),
+      '',
+      `Items exported: ${items.length}`,
+      '',
+      'AuctionNinja account item JSON:',
+      JSON.stringify({ context, items }, null, 2)
+    ].join('\n');
+  }
+
+  function buildAuctionNinjaFollowedItemsLlmBrief(items, context = extractAuctionNinjaAccountContext('followed-items')) {
+    return buildAuctionNinjaAccountLlmBrief(items, { ...context, pageKind: 'followed-items' }, 'followed-items');
+  }
+
+  function buildAuctionNinjaWonItemsLlmBrief(items, context = extractAuctionNinjaAccountContext('items-won')) {
+    return buildAuctionNinjaAccountLlmBrief(items, { ...context, pageKind: 'items-won' }, 'items-won');
   }
 
   function installAssistantCatalogScraperButton(status = () => {}) {
@@ -3129,7 +3405,28 @@ ${cards}
     `;
   }
 
-  function renderAuctionNinjaSection(debugEnabled) {
+  function renderAuctionNinjaSection(debugEnabled, route = {}) {
+    if (route?.kind === 'followed-items' || route?.kind === 'items-won') {
+      const isWon = route.kind === 'items-won';
+      return `
+        <section id="auctionninja-account-mode" class="hiba-section" data-module="auctionninja" data-page-kind="${escapeHtml(route.kind)}">
+          <div class="hiba-section-head">
+            <div>
+              <div class="hiba-kicker">AuctionNinja</div>
+              <strong>${isWon ? 'Items Won Export' : 'Followed Items Export'}</strong>
+            </div>
+            <span class="hiba-chip neutral">${isWon ? 'inventory' : 'watchlist'}</span>
+          </div>
+          <div class="hiba-actions">
+            ${actionButton('auctionninja-account-copy-llm', 'file', isWon ? 'Copy Won Items LLM' : 'Copy Watchlist LLM', 'primary', '', isWon ? 'Copy won items with resale planning context.' : 'Copy followed items with resale triage context.')}
+            ${actionButton('auctionninja-account-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy visible account items as normalized JSON.')}
+            ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current export work.')}
+          </div>
+          ${renderDebugActions(debugEnabled)}
+        </section>
+      `;
+    }
+
     return `
       <section id="auctionninja-catalog-mode" class="hiba-section" data-module="auctionninja">
         <div class="hiba-section-head">
@@ -3170,10 +3467,10 @@ ${cards}
     `;
   }
 
-  function renderActiveSection(mode, debugEnabled) {
+  function renderActiveSection(mode, debugEnabled, route = {}) {
     if (mode === 'live') return renderLiveSection(debugEnabled);
     if (mode === 'fliptracker') return renderFlipTrackerSection(debugEnabled);
-    if (mode === 'auctionninja') return renderAuctionNinjaSection(debugEnabled);
+    if (mode === 'auctionninja') return renderAuctionNinjaSection(debugEnabled, route);
     return renderCatalogSection(debugEnabled);
   }
 
@@ -3190,6 +3487,7 @@ ${cards}
   function buildPanelHtml(options = {}) {
     const mode = options.mode || (typeof location !== 'undefined' ? resolveAssistantMode(location).mode : 'catalog') || 'catalog';
     const debugEnabled = options.debugEnabled ?? getStoredDebugEnabled();
+    const route = options.route || (typeof location !== 'undefined' ? resolveAssistantMode(location).route : {});
     return `
       <div class="hiba-drawer" role="dialog" aria-label="${APP_NAME}" data-flipperaddon-mode="${escapeHtml(mode)}">
         <div class="hiba-shellbar">
@@ -3209,7 +3507,7 @@ ${cards}
             <span class="hiba-chip neutral" id="hiba-session-chip">idle</span>
           </div>
           ${renderModeTabs(mode)}
-          ${renderActiveSection(mode, debugEnabled)}
+          ${renderActiveSection(mode, debugEnabled, route)}
           <div id="flipperaddon-toast" class="hiba-toast" role="status" aria-live="polite"></div>
         </div>
       </div>
@@ -3289,7 +3587,7 @@ ${cards}
     });
   }
 
-  function createPanel(mode = resolveAssistantMode().mode, debugEnabled = getStoredDebugEnabled()) {
+  function createPanel(mode = resolveAssistantMode().mode, debugEnabled = getStoredDebugEnabled(), route = resolveAssistantMode().route) {
     removeLegacyScraperArtifacts('createPanel');
     const old = document.getElementById(PANEL_ID);
     if (old) old.remove();
@@ -3297,7 +3595,7 @@ ${cards}
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
     panel.dataset.flipperaddonMode = mode;
-    panel.innerHTML = buildPanelHtml({ mode, debugEnabled });
+    panel.innerHTML = buildPanelHtml({ mode, debugEnabled, route });
 
     document.body.appendChild(panel);
     setPanelMinimized(panel, true);
@@ -3313,11 +3611,14 @@ ${cards}
   function init() {
     const assistantMode = resolveAssistantMode();
     const activeMode = assistantMode.mode === 'unsupported' ? 'catalog' : assistantMode.mode;
-    const panel = createPanel(activeMode, getStoredDebugEnabled());
+    const activeRoute = assistantMode.route || {};
+    const panel = createPanel(activeMode, getStoredDebugEnabled(), activeRoute);
     const toastEl = panel.querySelector('#flipperaddon-toast');
     const liveMode = activeMode === 'live';
     const listingExportMode = activeMode === 'fliptracker';
     const auctionNinjaMode = activeMode === 'auctionninja';
+    const auctionNinjaKind = auctionNinjaMode ? (activeRoute?.kind || '') : '';
+    const auctionNinjaAccountMode = auctionNinjaKind === 'followed-items' || auctionNinjaKind === 'items-won';
     const bidControlsEl = panel.querySelector('#hibid-bid-controls');
     const listingExportModeEl = panel.querySelector('#fliptracker-listing-export-mode');
     const listingExportStatusEl = panel.querySelector('#fliptracker-listing-status');
@@ -3328,9 +3629,11 @@ ${cards}
     const liveCopyLlmButton = panel.querySelector('#hibid-live-copy-llm');
     const catalogCopyJsonButton = panel.querySelector('#hibid-catalog-copy-json');
     const catalogCopyLlmButton = panel.querySelector('#hibid-catalog-copy-llm');
-    const auctionNinjaModeEl = panel.querySelector('#auctionninja-catalog-mode');
+    const auctionNinjaModeEl = panel.querySelector('[data-module="auctionninja"]');
     const auctionNinjaCopyJsonButton = panel.querySelector('#auctionninja-catalog-copy-json');
     const auctionNinjaCopyLlmButton = panel.querySelector('#auctionninja-catalog-copy-llm');
+    const auctionNinjaAccountCopyJsonButton = panel.querySelector('#auctionninja-account-copy-json');
+    const auctionNinjaAccountCopyLlmButton = panel.querySelector('#auctionninja-account-copy-llm');
     const scraperStopButton = panel.querySelector('#hibid-scraper-stop');
     const debugCopyButton = panel.querySelector('#hibid-debug-copy');
     const debugClearButton = panel.querySelector('#hibid-debug-clear');
@@ -3428,14 +3731,22 @@ ${cards}
     }
 
     if (auctionNinjaMode) {
-      const context = extractAuctionNinjaSaleContext();
-      const range = parseAuctionNinjaCatalogRange(textOf(document.body || document.documentElement));
-      const visibleLots = extractAuctionNinjaCatalogLots();
-      renderAuctionNinjaLots(visibleLots, context);
-      status(range
-        ? `AuctionNinja catalog ready. Visible ${visibleLots.length}/${range.total} lot(s).`
-        : `AuctionNinja ${resolveAssistantMode().route?.kind || 'page'} ready.`);
-      debug('auctionninja mode ready', { route: resolveAssistantMode().route, range, visibleLots: visibleLots.length, context });
+      if (auctionNinjaAccountMode) {
+        const context = extractAuctionNinjaAccountContext(auctionNinjaKind);
+        const visibleItems = auctionNinjaKind === 'items-won' ? extractAuctionNinjaWonItems() : extractAuctionNinjaFollowedItems();
+        renderAuctionNinjaLots(visibleItems, context);
+        status(`AuctionNinja ${auctionNinjaKind === 'items-won' ? 'won items' : 'followed items'} ready.`);
+        debug('auctionninja account mode ready', { route: activeRoute, visibleItems: visibleItems.length, context });
+      } else {
+        const context = extractAuctionNinjaSaleContext();
+        const range = parseAuctionNinjaCatalogRange(textOf(document.body || document.documentElement));
+        const visibleLots = extractAuctionNinjaCatalogLots();
+        renderAuctionNinjaLots(visibleLots, context);
+        status(range
+          ? `AuctionNinja catalog ready. Visible ${visibleLots.length}/${range.total} lot(s).`
+          : `AuctionNinja ${activeRoute?.kind || 'page'} ready.`);
+        debug('auctionninja mode ready', { route: activeRoute, range, visibleLots: visibleLots.length, context });
+      }
     }
 
     listingExportScanButton?.addEventListener('click', () => {
@@ -3467,27 +3778,39 @@ ${cards}
       if (state.busy) return null;
       setScrapingBusy(true);
       state.stop = false;
-      if (auctionNinjaCopyJsonButton) auctionNinjaCopyJsonButton.disabled = true;
-      if (auctionNinjaCopyLlmButton) auctionNinjaCopyLlmButton.disabled = true;
+      [
+        auctionNinjaCopyJsonButton,
+        auctionNinjaCopyLlmButton,
+        auctionNinjaAccountCopyJsonButton,
+        auctionNinjaAccountCopyLlmButton
+      ].forEach(button => {
+        if (button) button.disabled = true;
+      });
       try {
-        status(mode === 'llm' ? 'Scraping AuctionNinja catalog for LLM brief...' : 'Scraping AuctionNinja catalog...');
-        const result = await scrapeAuctionNinjaCatalogLots(status, () => state.stop);
-        const lots = result.items || result.lots || [];
-        renderAuctionNinjaLots(lots, result.context);
-        const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
+        const accountLabel = auctionNinjaKind === 'items-won' ? 'won items' : 'followed items';
+        status(auctionNinjaAccountMode
+          ? (mode === 'llm' ? `Reading AuctionNinja ${accountLabel} for LLM brief...` : `Reading AuctionNinja ${accountLabel}...`)
+          : (mode === 'llm' ? 'Scraping AuctionNinja catalog for LLM brief...' : 'Scraping AuctionNinja catalog...'));
+        const result = auctionNinjaAccountMode
+          ? await scrapeAuctionNinjaAccountItems(auctionNinjaKind, status, () => state.stop)
+          : await scrapeAuctionNinjaCatalogLots(status, () => state.stop);
+        const rows = result.items || result.lots || [];
+        renderAuctionNinjaLots(rows, result.context);
+        const countText = result.expectedTotal && !auctionNinjaAccountMode ? `${rows.length}/${result.expectedTotal}` : String(rows.length);
         debug('auctionninja scrape summary', {
           source: result.source || 'unknown',
-          count: lots.length,
+          kind: auctionNinjaKind || 'sale-catalog',
+          count: rows.length,
           expectedTotal: result.expectedTotal,
           stopReason: result.stopReason || '-'
         });
-        if (!lots.length) {
+        if (!rows.length && !auctionNinjaAccountMode) {
           status('No AuctionNinja lots found. Enable debug and copy logs if this page has cards.');
           return result;
         }
         debug('auctionninja ui scrape finished', {
           mode,
-          count: lots.length,
+          count: rows.length,
           expectedTotal: result.expectedTotal,
           stopReason: result.stopReason,
           incomplete: result.incomplete
@@ -3495,8 +3818,14 @@ ${cards}
         return result;
       } finally {
         setScrapingBusy(false);
-        if (auctionNinjaCopyJsonButton) auctionNinjaCopyJsonButton.disabled = false;
-        if (auctionNinjaCopyLlmButton) auctionNinjaCopyLlmButton.disabled = false;
+        [
+          auctionNinjaCopyJsonButton,
+          auctionNinjaCopyLlmButton,
+          auctionNinjaAccountCopyJsonButton,
+          auctionNinjaAccountCopyLlmButton
+        ].forEach(button => {
+          if (button) button.disabled = false;
+        });
       }
     };
 
@@ -3520,6 +3849,32 @@ ${cards}
       status(copied
         ? `Copied AuctionNinja LLM brief for ${lots.length}${result.expectedTotal ? `/${result.expectedTotal}` : ''} lot(s).`
         : 'AuctionNinja LLM brief built, but clipboard failed.');
+    });
+
+    auctionNinjaAccountCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAuctionNinjaForUi('json');
+      if (!result) return;
+      const items = result.items || [];
+      const payload = JSON.stringify({ context: result.context, items }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      const label = auctionNinjaKind === 'items-won' ? 'won items' : 'followed items';
+      status(copied
+        ? `Copied AuctionNinja ${label} JSON for ${items.length} item(s).`
+        : `AuctionNinja ${label} JSON built, but clipboard failed.`);
+    });
+
+    auctionNinjaAccountCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAuctionNinjaForUi('llm');
+      if (!result) return;
+      const items = result.items || [];
+      const payload = auctionNinjaKind === 'items-won'
+        ? buildAuctionNinjaWonItemsLlmBrief(items, result.context)
+        : buildAuctionNinjaFollowedItemsLlmBrief(items, result.context);
+      const copied = await writeClipboard(payload).catch(() => false);
+      const label = auctionNinjaKind === 'items-won' ? 'won items' : 'followed items';
+      status(copied
+        ? `Copied AuctionNinja ${label} LLM brief for ${items.length} item(s).`
+        : `AuctionNinja ${label} LLM brief built, but clipboard failed.`);
     });
 
     const copyCatalogLots = async (mode) => {

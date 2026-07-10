@@ -17,6 +17,7 @@ Tampermonkey updates use that same raw GitHub URL through the script metadata. I
 - HiBid catalog/category/watchlist pages: copy JSON and resale LLM brief.
 - HiBid livecatalog pages: expand/copy live lot JSON and resale LLM brief.
 - AuctionNinja sale catalog pages: copy sale terms plus lot JSON or resale LLM brief.
+- AuctionNinja followed-items and items-won pages: copy account item JSON or watchlist/won-items LLM briefs for resale triage and inventory planning.
 - eBay/Facebook selling pages: FlipTracker active listing copy/download export.
 
 The older `hibid-lot-catalog-scraper.user.js` remains in the repo for legacy reference/tests, but normal use should install only `hibid-bid-assistant.user.js`.
