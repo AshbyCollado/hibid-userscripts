@@ -551,6 +551,87 @@ test('assistant blocks DOM fallback exports when search-filtered lots do not mat
   });
 });
 
+test('assistant blocks AuctionNinja exports from the wrong active page kind', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-auction-search-dom',
+    context: { source: 'AuctionNinja', pageKind: 'auction-search' },
+    items: [{ source: 'AuctionNinja', pageKind: 'auction-search', title: 'Estate Sale' }],
+  }, 'auctionninja', { kind: 'followed-items' })), {
+    ok: false,
+    reason: 'auctionninja-page-kind-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-account-dom',
+    context: { source: 'AuctionNinja', pageKind: 'bid-history' },
+    items: [{ source: 'AuctionNinja', pageKind: 'bid-history', title: 'Brass Floor Lamp' }],
+  }, 'auctionninja', { kind: 'bid-history' })), {
+    ok: true,
+  });
+});
+
+test('assistant blocks AAR exports from the wrong route or auction id', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'aar-dom',
+    context: { source: 'AAR Auctions', pageKind: 'aar-auction-catalog', auctionId: '8563' },
+    items: [{ source: 'AAR Auctions', pageKind: 'aar-auction-catalog', auctionId: '8563', title: 'Catalog Lot' }],
+  }, 'aar', { kind: 'aar-auction-list' })), {
+    ok: false,
+    reason: 'aar-page-kind-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'aar-dom',
+    context: { source: 'AAR Auctions', pageKind: 'aar-auction-catalog', auctionId: '9999' },
+    lots: [{ source: 'AAR Auctions', pageKind: 'aar-auction-catalog', auctionId: '9999', title: 'Wrong Auction Lot' }],
+  }, 'aar', { kind: 'aar-auction-catalog', auctionId: '8563' })), {
+    ok: false,
+    reason: 'aar-auction-id-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'aar-dom',
+    context: { source: 'AAR Auctions', pageKind: 'aar-auction-list' },
+    sales: [{ source: 'AAR Auctions', pageKind: 'aar-auction-list', auctionId: '8563', title: 'Auction Calendar Entry' }],
+  }, 'aar', { kind: 'aar-auction-list' })), {
+    ok: true,
+  });
+});
+
+test('assistant blocks GovDeals exports from the wrong route or URL filters', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'govdeals-dom',
+    context: { source: 'GovDeals', pageKind: 'govdeals-seller' },
+    listings: [{ source: 'GovDeals', pageKind: 'govdeals-seller', title: 'Rutgers Asset' }],
+  }, 'govdeals', { kind: 'govdeals-new-listings', zipcode: '07008', miles: '25' })), {
+    ok: false,
+    reason: 'govdeals-page-kind-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'govdeals-dom',
+    context: { source: 'GovDeals', pageKind: 'govdeals-new-listings', zipcode: '07008', miles: '100' },
+    listings: [{ source: 'GovDeals', pageKind: 'govdeals-new-listings', title: 'Nearby Asset' }],
+  }, 'govdeals', { kind: 'govdeals-new-listings', zipcode: '07008', miles: '25' })), {
+    ok: false,
+    reason: 'govdeals-filter-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'govdeals-dom',
+    context: { source: 'GovDeals', pageKind: 'govdeals-new-listings', zipcode: '07008', miles: '25' },
+    listings: [{ source: 'GovDeals', pageKind: 'govdeals-new-listings', title: 'Nearby Asset' }],
+  }, 'govdeals', { kind: 'govdeals-new-listings', zipcode: '07008', miles: '25' })), {
+    ok: true,
+  });
+});
+
 test('assistant marks partial data-first catalog scrapes incomplete', () => {
   const core = loadCore();
   const complete = {

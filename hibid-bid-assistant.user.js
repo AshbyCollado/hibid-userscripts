@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.22
+// @version      0.7.23
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -41,7 +41,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.22';
+  const SCRIPT_VERSION = '0.7.23';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1463,6 +1463,99 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return { ok: true };
   }
 
+  function scraperResultRows(result) {
+    return [
+      ...(Array.isArray(result?.items) ? result.items : []),
+      ...(Array.isArray(result?.lots) ? result.lots : []),
+      ...(Array.isArray(result?.sales) ? result.sales : []),
+      ...(Array.isArray(result?.listings) ? result.listings : []),
+    ].filter(Boolean);
+  }
+
+  function uniqueNonEmpty(values) {
+    return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)));
+  }
+
+  function scraperResultPageKinds(result) {
+    return uniqueNonEmpty([
+      result?.context?.pageKind,
+      ...scraperResultRows(result).map(row => row?.pageKind),
+    ]);
+  }
+
+  function validateAuctionNinjaExportAgainstRoute(result, route = {}) {
+    const routeKind = String(route?.kind || '').trim();
+    const allowedKind = routeKind === 'item-detail' ? 'sale-catalog' : routeKind;
+    if (!allowedKind) return { ok: true };
+    const pageKinds = scraperResultPageKinds(result);
+    if (pageKinds.length && pageKinds.some(kind => kind !== allowedKind)) {
+      return { ok: false, reason: 'auctionninja-page-kind-mismatch' };
+    }
+    if (routeKind === 'sale-catalog' && route.saleId && result?.context?.saleId
+      && String(result.context.saleId) !== String(route.saleId)) {
+      return { ok: false, reason: 'auctionninja-sale-id-mismatch' };
+    }
+    return { ok: true };
+  }
+
+  function validateAarExportAgainstRoute(result, route = {}) {
+    const routeKind = String(route?.kind || '').trim();
+    if (!routeKind) return { ok: true };
+    const pageKinds = scraperResultPageKinds(result);
+    if (pageKinds.length && pageKinds.some(kind => kind !== routeKind)) {
+      return { ok: false, reason: 'aar-page-kind-mismatch' };
+    }
+    if (routeKind === 'aar-auction-catalog' && route.auctionId) {
+      const routeAuctionId = String(route.auctionId);
+      const contextAuctionId = String(result?.context?.auctionId || '');
+      const rowAuctionIds = uniqueNonEmpty(scraperResultRows(result).map(row => row?.auctionId));
+      if ((contextAuctionId && contextAuctionId !== routeAuctionId)
+        || rowAuctionIds.some(auctionId => auctionId !== routeAuctionId)) {
+        return { ok: false, reason: 'aar-auction-id-mismatch' };
+      }
+    }
+    return { ok: true };
+  }
+
+  function validateGovDealsExportAgainstRoute(result, route = {}) {
+    const routeKind = String(route?.kind || '').trim();
+    if (!routeKind) return { ok: true };
+    const pageKinds = scraperResultPageKinds(result);
+    if (pageKinds.length && pageKinds.some(kind => kind !== routeKind)) {
+      return { ok: false, reason: 'govdeals-page-kind-mismatch' };
+    }
+    if (routeKind === 'govdeals-new-listings') {
+      const expectedZip = String(route.zipcode || '').trim();
+      const expectedMiles = String(route.miles || '').trim();
+      const contextZip = String(result?.context?.zipcode || '').trim();
+      const contextMiles = String(result?.context?.miles || '').trim();
+      if ((expectedZip && contextZip !== expectedZip) || (expectedMiles && contextMiles !== expectedMiles)) {
+        return { ok: false, reason: 'govdeals-filter-mismatch' };
+      }
+    }
+    if (routeKind === 'govdeals-asset') {
+      const expectedAssetId = String(route.assetId || '').trim();
+      const expectedAccountId = String(route.accountId || '').trim();
+      const rows = scraperResultRows(result);
+      const assetIds = uniqueNonEmpty([result?.context?.assetId, ...rows.map(row => row?.assetId)]);
+      const accountIds = uniqueNonEmpty([result?.context?.accountId, ...rows.map(row => row?.accountId)]);
+      if ((expectedAssetId && assetIds.length && assetIds.some(assetId => assetId !== expectedAssetId))
+        || (expectedAccountId && accountIds.length && accountIds.some(accountId => accountId !== expectedAccountId))) {
+        return { ok: false, reason: 'govdeals-asset-id-mismatch' };
+      }
+    }
+    return { ok: true };
+  }
+
+  function validateScraperExportAgainstRoute(result, mode = '', route = {}) {
+    if (!result) return { ok: true };
+    const normalizedMode = String(mode || '').toLowerCase();
+    if (normalizedMode === 'auctionninja') return validateAuctionNinjaExportAgainstRoute(result, route);
+    if (normalizedMode === 'aar') return validateAarExportAgainstRoute(result, route);
+    if (normalizedMode === 'govdeals') return validateGovDealsExportAgainstRoute(result, route);
+    return { ok: true };
+  }
+
   function parseEbaySellerHubTableListingsHtml(html) {
     const text = String(html || '');
     const rowChunks = Array.from(text.matchAll(/<tr\b[\s\S]*?<\/tr>/gi)).map(match => match[0])
@@ -1737,6 +1830,7 @@ ${cards}
     extractHibidApolloLots,
     extractHibidStateFromDocument,
     validateCatalogExportAgainstVisibleState,
+    validateScraperExportAgainstRoute,
     isCatalogScrapeComplete,
     scrapeCatalogLots,
     findDialog,
@@ -6353,6 +6447,17 @@ ${cards}
         const result = auctionNinjaAccountMode
           ? await scrapeAuctionNinjaAccountItems(auctionNinjaKind, status, () => state.stop)
           : (auctionNinjaAuctionSearchMode ? await scrapeAuctionNinjaAuctionSearchSales(status, () => state.stop) : await scrapeAuctionNinjaCatalogLots(status, () => state.stop));
+        const validation = validateScraperExportAgainstRoute(result, 'auctionninja', activeRoute);
+        if (!validation.ok) {
+          debug('auctionninja export blocked by route guard', {
+            reason: validation.reason,
+            route: activeRoute,
+            context: result?.context || null,
+            source: result?.source || 'unknown'
+          });
+          status('Blocked stale AuctionNinja export; current page does not match scraped rows.');
+          return null;
+        }
         const rows = result.items || result.lots || [];
         renderAuctionNinjaLots(rows, result.context);
         debug('auctionninja scrape summary', {
@@ -6480,8 +6585,19 @@ ${cards}
         const result = isCatalog
           ? await scrapeAarCatalogLots(status, () => state.stop)
           : await scrapeAarAuctionCards(status, () => state.stop);
-        const rows = result.lots || result.sales || result.items || [];
         result.context = { ...(result.context || {}), researchSettings: settings };
+        const validation = validateScraperExportAgainstRoute(result, 'aar', activeRoute);
+        if (!validation.ok) {
+          debug('aar export blocked by route guard', {
+            reason: validation.reason,
+            route: activeRoute,
+            context: result?.context || null,
+            source: result?.source || 'unknown'
+          });
+          status('Blocked stale AAR export; current page does not match scraped rows.');
+          return null;
+        }
+        const rows = result.lots || result.sales || result.items || [];
         renderAarRows(rows, result.context);
         debug('aar ui scrape summary', {
           mode,
@@ -6569,8 +6685,19 @@ ${cards}
         const label = govDealsKind === 'govdeals-seller' ? 'seller page' : (govDealsKind === 'govdeals-asset' ? 'asset page' : 'listings page');
         status(mode === 'llm' ? `Scraping GovDeals ${label} for LLM brief...` : `Scraping GovDeals ${label}...`);
         const result = await scrapeGovDealsListings(status, () => state.stop);
-        const rows = result.listings || result.items || [];
         result.context = { ...(result.context || {}), researchSettings: getAarResearchSettings() };
+        const validation = validateScraperExportAgainstRoute(result, 'govdeals', activeRoute);
+        if (!validation.ok) {
+          debug('govdeals export blocked by route guard', {
+            reason: validation.reason,
+            route: activeRoute,
+            context: result?.context || null,
+            source: result?.source || 'unknown'
+          });
+          status('Blocked stale GovDeals export; current page does not match scraped rows.');
+          return null;
+        }
+        const rows = result.listings || result.items || [];
         renderGovDealsRows(rows, result.context);
         debug('govdeals ui scrape summary', {
           mode,
