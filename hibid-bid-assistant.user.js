@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.8
+// @version      0.7.9
 // @description  Modular resale scraper/exporter for HiBid, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -17,6 +17,10 @@
 // @match        https://www.ebay.com/mys/*
 // @match        https://www.facebook.com/marketplace/you/*
 // @match        https://www.facebook.com/marketplace/profile/*
+// @match        https://www.auctionninja.com/auctions*
+// @match        https://www.auctionninja.com/bid-history*
+// @match        https://www.auctionninja.com/followed-items*
+// @match        https://www.auctionninja.com/items-won*
 // @match        https://www.auctionninja.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -32,7 +36,7 @@
   const PANEL_ID = 'hibid-bid-assistant-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.8';
+  const SCRIPT_VERSION = '0.7.9';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -4577,11 +4581,14 @@ ${cards}
     if ('onurlchange' in window) {
       window.addEventListener('urlchange', () => ensureMounted('urlchange'));
     }
+    window.addEventListener('load', () => ensureMounted('window load'));
     window.addEventListener('popstate', () => ensureMounted('popstate'));
     window.addEventListener('hashchange', () => ensureMounted('hashchange'));
-    new MutationObserver(() => ensureMounted('mutation')).observe(document.documentElement, {
-      childList: true,
-      subtree: true
-    });
+    if (document.documentElement) {
+      new MutationObserver(() => ensureMounted('mutation')).observe(document.documentElement, {
+        childList: true,
+        subtree: true
+      });
+    }
   }
 })();
