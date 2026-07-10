@@ -129,12 +129,12 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: add AuctionNinja drawer module with research-only controls.
 - Done: add AuctionNinja JSON and LLM brief export with sale terms ahead of lot data.
 - Done: add tests for AuctionNinja routes, blocked account pages, range parsing, sale context, lot parsing, and active-mode UI.
+- Done: Waterfox verified AuctionNinja sale catalog drawer on `v0.7.1`, copied LLM brief for `106/106` lots, and confirmed page scrolling still works under the drawer.
 - Pending future: inject Add to Max Plan near HiBid watch controls on page cards.
 - Pending future: AuctionNinja auction-search triage module.
 - Pending future: AuctionNinja items-won inventory/reconciliation module.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 - Pending future: richer visual max-plan table editing beyond inline row saves and raw JSON.
-- Pending future: live Waterfox screenshot/install verification after the user asks to load/install this branch.
 
 ## Verification Checklist
 
