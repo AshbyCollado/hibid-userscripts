@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.19
+// @version      0.7.20
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -41,7 +41,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.19';
+  const SCRIPT_VERSION = '0.7.20';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1515,6 +1515,7 @@ ${cards}
     buildGovDealsLlmBrief,
     getAarResearchSettings,
     saveAarResearchSettings,
+    getSiteShortcuts,
     findAuctionNinjaNextPageControl,
     extractHibidApolloLots,
     extractHibidStateFromDocument,
@@ -5275,7 +5276,112 @@ ${cards}
     return route?.source === 'ajwillner' || route?.host === 'bid.ajwillnerauctions.com';
   }
 
-  function renderModeTabs(mode, route = {}) {
+  const SITE_SHORTCUTS = Object.freeze([
+    Object.freeze({
+      id: 'hibid',
+      label: 'HiBid',
+      site: 'hibid',
+      modeHint: 'catalog',
+      url: 'https://hibid.com/lots',
+      help: 'Open HiBid lots search in this tab.'
+    }),
+    Object.freeze({
+      id: 'ajwillner',
+      label: 'AJ Willner',
+      site: 'ajwillner',
+      modeHint: 'catalog',
+      url: 'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active',
+      help: 'Open the AJ Willner active auction catalog in this tab.'
+    }),
+    Object.freeze({
+      id: 'auctionninja',
+      label: 'AuctionNinja',
+      site: 'auctionninja',
+      modeHint: 'auction-search',
+      url: 'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=',
+      help: 'Open AuctionNinja nearby auctions near Carteret, NJ in this tab.'
+    }),
+    Object.freeze({
+      id: 'aar',
+      label: 'AAR Auctions',
+      site: 'aar',
+      modeHint: 'auction-list',
+      url: 'https://aarauctions.com/auctions/',
+      help: 'Open the AAR Auctions calendar in this tab.'
+    }),
+    Object.freeze({
+      id: 'govdeals',
+      label: 'GovDeals',
+      site: 'govdeals',
+      modeHint: 'new-listings',
+      url: 'https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25',
+      help: 'Open GovDeals new listings near 07008 within 25 miles in this tab.'
+    })
+  ]);
+
+  function shortcutIdForHost(hostname = '') {
+    const host = String(hostname || '').toLowerCase();
+    if (host === 'bid.ajwillnerauctions.com') return 'ajwillner';
+    if (isGovDealsHost(host)) return 'govdeals';
+    if (isAarAuctionsHost(host)) return 'aar';
+    if (isAuctionNinjaHost(host)) return 'auctionninja';
+    if (isHiBidHost(host)) return 'hibid';
+    return '';
+  }
+
+  function getCurrentSiteShortcutId(currentLocationOrMode = null, route = {}) {
+    if (route?.source === 'ajwillner' || route?.host === 'bid.ajwillnerauctions.com') return 'ajwillner';
+    const routeHost = shortcutIdForHost(route?.host || '');
+    if (routeHost) return routeHost;
+
+    const input = currentLocationOrMode || (typeof location !== 'undefined' ? location : null);
+    if (!input) return '';
+
+    if (typeof input === 'string') {
+      const value = input.trim().toLowerCase();
+      if (SITE_SHORTCUTS.some(item => item.id === value || item.site === value)) return value === 'auctionninja' ? 'auctionninja' : value;
+      if (value === 'catalog' || value === 'live' || value === 'hibid-live') return 'hibid';
+      if (value === 'auction-search' || value === 'followed-items' || value === 'items-won' || value === 'bid-history') return 'auctionninja';
+      if (value === 'aar-auction-list' || value === 'aar-auction-catalog') return 'aar';
+      if (value === 'govdeals-seller' || value === 'govdeals-new-listings' || value === 'govdeals-asset') return 'govdeals';
+      if (/^https?:\/\//i.test(value)) {
+        try {
+          return shortcutIdForHost(new URL(input).hostname);
+        } catch {
+          return '';
+        }
+      }
+      return '';
+    }
+
+    if (input.mode) return getCurrentSiteShortcutId(input.mode, input.route || route);
+    if (input.source === 'ajwillner') return 'ajwillner';
+    const host = input.hostname || input.host || '';
+    if (host) return shortcutIdForHost(host);
+    if (input.href) {
+      try {
+        return shortcutIdForHost(new URL(input.href).hostname);
+      } catch {
+        return '';
+      }
+    }
+    return '';
+  }
+
+  function getSiteShortcuts(currentLocationOrMode = null, route = {}) {
+    const currentId = getCurrentSiteShortcutId(currentLocationOrMode, route);
+    return SITE_SHORTCUTS.map(item => ({
+      id: item.id,
+      label: item.label,
+      site: item.site,
+      modeHint: item.modeHint,
+      url: item.url,
+      help: item.help,
+      current: item.id === currentId
+    }));
+  }
+
+  function renderModeTabs(mode, route = {}, busy = false) {
     const isAjWillner = mode === 'catalog' && isAjWillnerRoute(route);
     const meta = {
       catalog: isAjWillner
@@ -5289,9 +5395,22 @@ ${cards}
       unsupported: { label: 'Unsupported', icon: 'shield', help: 'This page is not supported by FlipperAddon.' }
     };
     const active = meta[mode] || meta.catalog;
+    const shortcuts = getSiteShortcuts(mode, route);
+    const shortcutDisabled = busy ? ' disabled aria-disabled="true"' : '';
+    const shortcutRows = shortcuts.map(item => `
+        <button type="button" class="hiba-shortcut${item.current ? ' active' : ''}" data-site-shortcut-url="${escapeHtml(item.url)}" data-site-shortcut-id="${escapeHtml(item.id)}"${item.current ? ' aria-current="page"' : ''}${helpAttrs(item.help)}${shortcutDisabled}>
+          <span>${escapeHtmlText(item.label)}</span>
+          <small>${escapeHtmlText(item.modeHint)}</small>
+        </button>
+    `).join('');
     return `
-      <div class="hiba-tabs" role="tablist" aria-label="Active FlipperAddon module">
-        <button type="button" class="hiba-tab active" data-mode-tab="${escapeHtml(mode)}"${helpAttrs(active.help)} disabled>${hibaIcon(active.icon)}<span>${active.label}</span></button>
+      <div class="hiba-tabs hiba-site-switcher" aria-label="FlipperAddon site switcher">
+        <button id="flipperaddon-site-switcher-toggle" type="button" class="hiba-tab hiba-switcher-toggle active" aria-expanded="false" aria-controls="flipperaddon-site-switcher-menu"${helpAttrs(active.help)}>
+          ${hibaIcon(active.icon)}<span>${active.label}</span>${hibaIcon('chevron')}
+        </button>
+        <div id="flipperaddon-site-switcher-menu" class="hiba-site-menu" role="menu" aria-label="Auction site shortcuts" hidden>
+          ${shortcutRows}
+        </div>
       </div>
     `;
   }
@@ -5533,6 +5652,7 @@ ${cards}
     const mode = options.mode || (typeof location !== 'undefined' ? resolveAssistantMode(location).mode : 'catalog') || 'catalog';
     const debugEnabled = options.debugEnabled ?? getStoredDebugEnabled();
     const route = options.route || (typeof location !== 'undefined' ? resolveAssistantMode(location).route : {});
+    const busy = Boolean(options.busy);
     return `
       <div class="hiba-drawer" role="dialog" aria-label="${APP_NAME}" data-flipperaddon-mode="${escapeHtml(mode)}">
         <div class="hiba-shellbar">
@@ -5551,7 +5671,7 @@ ${cards}
             </div>
             <span class="hiba-chip neutral" id="hiba-session-chip">idle</span>
           </div>
-          ${renderModeTabs(mode, route)}
+          ${renderModeTabs(mode, route, busy)}
           ${renderActiveSection(mode, debugEnabled, route)}
           <div id="flipperaddon-toast" class="hiba-toast" role="status" aria-live="polite"></div>
         </div>
@@ -5577,7 +5697,16 @@ ${cards}
         #${PANEL_ID} .hiba-head strong, #${PANEL_ID} .hiba-section-head strong { font-size:14px; }
         #${PANEL_ID} .hiba-tabs { display:grid; grid-template-columns:1fr; gap:6px; margin:8px 0; padding:3px; border:1px solid rgba(148,163,184,.18); border-radius:11px; background:rgba(2,6,23,.62); }
         #${PANEL_ID} .hiba-tab { display:flex; align-items:center; justify-content:center; gap:6px; min-width:0; color:#94a3b8; background:transparent; border:0; border-radius:8px; padding:7px 5px; font-weight:800; cursor:pointer; }
-        #${PANEL_ID} .hiba-tab.active { color:#fff; background:#1d4ed8; box-shadow:0 8px 22px rgba(37,99,235,.24); cursor:default; }
+        #${PANEL_ID} .hiba-tab.active { color:#fff; background:#1d4ed8; box-shadow:0 8px 22px rgba(37,99,235,.24); }
+        #${PANEL_ID} .hiba-switcher-toggle { width:100%; justify-content:space-between; padding:7px 9px; }
+        #${PANEL_ID} .hiba-switcher-toggle span { min-width:0; flex:1; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        #${PANEL_ID} .hiba-site-menu[hidden] { display:none !important; }
+        #${PANEL_ID} .hiba-site-menu { display:grid; gap:4px; padding:2px; }
+        #${PANEL_ID} .hiba-shortcut { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px; width:100%; border:1px solid rgba(148,163,184,.16); border-radius:8px; padding:7px 8px; color:#dbeafe; background:rgba(15,23,42,.82); font-weight:850; text-align:left; cursor:pointer; }
+        #${PANEL_ID} .hiba-shortcut:hover { border-color:rgba(96,165,250,.42); background:rgba(30,41,59,.92); }
+        #${PANEL_ID} .hiba-shortcut.active { color:#ecfeff; background:rgba(14,116,144,.36); border-color:rgba(103,232,249,.36); }
+        #${PANEL_ID} .hiba-shortcut[disabled] { opacity:.52; cursor:not-allowed; }
+        #${PANEL_ID} .hiba-shortcut small { min-width:0; color:#93c5fd; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }
         #${PANEL_ID} .hiba-section { border:1px solid rgba(148,163,184,.16); border-radius:12px; padding:10px; margin-top:9px; background:rgba(15,23,42,.52); }
         #${PANEL_ID} .hiba-section[style*="display:none"] { margin:0; padding:0; border:0; }
         #${PANEL_ID} .hiba-details { margin-top:9px; border:1px solid rgba(148,163,184,.16); border-radius:10px; background:rgba(2,6,23,.38); padding:8px 9px; }
@@ -5705,11 +5834,25 @@ ${cards}
     const scraperStopButton = panel.querySelector('#hibid-scraper-stop');
     const debugCopyButton = panel.querySelector('#hibid-debug-copy');
     const debugClearButton = panel.querySelector('#hibid-debug-clear');
+    const siteSwitcherToggle = panel.querySelector('#flipperaddon-site-switcher-toggle');
+    const siteSwitcherMenu = panel.querySelector('#flipperaddon-site-switcher-menu');
     const state = { stop: false, rows: [], busy: false, listingRows: [], toastTimer: null };
+    const setSiteSwitcherOpen = (open) => {
+      if (!siteSwitcherMenu || !siteSwitcherToggle) return;
+      const nextOpen = Boolean(open) && !state.busy;
+      siteSwitcherMenu.hidden = !nextOpen;
+      siteSwitcherToggle.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+      debug('site switcher toggled', { open: nextOpen });
+    };
     setActiveModeTab(panel, activeMode);
     const setScrapingBusy = (busy) => {
       state.busy = Boolean(busy);
       if (scraperStopButton) scraperStopButton.style.display = busy ? '' : 'none';
+      panel.querySelectorAll('[data-site-shortcut-url]').forEach(shortcut => {
+        shortcut.disabled = state.busy;
+        shortcut.setAttribute('aria-disabled', state.busy ? 'true' : 'false');
+      });
+      if (state.busy) setSiteSwitcherOpen(false);
     };
     setScrapingBusy(false);
 
@@ -5798,14 +5941,51 @@ ${cards}
       });
     });
 
+    siteSwitcherToggle?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.busy) return;
+      setSiteSwitcherOpen(siteSwitcherMenu?.hidden !== false);
+    });
+    panel.querySelectorAll('[data-site-shortcut-url]').forEach(shortcut => {
+      shortcut.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (state.busy || shortcut.disabled) return;
+        const url = shortcut.dataset.siteShortcutUrl || '';
+        if (!url) return;
+        debug('site shortcut navigating', {
+          id: shortcut.dataset.siteShortcutId || '',
+          url
+        });
+        setSiteSwitcherOpen(false);
+        window.location.assign(url);
+      });
+    });
+    const closeSiteSwitcherOnOutsideClick = (event) => {
+      if (!siteSwitcherMenu || siteSwitcherMenu.hidden) return;
+      if (!panel.contains(event.target)) setSiteSwitcherOpen(false);
+    };
+    const closeSiteSwitcherOnEscape = (event) => {
+      if (event.key === 'Escape') setSiteSwitcherOpen(false);
+    };
+    document.addEventListener('click', closeSiteSwitcherOnOutsideClick, true);
+    document.addEventListener('keydown', closeSiteSwitcherOnEscape);
+    panel.addEventListener('flipperaddon-panel-teardown', () => {
+      document.removeEventListener('click', closeSiteSwitcherOnOutsideClick, true);
+      document.removeEventListener('keydown', closeSiteSwitcherOnEscape);
+    }, { once: true });
+
     panel.querySelector('#hibid-bid-minimize').addEventListener('click', () => {
       const body = panel.querySelector('#hibid-bid-body');
       const minimized = body.style.display !== 'none';
+      setSiteSwitcherOpen(false);
       setPanelMinimized(panel, minimized);
       saveMinimized(minimized);
       debug('panel minimize toggled', { minimized });
     });
     panel.querySelector('#hibid-bid-close').addEventListener('click', () => {
+      panel.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason: 'close' } }));
       document.dispatchEvent(new CustomEvent('hibid-bid-assistant-close'));
       panel.remove();
     });
@@ -6323,6 +6503,7 @@ ${cards}
     const teardownPanel = (reason = 'remount') => {
       const existing = document.getElementById(PANEL_ID);
       if (!existing) return false;
+      existing.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason } }));
       if (shouldTeardownPanelForRebuild(reason)) {
         document.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason } }));
       }

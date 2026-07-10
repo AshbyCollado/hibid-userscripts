@@ -390,6 +390,58 @@ test('assistant is branded as FlipperAddon by ALOS with FlipperAddon menu comman
   ]);
 });
 
+test('assistant site shortcuts expose fixed auction links only', () => {
+  const core = loadCore();
+  const shortcuts = core.getSiteShortcuts(new URL('https://www.govdeals.com/en/rutgers'));
+
+  assert.deepEqual(plain(shortcuts.map(item => item.id)), [
+    'hibid',
+    'ajwillner',
+    'auctionninja',
+    'aar',
+    'govdeals',
+  ]);
+  assert.deepEqual(plain(shortcuts.map(item => item.url)), [
+    'https://hibid.com/lots',
+    'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active',
+    'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=',
+    'https://aarauctions.com/auctions/',
+    'https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25',
+  ]);
+  assert.equal(shortcuts.find(item => item.id === 'govdeals').current, true);
+  assert.equal(shortcuts.filter(item => item.current).length, 1);
+  assert.equal(shortcuts.some(item => /ebay|facebook|marketplace/i.test(`${item.id} ${item.label} ${item.site} ${item.url}`)), false);
+
+  const ajWillner = core.getSiteShortcuts(new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active'));
+  assert.equal(ajWillner.find(item => item.id === 'ajwillner').current, true);
+  assert.equal(ajWillner.filter(item => item.current).length, 1);
+});
+
+test('assistant panel renders compact site switcher with active and busy states', () => {
+  const core = loadCore();
+  const govDealsHtml = core.buildPanelHtml({
+    mode: 'govdeals',
+    route: { kind: 'govdeals-new-listings', host: 'www.govdeals.com' },
+    debugEnabled: false,
+  });
+  const busyHtml = core.buildPanelHtml({
+    mode: 'govdeals',
+    route: { kind: 'govdeals-new-listings', host: 'www.govdeals.com' },
+    debugEnabled: false,
+    busy: true,
+  });
+
+  assert.match(govDealsHtml, /id="flipperaddon-site-switcher-toggle"/);
+  assert.match(govDealsHtml, /id="flipperaddon-site-switcher-menu"/);
+  assert.match(govDealsHtml, /data-site-shortcut-url="https:\/\/aarauctions\.com\/auctions\/"/);
+  assert.match(govDealsHtml, /data-site-shortcut-id="govdeals"[^>]*aria-current="page"/);
+  assert.doesNotMatch(govDealsHtml, /ebay\.com|facebook\.com\/marketplace/i);
+
+  const disabledShortcutCount = (busyHtml.match(/data-site-shortcut-url="[^"]+"[^>]*disabled/g) || []).length;
+  assert.equal(disabledShortcutCount, 5);
+  assert.match(busyHtml, /id="hibid-scraper-stop"/);
+});
+
 test('assistant exposes a page-window canary when unsafeWindow is available', () => {
   const pageWindow = {};
   loadCore({ unsafeWindow: pageWindow });
@@ -1285,7 +1337,7 @@ test('assistant builds GovDeals distance-aware briefs and renders scraper-only U
   assert.match(assetHtml, /id="govdeals-asset-copy-json"/);
   [sellerHtml, searchHtml, assetHtml].forEach((html) => {
     assert.match(html, /GovDeals/);
-    assert.doesNotMatch(html, /Prepare Bid|Snipe Now|Auto-confirm|Max plan|checkout|payment|offer|cart/i);
+    assert.doesNotMatch(html, /Prepare Bid|Snipe Now|Auto-confirm|Max plan|checkout|payment|offer|\bcart\b/i);
   });
 });
 

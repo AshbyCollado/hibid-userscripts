@@ -122,7 +122,9 @@ test('panel markup exposes modern drawer shell and stable controls', () => {
   assert.doesNotMatch(html, /hiba-subtitle/);
   assert.doesNotMatch(html, /id="hiba-current-mode-pill"/);
   assert.match(html, /id="fliptracker-listing-download"/);
-  assert.match(html, /data-mode-tab="fliptracker"/);
+  assert.match(html, /id="flipperaddon-site-switcher-toggle"/);
+  assert.match(html, /id="flipperaddon-site-switcher-menu"/);
+  assert.doesNotMatch(html, /ebay\.com|facebook\.com\/marketplace/i);
   assert.doesNotMatch(html, /id="hibid-bid-load"/);
   assert.doesNotMatch(html, /id="hibid-live-copy-llm"/);
   assert.doesNotMatch(html, /id="hibid-bid-results"/);
