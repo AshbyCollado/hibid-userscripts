@@ -21,6 +21,9 @@ function loadCore(options = {}) {
       return value;
     };
   }
+  if (options.unsafeWindow) {
+    sandbox.unsafeWindow = options.unsafeWindow;
+  }
   sandbox.globalThis = sandbox;
   sandbox.__HIBID_BID_ASSISTANT_TEST__ = true;
   vm.runInNewContext(source, sandbox, { filename: 'hibid-bid-assistant.user.js' });
@@ -301,6 +304,14 @@ test('assistant is branded as FlipperAddon by ALOS with FlipperAddon menu comman
     'Clear FlipperAddon Debug Log',
     'Copy HiBid Lots Now',
   ]);
+});
+
+test('assistant exposes a page-window canary when unsafeWindow is available', () => {
+  const pageWindow = {};
+  loadCore({ unsafeWindow: pageWindow });
+
+  assert.equal(pageWindow.__HIBID_UNIFIED_ASSISTANT_ACTIVE__, true);
+  assert.match(pageWindow.__FLIPPERADDON_VERSION__, /^0\.\d+\.\d+$/);
 });
 
 test('assistant mode resolver activates only the current page module', () => {
@@ -984,6 +995,43 @@ Pink Lady Liquidation
       rawText: 'Dumont New Jersey Estate Sale Dumont, NJ Local Pickup Only Begins to close Thu, Jul 16 2026 @ 8:00 PM EDT Pink Lady Liquidation 561 Lots',
     },
   ]);
+});
+
+test('assistant recovers AuctionNinja auction-search title when sale link is count-only', () => {
+  const core = loadCore();
+  const countOnlySaleLink = makeFakeNode({
+    text: '(9)',
+    attrs: { href: 'https://www.auctionninja.com/estatepros/sales/details/designer-handbags-and-estate-jewelry--22009.html' },
+  });
+  const sellerLink = makeFakeNode({
+    text: 'Estate Pros',
+    attrs: { href: 'https://www.auctionninja.com/estatepros/' },
+  });
+  const row = makeFakeNode({
+    text: `Designer Handbags And Estate Jewelry
+(9)
+Paramus, NJ Shipping Available
+Begins to close
+Sat, Jul 18 2026 @ 7:30 PM EDT
+Estate Pros`,
+    selectors: {
+      'a[href*="/sales/details/"]': countOnlySaleLink,
+      'a[href]:not([href*="/sales/details/"])': sellerLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: '108 auctions near Carteret, NJ',
+    selectors: {
+      '.auction-item': [row],
+      'a[href*="/sales/details/"]': countOnlySaleLink,
+    },
+  });
+
+  const sales = core.extractAuctionNinjaAuctionSearchSales(root, new URL('https://www.auctionninja.com/nj/carteret/07008?miles=50&an='));
+
+  assert.equal(sales.length, 1);
+  assert.equal(sales[0].title, 'Designer Handbags And Estate Jewelry');
+  assert.equal(sales[0].url, 'https://www.auctionninja.com/estatepros/sales/details/designer-handbags-and-estate-jewelry--22009.html');
 });
 
 test('assistant renders AuctionNinja account-page copy controls only', () => {

@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.10`.
+- Current version: `0.7.12`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -107,6 +107,7 @@ Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/
    - Bid-history LLM briefs focus on missed opportunities, overbid risk, recurring seller/category signals, and whether past max bids matched sold comps and profit thresholds.
 6. Auction search exports:
    - Nearby/search pages read whole sale rows, not lots: sale title/URL, seller/URL, image, location, pickup/shipping, closing time, item count, and raw text.
+   - Some AuctionNinja search rows use the sale URL for count-only anchors like `(9)` before or instead of a readable title link; treat those as URL-only and recover the title from line-preserved card text.
    - Prefer background fetches from discovered `marketplace_ajax.php?Page=...` pagination controls; merge sale rows by URL/title and avoid visible-tab clicks unless future guarded fallback is added.
    - Auction-search LLM briefs rank whole sales for resale potential before drilling into lot catalogs.
 
@@ -160,6 +161,8 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.8` fixes AuctionNinja auction-search title selection when cards repeat sale links for image/count/title targets.
 - Done: `v0.7.9` adds explicit AuctionNinja account/search match metadata and a window-load remount retry for account dashboard reliability.
 - Done: `v0.7.10` gives FlipperAddon a unique panel ID so stale enabled assistant copies cannot remove the current UI.
+- Done: `v0.7.11` recovers AuctionNinja auction-search sale titles when the only sale-details anchor text is a count marker such as `(9)`.
+- Done: `v0.7.12` exposes the boot canary on `unsafeWindow` so Selenium/page-context checks can confirm `window.__HIBID_UNIFIED_ASSISTANT_ACTIVE__ === true`.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 
 ## Verification Checklist

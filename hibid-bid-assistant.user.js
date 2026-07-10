@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.10
+// @version      0.7.12
 // @description  Modular resale scraper/exporter for HiBid, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -27,6 +27,7 @@
 // @grant        GM_setClipboard
 // @grant        GM.setClipboard
 // @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @grant        window.onurlchange
 // ==/UserScript==
 
@@ -36,7 +37,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.10';
+  const SCRIPT_VERSION = '0.7.12';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1528,6 +1529,22 @@ ${cards}
   };
   globalThis.HiBidBidAssistantCore = Core;
 
+  function exposeAssistantCanary(target) {
+    if (!target) return false;
+    try {
+      target.__HIBID_UNIFIED_ASSISTANT_ACTIVE__ = true;
+      target.__FLIPPERADDON_VERSION__ = SCRIPT_VERSION;
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  exposeAssistantCanary(globalThis);
+  if (typeof unsafeWindow !== 'undefined') {
+    exposeAssistantCanary(unsafeWindow);
+  }
+
   async function enableSinglePage(status) {
     const headerText = textOf(document.querySelector('.lot-list-header'));
     if (/Total Lots:\s*\d/i.test(headerText)) return;
@@ -2138,6 +2155,49 @@ ${cards}
     return match ? Number(match[1].replace(/,/g, '')) : null;
   }
 
+  function isAuctionNinjaSearchNonTitleLabel(value) {
+    const label = normalizeAuctionNinjaTitle(value);
+    if (!label) return true;
+    return /^\(?\s*\d{1,6}\s*\)?$/.test(label)
+      || /^\d{1,6}\s+Lots?$/i.test(label)
+      || /^(?:View|View Auction|Details|Bid Now|AuctionNinja)$/i.test(label);
+  }
+
+  function cleanAuctionNinjaSearchTitleCandidate(value) {
+    return normalizeAuctionNinjaTitle(value)
+      .replace(/\s+\(\s*\d{1,6}\s*\)\s*$/g, '')
+      .replace(/\s+\d{1,6}\s+Lots?\s*$/gi, '')
+      .trim();
+  }
+
+  function isAuctionNinjaSearchMetadataLine(value) {
+    const line = normalizeAuctionNinjaTitle(value);
+    if (isAuctionNinjaSearchNonTitleLabel(line)) return true;
+    if (/^(?:Begins to close|Ends|Local Pickup|Local Pick Up|Pickup Only|Shipping|Preview|Sale closed|Closed)\b/i.test(line)) return true;
+    if (/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+/i.test(line)) return true;
+    if (normalizeAuctionNinjaSearchLocation(line)) return true;
+    if (parseAuctionNinjaShippingText(line)) return true;
+    return false;
+  }
+
+  function extractAuctionNinjaAuctionSearchTitle(card, saleLink, url) {
+    const linkTitle = cleanAuctionNinjaSearchTitleCandidate(textOf(saleLink));
+    if (!isAuctionNinjaSearchNonTitleLabel(linkTitle)) return linkTitle;
+
+    const lines = rawTextOf(card)
+      .split(/\n+/)
+      .map(cleanAuctionNinjaSearchTitleCandidate)
+      .filter(Boolean);
+    const lineTitle = lines.find(line => !isAuctionNinjaSearchMetadataLine(line));
+    if (lineTitle) return lineTitle;
+
+    const flatLead = cleanAuctionNinjaSearchTitleCandidate(
+      textOf(card).split(/\b(?:Begins to close|Local Pickup|Local Pick Up|Shipping|Pickup Only)\b/i)[0]
+    );
+    if (!isAuctionNinjaSearchNonTitleLabel(flatLead)) return flatLead;
+    return titleFromAuctionNinjaProductUrl(url);
+  }
+
   function findAuctionNinjaAuctionSearchCardFromSeed(seed) {
     if (!seed) return null;
     let best = null;
@@ -2173,7 +2233,7 @@ ${cards}
       if (label) score += 20;
       if (label.length >= 18) score += 30;
       if (/\b(?:sale|auction|estate|collection|jewelry|vintage|antiques?|decor|furniture|collectibles?)\b/i.test(label)) score += 18;
-      if (/^\d+\s+Lots?$/i.test(label) || !label) score -= 80;
+      if (isAuctionNinjaSearchNonTitleLabel(label)) score -= 80;
       if (/bid now|view|details/i.test(label)) score -= 25;
       return { link, label, score };
     }).sort((a, b) => b.score - a.score);
@@ -2236,7 +2296,7 @@ ${cards}
       const rawText = textOf(card);
       const saleLink = findBestAuctionNinjaSaleLink(card) || card.querySelector?.('a[href*="/sales/details/"]') || (/\/sales\/details\//i.test(controlHref(card)) ? card : null);
       const url = absoluteUrl(controlHref(saleLink), base);
-      const title = normalizeAuctionNinjaTitle(textOf(saleLink) || rawText.split(/\b(?:Begins to close|Local Pickup|Shipping|Pickup Only)\b/i)[0] || titleFromAuctionNinjaProductUrl(url));
+      const title = extractAuctionNinjaAuctionSearchTitle(card, saleLink, url);
       const sellerLink = card.querySelector?.('a[href]:not([href*="/sales/details/"])');
       const sellerUrl = absoluteUrl(controlHref(sellerLink), base);
       const seller = normalizeAuctionNinjaTitle(textOf(sellerLink));
@@ -4479,7 +4539,6 @@ ${cards}
   }
 
   if (!globalThis.__HIBID_BID_ASSISTANT_TEST__) {
-    globalThis.__HIBID_UNIFIED_ASSISTANT_ACTIVE__ = true;
     debug('boot', routeDebug());
 
     let panelClosed = false;
