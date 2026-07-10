@@ -580,6 +580,302 @@ test('assistant resolves supported and blocked AuctionNinja route families', () 
   });
 });
 
+test('assistant resolves supported and blocked AAR Auctions route families', () => {
+  const core = loadCore();
+  const list = new URL('https://aarauctions.com/auctions/');
+  const catalog = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8563');
+
+  assert.deepEqual(plain(core.resolveAarAuctionsPage(list)), {
+    supported: true,
+    kind: 'aar-auction-list',
+    host: 'aarauctions.com',
+    reason: 'AAR auction calendar route',
+  });
+  assert.deepEqual(plain(core.resolveAarAuctionsPage(catalog)), {
+    supported: true,
+    kind: 'aar-auction-catalog',
+    host: 'aarauctions.com',
+    auctionId: '8563',
+    reason: 'AAR auction catalog route',
+  });
+  assert.equal(core.shouldInitOnLocation(list), true);
+  assert.equal(core.shouldInitOnLocation(catalog), true);
+  assert.equal(core.resolveAssistantMode(list).mode, 'aar');
+  assert.equal(core.resolveAssistantMode(catalog).source, 'aar');
+
+  [
+    'https://aarauctions.com/login',
+    'https://aarauctions.com/register',
+    'https://aarauctions.com/servlet/Login.do',
+    'https://aarauctions.com/servlet/Bid.do?auctionId=8563',
+    'https://aarauctions.com/servlet/Payment.do',
+  ].forEach((href) => {
+    const url = new URL(href);
+    assert.equal(core.resolveAarAuctionsPage(url).supported, false, href);
+    assert.equal(core.shouldInitOnLocation(url), false, href);
+  });
+});
+
+test('assistant extracts AAR auction calendar cards', () => {
+  const core = loadCore();
+  const catalogLink = makeFakeNode({
+    text: 'Catalog',
+    attrs: { href: '/servlet/Search.do?auctionId=8565' },
+  });
+  const registerLink = makeFakeNode({
+    text: 'Register for Auction',
+    attrs: { href: '/servlet/Register.do?auctionId=8565' },
+  });
+  const image = makeFakeNode({
+    attrs: { src: '/images/summer-equipment.jpg', alt: 'Summer Equipment' },
+  });
+  const card = makeFakeNode({
+    text: `Vehicles, Equipment, Tools
+Summer Equipment #2 Auction Ending 7/12
+Closing at 7:00 PM, Sun, Jul. 12, 2026
+Pleasant Valley, NY
+Bid Online Now
+Catalog`,
+    selectors: {
+      'a[href*="Search.do?auctionId="]': catalogLink,
+      'a[href*="Register"]': registerLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Auction Calendar',
+    selectors: {
+      'a[href*="Search.do?auctionId="]': catalogLink,
+      '.et_pb_column': [card],
+    },
+  });
+
+  const sales = core.extractAarAuctionCards(root, new URL('https://aarauctions.com/auctions/'));
+
+  assert.deepEqual(plain(sales), [
+    {
+      source: 'AAR Auctions',
+      pageKind: 'aar-auction-list',
+      auctionId: '8565',
+      title: 'Summer Equipment #2 Auction Ending 7/12',
+      url: 'https://aarauctions.com/servlet/Search.do?auctionId=8565',
+      image: 'https://aarauctions.com/images/summer-equipment.jpg',
+      category: 'Vehicles, Equipment, Tools',
+      closingText: 'Closing at 7:00 PM, Sun, Jul. 12, 2026',
+      description: 'Pleasant Valley, NY Bid Online Now Catalog',
+      registerUrl: 'https://aarauctions.com/servlet/Register.do?auctionId=8565',
+      locationHint: 'Pleasant Valley, NY',
+      mapSearchUrl: 'https://www.google.com/maps/search/?api=1&query=Pleasant%20Valley%2C%20NY%20to%20Edison%2C%20NJ%2008817',
+      rawText: 'Vehicles, Equipment, Tools Summer Equipment #2 Auction Ending 7/12 Closing at 7:00 PM, Sun, Jul. 12, 2026 Pleasant Valley, NY Bid Online Now Catalog',
+    },
+  ]);
+});
+
+test('assistant extracts AAR catalog context and lot fields', () => {
+  const core = loadCore();
+  const lotLink = makeFakeNode({
+    text: 'More Info / Bid Now',
+    attrs: { href: '/servlet/Search.do?auctionId=8563&itemId=1' },
+  });
+  const image = makeFakeNode({ attrs: { src: '/live/images/auction-8563/jeep.jpg' } });
+  const lotRow = makeFakeNode({
+    text: `#1 - 1994 Jeep Wrangler 4WD
+More Info / Bid Now
+Closes On: Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST
+High Bid: $1,550.00 - moose1214
+Auction Type: One Lot
+Quantity: 1
+Minimum Next Bid: $1,600.00
+More Details
+Runs and drives. Odometer shows 122,000 miles.`,
+    selectors: {
+      'a[href*="itemId"]': lotLink,
+      'a[href*="Search.do"]': lotLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: `By Appointment Only - Items Must Be Picked Up By Friday July 17 at 3PM
+10% buyers premium.
+Payment for vehicles and equipment is cash, cashier's check, money order, or wire only.
+Items located at Absolute Auction Center: 45 South Ave, Pleasant Valley, NY 12569.
+All Items (7)
+#1 - 1994 Jeep Wrangler 4WD`,
+    selectors: {
+      'h1': makeFakeNode({ text: 'Summer Equipment Auction Ending 7/15' }),
+      'a[href*="maps"]': makeFakeNode({ attrs: { href: 'https://maps.example.test/pleasant-valley' } }),
+      'tr': [lotRow],
+      '.auction-item': [lotRow],
+    },
+  });
+  const loc = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8563');
+
+  const context = core.extractAarCatalogContext(root, loc);
+  const lots = core.extractAarCatalogLots(root, loc);
+
+  assert.equal(context.source, 'AAR Auctions');
+  assert.equal(context.pageKind, 'aar-auction-catalog');
+  assert.equal(context.auctionId, '8563');
+  assert.equal(context.title, 'Summer Equipment Auction Ending 7/15');
+  assert.equal(context.buyerPremium, '10%');
+  assert.match(context.pickupText, /Picked Up By Friday July 17/i);
+  assert.match(context.paymentText, /cash, cashier's check/i);
+  assert.equal(context.location, '45 South Ave, Pleasant Valley, NY 12569');
+  assert.equal(context.expectedTotal, 7);
+
+  assert.deepEqual(plain(lots), [
+    {
+      source: 'AAR Auctions',
+      pageKind: 'aar-auction-catalog',
+      auctionId: '8563',
+      lot: '1',
+      title: '1994 Jeep Wrangler 4WD',
+      url: 'https://aarauctions.com/servlet/Search.do?auctionId=8563&itemId=1',
+      image: 'https://aarauctions.com/live/images/auction-8563/jeep.jpg',
+      description: 'Runs and drives. Odometer shows 122,000 miles.',
+      highBid: '$1,550.00',
+      highBidAmount: 1550,
+      currentBid: 1550,
+      nextBid: '$1,600.00',
+      nextBidAmount: 1600,
+      quantity: 1,
+      auctionType: 'One Lot',
+      closingText: 'Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST',
+      rawText: '#1 - 1994 Jeep Wrangler 4WD More Info / Bid Now Closes On: Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST High Bid: $1,550.00 - moose1214 Auction Type: One Lot Quantity: 1 Minimum Next Bid: $1,600.00 More Details Runs and drives. Odometer shows 122,000 miles.',
+    },
+  ]);
+});
+
+test('assistant extracts AAR servlet lots from embedded Lot scripts', () => {
+  const core = loadCore();
+  const duplicateRow = makeFakeNode({
+    text: `#1 - 1994 Jeep Wrangler 4WD 2.5L L4 engine
+More Info / Bid Now
+Closes On: Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST
+High Bid: $1,550.00
+Auction Type: One Lot
+Quantity: 1
+Minimum Next Bid: $1,600.00
+More Details
+Duplicate visible row should not create an extra lot.`,
+    selectors: {
+      'a[href*="itemId"]': makeFakeNode({ attrs: { href: '/servlet/Search.do?auctionId=8563&itemId=222210&visible=1' } }),
+    },
+  });
+  const root = makeFakeNode({
+    text: 'All Items (2)',
+    selectors: {
+      'script': [
+        makeFakeNode({
+          text: `var lot222210 = new Lot( 8563, 0, '1', '222210', '', '1994 Jeep Wrangler 4WD 2.5L L4 engine. VIN: 1J4FY19P2RP440051. Runs and drives.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0.0, 'moose1214', '', 1550.0, 1750.0, 1600.0, 0.0, 0.0, '1,550.00', '1,750.00', '1,600.00', '0.00', '0.00', 26, 497465, 497495, 1784159400, 1784159430, '07:50 PM', '07:50 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`
+        }),
+        makeFakeNode({
+          text: `var lot222211 = new Lot(8563, 0, '2', '222211', '', '2012 Chevrolet Express Van handicap accessible. Braun Millennium power lift.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0.0, 'bidder42', '', 3000.0, 3250.0, 3100.0, 0.0, 0.0, '3,000.00', '3,250.00', '3,100.00', '0.00', '0.00', 26, 497495, 497525, 1784159430, 1784159460, '07:50 PM', '07:51 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`
+        }),
+      ],
+      '.auction-item': [duplicateRow],
+    },
+  });
+
+  const lots = core.extractAarCatalogLots(root, new URL('https://aarauctions.com/servlet/Search.do?auctionId=8563'));
+
+  assert.equal(lots.length, 2);
+  assert.deepEqual(plain(lots.map(lot => ({
+    lot: lot.lot,
+    title: lot.title,
+    url: lot.url,
+    currentBid: lot.currentBid,
+    nextBidAmount: lot.nextBidAmount,
+    auctionType: lot.auctionType,
+    quantity: lot.quantity,
+  }))), [
+    {
+      lot: '1',
+      title: '1994 Jeep Wrangler 4WD 2.5L L4 engine',
+      url: 'https://aarauctions.com/servlet/Search.do?auctionId=8563&itemId=222210',
+      currentBid: 1550,
+      nextBidAmount: 1600,
+      auctionType: 'One Lot',
+      quantity: 1,
+    },
+    {
+      lot: '2',
+      title: '2012 Chevrolet Express Van handicap accessible',
+      url: 'https://aarauctions.com/servlet/Search.do?auctionId=8563&itemId=222211',
+      currentBid: 3000,
+      nextBidAmount: 3100,
+      auctionType: 'One Lot',
+      quantity: 1,
+    },
+  ]);
+  assert.match(lots[0].description, /Runs and drives/);
+});
+
+test('assistant persists AAR research settings and builds distance-aware briefs', () => {
+  const storage = new Map();
+  const core = loadCore({ storage });
+
+  assert.deepEqual(plain(core.getAarResearchSettings()), {
+    originLabel: 'Edison, NJ 08817',
+    radiusMiles: 100,
+  });
+
+  core.saveAarResearchSettings({ originLabel: 'Metuchen, NJ 08840', radiusMiles: 75 });
+  assert.deepEqual(plain(core.getAarResearchSettings()), {
+    originLabel: 'Metuchen, NJ 08840',
+    radiusMiles: 75,
+  });
+
+  const brief = core.buildAarAuctionListLlmBrief([
+    {
+      source: 'AAR Auctions',
+      pageKind: 'aar-auction-list',
+      title: 'Summer Equipment #2 Auction Ending 7/12',
+      locationHint: 'Pleasant Valley, NY',
+      mapSearchUrl: 'https://www.google.com/maps/search/?api=1&query=Pleasant%20Valley%2C%20NY%20to%20Metuchen%2C%20NJ%2008840',
+    },
+  ], {
+    source: 'AAR Auctions',
+    pageKind: 'aar-auction-list',
+    title: 'AAR Auction Calendar',
+  }, core.getAarResearchSettings());
+
+  assert.match(brief, /You are an auction resale analysis coordinator/);
+  assert.match(brief, /Distance Agent/i);
+  assert.match(brief, /Metuchen, NJ 08840/);
+  assert.match(brief, /75 miles/i);
+  assert.match(brief, /live map\/search results, not assumptions/i);
+  assert.match(brief, /distance_miles/);
+  assert.match(brief, /distance_proof_url/);
+  assert.match(brief, /assigned_agent/);
+  assert.match(brief, /Summer Equipment #2 Auction Ending 7\/12/);
+});
+
+test('assistant renders AAR copy controls and research settings only', () => {
+  const core = loadCore();
+  const listHtml = core.buildPanelHtml({
+    mode: 'aar',
+    debugEnabled: false,
+    route: { kind: 'aar-auction-list' },
+  });
+  const catalogHtml = core.buildPanelHtml({
+    mode: 'aar',
+    debugEnabled: false,
+    route: { kind: 'aar-auction-catalog' },
+  });
+
+  assert.match(listHtml, /Copy Auctions LLM/);
+  assert.match(listHtml, /id="aar-auctions-copy-json"/);
+  assert.match(listHtml, /Research Settings/);
+  assert.match(listHtml, /Edison, NJ 08817/);
+  assert.doesNotMatch(listHtml, /Prepare Bid|Snipe Now|Auto-confirm|Max plan|checkout|payment/i);
+
+  assert.match(catalogHtml, /Copy Catalog LLM/);
+  assert.match(catalogHtml, /id="aar-catalog-copy-json"/);
+  assert.match(catalogHtml, /radius/i);
+  assert.doesNotMatch(catalogHtml, /Copy Auctions LLM|Prepare Bid|Snipe Now|Max plan|checkout|payment/i);
+});
+
 test('assistant parses AuctionNinja catalog ranges for guarded loading', () => {
   const core = loadCore();
 

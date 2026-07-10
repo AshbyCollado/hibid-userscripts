@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.15
-// @description  Modular resale scraper/exporter for HiBid, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
+// @version      0.7.16
+// @description  Modular resale scraper/exporter for HiBid, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @match        https://hibid.com/lots*
@@ -22,6 +22,9 @@
 // @match        https://www.auctionninja.com/followed-items*
 // @match        https://www.auctionninja.com/items-won*
 // @match        https://www.auctionninja.com/*
+// @match        https://aarauctions.com/auctions*
+// @match        https://aarauctions.com/servlet/Search.do*
+// @match        https://aarauctions.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_setClipboard
@@ -37,7 +40,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.15';
+  const SCRIPT_VERSION = '0.7.16';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -45,6 +48,7 @@
   const MINIMIZED_KEY = 'flipperaddon-minimized-v1';
   const DEBUG_ENABLED_KEY = 'flipperaddon-debug-enabled-v1';
   const DEBUG_LOG_KEY = 'flipperaddon-debug-log-v1';
+  const AAR_RESEARCH_SETTINGS_KEY = 'flipperaddon-aar-research-settings-v1';
   const DEBUG_LOG_LIMIT = 200;
   const OUTBID_WATCHLIST_URL = 'https://hibid.com/account/watchlist?status=OUTBID';
   const LEGACY_SCRAPER_IDS = [
@@ -1469,6 +1473,7 @@ ${cards}
     MENU_COMMANDS,
     resolveHiBidPage,
     resolveAuctionNinjaPage,
+    resolveAarAuctionsPage,
     resolveAssistantMode,
     getExpectedLotTotal,
     findCatalogNextPageButton,
@@ -1480,6 +1485,9 @@ ${cards}
     extractAuctionNinjaWonItems,
     extractAuctionNinjaBidHistoryItems,
     extractAuctionNinjaAuctionSearchSales,
+    extractAarAuctionCards,
+    extractAarCatalogContext,
+    extractAarCatalogLots,
     findAjWillnerScrollContainer,
     getAjWillnerScrollStepSize,
     getAjWillnerExpectedTotal,
@@ -1488,11 +1496,17 @@ ${cards}
     scrapeAuctionNinjaCatalogLots,
     scrapeAuctionNinjaAccountItems,
     scrapeAuctionNinjaAuctionSearchSales,
+    scrapeAarAuctionCards,
+    scrapeAarCatalogLots,
     buildAuctionNinjaLlmBrief,
     buildAuctionNinjaFollowedItemsLlmBrief,
     buildAuctionNinjaWonItemsLlmBrief,
     buildAuctionNinjaBidHistoryLlmBrief,
     buildAuctionNinjaAuctionSearchLlmBrief,
+    buildAarAuctionListLlmBrief,
+    buildAarCatalogLlmBrief,
+    getAarResearchSettings,
+    saveAarResearchSettings,
     findAuctionNinjaNextPageControl,
     extractHibidApolloLots,
     extractHibidStateFromDocument,
@@ -1959,6 +1973,82 @@ ${cards}
     }
 
     return { supported: false, kind: 'unsupported', host, reason: 'unsupported AuctionNinja path' };
+  }
+
+  function isAarAuctionsHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    return host === 'aarauctions.com' || host === 'www.aarauctions.com';
+  }
+
+  function getAarAuctionId(loc = location) {
+    try {
+      return new URL(loc.href || String(loc), 'https://aarauctions.com/').searchParams.get('auctionId') || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function resolveAarAuctionsPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const path = String(loc.pathname || '');
+    const lowerPath = path.toLowerCase();
+    if (!isAarAuctionsHost(host)) {
+      return { supported: false, kind: 'unsupported', host, reason: 'unsupported host' };
+    }
+
+    if (/(?:login|logout|register|account|profile|payment|invoice|checkout|bid)(?:\.do)?(?:\/|$)/i.test(lowerPath)) {
+      return { supported: false, kind: 'blocked-aar-mutation', host, reason: 'blocked AAR account/payment/bid route' };
+    }
+
+    if (/^\/auctions\/?$/i.test(path)) {
+      return { supported: true, kind: 'aar-auction-list', host, reason: 'AAR auction calendar route' };
+    }
+
+    if (/^\/servlet\/Search\.do$/i.test(path) && getAarAuctionId(loc)) {
+      return {
+        supported: true,
+        kind: 'aar-auction-catalog',
+        host,
+        auctionId: getAarAuctionId(loc),
+        reason: 'AAR auction catalog route'
+      };
+    }
+
+    return { supported: false, kind: 'unsupported', host, reason: 'unsupported AAR Auctions path' };
+  }
+
+  function defaultAarResearchSettings() {
+    return { originLabel: 'Edison, NJ 08817', radiusMiles: 100 };
+  }
+
+  function getAarResearchSettings() {
+    const defaults = defaultAarResearchSettings();
+    try {
+      const stored = GM_getValue(AAR_RESEARCH_SETTINGS_KEY, null);
+      const parsed = typeof stored === 'string' ? JSON.parse(stored) : stored;
+      const radius = Number(parsed?.radiusMiles);
+      return {
+        originLabel: String(parsed?.originLabel || defaults.originLabel).trim() || defaults.originLabel,
+        radiusMiles: Number.isFinite(radius) && radius > 0 ? radius : defaults.radiusMiles
+      };
+    } catch {
+      return defaults;
+    }
+  }
+
+  function saveAarResearchSettings(settings = {}) {
+    const defaults = defaultAarResearchSettings();
+    const radius = Number(settings.radiusMiles);
+    const next = {
+      originLabel: String(settings.originLabel || defaults.originLabel).trim() || defaults.originLabel,
+      radiusMiles: Number.isFinite(radius) && radius > 0 ? radius : defaults.radiusMiles
+    };
+    try {
+      GM_setValue(AAR_RESEARCH_SETTINGS_KEY, next);
+    } catch {
+      // Tampermonkey storage may be unavailable in tests.
+    }
+    return next;
   }
 
   function normalizeAuctionNinjaTitle(value) {
@@ -2549,6 +2639,490 @@ ${cards}
     return sales;
   }
 
+  function extractAarAuctionIdFromUrl(url) {
+    try {
+      return new URL(url, 'https://aarauctions.com/').searchParams.get('auctionId') || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function buildAarMapSearchUrl(locationText, settings = getAarResearchSettings()) {
+    const locationLabel = String(locationText || '').trim();
+    if (!locationLabel) return '';
+    const origin = String(settings?.originLabel || defaultAarResearchSettings().originLabel).trim();
+    const query = `${locationLabel} to ${origin}`;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+  }
+
+  function parseAarLocationHint(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    const address = text.match(/\b\d{1,6}\s+[A-Za-z0-9 .'-]+,\s*[A-Z][A-Za-z .'-]+,\s*[A-Z]{2}\s*\d{5}(?:-\d{4})?\b/)?.[0];
+    if (address) return address.trim();
+    return text.match(/\b[A-Z][A-Za-z .'-]+,\s+[A-Z]{2}(?:\s+\d{5})?\b/)?.[0]?.trim() || '';
+  }
+
+  function getAarLines(node) {
+    return rawTextOf(node)
+      .split(/\n+/)
+      .map(line => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+  }
+
+  function isAarActionLine(line) {
+    return /^(?:Register(?: for Auction)?|More Info \/ Bid Now|Track this Item|Login to Bid)$/i.test(String(line || '').trim());
+  }
+
+  function isAarClosingLine(line) {
+    return /^(?:Closing at|Closes On|Ends|Starts)\b/i.test(String(line || '').trim());
+  }
+
+  function cleanAarTitleLine(line) {
+    return String(line || '')
+      .replace(/\b(?:Catalog|Register for Auction|Bid Online Now)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function getAarAuctionCardSeeds(root = document) {
+    const selectors = [
+      '.et_pb_column',
+      '.et_pb_module',
+      '.auction-item',
+      '.auction-card',
+      '[class*="auction"][class*="item"]',
+      'article',
+      'li',
+      'a[href*="Search.do?auctionId="]'
+    ];
+    const cards = [];
+    const seen = new Set();
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(seed => {
+        let card = seed;
+        if (!card.querySelector?.('a[href*="Search.do?auctionId="]') && /Search\.do\?auctionId=/i.test(controlHref(card))) {
+          card = seed.parentElement || seed;
+        }
+        const raw = textOf(card);
+        const hasCatalogLink = Boolean(card.querySelector?.('a[href*="Search.do?auctionId="]')) || /Search\.do\?auctionId=/i.test(controlHref(card));
+        if (!raw || !hasCatalogLink || seen.has(card)) return;
+        if (/Bidder Login|Seller Login|Payment|Invoice|Checkout/i.test(raw)) return;
+        seen.add(card);
+        cards.push(card);
+      });
+    });
+    return cards;
+  }
+
+  function findBestAarCatalogLink(card) {
+    const links = Array.from(card?.querySelectorAll?.('a[href*="Search.do?auctionId="]') || []);
+    if (/Search\.do\?auctionId=/i.test(controlHref(card))) links.unshift(card);
+    const scored = links.map(link => {
+      const label = cleanAarTitleLine(textOf(link));
+      let score = 0;
+      if (label && !/^(?:Catalog|View Catalog|Bid Online Now)$/i.test(label)) score += 40;
+      if (/auction|sale|ending|estate|equipment|vehicle|tools|real estate/i.test(label)) score += 25;
+      if (/catalog|register|bid online/i.test(label)) score -= 20;
+      return { link, score };
+    }).sort((a, b) => b.score - a.score);
+    return scored[0]?.link || links[0] || null;
+  }
+
+  function extractAarAuctionTitle(card, catalogLink) {
+    const linkLabel = cleanAarTitleLine(textOf(catalogLink));
+    if (linkLabel && !/^(?:Catalog|View Catalog|Bid Online Now)$/i.test(linkLabel)) return linkLabel;
+    const lines = getAarLines(card).map(cleanAarTitleLine).filter(Boolean);
+    return lines.find(line => /(?:auction|sale|ending|estate|real estate)/i.test(line) && !isAarClosingLine(line) && !isAarActionLine(line))
+      || lines.find(line => !isAarClosingLine(line) && !isAarActionLine(line) && !/^(?:Catalog|Bid Online Now)$/i.test(line))
+      || '';
+  }
+
+  function extractAarAuctionCards(root = document, loc = (typeof location !== 'undefined' ? location : null), settings = getAarResearchSettings()) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/auctions/');
+    const cards = [];
+    const seen = new Set();
+
+    getAarAuctionCardSeeds(root).forEach(card => {
+      const rawText = textOf(card);
+      const catalogLink = findBestAarCatalogLink(card);
+      const url = absoluteUrl(controlHref(catalogLink), base);
+      const auctionId = extractAarAuctionIdFromUrl(url);
+      const title = extractAarAuctionTitle(card, catalogLink);
+      const lines = getAarLines(card);
+      const closingText = lines.find(isAarClosingLine) || rawText.match(/\bClosing at\s+.*?(?:\d{4}|\d{1,2}(?:AM|PM)?)(?=\s|$)/i)?.[0] || '';
+      const category = lines.find(line => line !== title && line !== closingText && !isAarActionLine(line) && !/^(?:Catalog|Bid Online Now)$/i.test(line)) || '';
+      const description = lines
+        .filter(line => line !== title && line !== category && line !== closingText && !isAarActionLine(line))
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const locationHint = parseAarLocationHint(`${description} ${rawText}`);
+      const key = url || auctionId || `${title}:${rawText.slice(0, 80)}`;
+      if (!key || seen.has(key) || !title) return;
+      seen.add(key);
+
+      cards.push({
+        source: 'AAR Auctions',
+        pageKind: 'aar-auction-list',
+        auctionId,
+        title,
+        url,
+        image: pickFirstImage(card, base),
+        category,
+        closingText,
+        description,
+        registerUrl: pickFirstHref(card, ['a[href*="Register"]', 'a[href*="register"]'], base),
+        locationHint,
+        mapSearchUrl: buildAarMapSearchUrl(locationHint, settings),
+        rawText
+      });
+    });
+
+    return cards;
+  }
+
+  function extractAarSentence(raw, pattern) {
+    const lines = rawTextOf({ textContent: raw })
+      .split(/\n+/)
+      .map(line => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    return lines.find(line => pattern.test(line)) || '';
+  }
+
+  function extractAarCatalogContext(root = document, loc = (typeof location !== 'undefined' ? location : null), settings = getAarResearchSettings()) {
+    const raw = rawTextOf(root?.body || root?.documentElement || root);
+    const flat = textOf(root?.body || root?.documentElement || root);
+    const locationMatch = raw.match(/Items\s+located\s+at\s*:?\s*([^\n.]+)/i);
+    let locationText = locationMatch?.[1]?.trim() || parseAarLocationHint(raw);
+    if (locationText.includes(':')) locationText = locationText.split(':').pop().trim();
+    const expectedMatch = flat.match(/\bAll\s+Items\s*\(\s*([\d,]+)\s*\)/i)
+      || flat.match(/\b(\d{1,6})\s+items?\s+per\s+page\b/i)
+      || flat.match(/\bof\s+([\d,]+)\s+items?\b/i);
+    return {
+      source: 'AAR Auctions',
+      pageKind: 'aar-auction-catalog',
+      auctionId: loc ? getAarAuctionId(loc) : '',
+      title: pickFirstText(root, ['h1', '.auction-title', 'title']) || String(root?.title || '').replace(/\s*\|\s*Absolute Auctions.*$/i, '').trim() || 'AAR Auction Catalog',
+      url: loc?.href || (typeof location !== 'undefined' ? location.href : ''),
+      buyerPremium: percentFromText(flat.match(/\b\d+(?:\.\d+)?\s*%\s+buyers?\s+premium\b/i)?.[0] || flat.match(/\bbuyers?\s+premium\s*:?\s*\d+(?:\.\d+)?\s*%/i)?.[0] || ''),
+      pickupText: extractAarSentence(raw, /\b(?:pickup|picked up)\b/i),
+      paymentText: extractAarSentence(raw, /\bpayment\b/i),
+      location: locationText,
+      directionsUrl: pickFirstHref(root, ['a[href*="maps"]', 'a[href*="google.com/maps"]'], loc?.href || 'https://aarauctions.com/'),
+      mapSearchUrl: buildAarMapSearchUrl(locationText, settings),
+      expectedTotal: expectedMatch ? Number(expectedMatch[1].replace(/,/g, '')) : null,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  function getAarCatalogLotRows(root = document) {
+    const selectors = [
+      'tr',
+      '.auction-item',
+      '.item',
+      '.lot',
+      '[class*="auction"][class*="item"]',
+      '[class*="lot"]',
+      'li',
+      'article'
+    ];
+    const rows = [];
+    const seen = new Set();
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(row => {
+        const raw = textOf(row);
+        if (!raw || !/#\s*[A-Za-z0-9.-]+\s*[-–]/.test(raw) || !/High Bid|Minimum Next Bid|Closes On|More Info/i.test(raw)) return;
+        if (seen.has(row)) return;
+        seen.add(row);
+        rows.push(row);
+      });
+    });
+    return rows;
+  }
+
+  function parseAarLotScriptArgs(value) {
+    const args = [];
+    let current = '';
+    let quote = '';
+    let escaped = false;
+    String(value || '').split('').forEach(char => {
+      if (escaped) {
+        current += char;
+        escaped = false;
+        return;
+      }
+      if (char === '\\' && quote) {
+        current += char;
+        escaped = true;
+        return;
+      }
+      if ((char === "'" || char === '"') && (!quote || quote === char)) {
+        quote = quote ? '' : char;
+        current += char;
+        return;
+      }
+      if (char === ',' && !quote) {
+        args.push(current.trim());
+        current = '';
+        return;
+      }
+      current += char;
+    });
+    if (current.trim() || value) args.push(current.trim());
+    return args;
+  }
+
+  function decodeAarScriptArg(value) {
+    const token = String(value ?? '').trim();
+    if (/^null$/i.test(token)) return '';
+    if ((token.startsWith("'") && token.endsWith("'")) || (token.startsWith('"') && token.endsWith('"'))) {
+      return token.slice(1, -1)
+        .replace(/\\'/g, "'")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\');
+    }
+    return token;
+  }
+
+  function numberFromAarScriptArg(value) {
+    const decoded = decodeAarScriptArg(value);
+    const number = Number(String(decoded).replace(/,/g, ''));
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function moneyLabelFromAarScriptArgs(labelValue, numericValue) {
+    const label = decodeAarScriptArg(labelValue);
+    if (label) return `$${label}`;
+    const number = numberFromAarScriptArg(numericValue);
+    return Number.isFinite(number) ? `$${number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '';
+  }
+
+  function cleanAarScriptLotTitle(value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    const firstSentence = text.match(/^(.{18,}?\.)\s+/)?.[1] || '';
+    return (firstSentence || text)
+      .replace(/\.$/, '')
+      .trim();
+  }
+
+  function extractAarScriptLots(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
+    const lots = [];
+    Array.from(root?.querySelectorAll?.('script') || []).forEach(script => {
+      const text = script?.textContent || '';
+      const matches = text.matchAll(/new\s+Lot\s*\(([\s\S]*?)\)\s*;/g);
+      Array.from(matches).forEach(match => {
+        const args = parseAarLotScriptArgs(match[1]);
+        if (args.length < 22) return;
+        const auctionId = decodeAarScriptArg(args[0]) || (loc ? getAarAuctionId(loc) : '');
+        const lot = decodeAarScriptArg(args[2]);
+        const itemId = decodeAarScriptArg(args[3]);
+        const description = decodeAarScriptArg(args[5]);
+        const title = cleanAarScriptLotTitle(description);
+        if (!lot || !itemId || !title) return;
+        const highBidAmount = numberFromAarScriptArg(args[19]);
+        const nextBidAmount = numberFromAarScriptArg(args[21]);
+        lots.push({
+          source: 'AAR Auctions',
+          pageKind: 'aar-auction-catalog',
+          auctionId,
+          lot,
+          title,
+          url: absoluteUrl(`/servlet/Search.do?auctionId=${encodeURIComponent(auctionId)}&itemId=${encodeURIComponent(itemId)}`, base),
+          image: '',
+          description,
+          highBid: moneyLabelFromAarScriptArgs(args[24], args[19]),
+          highBidAmount,
+          currentBid: highBidAmount,
+          nextBid: moneyLabelFromAarScriptArgs(args[26], args[21]),
+          nextBidAmount,
+          quantity: numberFromAarScriptArg(args[15]),
+          auctionType: decodeAarScriptArg(args[14]),
+          closingText: [decodeAarScriptArg(args[34]), decodeAarScriptArg(args[35])].filter(Boolean).join(' - '),
+          rawText: textOf(script)
+        });
+      });
+    });
+    return lots;
+  }
+
+  function extractAarCatalogLots(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
+    const auctionId = loc ? getAarAuctionId(loc) : '';
+    const lots = [];
+    const seen = new Set();
+
+    const addLot = (lot) => {
+      const key = lot.lot ? `${lot.auctionId || ''}:${lot.lot}` : (lot.url || lot.title);
+      if (!key || seen.has(key) || !lot.lot || !lot.title) return;
+      seen.add(key);
+      lots.push(lot);
+    };
+
+    extractAarScriptLots(root, loc).forEach(addLot);
+
+    getAarCatalogLotRows(root).forEach(row => {
+      const rawText = textOf(row);
+      const lot = rawText.match(/#\s*([A-Za-z0-9.-]+)\s*[-–]/)?.[1] || '';
+      const title = rawText.match(/#\s*[A-Za-z0-9.-]+\s*[-–]\s*([\s\S]*?)(?=\s+(?:More Info|Closes On|High Bid|Auction Type|Quantity|Minimum Next Bid|Login to Bid|$))/i)?.[1]?.trim() || '';
+      const link = row.querySelector?.('a[href*="itemId"], a[href*="ItemId"], a[href*="Search.do"]');
+      const url = absoluteUrl(controlHref(link), base);
+      const highBid = rawText.match(/\bHigh Bid:\s*(\$[\d,]+(?:\.\d{2})?)/i)?.[1] || '';
+      const nextBid = rawText.match(/\bMinimum Next Bid:\s*(\$[\d,]+(?:\.\d{2})?)/i)?.[1] || '';
+      const quantityText = rawText.match(/\bQuantity:\s*([\d,]+)/i)?.[1] || '';
+      const closingText = rawText.match(/\bCloses On:\s*([\s\S]*?)(?=\s+High Bid:|\s+Auction Type:|\s+Quantity:|\s+Minimum Next Bid:|$)/i)?.[1]?.trim() || '';
+      const description = rawText.match(/\bMore Details\s+([\s\S]+)$/i)?.[1]?.trim() || '';
+      addLot({
+        source: 'AAR Auctions',
+        pageKind: 'aar-auction-catalog',
+        auctionId,
+        lot,
+        title,
+        url,
+        image: pickFirstImage(row, base),
+        description,
+        highBid,
+        highBidAmount: moneyFromText(highBid),
+        currentBid: moneyFromText(highBid),
+        nextBid,
+        nextBidAmount: moneyFromText(nextBid),
+        quantity: quantityText ? Number(quantityText.replace(/,/g, '')) : null,
+        auctionType: rawText.match(/\bAuction Type:\s*([\s\S]*?)(?=\s+Quantity:|\s+Minimum Next Bid:|$)/i)?.[1]?.trim() || '',
+        closingText,
+        rawText
+      });
+    });
+
+    return lots.sort((a, b) => String(a.lot).localeCompare(String(b.lot), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+  }
+
+  function mergeAarLots(target, lots) {
+    lots.forEach(lot => {
+      const key = lot.lot ? `${lot.auctionId || ''}:${lot.lot}` : (lot.url || lot.title);
+      if (key && lot.title) target.set(String(key), lot);
+    });
+    return target;
+  }
+
+  function findAarCatalogPageUrls(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
+    const auctionId = loc ? getAarAuctionId(loc) : extractAarAuctionIdFromUrl(base);
+    const pages = new Map();
+    Array.from(root?.querySelectorAll?.('a[href*="Search.do"]') || []).forEach(anchor => {
+      const label = controlLabel(anchor);
+      const href = controlHref(anchor);
+      if (!href || /bid|register|track|login|payment|invoice|checkout/i.test(`${href} ${label}`)) return;
+      let url;
+      try {
+        url = new URL(href, base);
+      } catch {
+        return;
+      }
+      if (!isAarAuctionsHost(url.hostname)) return;
+      if (!/^\/servlet\/Search\.do$/i.test(url.pathname)) return;
+      if (auctionId && url.searchParams.get('auctionId') !== auctionId) return;
+      if (![...url.searchParams.keys()].some(key => /page|start|offset|perpage|perPage|rows/i.test(key))) return;
+      pages.set(url.href, url.href);
+    });
+    return Array.from(pages.values());
+  }
+
+  async function scrapeAarAuctionCards(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const settings = getAarResearchSettings();
+    const sales = extractAarAuctionCards(root, typeof location !== 'undefined' ? location : null, settings);
+    const context = {
+      source: 'AAR Auctions',
+      pageKind: 'aar-auction-list',
+      title: String(root?.title || '').replace(/\s*\|\s*Absolute Auctions.*$/i, '').trim() || 'AAR Auction Calendar',
+      url: typeof location !== 'undefined' ? location.href : '',
+      researchSettings: settings,
+      generatedAt: new Date().toISOString()
+    };
+    onProgress(`Read ${sales.length} AAR auction card(s).`);
+    debug('aar auction list scrape finished', { count: sales.length, settings });
+    return { source: 'aar-dom', items: sales, sales, expectedTotal: sales.length, context, stopped: shouldStop(), stopReason: shouldStop() ? 'stopped-by-user' : 'current-page-only' };
+  }
+
+  async function scrapeAarCatalogLots(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const lotsByKey = new Map();
+    const loc = typeof location !== 'undefined' ? location : null;
+    let context = extractAarCatalogContext(root, loc);
+    let stopReason = '';
+    let steps = 0;
+    mergeAarLots(lotsByKey, extractAarCatalogLots(root, loc));
+    const queued = findAarCatalogPageUrls(root, loc);
+    const seenUrls = new Set(queued);
+    debug('aar catalog scrape start', { count: lotsByKey.size, context, queued: queued.length });
+
+    while (queued.length && !shouldStop()) {
+      if (steps >= 12) {
+        stopReason = 'max-fetch-steps';
+        break;
+      }
+      if (context.expectedTotal && lotsByKey.size >= context.expectedTotal) {
+        stopReason = 'expected-total-reached';
+        break;
+      }
+      if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') {
+        stopReason = 'fetch-unavailable';
+        break;
+      }
+      const url = queued.shift();
+      steps += 1;
+      onProgress(`Fetching AAR catalog page ${steps}...`);
+      try {
+        const response = await fetch(url, { credentials: 'include' });
+        if (!response?.ok) {
+          stopReason = `fetch-failed-${response?.status || 'unknown'}`;
+          break;
+        }
+        const html = await response.text();
+        const pageDoc = parseAuctionNinjaHtmlDocument(html);
+        if (!pageDoc) {
+          stopReason = 'fetch-parse-failed';
+          break;
+        }
+        const pageLoc = new URL(url);
+        mergeAarLots(lotsByKey, extractAarCatalogLots(pageDoc, pageLoc));
+        const pageContext = extractAarCatalogContext(pageDoc, pageLoc);
+        context = { ...context, expectedTotal: context.expectedTotal || pageContext.expectedTotal };
+        findAarCatalogPageUrls(pageDoc, pageLoc).forEach(pageUrl => {
+          if (!seenUrls.has(pageUrl)) {
+            seenUrls.add(pageUrl);
+            queued.push(pageUrl);
+          }
+        });
+      } catch (error) {
+        stopReason = 'fetch-threw';
+        debug('aar catalog fetch threw', { url, error: String(error) });
+        break;
+      }
+    }
+
+    if (shouldStop()) stopReason = 'stopped-by-user';
+    if (!stopReason) stopReason = context.expectedTotal && lotsByKey.size >= context.expectedTotal ? 'expected-total-reached' : 'current-page-exhausted';
+    const lots = Array.from(lotsByKey.values()).sort((a, b) => String(a.lot || '').localeCompare(String(b.lot || ''), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+    const expectedTotal = context.expectedTotal || lots.length;
+    debug('aar catalog scrape finished', { lots: lots.length, expectedTotal, stopReason, steps });
+    return {
+      source: 'aar-dom',
+      items: lots,
+      lots,
+      expectedTotal,
+      context,
+      stopped: shouldStop(),
+      stopReason,
+      incomplete: expectedTotal ? lots.length < expectedTotal : false,
+      pageSteps: steps
+    };
+  }
+
   function mergeAuctionNinjaLots(target, lots) {
     lots.forEach(lot => {
       const key = lot.url || lot.id || lot.lot || lot.title;
@@ -3084,6 +3658,8 @@ ${cards}
 
     if (isAuctionNinjaHost(host)) return resolveAuctionNinjaPage(loc).supported;
 
+    if (isAarAuctionsHost(host)) return resolveAarAuctionsPage(loc).supported;
+
     if (isHiBidHost(host)) return resolveHiBidPage(loc).supported;
     return false;
   }
@@ -3109,6 +3685,13 @@ ${cards}
       return route.supported
         ? { supported: true, mode: 'auctionninja', source: 'auctionninja', reason: route.reason, route }
         : { supported: false, mode: 'unsupported', source: 'auctionninja', reason: route.reason, route };
+    }
+
+    if (isAarAuctionsHost(host)) {
+      const route = resolveAarAuctionsPage(loc);
+      return route.supported
+        ? { supported: true, mode: 'aar', source: 'aar', reason: route.reason, route }
+        : { supported: false, mode: 'unsupported', source: 'aar', reason: route.reason, route };
     }
 
     if (isHiBidHost(host)) {
@@ -3555,6 +4138,72 @@ ${cards}
       '',
       'AuctionNinja auction-search sale JSON:',
       JSON.stringify({ context, sales }, null, 2)
+    ].join('\n');
+  }
+
+  function buildAarDistanceResearchBlock(settings = getAarResearchSettings()) {
+    const origin = String(settings?.originLabel || defaultAarResearchSettings().originLabel).trim();
+    const radius = Number(settings?.radiusMiles) || defaultAarResearchSettings().radiusMiles;
+    return [
+      'AAR Auctions distance research requirement:',
+      `Origin: ${origin}`,
+      `Radius: ${radius} miles`,
+      'Distance Agent: assign one research lane/subagent to verify every auction location and every recommended lead against this origin/radius using live map/search results, not assumptions.',
+      'Do not recommend an AAR auction or lot as a buy unless its pickup/location is proven within the configured radius, shipping is explicitly available, or it is marked needs_distance_verification.',
+      'For the spreadsheet, add and fill these columns: distance_miles, distance_proof_url, distance_status, assigned_agent.',
+      'Valid distance_status values: in_range, out_of_range, shipping_available, needs_distance_verification.'
+    ].join('\n');
+  }
+
+  function buildAarAuctionListLlmBrief(sales, context = {}, settings = getAarResearchSettings()) {
+    const ctx = { ...context, researchSettings: settings };
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      'AAR Auctions task: auction-calendar triage before drilling into catalogs.',
+      'Rank auctions by likely resale opportunity, enough lot volume, pickup practicality, shipping availability, and time remaining.',
+      'Use sold/completed comps first, profit second, hunches last.',
+      '',
+      buildAarDistanceResearchBlock(settings),
+      '',
+      'AAR auction-calendar context:',
+      JSON.stringify(ctx, null, 2),
+      '',
+      `Auctions exported: ${sales.length}`,
+      '',
+      'AAR auction-calendar JSON:',
+      JSON.stringify({ context: ctx, sales }, null, 2)
+    ].join('\n');
+  }
+
+  function buildAarCatalogLlmBrief(lots, context = {}, settings = getAarResearchSettings()) {
+    const ctx = { ...context, researchSettings: settings };
+    const saleTerms = [
+      'AAR Auctions sale terms:',
+      `Title: ${context.title || ''}`,
+      `Auction ID: ${context.auctionId || ''}`,
+      `Buyer premium: ${context.buyerPremium || ''}`,
+      `Pickup: ${context.pickupText || ''}`,
+      `Payment: ${context.paymentText || ''}`,
+      `Location: ${context.location || ''}`,
+      `Directions/map proof seed: ${context.directionsUrl || context.mapSearchUrl || ''}`,
+      '',
+      'AAR safety boundary: this export is for resale research and planning only. Do not click bid, register, payment, invoice, login, or account controls from this brief.'
+    ].join('\n');
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      saleTerms,
+      '',
+      buildAarDistanceResearchBlock(settings),
+      '',
+      'Parsed AAR auction context:',
+      JSON.stringify(ctx, null, 2),
+      '',
+      `Lots scraped: ${lots.length}`,
+      '',
+      'Full AAR lot data JSON:',
+      JSON.stringify({ context: ctx, lots }, null, 2)
     ].join('\n');
   }
 
@@ -4052,6 +4701,7 @@ ${cards}
     if (mode === 'fliptracker') return 'FlipTracker';
     if (mode === 'live') return 'Live';
     if (mode === 'auctionninja') return 'AuctionNinja';
+    if (mode === 'aar') return 'AAR Auctions';
     if (mode === 'unsupported') return 'Unsupported';
     return 'Catalog';
   }
@@ -4069,6 +4719,7 @@ ${cards}
       live: { label: 'HiBid Live', icon: 'radio', help: 'HiBid live scraper mode expands visible live lots and copies JSON or an LLM brief.' },
       fliptracker: { label: 'FlipTracker', icon: 'file', help: 'FlipTracker mode exports visible eBay or Facebook selling listings for import/review.' },
       auctionninja: { label: 'AuctionNinja', icon: 'list', help: 'AuctionNinja mode copies sale catalogs as JSON or a terms-aware LLM brief without touching bid controls.' },
+      aar: { label: 'AAR Auctions', icon: 'list', help: 'AAR Auctions mode copies auction calendars or catalogs as JSON or distance-aware LLM briefs.' },
       unsupported: { label: 'Unsupported', icon: 'shield', help: 'This page is not supported by FlipperAddon.' }
     };
     const active = meta[mode] || meta.catalog;
@@ -4086,6 +4737,49 @@ ${cards}
         ${actionButton('hibid-debug-copy', 'copy', 'Copy Debug', 'secondary', '', 'Copy the in-memory FlipperAddon debug log for troubleshooting.')}
         ${actionButton('hibid-debug-clear', 'stop', 'Clear Debug', 'danger', '', 'Clear saved FlipperAddon debug log entries.')}
       </div>
+    `;
+  }
+
+  function renderAarResearchSettings() {
+    const settings = getAarResearchSettings();
+    return `
+      <details class="hiba-details" id="aar-research-settings">
+        <summary>Research Settings</summary>
+        <label class="hiba-field">
+          <span>Origin</span>
+          <input id="aar-origin-label" class="hiba-input" type="text" value="${escapeHtml(settings.originLabel)}" title="Origin used in AAR LLM briefs for the distance verification agent." aria-label="AAR distance origin">
+        </label>
+        <label class="hiba-field">
+          <span>Radius miles</span>
+          <input id="aar-radius-miles" class="hiba-input" type="number" min="1" step="1" value="${escapeHtml(String(settings.radiusMiles))}" title="Maximum driving/search radius used in AAR LLM briefs." aria-label="AAR radius miles">
+        </label>
+      </details>
+    `;
+  }
+
+  function renderAarSection(debugEnabled, route = {}) {
+    const isCatalog = route?.kind === 'aar-auction-catalog';
+    return `
+      <section id="aar-auctions-mode" class="hiba-section" data-module="aar" data-page-kind="${escapeHtml(route?.kind || 'aar-auction-list')}">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">AAR Auctions</div>
+            <strong>${isCatalog ? 'Catalog Export' : 'Auction Calendar Export'}</strong>
+          </div>
+          <span class="hiba-chip neutral">${isCatalog ? 'catalog' : 'calendar'}</span>
+        </div>
+        <div class="hiba-actions">
+          ${isCatalog
+            ? actionButton('aar-catalog-copy-llm', 'file', 'Copy Catalog LLM', 'primary', '', 'Copy AAR sale terms, distance research instructions, and lot JSON for a desktop LLM.')
+            : actionButton('aar-auctions-copy-llm', 'file', 'Copy Auctions LLM', 'primary', '', 'Copy AAR auction cards with distance research instructions for a desktop LLM.')}
+          ${isCatalog
+            ? actionButton('aar-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy the current AAR catalog as normalized JSON.')
+            : actionButton('aar-auctions-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy AAR auction calendar cards as normalized JSON.')}
+          ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current AAR scrape/export work.')}
+        </div>
+        ${renderAarResearchSettings()}
+        ${renderDebugActions(debugEnabled)}
+      </section>
     `;
   }
 
@@ -4226,6 +4920,7 @@ ${cards}
     if (mode === 'live') return renderLiveSection(debugEnabled);
     if (mode === 'fliptracker') return renderFlipTrackerSection(debugEnabled);
     if (mode === 'auctionninja') return renderAuctionNinjaSection(debugEnabled, route);
+    if (mode === 'aar') return renderAarSection(debugEnabled, route);
     return renderCatalogSection(debugEnabled, route);
   }
 
@@ -4292,6 +4987,8 @@ ${cards}
         #${PANEL_ID} .hiba-section[style*="display:none"] { margin:0; padding:0; border:0; }
         #${PANEL_ID} .hiba-details { margin-top:9px; border:1px solid rgba(148,163,184,.16); border-radius:10px; background:rgba(2,6,23,.38); padding:8px 9px; }
         #${PANEL_ID} .hiba-details summary { cursor:pointer; font-weight:900; color:#e0f2fe; }
+        #${PANEL_ID} .hiba-field { display:grid; gap:4px; margin-top:8px; color:#cbd5e1; font-size:12px; font-weight:800; }
+        #${PANEL_ID} .hiba-input { width:100%; min-height:32px; color:#f8fafc; background:#020617; border:1px solid rgba(148,163,184,.26); border-radius:9px; padding:6px 8px; font:12px/1.25 ui-sans-serif, system-ui, sans-serif; }
         #${PANEL_ID} .hiba-actions { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:9px; }
         #${PANEL_ID} .hiba-actions.compact { margin-top:0; justify-content:flex-end; }
         #${PANEL_ID} .hiba-btn, #${PANEL_ID} .hiba-prepare, #${PANEL_ID} .hiba-icon-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid rgba(147,197,253,.28); border-radius:9px; padding:7px 9px; color:#eff6ff; background:#1d4ed8; font-weight:800; cursor:pointer; min-height:34px; }
@@ -4372,9 +5069,11 @@ ${cards}
     const liveMode = activeMode === 'live';
     const listingExportMode = activeMode === 'fliptracker';
     const auctionNinjaMode = activeMode === 'auctionninja';
+    const aarMode = activeMode === 'aar';
     const auctionNinjaKind = auctionNinjaMode ? (activeRoute?.kind || '') : '';
     const auctionNinjaAccountMode = auctionNinjaKind === 'followed-items' || auctionNinjaKind === 'items-won' || auctionNinjaKind === 'bid-history';
     const auctionNinjaAuctionSearchMode = auctionNinjaKind === 'auction-search';
+    const aarKind = aarMode ? (activeRoute?.kind || '') : '';
     const bidControlsEl = panel.querySelector('#hibid-bid-controls');
     const listingExportModeEl = panel.querySelector('#fliptracker-listing-export-mode');
     const listingExportStatusEl = panel.querySelector('#fliptracker-listing-status');
@@ -4392,6 +5091,13 @@ ${cards}
     const auctionNinjaAccountCopyLlmButton = panel.querySelector('#auctionninja-account-copy-llm');
     const auctionNinjaAuctionsCopyJsonButton = panel.querySelector('#auctionninja-auctions-copy-json');
     const auctionNinjaAuctionsCopyLlmButton = panel.querySelector('#auctionninja-auctions-copy-llm');
+    const aarModeEl = panel.querySelector('[data-module="aar"]');
+    const aarAuctionsCopyJsonButton = panel.querySelector('#aar-auctions-copy-json');
+    const aarAuctionsCopyLlmButton = panel.querySelector('#aar-auctions-copy-llm');
+    const aarCatalogCopyJsonButton = panel.querySelector('#aar-catalog-copy-json');
+    const aarCatalogCopyLlmButton = panel.querySelector('#aar-catalog-copy-llm');
+    const aarOriginInput = panel.querySelector('#aar-origin-label');
+    const aarRadiusInput = panel.querySelector('#aar-radius-miles');
     const scraperStopButton = panel.querySelector('#hibid-scraper-stop');
     const debugCopyButton = panel.querySelector('#hibid-debug-copy');
     const debugClearButton = panel.querySelector('#hibid-debug-clear');
@@ -4446,6 +5152,15 @@ ${cards}
       });
     };
 
+    const renderAarRows = (rows, context = {}) => {
+      state.rows = rows;
+      debug('aar rows captured without preview render', {
+        count: rows.length,
+        title: context.title || document.title || '',
+        pageKind: context.pageKind || aarKind || ''
+      });
+    };
+
     const currentListingExportHtml = () => buildFlipTrackerListingsExportHtml(state.listingRows, {
       pageUrl: location.href,
       generatedAt: new Date().toISOString()
@@ -4460,7 +5175,7 @@ ${cards}
     panel.querySelectorAll('[data-mode-tab]').forEach(tab => {
       tab.addEventListener('click', () => {
         const mode = tab.dataset.modeTab;
-        const target = mode === 'fliptracker' ? listingExportModeEl : (mode === 'auctionninja' ? auctionNinjaModeEl : bidControlsEl);
+        const target = mode === 'fliptracker' ? listingExportModeEl : (mode === 'auctionninja' ? auctionNinjaModeEl : (mode === 'aar' ? aarModeEl : bidControlsEl));
         setActiveModeTab(panel, mode);
         if (target && target.style.display !== 'none') target.scrollIntoView({ block: 'nearest' });
       });
@@ -4512,6 +5227,34 @@ ${cards}
           ? `AuctionNinja catalog ready. Visible ${visibleLots.length}/${range.total} lot(s).`
           : `AuctionNinja ${activeRoute?.kind || 'page'} ready.`);
         debug('auctionninja mode ready', { route: activeRoute, range, visibleLots: visibleLots.length, context });
+      }
+    }
+
+    const saveAarSettingsFromUi = () => {
+      if (!aarMode) return getAarResearchSettings();
+      const settings = saveAarResearchSettings({
+        originLabel: aarOriginInput?.value || defaultAarResearchSettings().originLabel,
+        radiusMiles: aarRadiusInput?.value || defaultAarResearchSettings().radiusMiles
+      });
+      debug('aar research settings saved', settings);
+      return settings;
+    };
+    aarOriginInput?.addEventListener('change', saveAarSettingsFromUi);
+    aarRadiusInput?.addEventListener('change', saveAarSettingsFromUi);
+
+    if (aarMode) {
+      const settings = getAarResearchSettings();
+      if (aarKind === 'aar-auction-catalog') {
+        const context = extractAarCatalogContext(document, location, settings);
+        const visibleLots = extractAarCatalogLots(document, location);
+        renderAarRows(visibleLots, context);
+        status(`AAR catalog ready. Visible ${visibleLots.length}${context.expectedTotal ? `/${context.expectedTotal}` : ''} lot(s).`);
+        debug('aar catalog mode ready', { route: activeRoute, visibleLots: visibleLots.length, context, settings });
+      } else {
+        const visibleSales = extractAarAuctionCards(document, location, settings);
+        renderAarRows(visibleSales, { source: 'AAR Auctions', pageKind: 'aar-auction-list', researchSettings: settings });
+        status(`AAR auction calendar ready. Visible ${visibleSales.length} auction(s).`);
+        debug('aar auction-list mode ready', { route: activeRoute, visibleSales: visibleSales.length, settings });
       }
     }
 
@@ -4668,6 +5411,96 @@ ${cards}
       status(copied
         ? `Copied AuctionNinja auctions LLM brief for ${sales.length}${result.expectedTotal ? `/${result.expectedTotal}` : ''} sale(s).`
         : 'AuctionNinja auctions LLM brief built, but clipboard failed.');
+    });
+
+    const scrapeAarForUi = async (mode) => {
+      if (state.busy) return null;
+      setScrapingBusy(true);
+      state.stop = false;
+      [
+        aarAuctionsCopyJsonButton,
+        aarAuctionsCopyLlmButton,
+        aarCatalogCopyJsonButton,
+        aarCatalogCopyLlmButton
+      ].forEach(button => {
+        if (button) button.disabled = true;
+      });
+      try {
+        const settings = saveAarSettingsFromUi();
+        const isCatalog = aarKind === 'aar-auction-catalog';
+        status(isCatalog
+          ? (mode === 'llm' ? 'Scraping AAR catalog for LLM brief...' : 'Scraping AAR catalog...')
+          : (mode === 'llm' ? 'Scraping AAR auction calendar for LLM brief...' : 'Scraping AAR auction calendar...'));
+        const result = isCatalog
+          ? await scrapeAarCatalogLots(status, () => state.stop)
+          : await scrapeAarAuctionCards(status, () => state.stop);
+        const rows = result.lots || result.sales || result.items || [];
+        result.context = { ...(result.context || {}), researchSettings: settings };
+        renderAarRows(rows, result.context);
+        debug('aar ui scrape summary', {
+          mode,
+          kind: aarKind,
+          count: rows.length,
+          expectedTotal: result.expectedTotal,
+          stopReason: result.stopReason || '-'
+        });
+        if (!rows.length) {
+          status(`No AAR ${isCatalog ? 'lots' : 'auctions'} found. Enable debug and copy logs if this page has rows.`);
+        }
+        return result;
+      } finally {
+        setScrapingBusy(false);
+        [
+          aarAuctionsCopyJsonButton,
+          aarAuctionsCopyLlmButton,
+          aarCatalogCopyJsonButton,
+          aarCatalogCopyLlmButton
+        ].forEach(button => {
+          if (button) button.disabled = false;
+        });
+      }
+    };
+
+    aarAuctionsCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('json');
+      if (!result) return;
+      const sales = result.sales || result.items || [];
+      if (!sales.length) return;
+      const payload = JSON.stringify({ context: result.context, sales }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied ? `Copied AAR auctions JSON for ${sales.length} auction(s).` : 'AAR auctions JSON built, but clipboard failed.');
+    });
+
+    aarAuctionsCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('llm');
+      if (!result) return;
+      const sales = result.sales || result.items || [];
+      if (!sales.length) return;
+      const payload = buildAarAuctionListLlmBrief(sales, result.context, getAarResearchSettings());
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied ? `Copied AAR auctions LLM brief for ${sales.length} auction(s).` : 'AAR auctions LLM brief built, but clipboard failed.');
+    });
+
+    aarCatalogCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('json');
+      if (!result) return;
+      const lots = result.lots || result.items || [];
+      if (!lots.length) return;
+      const payload = JSON.stringify({ context: result.context, lots }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
+      status(copied ? `Copied AAR catalog JSON for ${countText} lot(s).` : 'AAR catalog JSON built, but clipboard failed.');
+    });
+
+    aarCatalogCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('llm');
+      if (!result) return;
+      const lots = result.lots || result.items || [];
+      if (!lots.length) return;
+      const payload = buildAarCatalogLlmBrief(lots, result.context, getAarResearchSettings());
+      const copied = await writeClipboard(payload).catch(() => false);
+      const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
+      status(copied ? `Copied AAR catalog LLM brief for ${countText} lot(s).` : 'AAR catalog LLM brief built, but clipboard failed.');
     });
 
     const copyCatalogLots = async (mode) => {

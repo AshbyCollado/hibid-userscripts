@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.15`.
+- Current version: `0.7.16`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -27,6 +27,11 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
   - Items-won controls: Copy Won Items LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Bid-history controls: Copy Bid History LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Safety: research/export only; no bid clicks, no bid-field writes, no checkout/invoice/payment/account actions.
+- `aar`: AAR Auctions calendar and catalog export pages.
+  - Auction calendar controls: Copy Auctions LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Catalog controls: Copy Catalog LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Research settings: collapsed origin/radius editor persisted under `flipperaddon-aar-research-settings-v1`, default `Edison, NJ 08817` and `100` miles.
+  - Safety: research/export only; no bid, register, payment, invoice, login, or account actions.
 - `unsupported`: do not mount.
 
 ## Route Map
@@ -55,9 +60,12 @@ Mount without waiting for lot tiles on:
 - `https://www.auctionninja.com/bid-history*`
 - `https://www.auctionninja.com/*/sales/details/*.html*`
 - `https://www.auctionninja.com/*/product/*.html*`
+- `https://aarauctions.com/auctions*`
+- `https://aarauctions.com/servlet/Search.do?auctionId=*`
 
 Do not mount on generic HiBid account/help/search pages unless a resolver case is added and tested.
 Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/settings, support, login/logout, or generic account pages.
+Do not mount on AAR login, register, account, payment, invoice, checkout, or bid routes.
 
 ## Scraper Flow
 
@@ -122,6 +130,23 @@ Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/
    - Prefer background fetches from discovered `marketplace_ajax.php?Page=...` pagination controls; merge sale rows by URL/title and avoid visible-tab clicks unless future guarded fallback is added.
    - Auction-search LLM briefs rank whole sales for resale potential before drilling into lot catalogs.
 
+### AAR Auctions
+
+1. Page mode:
+   - `/auctions/` is auction-calendar triage.
+   - `/servlet/Search.do?auctionId=...` is auction catalog export.
+2. Auction calendar:
+   - Extract auction ID, title, category, catalog URL, image, closing text, description, register URL, location hint, and a Google Maps search seed from auction cards.
+   - LLM briefs rank whole auctions before drilling into catalogs.
+3. Catalog:
+   - Extract title, auction ID, buyer premium, pickup text, payment text, item location, directions/map seed, and expected total from server-rendered page text.
+   - Extract lot number, title, URL, image, description, high/current bid, minimum next bid, quantity, auction type, closing text, and raw text from visible lot rows.
+   - Discover same-auction safe pagination/search URLs when present; reject bid, register, track, login, payment, invoice, and checkout links.
+4. Distance research:
+   - The addon does not geocode in-page. It persists origin/radius config and includes it in every AAR JSON/LLM export.
+   - AAR LLM briefs include a required `Distance Agent` instruction to verify distance with live map/search results, not assumptions.
+   - Spreadsheet output must include `distance_miles`, `distance_proof_url`, `distance_status`, and `assigned_agent`.
+
 ## Legacy Max Plan State
 
 - Old max-plan data remains in storage for compatibility and tests, but scraper-first UI does not render or use max-plan controls.
@@ -174,6 +199,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.10` gives FlipperAddon a unique panel ID so stale enabled assistant copies cannot remove the current UI.
 - Done: `v0.7.11` recovers AuctionNinja auction-search sale titles when the only sale-details anchor text is a count marker such as `(9)`.
 - Done: `v0.7.12` exposes the boot canary on `unsafeWindow` so Selenium/page-context checks can confirm `window.__HIBID_UNIFIED_ASSISTANT_ACTIVE__ === true`.
+- Done: `v0.7.16` adds AAR Auctions calendar/catalog scraper exports with persisted origin/radius research settings and distance-agent LLM briefs.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 
 ## Verification Checklist
@@ -191,10 +217,13 @@ Debug UI and console/log capture are off unless debug mode is enabled.
   - Open `https://www.auctionninja.com/items-won?an=hwfmhr2h2qi`.
   - Open `https://www.auctionninja.com/bid-history?an=sp2i8ac5q0n`.
   - Open `https://www.auctionninja.com/nj/carteret/07008?miles=50&an=`.
+  - Open `https://aarauctions.com/auctions/`.
+  - Open `https://aarauctions.com/servlet/Search.do?auctionId=8563`.
   - Capture full-window screenshots showing the page and bottom-right launcher/drawer.
   - Confirm each page exposes only its active module.
   - Confirm scrolling, filters, lot links, watch buttons, and bid buttons still work when not actively scraping.
   - For AuctionNinja, confirm sale, followed, and won pages never expose or click bid/checkout/payment/invoice/account mutation actions.
+  - For AAR Auctions, confirm the drawer shows only calendar/catalog copy controls, research settings persist, and bid/register/payment routes do not mount.
 
 ## Known Pitfalls
 
@@ -203,4 +232,5 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Seller subdomains may lack `#hibid-state`; fallback DOM/network-observed behavior matters there.
 - Closed catalog price realized text is auction result data, not an eBay sold comp.
 - AuctionNinja catalogs can change while closing; `1-40 of N` may drift. Treat drift as a debug-visible stop reason, not a silent success.
+- AAR calendar cards are WordPress/Divi HTML, while catalogs are servlet-rendered tables/text; keep route-specific parsers instead of trying to reuse HiBid or AuctionNinja selectors.
 - Do not treat "opened the page" as verification. Verification means observed UI plus route/debug/count evidence.
