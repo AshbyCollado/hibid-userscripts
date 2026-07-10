@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.27
+// @version      0.7.28
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -136,6 +136,24 @@ Comping rules:
 - If proof is only an eBay search/shop/category page, mark Research Lead unless there is very strong market context.
 - For local-only bulky items, use local market intuition only if potential profit justifies pickup.
 - Every lead needs proof URL or must be explicitly marked local/speculative.
+
+Commercial equipment exception:
+Do not treat "no eBay sold comps" as low value for commercial, restaurant, industrial, medical, espresso/coffee, refrigeration, ovens, mixers, POS, or other pro equipment.
+For these items, sold comps are still preferred, but if exact sold comps are thin or absent, you must also research:
+- manufacturer/distributor/spec pages
+- retail/replacement cost
+- active commercial-equipment listings
+- used restaurant-equipment dealer listings
+- local marketplace demand
+- repair/parts value
+Missing sold comps should usually mean Research Lead or Local Flip Lead, not Garbage, when replacement cost or operator demand is high.
+For expensive pro equipment, produce three bid ceilings:
+- safe_reseller_max: conservative bid for this buyer after premium, tax, pickup, storage, testing, cleaning, eBay/local fees, and sedan/logistics risk.
+- aggressive_dealer_max: what a reseller with truck/storage/repair ability and local buyers might rationally pay.
+- end_user_value: what an operator buying for their own cafe/restaurant/shop could rationally pay versus retail replacement.
+Always explain why other bidders may rationally pay above safe_reseller_max. Never present the safe reseller max as the whole market.
+If retail/replacement cost is $2,000+ and the item is plausibly working, do not recommend a tiny max bid just because eBay sold comps are missing; explicitly anchor the dealer/end-user value and then discount for condition/logistics.
+For misspelled or obscure brands/models, search likely variants and image-match names. Examples: Lajetina vs LADETINA, DaZheng, Legend Q2, Q2-1T, Q-2A.
 
 Proof levels:
 - exact_ebay_sold
