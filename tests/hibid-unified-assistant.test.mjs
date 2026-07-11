@@ -649,6 +649,54 @@ test('assistant supports HiBid winning and outbid current-bids exports only', ()
   assert.doesNotMatch(`${winningHtml}${outbidHtml}`, /Prepare Bid|Snipe Now|Auto-confirm|Max plan/i);
 });
 
+test('assistant parses HiBid current-bids account card text fallback', () => {
+  const core = loadCore();
+  const root = {
+    body: {
+      textContent: `
+        Showing 1 to 18 of 18 lots
+        Lot 15 CARD READER
+        Unwatch Notes
+        10 Bids
+        Bidding Closed
+        Price Realized:
+        50.00 USD / Lot
+        Won
+        Lot 17 LENOVO TABLETS
+        Unwatch Notes
+        5 Bids
+        Current Bid: 37.50 USD
+        Winning
+      `,
+    },
+  };
+
+  const lots = core.extractTextLots(root);
+  assert.equal(lots.length, 2);
+  assert.deepEqual(plain(lots.map(lot => ({
+    lot: lot.lot,
+    title: lot.title,
+    highBid: lot.highBid,
+    bidCount: lot.bidCount,
+    userBidStatus: lot.userBidStatus,
+  }))), [
+    {
+      lot: '15',
+      title: 'CARD READER',
+      highBid: 'High Bid: 50.00 USD / Lot',
+      bidCount: '10 Bids',
+      userBidStatus: 'Won',
+    },
+    {
+      lot: '17',
+      title: 'LENOVO TABLETS',
+      highBid: 'High Bid: 37.50 USD',
+      bidCount: '5 Bids',
+      userBidStatus: 'Winning',
+    },
+  ]);
+});
+
 test('assistant blocks AAR exports from the wrong route or auction id', () => {
   const core = loadCore();
 

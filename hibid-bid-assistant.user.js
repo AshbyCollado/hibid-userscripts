@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.28
+// @version      0.7.29
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.28';
+  const SCRIPT_VERSION = '0.7.29';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -4819,23 +4819,23 @@ ${cards}
 
   function extractTextLots(root = document) {
     const text = textOf(root.body || root.documentElement || root);
-    const chunks = text.split(/(?=Lot\s+\d+[A-Za-z-]*\s*\|)/i);
+    const chunks = text.split(/(?=\bLot\s*#?\s*:?\s*\d+[A-Za-z-]*\b\s*(?:\||[-:]|\s+[A-Z0-9]))/i);
 
     return chunks.map(chunk => {
-      const firstLine = chunk.match(/Lot\s+(\d+[A-Za-z-]*)\s*\|\s*([^\n\r]+?)(?=\s{2,}|High Bid:|Current Bid:|$)/i);
+      const firstLine = chunk.match(/\bLot\s*#?\s*:?\s*(\d+[A-Za-z-]*)\s*(?:\||[-:])?\s*([\s\S]*?)(?=\s+(?:Unwatch|Watch|Notes|READ DESCRIPTION|Current Bid|High Bid|Price Realized|Bidding Closed|Sold For|Lot Won|Starting Bid|Opening Bid|\d+\s+Bids?\b|Bid\s+[\d,.]+\s*USD)|$)/i);
       if (!firstLine) return null;
 
-      const highBid = chunk.match(/(?:High Bid|Current Bid):\s*([\d,.]+\s*USD)/i)?.[1] || '';
+      const highBid = chunk.match(/(?:High Bid|Current Bid|Price Realized|Lot Won|Sold For):?\s*\$?\s*([\d,.]+\s*(?:USD)?(?:\s*\/\s*(?:Lot|ea))?)/i)?.[1] || '';
       const nextBid = chunk.match(/\bBid\s+([\d,.]+\s*USD)\b/i)?.[1] || '';
       const bidCount = chunk.match(/\b\d+\s+Bids?\b/i)?.[0] || '';
-      const status = extractUserBidStatus(chunk);
+      const status = extractUserBidStatus(chunk) || (/\bWon\b/i.test(chunk) ? 'Won' : '');
 
       return {
         tile: null,
         bidButton: null,
-        id: '',
+        id: firstLine[1],
         lot: firstLine[1],
-        title: firstLine[2].trim(),
+        title: firstLine[2].replace(/\s+/g, ' ').trim(),
         url: '',
         highBid: highBid ? `High Bid: ${highBid}` : '',
         highBidAmount: moneyFromText(highBid),
