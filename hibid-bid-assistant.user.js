@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.29
+// @version      0.7.30
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.29';
+  const SCRIPT_VERSION = '0.7.30';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1434,9 +1434,10 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     });
   }
 
-  function validateCatalogExportAgainstVisibleState(result, visibleState) {
+  function validateCatalogExportAgainstVisibleState(result, visibleState, route = {}) {
     const items = result?.items || result?.lots || [];
     if (!visibleState) return { ok: true };
+    if (isHibidCurrentBidsRoute(route)) return { ok: true };
     if (visibleState.noMatches && items.length) {
       return { ok: false, reason: 'visible-no-matches-with-exported-lots' };
     }
@@ -1462,6 +1463,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       return { ok: false, reason: 'filtered-source-mismatch' };
     }
     return { ok: true };
+  }
+
+  function isHibidCurrentBidsRoute(route = {}) {
+    const kind = String(route?.kind || '').trim();
+    return kind === 'currentbids-winning' || kind === 'currentbids-outbid';
   }
 
   function scraperResultRows(result) {
@@ -1640,6 +1646,12 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       }
     } else if (routeSource === 'hibid' || !routeSource) {
       if (looksAjWillner || looksOtherAuctionSource) return { ok: false, reason: 'catalog-source-mismatch' };
+    }
+
+    if (isHibidCurrentBidsRoute(route)) {
+      const countValidation = validateScraperResultCount(result, 'currentbids-count-exceeds-expected');
+      if (!countValidation.ok) return countValidation;
+      return { ok: true };
     }
 
     const completeValidation = validateScraperCompleteness(result, 'catalog-incomplete');
@@ -1972,6 +1984,7 @@ ${cards}
     extractHibidVisiblePageState,
     extractHibidApolloLots,
     extractHibidStateFromDocument,
+    isHibidCurrentBidsRoute,
     validateCatalogExportAgainstVisibleState,
     validateScraperExportAgainstRoute,
     isCatalogScrapeComplete,
@@ -2293,6 +2306,8 @@ ${cards}
       return scrapeAjWillnerListings(status, shouldStop);
     }
 
+    const activeRoute = resolveAssistantMode(typeof location !== 'undefined' ? location : undefined).route || {};
+    const currentBidsRoute = isHibidCurrentBidsRoute(activeRoute);
     const visibleState = extractHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null);
     if (visibleState.noMatches) {
       debug('catalog scrape stopped at visible no-match state', visibleState);
@@ -2308,27 +2323,31 @@ ${cards}
       };
     }
 
-    const stateResult = await scrapeHibidStatePages(status, shouldStop).catch(err => {
-      debug('catalog hibid-state scrape failed', { error: err.message });
-      return null;
-    });
-    if (stateResult?.stopReason === 'visible-no-matches') return stateResult;
-    if (stateResult?.items?.length) {
-      debug('catalog scrape finished from hibid-state', {
-        count: stateResult.items.length,
-        expectedTotal: stateResult.expectedTotal,
-        stopped: stateResult.stopped,
-        incomplete: stateResult.incomplete,
-        stopReason: stateResult.stopReason
+    if (!currentBidsRoute) {
+      const stateResult = await scrapeHibidStatePages(status, shouldStop).catch(err => {
+        debug('catalog hibid-state scrape failed', { error: err.message });
+        return null;
       });
-      if (isCatalogScrapeComplete(stateResult)) return stateResult;
-      status(`HiBid page data incomplete (${stateResult.items.length}/${stateResult.expectedTotal || '?'}); trying visible-page fallback...`);
-      debug('catalog hibid-state incomplete; falling back to DOM', {
-        count: stateResult.items.length,
-        expectedTotal: stateResult.expectedTotal,
-        failedPage: stateResult.failedPage,
-        stopReason: stateResult.stopReason
-      });
+      if (stateResult?.stopReason === 'visible-no-matches') return stateResult;
+      if (stateResult?.items?.length) {
+        debug('catalog scrape finished from hibid-state', {
+          count: stateResult.items.length,
+          expectedTotal: stateResult.expectedTotal,
+          stopped: stateResult.stopped,
+          incomplete: stateResult.incomplete,
+          stopReason: stateResult.stopReason
+        });
+        if (isCatalogScrapeComplete(stateResult)) return stateResult;
+        status(`HiBid page data incomplete (${stateResult.items.length}/${stateResult.expectedTotal || '?'}); trying visible-page fallback...`);
+        debug('catalog hibid-state incomplete; falling back to DOM', {
+          count: stateResult.items.length,
+          expectedTotal: stateResult.expectedTotal,
+          failedPage: stateResult.failedPage,
+          stopReason: stateResult.stopReason
+        });
+      }
+    } else {
+      debug('catalog hibid-state skipped for current-bids account route', activeRoute);
     }
 
     const itemsMap = new Map();
@@ -2344,19 +2363,20 @@ ${cards}
     await loadLots(status, shouldStop, collect);
     collect();
     const items = Array.from(itemsMap.values());
-    const expectedTotal = visibleState.expectedTotal ?? getExpectedLotTotal();
+    const expectedTotal = currentBidsRoute ? items.length : (visibleState.expectedTotal ?? getExpectedLotTotal());
     debug('catalog scrape finished from dom fallback', {
       count: items.length,
       expectedTotal,
-      stopped: shouldStop()
+      stopped: shouldStop(),
+      currentBidsRoute
     });
     return {
-      source: 'dom-fallback',
+      source: currentBidsRoute ? 'hibid-currentbids-dom' : 'dom-fallback',
       items,
       lots: items,
       expectedTotal,
       stopped: !!shouldStop(),
-      incomplete: Boolean(expectedTotal && items.length < expectedTotal),
+      incomplete: currentBidsRoute ? false : Boolean(expectedTotal && items.length < expectedTotal),
       visibleState
     };
   }
@@ -7002,23 +7022,25 @@ ${cards}
         }
         const lots = result.items || result.lots || [];
         const visibleState = result.visibleState || extractHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null);
-        const validation = validateCatalogExportAgainstVisibleState(result, visibleState);
+        const activeCatalogRoute = currentActiveRoute();
+        const validation = validateCatalogExportAgainstVisibleState(result, visibleState, activeCatalogRoute);
         if (!validation.ok) {
           debug('catalog export blocked by visible-state guard', {
             reason: validation.reason,
             source: result.source || 'unknown',
             count: lots.length,
             expectedTotal: result.expectedTotal,
-            visibleState
+            visibleState,
+            route: activeCatalogRoute
           });
           status('Blocked stale HiBid export; current filters do not match copied lots.');
           return;
         }
-        const routeValidation = validateScraperExportAgainstRoute(result, 'catalog', currentActiveRoute());
+        const routeValidation = validateScraperExportAgainstRoute(result, 'catalog', activeCatalogRoute);
         if (!routeValidation.ok) {
           debug('catalog export blocked by route guard', {
             reason: routeValidation.reason,
-            route: currentActiveRoute(),
+            route: activeCatalogRoute,
             source: result.source || 'unknown',
             rowSources: uniqueNonEmpty(lots.map(row => row.source)),
             count: lots.length,

@@ -697,6 +697,52 @@ test('assistant parses HiBid current-bids account card text fallback', () => {
   ]);
 });
 
+test('assistant does not reject HiBid current-bids account rows as incomplete catalog exports', () => {
+  const core = loadCore();
+  const route = { kind: 'currentbids-winning', source: 'hibid' };
+  const result = {
+    source: 'hibid-currentbids-dom',
+    items: [
+      { lot: '15', title: 'CARD READER', userBidStatus: 'Won', highBid: 'High Bid: 50.00 USD' },
+      { lot: '17', title: 'LENOVO TABLETS', userBidStatus: 'Won', highBid: 'High Bid: 37.50 USD / Lot' },
+    ],
+    lots: [
+      { lot: '15', title: 'CARD READER', userBidStatus: 'Won', highBid: 'High Bid: 50.00 USD' },
+      { lot: '17', title: 'LENOVO TABLETS', userBidStatus: 'Won', highBid: 'High Bid: 37.50 USD / Lot' },
+    ],
+    expectedTotal: 18,
+    incomplete: true,
+    visibleState: {
+      expectedTotal: 18,
+      visibleLotCount: 7,
+      noMatches: false,
+      hasActiveFilters: false,
+      activeFilterKeys: [],
+      filters: {},
+    },
+  };
+
+  assert.equal(core.isHibidCurrentBidsRoute(route), true);
+  assert.deepEqual(plain(core.validateCatalogExportAgainstVisibleState(result, result.visibleState, route)), { ok: true });
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', route)), { ok: true });
+});
+
+test('assistant still rejects incomplete normal HiBid catalog exports', () => {
+  const core = loadCore();
+  const result = {
+    source: 'dom-fallback',
+    items: [{ lot: '1', title: 'Visible Lot' }],
+    lots: [{ lot: '1', title: 'Visible Lot' }],
+    expectedTotal: 18,
+    incomplete: true,
+  };
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', { kind: 'catalog', source: 'hibid' })), {
+    ok: false,
+    reason: 'catalog-incomplete',
+  });
+});
+
 test('assistant blocks AAR exports from the wrong route or auction id', () => {
   const core = loadCore();
 
