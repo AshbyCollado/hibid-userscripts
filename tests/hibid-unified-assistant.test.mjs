@@ -697,6 +697,50 @@ test('assistant parses HiBid current-bids account card text fallback', () => {
   ]);
 });
 
+test('assistant parses HiBid current-bids card text without filter status contamination', () => {
+  const core = loadCore();
+  const tile = {
+    id: 'lot-17',
+    textContent: `
+      Lot 17 | LENOVO TABLETS
+      Unwatch Notes
+      5 Bids
+      Bidding Closed
+      Price Realized:
+      37.50 USD / Lot
+      12.50 USD / ea
+      Won
+    `,
+    querySelector(selector) {
+      if (/img/.test(selector)) {
+        return {
+          getAttribute(name) {
+            return name === 'src' ? '/images/lot17.jpg' : '';
+          },
+        };
+      }
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+
+  assert.deepEqual(plain({
+    lot: core.extractCurrentBidsLot(tile).lot,
+    title: core.extractCurrentBidsLot(tile).title,
+    highBid: core.extractCurrentBidsLot(tile).highBid,
+    bidCount: core.extractCurrentBidsLot(tile).bidCount,
+    userBidStatus: core.extractCurrentBidsLot(tile).userBidStatus,
+  }), {
+    lot: '17',
+    title: 'LENOVO TABLETS',
+    highBid: 'High Bid: 37.50 USD / Lot',
+    bidCount: '5 Bids',
+    userBidStatus: 'Won',
+  });
+});
+
 test('assistant does not reject HiBid current-bids account rows as incomplete catalog exports', () => {
   const core = loadCore();
   const route = { kind: 'currentbids-winning', source: 'hibid' };
