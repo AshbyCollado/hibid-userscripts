@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.32
+// @version      0.7.33
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.32';
+  const SCRIPT_VERSION = '0.7.33';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -2626,7 +2626,9 @@ ${cards}
       };
     }
 
-    if (parts[0] === 'en' && parts[1] === 'new-listings' && parts[2] === 'filters') {
+    if (parts[0] === 'en'
+      && ((parts[1] === 'new-listings' && parts[2] === 'filters')
+        || (parts[1] === 'search' && parts[2] === 'filters'))) {
       const params = govDealsSearchParams(loc);
       return {
         supported: true,
@@ -2634,7 +2636,7 @@ ${cards}
         host,
         zipcode: String(params.get('zipcode') || ''),
         miles: String(params.get('miles') || ''),
-        reason: 'GovDeals new listings route'
+        reason: parts[1] === 'search' ? 'GovDeals search filters route' : 'GovDeals new listings route'
       };
     }
 
@@ -5922,8 +5924,8 @@ ${cards}
       label: 'GovDeals',
       site: 'govdeals',
       modeHint: 'new-listings',
-      url: 'https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25',
-      help: 'Open GovDeals new listings near 07008 within 25 miles in this tab.'
+      url: 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search',
+      help: 'Open GovDeals search listings near 07008 within 50 miles in this tab.'
     })
   ]);
 

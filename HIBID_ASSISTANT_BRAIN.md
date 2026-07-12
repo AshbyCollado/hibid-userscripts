@@ -32,7 +32,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
   - Catalog controls: Copy Catalog LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Research settings: collapsed origin/radius editor persisted under `flipperaddon-aar-research-settings-v1`, default `Edison, NJ 08817` and `100` miles.
   - Safety: research/export only; no bid, register, payment, invoice, login, or account actions.
-- `govdeals`: GovDeals seller, new-listings, and asset export pages.
+- `govdeals`: GovDeals seller, search/new-listings filter, and asset export pages.
   - Seller controls: Copy Seller LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - New-listings controls: Copy Listings LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Asset controls: Copy Asset LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
@@ -71,6 +71,7 @@ Mount without waiting for lot tiles on:
 - `https://aarauctions.com/auctions*`
 - `https://aarauctions.com/servlet/Search.do?auctionId=*`
 - `https://www.govdeals.com/en/{seller}`
+- `https://www.govdeals.com/en/search/filters*`
 - `https://www.govdeals.com/en/new-listings/filters*`
 - `https://www.govdeals.com/en/asset/{assetId}/{accountId}`
 - `https://www.govdeals.com/asset/{assetId}/{accountId}`
@@ -164,7 +165,7 @@ Do not mount on GovDeals login, register, account, cart, checkout, payment, invo
 
 1. Page mode:
    - `/en/{seller}` is seller/storefront listing export, for example `/en/rutgers`.
-   - `/en/new-listings/filters?...` is nearby/new-listings export and preserves URL `zipcode` and `miles`.
+   - `/en/search/filters?...` and `/en/new-listings/filters?...` are nearby listing exports and preserve URL `zipcode` and `miles`.
    - `/en/asset/{assetId}/{accountId}` and `/asset/{assetId}/{accountId}` are direct asset export/enrichment routes.
 2. Listings:
    - Extract asset ID/account ID, lot number, title, URL, image, seller, category, condition/status, current bid, bid count, close time, location, distance text, pickup/shipping hints, description/specs when visible, and raw text.
@@ -231,6 +232,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.17` adds GovDeals seller, new-listings, and asset exports with safe asset-detail enrichment and distance-aware LLM briefs.
 - Done: `v0.7.18` tightens GovDeals real-grid parsing: browser URL filters, compact card fields, visible result counts, and carousel trimming.
 - Done: `v0.7.32` adds HiBid `/account/currentbids?status=WINNING` and `/account/currentbids?status=OUTBID` as scraper-only account exports, including line-anchored account-card parsing for `Price Realized` / `Won` rows and a DOM-only current-bids path that does not get blocked by catalog expected-count guards, `/ Lot` unit text, or broad catalog state.
+- Done: `v0.7.33` adds GovDeals `/en/search/filters?...` as the primary location-search listing route and updates the GovDeals site switcher shortcut to 07008 within 50 miles.
 - Done: `v0.7.19` tightens GovDeals seller pages: `Search Results` counts, sellerName context, and possessive-title compact card parsing.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 

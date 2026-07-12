@@ -1028,7 +1028,7 @@ test('assistant site shortcuts expose fixed auction links only', () => {
     'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active',
     'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=',
     'https://aarauctions.com/auctions/',
-    'https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25',
+    'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search',
   ]);
   assert.equal(shortcuts.find(item => item.id === 'govdeals').current, true);
   assert.equal(shortcuts.filter(item => item.current).length, 1);
@@ -1571,6 +1571,7 @@ test('assistant resolves supported and blocked GovDeals route families', () => {
   const core = loadCore();
   const seller = new URL('https://www.govdeals.com/en/rutgers');
   const search = new URL('https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25');
+  const locationSearch = new URL('https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search');
   const asset = new URL('https://www.govdeals.com/en/asset/43147/7484');
 
   assert.deepEqual(plain(core.resolveGovDealsPage(seller)), {
@@ -1588,6 +1589,14 @@ test('assistant resolves supported and blocked GovDeals route families', () => {
     miles: '25',
     reason: 'GovDeals new listings route',
   });
+  assert.deepEqual(plain(core.resolveGovDealsPage(locationSearch)), {
+    supported: true,
+    kind: 'govdeals-new-listings',
+    host: 'www.govdeals.com',
+    zipcode: '07008',
+    miles: '50',
+    reason: 'GovDeals search filters route',
+  });
   assert.deepEqual(plain(core.resolveGovDealsPage(asset)), {
     supported: true,
     kind: 'govdeals-asset',
@@ -1598,9 +1607,11 @@ test('assistant resolves supported and blocked GovDeals route families', () => {
   });
   assert.equal(core.shouldInitOnLocation(seller), true);
   assert.equal(core.shouldInitOnLocation(search), true);
+  assert.equal(core.shouldInitOnLocation(locationSearch), true);
   assert.equal(core.shouldInitOnLocation(asset), true);
   assert.equal(core.resolveAssistantMode(seller).mode, 'govdeals');
   assert.equal(core.resolveAssistantMode(search).source, 'govdeals');
+  assert.equal(core.resolveAssistantMode(locationSearch).source, 'govdeals');
 
   [
     'https://www.govdeals.com/en/login',
