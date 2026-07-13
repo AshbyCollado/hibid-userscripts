@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.36
+// @version      0.7.37
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.36';
+  const SCRIPT_VERSION = '0.7.37';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -5993,8 +5993,8 @@ ${cards}
       label: 'GovDeals',
       site: 'govdeals',
       modeHint: 'new-listings',
-      url: 'https://www.govdeals.com/en/search?category=2&categoryName=Consumer%20Electronics&zipcode=07008&miles=25',
-      help: 'Open GovDeals Consumer Electronics listings near 07008 within 25 miles in this tab.'
+      url: 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search',
+      help: 'Open GovDeals listings near 07008 within 50 miles in this tab.'
     })
   ]);
 

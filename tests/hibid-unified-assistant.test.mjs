@@ -1028,7 +1028,7 @@ test('assistant site shortcuts expose fixed auction links only', () => {
     'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active',
     'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=',
     'https://aarauctions.com/auctions/',
-    'https://www.govdeals.com/en/search?category=2&categoryName=Consumer%20Electronics&zipcode=07008&miles=25',
+    'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search',
   ]);
   assert.equal(shortcuts.find(item => item.id === 'govdeals').current, true);
   assert.equal(shortcuts.filter(item => item.current).length, 1);

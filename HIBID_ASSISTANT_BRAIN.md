@@ -236,6 +236,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.34` adds GovDeals `/en/search?...` direct query routes, preserves category filters, and updates the GovDeals site switcher shortcut to Consumer Electronics near 07008 within 25 miles.
 - Done: `v0.7.35` constrains the compact drawer to the viewport and scrolls the body so copy buttons cannot fall below the visible screen on GovDeals/Waterfox.
 - Done: `v0.7.36` hooks GovDeals direct-search `.card-search` grids and reports visible-page exports honestly so page-one cards copy instead of being blocked as stale/incomplete.
+- Done: `v0.7.37` points the GovDeals hotlink to the requested location-search route: `/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search`.
 - Done: `v0.7.19` tightens GovDeals seller pages: `Search Results` counts, sellerName context, and possessive-title compact card parsing.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 
