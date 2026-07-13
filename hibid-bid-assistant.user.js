@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.35
+// @version      0.7.36
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.35';
+  const SCRIPT_VERSION = '0.7.36';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -356,7 +356,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function rawTextOf(el) {
-    return (el?.textContent || '')
+    return (el?.innerText || el?.textContent || '')
       .replace(/\r/g, '')
       .replace(/[ \t]+/g, ' ')
       .replace(/\n[ \t]+/g, '\n')
@@ -3790,6 +3790,16 @@ ${cards}
     }
   }
 
+  function isGovDealsAssetHref(href) {
+    const ids = govDealsAssetPartsFromUrl(href);
+    return Boolean(ids.assetId && ids.accountId);
+  }
+
+  function govDealsAssetKeyFromHref(href) {
+    const ids = govDealsAssetPartsFromUrl(href);
+    return ids.assetId && ids.accountId ? `${ids.accountId}:${ids.assetId}` : absoluteUrl(href, 'https://www.govdeals.com/');
+  }
+
   function govDealsCompactPlaceMatch(text) {
     const stateNames = [
       'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado', 'Connecticut', 'Delaware',
@@ -3853,8 +3863,12 @@ ${cards}
 
   function govDealsLocation(raw) {
     const text = cleanGovDealsText(raw);
+    const lineLocation = govDealsLines({ textContent: raw })
+      .map(line => govDealsCompactPlaceMatch(line)?.[1]?.trim() || '')
+      .find(Boolean);
     return text.match(/\bItem Location\s*:?\s*([\s\S]*?)(?=\s+(?:Shipping|Local Pickup|Pickup|Condition|Used\/See|Distance|Bids?|Current Bid|OFFERED FOR AUCTION|Description|$))/i)?.[1]?.trim()
       || text.match(/\bLocation\s*:?\s*([\s\S]*?)(?=\s+(?:Distance|Shipping|Local Pickup|Pickup|Condition|Used\/See|Bids?|Current Bid|OFFERED FOR AUCTION|Description|$))/i)?.[1]?.trim()
+      || lineLocation
       || govDealsCompactListingFields(text).location
       || '';
   }
@@ -3913,49 +3927,95 @@ ${cards}
     return lines.find(line => line !== title && line !== seller && !/\b(?:Asset ID|Lot Number|Current Bid|High Bid|Bids?|Ends?|Location|Distance|Shipping|Pickup|Condition|Used\/See|Seller:)\b/i.test(line)) || '';
   }
 
+  function findGovDealsAssetLink(card) {
+    const selectors = [
+      'a[name="lnkAssetDetails"][href*="/asset/"]',
+      'a[name="lnkImageAssetDetails"][href*="/asset/"]',
+      'a[href*="/en/asset/"]',
+      'a[href*="/asset/"]'
+    ];
+    for (const selector of selectors) {
+      const links = Array.from(card?.querySelectorAll?.(selector) || []);
+      const found = links.find(link => isGovDealsAssetHref(controlHref(link)));
+      if (found) return found;
+    }
+    return isGovDealsAssetHref(controlHref(card)) ? card : null;
+  }
+
+  function closestGovDealsListingCard(seed) {
+    if (!seed) return null;
+    if (seed.matches?.('.card-search, [id^="asset-"], article, .card')) return seed;
+    return seed.closest?.('.card-search, [id^="asset-"], article, .card, li')
+      || seed.parentElement
+      || seed;
+  }
+
+  function govDealsTitleAttribute(card, assetLink) {
+    const titleNodes = [
+      assetLink,
+      card?.querySelector?.('a[name="lnkAssetDetails"]'),
+      card?.querySelector?.('a[name="lnkImageAssetDetails"]')
+    ];
+    for (const node of titleNodes) {
+      const value = cleanGovDealsText(node?.getAttribute?.('title') || node?.getAttribute?.('alt') || '');
+      if (value && !/view details|image|photo/i.test(value)) return value;
+    }
+    return '';
+  }
+
   function getGovDealsListingCards(root = document) {
     const selectors = [
+      '#grid .card-search',
+      '#grid [id^="asset-"]',
+      '.card-search',
+      '[id^="asset-"]',
       'article',
       '.card',
       '[class*="card"]',
       '[class*="listing"]',
       '[class*="asset"]',
       'li',
+      'a[name="lnkAssetDetails"][href*="/asset/"]',
+      'a[name="lnkImageAssetDetails"][href*="/asset/"]',
+      'a[href*="/en/asset/"]',
       'a[href*="/asset/"]'
     ];
     const cards = [];
     const seen = new Set();
-    const seenAssetUrls = new Set();
+    const seenAssetKeys = new Set();
     selectors.forEach(selector => {
       Array.from(root?.querySelectorAll?.(selector) || []).forEach(seed => {
-        let card = seed;
-        if (!card.querySelector?.('a[href*="/asset/"]') && /\/asset\//i.test(controlHref(card))) {
-          card = seed.parentElement || seed;
-        }
-        const raw = textOf(card);
-        const href = controlHref(card.querySelector?.('a[href*="/asset/"]') || (/\/asset\//i.test(controlHref(card)) ? card : null));
-        if (!raw || !href || seen.has(card)) return;
-        if (seenAssetUrls.has(href)) return;
+        const card = closestGovDealsListingCard(seed);
+        const assetLink = findGovDealsAssetLink(card) || (isGovDealsAssetHref(controlHref(seed)) ? seed : null);
+        const href = controlHref(assetLink);
+        if (!card || !assetLink || !href || seen.has(card)) return;
+        const assetKey = govDealsAssetKeyFromHref(href);
+        if (!assetKey || seenAssetKeys.has(assetKey)) return;
+        const raw = textOf(card) || textOf(assetLink) || govDealsTitleAttribute(card, assetLink);
+        if (!raw) return;
         if (/\b(?:login|register|checkout|payment|invoice|cart|place bid|make offer)\b/i.test(raw)) return;
         seen.add(card);
-        seenAssetUrls.add(href);
+        seenAssetKeys.add(assetKey);
         cards.push(card);
       });
     });
+    debug('govdeals listing card scan', { count: cards.length });
     return cards;
   }
 
   function parseGovDealsListingCard(card, loc = (typeof location !== 'undefined' ? location : null), pageKind = 'govdeals-new-listings') {
     const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.govdeals.com/');
-    const rawText = textOf(card);
+    const assetLink = findGovDealsAssetLink(card);
+    const rawText = rawTextOf(card) || textOf(card) || textOf(assetLink) || govDealsTitleAttribute(card, assetLink);
     const rawLines = govDealsLines(card);
-    const assetLink = card?.querySelector?.('a[href*="/asset/"]') || (/\/asset\//i.test(controlHref(card)) ? card : null);
     const url = absoluteUrl(controlHref(assetLink), base);
     const ids = govDealsAssetPartsFromUrl(url);
     const compact = govDealsCompactListingFields(rawText);
+    const titleAttribute = govDealsTitleAttribute(card, assetLink);
     const linkText = cleanGovDealsText(textOf(assetLink));
     const linkLooksLikeWholeCard = linkText && (linkText === rawText || /(?:Online Auction|Lot\s*#:|USD\s*[\d,]+|Current Bid|Location)/i.test(linkText));
-    const title = (linkLooksLikeWholeCard ? '' : linkText)
+    const title = titleAttribute
+      || (linkLooksLikeWholeCard ? '' : linkText)
       || compact.title
       || rawLines.find(line => !/\b(?:Asset ID|Lot Number|Current Bid|Bids?|Ends?|Location|Distance|Shipping|Pickup|Condition|Seller:)\b/i.test(line))
       || '';
@@ -3990,7 +4050,7 @@ ${cards}
       condition,
       specs: {},
       description: '',
-      rawText
+      rawText: cleanGovDealsText(rawText)
     };
   }
 
@@ -4177,6 +4237,7 @@ ${cards}
       });
       items = items.slice(0, context.visibleCount);
     }
+    const advertisedTotal = context?.visibleCount || null;
     onProgress(`Read ${items.length} GovDeals listing(s).`);
     const enriched = await enrichGovDealsListings(items, onProgress, shouldStop);
     debug('govdeals scrape finished', { kind: pageKind, count: enriched.length, context });
@@ -4184,11 +4245,15 @@ ${cards}
       source: 'govdeals-dom',
       items: enriched,
       listings: enriched,
-      expectedTotal: context.visibleCount || enriched.length,
-      context,
+      expectedTotal: enriched.length,
+      context: {
+        ...context,
+        advertisedTotal,
+        visiblePageCount: enriched.length
+      },
       stopped: shouldStop(),
-      stopReason: shouldStop() ? 'stopped-by-user' : 'current-page-plus-safe-enrichment',
-      incomplete: context.visibleCount ? enriched.length < context.visibleCount : false
+      stopReason: shouldStop() ? 'stopped-by-user' : (advertisedTotal && enriched.length < advertisedTotal ? 'current-visible-page-plus-safe-enrichment' : 'current-page-plus-safe-enrichment'),
+      incomplete: false
     };
   }
 

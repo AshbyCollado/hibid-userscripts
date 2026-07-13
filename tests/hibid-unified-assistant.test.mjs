@@ -1892,6 +1892,92 @@ ${compactText}`,
   assert.equal(possessiveListing.lotNumber, '7529-6816');
 });
 
+test('assistant extracts GovDeals direct search card-search grid cards', () => {
+  const core = loadCore();
+  const firstTitle = 'Lot of 4 Microsoft Surface Pro 7 Laptops';
+  const secondTitle = 'Lot of 2 Dell Latitude 5420 Laptops';
+  const firstText = `ONLINE AUCTION
+${firstTitle}
+Edison, New Jersey, USA
+USD 389.00
+1D18H(July 14, 2026 04:08 PM EDT)
+LOT#: 7529-6823
+Watching`;
+  const secondText = `ONLINE AUCTION
+${secondTitle}
+Carteret, New Jersey, USA
+USD 155.00
+1D20H(July 14, 2026 06:15 PM EDT)
+LOT#: 7529-6824
+Watch`;
+  const firstTitleLink = makeFakeNode({
+    text: firstTitle,
+    attrs: { href: '/en/asset/6823/7529', title: firstTitle },
+  });
+  const firstImageLink = makeFakeNode({
+    attrs: { href: '/en/asset/6823/7529', title: firstTitle },
+  });
+  const firstImage = makeFakeNode({
+    attrs: { src: 'https://cdn.govdeals.test/6823.jpg', title: firstTitle },
+  });
+  const secondTitleLink = makeFakeNode({
+    text: secondTitle,
+    attrs: { href: '/en/asset/6824/7529', title: secondTitle },
+  });
+  const firstCard = makeFakeNode({
+    text: firstText,
+    selectors: {
+      'a[name="lnkAssetDetails"][href*="/asset/"]': firstTitleLink,
+      'a[name="lnkImageAssetDetails"][href*="/asset/"]': firstImageLink,
+      'a[href*="/asset/"]': [firstImageLink, firstTitleLink],
+      'img': firstImage,
+    },
+  });
+  const secondCard = makeFakeNode({
+    text: secondText,
+    selectors: {
+      'a[name="lnkAssetDetails"][href*="/asset/"]': secondTitleLink,
+      'a[href*="/asset/"]': secondTitleLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: `53 Results for Consumer Electronics
+${firstText}
+${secondText}`,
+    selectors: {
+      '.card-search': [firstCard, secondCard],
+      'a[href*="/asset/"]': [firstTitleLink, secondTitleLink],
+    },
+  });
+  root.title = 'Consumer Electronics For Sale | GovDeals';
+  const loc = new URL('https://www.govdeals.com/en/search?category=2&categoryName=Consumer%20Electronics&zipcode=07008&miles=25');
+
+  const context = core.extractGovDealsSearchContext(root, loc);
+  const listings = core.extractGovDealsListings(root, loc, 'govdeals-new-listings');
+
+  assert.equal(context.visibleCount, 53);
+  assert.equal(context.category, '2');
+  assert.equal(context.categoryName, 'Consumer Electronics');
+  assert.equal(listings.length, 2);
+  assert.deepEqual(plain({
+    firstTitle: listings[0].title,
+    firstUrl: listings[0].url,
+    firstImage: listings[0].image,
+    firstLot: listings[0].lotNumber,
+    firstPrice: listings[0].currentBid,
+    secondTitle: listings[1].title,
+    secondLocation: listings[1].location,
+  }), {
+    firstTitle,
+    firstUrl: 'https://www.govdeals.com/en/asset/6823/7529',
+    firstImage: 'https://cdn.govdeals.test/6823.jpg',
+    firstLot: '7529-6823',
+    firstPrice: 'USD 389.00',
+    secondTitle,
+    secondLocation: 'Carteret, New Jersey, USA',
+  });
+});
+
 test('assistant extracts GovDeals asset detail fields for enrichment', () => {
   const core = loadCore();
   const root = makeFakeNode({
