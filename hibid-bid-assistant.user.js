@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.37
+// @version      0.7.38
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.37';
+  const SCRIPT_VERSION = '0.7.38';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -6745,17 +6745,25 @@ ${cards}
     }
 
     if (govDealsMode) {
-      const context = govDealsKind === 'govdeals-seller'
-        ? extractGovDealsSellerContext()
-        : (govDealsKind === 'govdeals-asset'
-          ? { source: 'GovDeals', pageKind: 'govdeals-asset', title: document.title.replace(/\s*\|\s*GovDeals.*$/i, '').trim() || 'GovDeals Asset', url: location.href, generatedAt: new Date().toISOString() }
-          : extractGovDealsSearchContext());
-      const visibleRows = govDealsKind === 'govdeals-asset'
-        ? [extractGovDealsAssetDetail()].filter(item => item.title)
-        : extractGovDealsListings(document, location, govDealsKind || 'govdeals-new-listings');
-      renderGovDealsRows(visibleRows, context);
-      status(`GovDeals ${govDealsKind === 'govdeals-seller' ? 'seller' : (govDealsKind === 'govdeals-asset' ? 'asset' : 'listings')} ready. Visible ${visibleRows.length} item(s).`);
-      debug('govdeals mode ready', { route: activeRoute, visibleRows: visibleRows.length, context });
+      const refreshGovDealsReadyState = (reason = 'initial') => {
+        if (!document.contains(panel) || state.busy) return;
+        const context = govDealsKind === 'govdeals-seller'
+          ? extractGovDealsSellerContext()
+          : (govDealsKind === 'govdeals-asset'
+            ? { source: 'GovDeals', pageKind: 'govdeals-asset', title: document.title.replace(/\s*\|\s*GovDeals.*$/i, '').trim() || 'GovDeals Asset', url: location.href, generatedAt: new Date().toISOString() }
+            : extractGovDealsSearchContext());
+        const visibleRows = govDealsKind === 'govdeals-asset'
+          ? [extractGovDealsAssetDetail()].filter(item => item.title)
+          : extractGovDealsListings(document, location, govDealsKind || 'govdeals-new-listings');
+        renderGovDealsRows(visibleRows, context);
+        status(`GovDeals ${govDealsKind === 'govdeals-seller' ? 'seller' : (govDealsKind === 'govdeals-asset' ? 'asset' : 'listings')} ready. Visible ${visibleRows.length} item(s).`);
+        debug('govdeals mode ready', { route: activeRoute, visibleRows: visibleRows.length, context, reason });
+      };
+      refreshGovDealsReadyState('initial');
+      [2500, 7000].forEach(delay => {
+        const timer = window.setTimeout(() => refreshGovDealsReadyState(`hydration-${delay}`), delay);
+        panel.addEventListener('flipperaddon-panel-teardown', () => window.clearTimeout(timer), { once: true });
+      });
     }
 
     listingExportScanButton?.addEventListener('click', () => {
