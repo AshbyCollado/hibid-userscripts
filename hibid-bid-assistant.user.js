@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.34
+// @version      0.7.35
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.34';
+  const SCRIPT_VERSION = '0.7.35';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -6300,10 +6300,10 @@ ${cards}
         </div>
       </div>
       <style>
-        #${PANEL_ID} { position:fixed; right:14px; bottom:14px; z-index:999999; width:min(356px, calc(100vw - 24px)); max-height:calc(100vh - 28px); color:#f8fafc; font:13px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing:0; color-scheme:dark; }
+        #${PANEL_ID} { position:fixed; right:14px; bottom:14px; z-index:999999; display:flex; flex-direction:column; width:min(356px, calc(100vw - 24px)); max-height:calc(100vh - 28px); color:#f8fafc; font:13px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing:0; color-scheme:dark; }
         #${PANEL_ID}, #${PANEL_ID} * { box-sizing:border-box; }
         #${PANEL_ID}.hiba-minimized { width:min(188px, calc(100vw - 24px)); }
-        #${PANEL_ID} .hiba-drawer { overflow:hidden; border:1px solid rgba(148,163,184,.24); border-radius:13px; background:#0b1020; box-shadow:0 16px 45px rgba(0,0,0,.36), 0 2px 10px rgba(15,23,42,.4); }
+        #${PANEL_ID} .hiba-drawer { display:flex; flex-direction:column; max-height:inherit; overflow:hidden; border:1px solid rgba(148,163,184,.24); border-radius:13px; background:#0b1020; box-shadow:0 16px 45px rgba(0,0,0,.36), 0 2px 10px rgba(15,23,42,.4); }
         #${PANEL_ID} .hiba-shellbar { display:flex; align-items:stretch; gap:6px; padding:7px; border-bottom:1px solid rgba(148,163,184,.14); background:rgba(15,23,42,.92); }
         #${PANEL_ID}.hiba-minimized .hiba-shellbar { border-bottom:0; }
         #${PANEL_ID} .hiba-launcher { flex:1; min-width:0; display:flex; align-items:center; gap:8px; color:#f8fafc; background:transparent; border:0; border-radius:9px; padding:6px 7px; cursor:pointer; text-align:left; }
@@ -6314,7 +6314,7 @@ ${cards}
         #${PANEL_ID} .hiba-mode-pill, #${PANEL_ID} .hiba-chip { display:inline-flex; align-items:center; min-height:22px; border:1px solid rgba(148,163,184,.24); border-radius:999px; padding:2px 8px; color:#cbd5e1; background:rgba(15,23,42,.78); font-size:11px; font-weight:800; white-space:nowrap; }
         #${PANEL_ID} .hiba-chip.eligible, #${PANEL_ID} .hiba-chip.success { color:#bbf7d0; background:rgba(22,101,52,.32); border-color:rgba(74,222,128,.34); }
         #${PANEL_ID} .hiba-chip.skip, #${PANEL_ID} .hiba-chip.danger { color:#fecaca; background:rgba(127,29,29,.34); border-color:rgba(248,113,113,.34); }
-        #${PANEL_ID} .hiba-body { max-height:calc(100vh - 82px); overflow:auto; padding:10px; }
+        #${PANEL_ID} .hiba-body { flex:1 1 auto; min-height:0; overflow:auto; padding:10px; }
         #${PANEL_ID} .hiba-head, #${PANEL_ID} .hiba-section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
         #${PANEL_ID} .hiba-head { margin-bottom:10px; }
         #${PANEL_ID} .hiba-head strong, #${PANEL_ID} .hiba-section-head strong { font-size:14px; }
