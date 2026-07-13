@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.39
+// @version      0.7.40
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.39';
+  const SCRIPT_VERSION = '0.7.40';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -6351,7 +6351,7 @@ ${cards}
     const title = isAjWillner
       ? 'AJ Willner Catalog Export'
       : (isWinningBids ? 'Winning Bids Export' : (isOutbidBids ? 'Outbid Bids Export' : 'Catalog Export'));
-    const chip = isAjWillner ? 'virtual list' : (isWinningBids ? 'winning' : (isOutbidBids ? 'outbid' : 'scraper'));
+    const chip = isAjWillner ? 'api-first' : (isWinningBids ? 'winning' : (isOutbidBids ? 'outbid' : 'scraper'));
     const llmHelp = isAjWillner
       ? 'Copy the resale-analysis prompt plus scraped AJ Willner listing JSON for a desktop LLM.'
       : (isAccountBids
