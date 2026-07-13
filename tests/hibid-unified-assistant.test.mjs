@@ -12,6 +12,7 @@ function loadCore(options = {}) {
   const sandbox = {
     console,
     URL,
+    URLSearchParams,
     globalThis: {},
   };
   if (options.storage) {
@@ -23,6 +24,9 @@ function loadCore(options = {}) {
   }
   if (options.unsafeWindow) {
     sandbox.unsafeWindow = options.unsafeWindow;
+  }
+  if (options.fetch) {
+    sandbox.fetch = options.fetch;
   }
   sandbox.globalThis = sandbox;
   sandbox.__HIBID_BID_ASSISTANT_TEST__ = true;
@@ -283,6 +287,150 @@ test('assistant extracts AJ Willner virtual-list cards as catalog lots', () => {
       rawText: 'ENDS 4d 10h 18min #32 \u2022 Rowe "Moore" Upholstered Sofa Quantity: 1 Dimensions: 93W x 40D x 33H MSRP: $4,639 High bid $100',
     },
   ]);
+});
+
+test('assistant builds AJ Willner API search URLs from the active page filters', () => {
+  const core = loadCore();
+  const activeUrl = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');
+  const activeApi = new URL(core.ajWillnerSearchApiUrl(activeUrl, 2, 200));
+
+  assert.equal(activeApi.origin, 'https://bid.ajwillnerauctions.com');
+  assert.equal(activeApi.pathname, '/api/items/search');
+  assert.equal(activeApi.searchParams.get('auction_id'), '164037');
+  assert.equal(activeApi.searchParams.get('category'), 'All');
+  assert.equal(activeApi.searchParams.get('page'), '2');
+  assert.equal(activeApi.searchParams.get('per_page'), '200');
+  assert.equal(activeApi.searchParams.get('exact_category_match'), 'true');
+  assert.equal(activeApi.searchParams.has('sub_category'), false);
+
+  const filteredUrl = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=Sofas&subCategory=Closed&q=chair');
+  const filteredApi = new URL(core.ajWillnerSearchApiUrl(filteredUrl, 3, 50));
+  assert.equal(filteredApi.searchParams.get('category'), 'Sofas');
+  assert.equal(filteredApi.searchParams.get('sub_category'), 'Closed');
+  assert.equal(filteredApi.searchParams.get('query'), 'chair');
+  assert.equal(filteredApi.searchParams.get('page'), '3');
+  assert.equal(filteredApi.searchParams.get('per_page'), '50');
+});
+
+test('assistant normalizes AJ Willner API lots with compact descriptions', () => {
+  const core = loadCore();
+  const item = {
+    id: 24887841,
+    auction_id: 164037,
+    auction_name: 'Overstock Product Liquidation NJ W27',
+    lot_identifier: '32',
+    name: 'Rowe "Moore" Upholstered Sofa',
+    name_with_prefix: '#32 Rowe "Moore" Upholstered Sofa',
+    description: '<p>Quantity: 1</p><p>Dimensions: 93W x 40D x 33H</p><strong>Terms of Sale</strong><p>Everything repeats forever.</p>',
+    description_without_html: 'Quantity: 1 Dimensions: 93W x 40D x 33H Terms of Sale Everything repeats forever.',
+    images: [{ lg: 'https://images.example.test/sofa-large.jpg', sm: 'https://images.example.test/sofa-small.jpg' }],
+    api_bidding_state: {
+      high: { amount: 650 },
+      ask_amount: 700,
+      accepted_bid_count: 7,
+    },
+    status: 'accepting_bids',
+    main_category: 'Sofas',
+    quantity: 1,
+    start_amount: 500,
+    scheduled_end_time: '2026-07-17T23:00:00Z',
+    currency_symbol: '$',
+  };
+
+  const lot = core.normalizeAjWillnerApiItem(item, new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active'));
+
+  assert.deepEqual(plain(lot), {
+    source: 'ajwillner',
+    id: '24887841',
+    lot: '32',
+    title: 'Rowe "Moore" Upholstered Sofa',
+    url: 'https://bid.ajwillnerauctions.com/ui/auctions/164037/24887841',
+    image: 'https://images.example.test/sofa-large.jpg',
+    description: 'Quantity: 1 Dimensions: 93W x 40D x 33H',
+    highBid: 'High bid $650',
+    highBidAmount: 650,
+    currentPrice: 650,
+    currentBid: 650,
+    nextBid: 'Bid $700',
+    nextBidAmount: 700,
+    bidCount: '7 Bids',
+    bidCountNumber: 7,
+    timeLeft: '',
+    status: 'accepting bids',
+    userBidStatus: '',
+    isWinning: false,
+    isOutbid: false,
+    watched: false,
+    quantity: 1,
+    category: 'Sofas',
+    startAmount: 500,
+    auctionTitle: 'Overstock Product Liquidation NJ W27',
+    scheduledEndTime: '2026-07-17T23:00:00Z',
+    rawText: '#32 Rowe "Moore" Upholstered Sofa Quantity: 1 Dimensions: 93W x 40D x 33H High bid $650 7 Bids accepting bids',
+  });
+});
+
+test('assistant scrapes AJ Willner through paged API before virtual scrolling', async () => {
+  const requests = [];
+  const core = loadCore({
+    fetch: async (href) => {
+      const url = new URL(href);
+      requests.push(url);
+      const page = Number(url.searchParams.get('page'));
+      assert.equal(url.pathname, '/api/items/search');
+      assert.equal(url.searchParams.get('auction_id'), '164037');
+      assert.equal(url.searchParams.get('category'), 'All');
+      assert.equal(url.searchParams.get('per_page'), page === 1 ? '200' : '1');
+      const base = {
+        total: 2,
+        per_page: 1,
+        page,
+      };
+      return {
+        ok: true,
+        json: async () => ({
+          ...base,
+          items: page === 1
+            ? [{
+                id: '1',
+                auction_id: '164037',
+                lot_identifier: '2',
+                name: 'Second lot',
+                description_without_html: 'Second description Terms of Sale Extra.',
+                api_bidding_state: { high: { amount: 20 }, ask_amount: 25, accepted_bid_count: 2 },
+              }]
+            : [{
+                id: '2',
+                auction_id: '164037',
+                lot_identifier: '1',
+                name: 'First lot',
+                description_without_html: 'First description',
+                api_bidding_state: { high: { amount: 10 }, ask_amount: 15, accepted_bid_count: 1 },
+              }],
+        }),
+      };
+    },
+  });
+  const statuses = [];
+  const result = await core.scrapeAjWillnerApiListings(
+    (message) => statuses.push(message),
+    () => false,
+    makeFakeNode({ text: '2 items found in Active' }),
+    new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+  );
+
+  assert.equal(result.source, 'ajwillner-api');
+  assert.equal(result.expectedTotal, 2);
+  assert.equal(result.items.length, 2);
+  assert.equal(result.incomplete, false);
+  assert.equal(result.stopReason, 'api-complete');
+  assert.equal(result.pageSteps, 2);
+  assert.deepEqual(plain(result.items.map(item => item.lot)), ['1', '2']);
+  assert.deepEqual(plain(result.items.map(item => item.title)), ['First lot', 'Second lot']);
+  assert.equal(result.items[1].description, 'Second description');
+  assert.deepEqual(plain(requests.map(url => url.searchParams.get('page'))), ['1', '2']);
+  assert.ok(statuses.some(message => /AJ Willner API page 1/i.test(message)));
+  assert.ok(statuses.some(message => /AJ Willner API page 2\/2/i.test(message)));
 });
 
 test('assistant uses an overlapping AJ Willner virtual-scroll stride', () => {

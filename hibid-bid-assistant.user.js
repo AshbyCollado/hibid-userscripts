@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.38
+// @version      0.7.39
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.38';
+  const SCRIPT_VERSION = '0.7.39';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -2001,6 +2001,9 @@ ${cards}
     getAjWillnerScrollStepSize,
     getAjWillnerExpectedTotal,
     extractAjWillnerVisibleListings,
+    normalizeAjWillnerApiItem,
+    ajWillnerSearchApiUrl,
+    scrapeAjWillnerApiListings,
     scrapeAjWillnerListings,
     scrapeAuctionNinjaCatalogLots,
     scrapeAuctionNinjaAccountItems,
@@ -2242,8 +2245,172 @@ ${cards}
     }).filter(Boolean);
   }
 
+  function cleanAjWillnerApiDescription(item = {}) {
+    const raw = item.description_without_html || item.simple_description || stripHtml(item.description || '');
+    return cleanGovDealsText(String(raw || '')
+      .replace(/\bTerms of Sale\b[\s\S]*$/i, '')
+      .replace(/\bAll Items Sold AS-IS[\s\S]*$/i, ''));
+  }
+
+  function pickAjWillnerApiImage(item = {}) {
+    const image = Array.isArray(item.images) ? item.images[0] : null;
+    if (!image) return '';
+    return image.lg || image.sm || image.xs || image.xl || image.original || image.url || '';
+  }
+
+  function ajWillnerMoneyText(label, value, currencySymbol = '$') {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return '';
+    return `${label} ${currencySymbol || '$'}${amount.toLocaleString(undefined, {
+      minimumFractionDigits: amount % 1 ? 2 : 0,
+      maximumFractionDigits: 2
+    })}`;
+  }
+
+  function normalizeAjWillnerApiItem(item = {}, loc = location) {
+    const auctionId = item.auction_id || getAjWillnerAuctionId(loc);
+    const currencySymbol = item.currency_symbol || '$';
+    const highAmount = Number(item.api_bidding_state?.high?.amount ?? item.bidding_state?.high?.amount);
+    const askAmount = Number(item.api_bidding_state?.ask_amount ?? item.api_bidding_state?.minimum_bid_amount ?? item.bidding_state?.askAmount);
+    const bidCount = Number(item.api_bidding_state?.accepted_bid_count ?? item.bidding_state?.acceptedBidCount);
+    const statusText = String(item.status || '').replace(/_/g, ' ');
+    const url = absoluteUrl(`/ui/auctions/${auctionId}/${item.id}`, loc?.href || 'https://bid.ajwillnerauctions.com/');
+    const title = String(item.name || item.displayed_name || item.name_with_prefix || '').trim();
+    const description = cleanAjWillnerApiDescription(item);
+    if (!item.id || !title) return null;
+    return {
+      source: 'ajwillner',
+      id: String(item.id),
+      lot: String(item.lot_identifier || item.simple_id || item.sequence || item.id || '').replace(/^#\s*/, ''),
+      title,
+      url,
+      image: pickAjWillnerApiImage(item),
+      description,
+      highBid: Number.isFinite(highAmount) ? ajWillnerMoneyText('High bid', highAmount, currencySymbol) : '',
+      highBidAmount: Number.isFinite(highAmount) ? highAmount : null,
+      currentPrice: Number.isFinite(highAmount) ? highAmount : null,
+      currentBid: Number.isFinite(highAmount) ? highAmount : null,
+      nextBid: Number.isFinite(askAmount) ? ajWillnerMoneyText('Bid', askAmount, currencySymbol) : '',
+      nextBidAmount: Number.isFinite(askAmount) ? askAmount : null,
+      bidCount: Number.isFinite(bidCount) ? `${bidCount} ${bidCount === 1 ? 'Bid' : 'Bids'}` : '',
+      bidCountNumber: Number.isFinite(bidCount) ? bidCount : null,
+      timeLeft: '',
+      status: statusText,
+      userBidStatus: '',
+      isWinning: false,
+      isOutbid: false,
+      watched: false,
+      quantity: Number(item.quantity) || null,
+      category: item.main_category || '',
+      startAmount: Number(item.start_amount ?? item.bidding_configuration?.start_amount) || null,
+      auctionTitle: item.auction_name || '',
+      scheduledEndTime: item.scheduled_end_time || item.actual_end_time || '',
+      rawText: cleanGovDealsText([
+        item.name_with_prefix || item.name || '',
+        description,
+        Number.isFinite(highAmount) ? ajWillnerMoneyText('High bid', highAmount, currencySymbol) : '',
+        Number.isFinite(bidCount) ? `${bidCount} ${bidCount === 1 ? 'Bid' : 'Bids'}` : '',
+        statusText
+      ].filter(Boolean).join(' '))
+    };
+  }
+
+  function ajWillnerSearchApiUrl(loc = location, page = 1, perPage = 200) {
+    const auctionId = getAjWillnerAuctionId(loc);
+    const params = new URLSearchParams(loc?.search || '');
+    const apiParams = new URLSearchParams({
+      auction_id: auctionId,
+      page: String(page),
+      per_page: String(perPage),
+      exact_category_match: 'true'
+    });
+    const category = params.get('category') || 'All';
+    const subCategory = params.get('subCategory') || params.get('sub_category') || 'Active';
+    const query = params.get('q') || params.get('query') || params.get('search') || '';
+    if (category) apiParams.set('category', category);
+    if (subCategory && !/^active$/i.test(subCategory)) apiParams.set('sub_category', subCategory);
+    if (query) apiParams.set('query', query);
+    return absoluteUrl(`/api/items/search?${apiParams}`, loc?.href || 'https://bid.ajwillnerauctions.com/');
+  }
+
+  async function fetchAjWillnerSearchPage(loc = location, page = 1, perPage = 200) {
+    const href = ajWillnerSearchApiUrl(loc, page, perPage);
+    const response = await fetch(href, { credentials: 'include' });
+    if (!response?.ok) throw new Error(`AJ Willner API page ${page} failed: ${response?.status}`);
+    const data = await response.json();
+    return { href, data };
+  }
+
+  async function scrapeAjWillnerApiListings(status = () => {}, shouldStop = () => false, root = document, loc = location) {
+    const perPage = 200;
+    const auctionId = getAjWillnerAuctionId(loc);
+    if (!auctionId || typeof fetch !== 'function') return null;
+    status('Reading AJ Willner API page 1...');
+    const first = await fetchAjWillnerSearchPage(loc, 1, perPage);
+    const total = Number(first.data?.total) || 0;
+    const pageSize = Number(first.data?.per_page) || perPage;
+    const totalPages = total ? Math.ceil(total / pageSize) : 1;
+    const pages = [first];
+    const remaining = [];
+    for (let page = 2; page <= totalPages; page += 1) remaining.push(page);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < remaining.length && !shouldStop()) {
+        const page = remaining[cursor];
+        cursor += 1;
+        status(`Reading AJ Willner API page ${page}/${totalPages}...`);
+        pages.push(await fetchAjWillnerSearchPage(loc, page, pageSize));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, remaining.length) }, worker));
+    const byId = new Map();
+    pages
+      .sort((a, b) => (Number(a.data?.page) || 0) - (Number(b.data?.page) || 0))
+      .forEach(page => {
+        (page.data?.items || []).forEach(item => {
+          const normalized = normalizeAjWillnerApiItem(item, loc);
+          if (normalized?.id) byId.set(normalized.id, normalized);
+        });
+      });
+    const items = Array.from(byId.values()).sort((a, b) => String(a.lot || '').localeCompare(String(b.lot || ''), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+    const expectedTotal = total || items.length || getAjWillnerExpectedTotal(root, findAjWillnerScrollContainer(root));
+    const stopped = !!shouldStop();
+    debug('AJ Willner API scrape finished', {
+      count: items.length,
+      expectedTotal,
+      totalPages,
+      stopped
+    });
+    return {
+      source: 'ajwillner-api',
+      items,
+      lots: items,
+      expectedTotal,
+      stopped,
+      incomplete: Boolean(!stopped && expectedTotal && items.length < expectedTotal),
+      stopReason: stopped ? 'stopped by user' : 'api-complete',
+      context: {
+        source: 'ajwillner',
+        pageKind: 'catalog',
+        auctionId,
+        url: loc?.href || '',
+        generatedAt: new Date().toISOString()
+      },
+      pageSteps: totalPages
+    };
+  }
+
   async function scrapeAjWillnerListings(status = () => {}, shouldStop = () => false, root = document, loc = location) {
     debug('AJ Willner scrape start', routeDebug());
+    const apiResult = await scrapeAjWillnerApiListings(status, shouldStop, root, loc).catch(error => {
+      debug('AJ Willner API scrape failed; falling back to virtual list', { error: String(error?.message || error) });
+      return null;
+    });
+    if (apiResult?.items?.length || apiResult?.expectedTotal === 0) return apiResult;
+
     const scrollContainer = findAjWillnerScrollContainer(root);
     const itemsMap = new Map();
     let expectedTotal = getAjWillnerExpectedTotal(root, scrollContainer);
@@ -7198,6 +7365,19 @@ ${cards}
           : JSON.stringify(lots, null, 2);
         const copied = await writeClipboard(payload).catch(() => false);
         const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
+        let downloaded = false;
+        if (!copied) {
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const sourceSlug = isAjWillnerRoute(activeCatalogRoute) ? 'ajwillner' : 'catalog';
+          const ext = mode === 'llm' ? 'txt' : 'json';
+          const mime = mode === 'llm' ? 'text/plain;charset=utf-8' : 'application/json;charset=utf-8';
+          try {
+            downloadTextFile(`flipperaddon-${sourceSlug}-${stamp}.${ext}`, payload, mime);
+            downloaded = true;
+          } catch (error) {
+            debug('catalog download fallback failed', { error: String(error?.message || error) });
+          }
+        }
         debug('catalog scrape summary', {
           source: result.source || 'unknown',
           count: lots.length,
@@ -7205,13 +7385,14 @@ ${cards}
         });
         status(copied
           ? (mode === 'llm' ? `Copied LLM brief for ${countText} lot(s).` : `Copied JSON for ${countText} lot(s).`)
-          : `Scraped ${countText} lot(s), but clipboard failed. Copy debug log.`);
+          : (downloaded ? `Scraped ${countText} lot(s); clipboard failed, downloaded ${mode === 'llm' ? 'brief' : 'JSON'}.` : `Scraped ${countText} lot(s), but clipboard failed. Copy debug log.`));
         debug('catalog lots copied', {
           mode,
           count: lots.length,
           expectedTotal: result.expectedTotal,
           source: result.source,
           copied,
+          downloaded,
           stopped: result.stopped
         });
       } finally {
