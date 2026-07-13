@@ -31,7 +31,7 @@ Only the active page module should expose controls. Do not bring back the old al
 
 `buildLlmAuctionBrief(...)` is the durable insertion point for resale instructions. It must include the full auction-resale coordinator prompt and enriched lot JSON, including URLs, image, description, bids, auction title, and buyer premium where available.
 
-AAR and GovDeals LLM briefs must pass through persisted research settings, defaulting to `Edison, NJ 08817` and `100` miles, and must require live map/search proof before recommending an auction, listing, or asset as in-range. GovDeals search/new-listings briefs must also preserve URL filters such as `zipcode` and `miles`.
+AAR and GovDeals LLM briefs must pass through persisted research settings, defaulting to `Edison, NJ 08817` and `100` miles, and must require live map/search proof before recommending an auction, listing, or asset as in-range. GovDeals search/new-listings briefs must also preserve URL filters such as `category`, `categoryName`, `zipcode`, and `miles`.
 
 ## Debug
 

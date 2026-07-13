@@ -1028,7 +1028,7 @@ test('assistant site shortcuts expose fixed auction links only', () => {
     'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active',
     'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=',
     'https://aarauctions.com/auctions/',
-    'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search',
+    'https://www.govdeals.com/en/search?category=2&categoryName=Consumer%20Electronics&zipcode=07008&miles=25',
   ]);
   assert.equal(shortcuts.find(item => item.id === 'govdeals').current, true);
   assert.equal(shortcuts.filter(item => item.current).length, 1);
@@ -1572,6 +1572,7 @@ test('assistant resolves supported and blocked GovDeals route families', () => {
   const seller = new URL('https://www.govdeals.com/en/rutgers');
   const search = new URL('https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25');
   const locationSearch = new URL('https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search');
+  const categorySearch = new URL('https://www.govdeals.com/en/search?category=2&categoryName=Consumer%20Electronics&zipcode=07008&miles=25');
   const asset = new URL('https://www.govdeals.com/en/asset/43147/7484');
 
   assert.deepEqual(plain(core.resolveGovDealsPage(seller)), {
@@ -1587,6 +1588,8 @@ test('assistant resolves supported and blocked GovDeals route families', () => {
     host: 'www.govdeals.com',
     zipcode: '07008',
     miles: '25',
+    category: '',
+    categoryName: '',
     reason: 'GovDeals new listings route',
   });
   assert.deepEqual(plain(core.resolveGovDealsPage(locationSearch)), {
@@ -1595,7 +1598,19 @@ test('assistant resolves supported and blocked GovDeals route families', () => {
     host: 'www.govdeals.com',
     zipcode: '07008',
     miles: '50',
-    reason: 'GovDeals search filters route',
+    category: '',
+    categoryName: '',
+    reason: 'GovDeals search route',
+  });
+  assert.deepEqual(plain(core.resolveGovDealsPage(categorySearch)), {
+    supported: true,
+    kind: 'govdeals-new-listings',
+    host: 'www.govdeals.com',
+    zipcode: '07008',
+    miles: '25',
+    category: '2',
+    categoryName: 'Consumer Electronics',
+    reason: 'GovDeals search route',
   });
   assert.deepEqual(plain(core.resolveGovDealsPage(asset)), {
     supported: true,
@@ -1608,10 +1623,12 @@ test('assistant resolves supported and blocked GovDeals route families', () => {
   assert.equal(core.shouldInitOnLocation(seller), true);
   assert.equal(core.shouldInitOnLocation(search), true);
   assert.equal(core.shouldInitOnLocation(locationSearch), true);
+  assert.equal(core.shouldInitOnLocation(categorySearch), true);
   assert.equal(core.shouldInitOnLocation(asset), true);
   assert.equal(core.resolveAssistantMode(seller).mode, 'govdeals');
   assert.equal(core.resolveAssistantMode(search).source, 'govdeals');
   assert.equal(core.resolveAssistantMode(locationSearch).source, 'govdeals');
+  assert.equal(core.resolveAssistantMode(categorySearch).source, 'govdeals');
 
   [
     'https://www.govdeals.com/en/login',
@@ -1758,8 +1775,10 @@ Current Tools Conduit Organizer`,
   });
   root.title = 'New Listings | GovDeals';
   const loc = new URL('https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25');
+  const directSearchLoc = new URL('https://www.govdeals.com/en/search?category=2&categoryName=Consumer%20Electronics&zipcode=07008&miles=25');
 
   const context = core.extractGovDealsSearchContext(root, loc);
+  const directSearchContext = core.extractGovDealsSearchContext(root, directSearchLoc);
   const listings = core.extractGovDealsListings(root, loc, 'govdeals-new-listings');
 
   assert.equal(context.source, 'GovDeals');
@@ -1767,6 +1786,8 @@ Current Tools Conduit Organizer`,
   assert.equal(context.zipcode, '07008');
   assert.equal(context.miles, '25');
   assert.equal(context.visibleCount, 1);
+  assert.equal(directSearchContext.category, '2');
+  assert.equal(directSearchContext.categoryName, 'Consumer Electronics');
   assert.equal(listings.length, 1);
   assert.deepEqual(plain({
     title: listings[0].title,
