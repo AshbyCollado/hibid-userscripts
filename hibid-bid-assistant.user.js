@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.40
+// @version      0.7.41
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.40';
+  const SCRIPT_VERSION = '0.7.41';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -81,6 +81,36 @@ Sold/completed comps first, profit second, hunches last.
 
 Core rule:
 Coverage first, confirmation second. Every lot gets classified. Nothing silently disappears.
+
+Parsing / Mandatory Analysis:
+## Mixed / Group Lot Rule — Mandatory Component Extraction
+
+Never classify a lot solely from its title. For every lot titled or described as
+"group," "assorted," "contents," "equipment," "rack," "cabinet," "with components,"
+"electronics," "office," or similar:
+
+1. Read the full description and inspect every available photo before assigning a status.
+2. Extract every identifiable brand, model, quantity, and potentially resellable component into a component list.
+3. A generic group lot may not be marked Garbage until each named or visually identifiable component has been checked for resale relevance.
+4. If a component has meaningful possible resale value, research that component separately. Do not value the lot only as a generic bundle.
+5. For every mixed lot, record:
+   - identified components and models
+   - what is visibly confirmed versus description-only
+   - portability / CT200h fit
+   - removal risk, missing-power-cable risk, lock/reset risk, test risk, and completeness risk
+   - conservative hammer max and all-in max, or an explicit PASS reason
+6. Create a visible \`Mixed Lot / Component Review\` tab or section containing every lot that triggered this rule, including passes. Do not bury these rows only in Garbage.
+7. Pin any portable mixed-lot candidate with a strict-profit path into \`Best Bids\`, even if its generic title would otherwise rank poorly.
+8. In the coverage audit, report:
+   - number of mixed/group lots reviewed
+   - number with extracted named components
+   - number elevated to a lead
+   - number passed with an explicit component-level reason
+
+A lot with named models in its description or photo must receive \`component_reviewed = yes\`.
+The important sentence is: "A generic group lot may not be marked Garbage until each named or visually identifiable component has been checked."
+
+When a description or image is unavailable in the export, say so explicitly in the row and do not invent component details. Use every supplied description field, raw text field, and image URL before deciding that a lot has no resale value.
 
 Statuses:
 - Confirmed Lead: exact or close sold comps support meaningful profit after all fees.
@@ -424,6 +454,31 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return '';
   }
 
+  function pickFirstDescription(root) {
+    const direct = root?.getAttribute?.('data-description')
+      || root?.getAttribute?.('data-notes')
+      || root?.getAttribute?.('aria-description')
+      || '';
+    if (direct.trim()) return direct.trim();
+
+    const selectors = [
+      '.lot-description',
+      '.description',
+      '.lot-notes',
+      '[class*="lot-description"]',
+      '[class*="description"]',
+      '[class*="lot-notes"]',
+      '[data-testid*="description"]',
+      '[data-testid*="notes"]'
+    ];
+    for (const selector of selectors) {
+      const element = root?.querySelector?.(selector);
+      const value = descriptionTextOf(element);
+      if (value && !/^read description$/i.test(value)) return value;
+    }
+    return '';
+  }
+
   function numberFromText(value) {
     const match = (value || '').match(/([\d,]+)/);
     return match ? Number(match[1].replace(/,/g, '')) : null;
@@ -754,6 +809,10 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const allStatus = `${statusText} ${statusClass} ${textOf(tile)}`;
     const userBidStatus = extractUserBidStatus(allStatus);
     const href = titleLink?.getAttribute('href') || '';
+    const base = typeof location !== 'undefined' ? location.href : 'https://hibid.com/';
+    const rawText = rawTextOf(tile);
+    const image = pickFirstImage(tile, base);
+    const description = pickFirstDescription(tile);
 
     return {
       tile,
@@ -761,7 +820,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       id: (tile.id || '').replace(/^lot-/, ''),
       lot: lotNumber,
       title: textOf(titleEl) || titleLink?.getAttribute('aria-label') || '',
-      url: href ? new URL(href, location.origin).href : '',
+      url: href ? absoluteUrl(href, base) : '',
+      image,
+      pictureCount: tile.querySelectorAll?.('img')?.length || 0,
+      description,
+      rawText,
       highBid: highBidText,
       highBidAmount: moneyFromText(highBidText),
       bidCount: bidCountText,
@@ -803,6 +866,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       lot,
       title,
       image: image ? absoluteUrl(image) : base.image || '',
+      description: pickFirstDescription(tile) || base.description || '',
       highBid: priceText ? `High Bid: ${priceText}` : base.highBid,
       highBidAmount: moneyFromText(priceText) || base.highBidAmount,
       bidCount,
@@ -2963,6 +3027,9 @@ ${cards}
       const timeLeft = raw.match(/((?:\d+\s+)?(?:days?|hours?|minutes?|seconds?)(?:\s+\d+\s+(?:days?|hours?|minutes?|seconds?))*\s+left)/i)?.[1] || '';
       const status = /\bclosed\b/i.test(raw) ? 'CLOSED' : '';
       const watched = /\bfollowing\b|\bwatched\b|\bunfollow\b/i.test(raw);
+      const description = pickFirstDescription(card)
+        || raw.match(/(?:Description|Features and Notes|Auctioneer'?s Note)\s*:?\s*([\s\S]*?)(?=\s+(?:Current Bid|High Bid|Minimum Bid|Starting Bid|Lot Won|\d+\s+Bids?\b|$))/i)?.[1]?.trim()
+        || '';
       const id = productIdFromAuctionNinjaUrl(url);
       const key = url || id || lot || title;
       if (!key || seen.has(key) || !title) return;
@@ -2981,7 +3048,7 @@ ${cards}
         currentBid: bid.amount,
         timeLeft,
         status,
-        description: '',
+        description,
         watched
       };
       const bidCount = raw.match(/(?:^|[^#:])\b(\d+)\s+Bids?\b(?!\s*Now)/i);
@@ -5145,6 +5212,8 @@ ${cards}
         timeLeft: '',
         nextBid,
         nextBidAmount: moneyFromText(nextBid),
+        description: chunk.match(/(?:Description|Features and Notes|Auctioneer'?s Note)\s*:?\s*([\s\S]*?)(?=\s+(?:High Bid|Current Bid|Price Realized|Bidding Closed|Sold For|Lot Won|Starting Bid|Opening Bid|\d+\s+Bids?\b|$))/i)?.[1]?.trim() || '',
+        rawText: chunk,
         userBidStatus: status,
         isWinning: status === 'Winning',
         isOutbid: status === 'Outbid',

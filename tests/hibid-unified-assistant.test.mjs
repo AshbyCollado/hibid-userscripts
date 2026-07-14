@@ -845,6 +845,31 @@ test('assistant parses HiBid current-bids account card text fallback', () => {
   ]);
 });
 
+test('assistant preserves description and image evidence from a HiBid DOM lot tile', () => {
+  const core = loadCore();
+  const tile = makeFakeNode({
+    text: 'Lot 677 | GROUP ELECTRONICS RACK Description: Cisco switch and Dell server',
+    selectors: {
+      'a.lot-number-lead[href]': makeFakeNode({
+        text: 'Lot 677',
+        attrs: { href: '/lot/677/group-electronics-rack' },
+      }),
+      '.lot-title, h2': makeFakeNode({ text: 'GROUP ELECTRONICS RACK' }),
+      '.lot-number-lead .text-primary': makeFakeNode({ text: '677' }),
+      '.lot-description': makeFakeNode({ text: 'Cisco switch and Dell server' }),
+      'img': makeFakeNode({ attrs: { src: '/images/lot-677.jpg' } }),
+    },
+  });
+  tile.id = 'lot-677';
+
+  const lot = core.extractLot(tile);
+
+  assert.equal(lot.lot, '677');
+  assert.equal(lot.description, 'Cisco switch and Dell server');
+  assert.equal(lot.image, 'https://hibid.com/images/lot-677.jpg');
+  assert.match(lot.rawText, /GROUP ELECTRONICS RACK/);
+});
+
 test('assistant parses HiBid current-bids card text without filter status contamination', () => {
   const core = loadCore();
   const tile = {
@@ -1377,6 +1402,12 @@ test('LLM auction brief includes the advanced resale coordinator prompt and full
   assert.match(brief, /Sold\/completed comps first, profit second, hunches last/);
   assert.match(brief, /auction all-in = bid x 1\.25/);
   assert.match(brief, /Use eBay sold\/completed listings first/);
+  assert.match(brief, /Parsing \/ Mandatory Analysis/);
+  assert.match(brief, /Mixed \/ Group Lot Rule .* Mandatory Component Extraction/);
+  assert.match(brief, /A generic group lot may not be marked Garbage until each named or visually identifiable component has been checked/);
+  assert.match(brief, /Mixed Lot \/ Component Review/);
+  assert.match(brief, /component_reviewed = yes/);
+  assert.match(brief, /number with extracted named components/);
   assert.match(brief, /sedan risk/i);
   assert.match(brief, /Factory sealed speaker/);
   assert.match(brief, /https:\/\/hibid\.com\/lot\/307763539\/4432i/);
@@ -2387,6 +2418,7 @@ Bid Now`,
     selectors: {
       'a[href*="/product/"]': lotLink,
       'img': image,
+      '.description': makeFakeNode({ text: 'Solid mahogany sideboard with original hardware.' }),
     },
   });
   const root = makeFakeNode({
@@ -2412,7 +2444,7 @@ Bid Now`,
       currentBid: 920,
       timeLeft: '3 minutes 40 seconds left',
       status: '',
-      description: '',
+      description: 'Solid mahogany sideboard with original hardware.',
       watched: false,
     },
   ]);

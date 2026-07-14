@@ -240,6 +240,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.38` refreshes GovDeals ready-state counts after hydration so the compact drawer does not stay at an early `Visible 0` scan.
 - Done: `v0.7.39` makes AJ Willner catalog exports API-first through `/api/items/search` pages before the old virtual-scroll fallback, trims repeated sale terms from API descriptions, and downloads the export if the browser blocks the clipboard after a completed scrape.
 - Done: `v0.7.40` relabels the AJ Willner module chip from `virtual list` to `api-first` so the UI matches the fast scraper path.
+- Done: `v0.7.41` adds a shared mandatory mixed/group-lot component review rule to every Copy LLM brief and preserves descriptions, image URLs, and raw text on DOM fallback records where the page exposes them.
 - Done: `v0.7.19` tightens GovDeals seller pages: `Search Results` counts, sellerName context, and possessive-title compact card parsing.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 
