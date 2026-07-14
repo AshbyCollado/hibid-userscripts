@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.19`.
+- Current version: `0.7.43`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -50,9 +50,9 @@ Mount without waiting for lot tiles on:
 - `https://hibid.com/livecatalog/*`
 - `https://hibid.com/lot/*`
 - `https://hibid.com/*/lot/*`
-- `https://hibid.com/account/watchlist?status=OUTBID`
-- `https://hibid.com/account/currentbids?status=WINNING`
-- `https://hibid.com/account/currentbids?status=OUTBID`
+- `https://hibid.com/account/watchlist*`, including state-prefixed `/newjersey/account/watchlist`
+- `https://hibid.com/account/currentbids?status=WINNING`, including state-prefixed routes
+- `https://hibid.com/account/currentbids?status=OUTBID`, including state-prefixed routes
 - `https://*.hibid.com/catalog/*`
 - `https://*.hibid.com/lot/*`
 - `https://*.hibid.com/account/watchlist?status=OUTBID`
@@ -242,6 +242,8 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.40` relabels the AJ Willner module chip from `virtual list` to `api-first` so the UI matches the fast scraper path.
 - Done: `v0.7.41` adds a shared mandatory mixed/group-lot component review rule to every Copy LLM brief and preserves descriptions, image URLs, and raw text on DOM fallback records where the page exposes them.
 - Done: `v0.7.42` recognizes state-prefixed HiBid account watchlist/current-bids routes such as `/newjersey/account/watchlist` and keeps them on the DOM-only account export path.
+- Done: `v0.7.43` makes the minimized launcher show the full `FlipperAddon by ALOS` name, widens it to 228px, and hides the close control until the drawer is expanded.
+- Verified in Waterfox on `v0.7.43`: representative HiBid, AJ Willner, eBay, Facebook, AuctionNinja, AAR, and GovDeals routes mount the expected module controls; the supplied `/livecatalog/752334/the-luxe-edit` target redirects to `/catalog/752334` because that auction is past, so it correctly presents catalog controls after the server redirect.
 - Done: `v0.7.19` tightens GovDeals seller pages: `Search Results` counts, sellerName context, and possessive-title compact card parsing.
 - Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
 

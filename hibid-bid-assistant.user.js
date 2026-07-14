@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.42
+// @version      0.7.43
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.42';
+  const SCRIPT_VERSION = '0.7.43';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -6594,7 +6594,7 @@ ${cards}
         <div class="hiba-shellbar">
           <button id="hibid-bid-minimize" type="button" class="hiba-launcher" title="Show assistant" aria-label="Show assistant">
             <span class="hiba-orb"></span>
-            <span class="hiba-title">${APP_SHORT_NAME}</span>
+            <span class="hiba-title">${APP_NAME}</span>
             ${hibaIcon('chevron')}
           </button>
           <button id="hibid-bid-close" type="button" class="hiba-icon-btn" title="Close assistant" aria-label="Close assistant">${hibaIcon('close')}</button>
@@ -6615,13 +6615,15 @@ ${cards}
       <style>
         #${PANEL_ID} { position:fixed; right:14px; bottom:14px; z-index:999999; display:flex; flex-direction:column; width:min(356px, calc(100vw - 24px)); max-height:calc(100vh - 28px); color:#f8fafc; font:13px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing:0; color-scheme:dark; }
         #${PANEL_ID}, #${PANEL_ID} * { box-sizing:border-box; }
-        #${PANEL_ID}.hiba-minimized { width:min(188px, calc(100vw - 24px)); }
+        #${PANEL_ID}.hiba-minimized { width:min(228px, calc(100vw - 24px)); }
+        #${PANEL_ID}.hiba-minimized #hibid-bid-close { display:none; }
         #${PANEL_ID} .hiba-drawer { display:flex; flex-direction:column; max-height:inherit; overflow:hidden; border:1px solid rgba(148,163,184,.24); border-radius:13px; background:#0b1020; box-shadow:0 16px 45px rgba(0,0,0,.36), 0 2px 10px rgba(15,23,42,.4); }
         #${PANEL_ID} .hiba-shellbar { display:flex; align-items:stretch; gap:6px; padding:7px; border-bottom:1px solid rgba(148,163,184,.14); background:rgba(15,23,42,.92); }
         #${PANEL_ID}.hiba-minimized .hiba-shellbar { border-bottom:0; }
         #${PANEL_ID} .hiba-launcher { flex:1; min-width:0; display:flex; align-items:center; gap:8px; color:#f8fafc; background:transparent; border:0; border-radius:9px; padding:6px 7px; cursor:pointer; text-align:left; }
         #${PANEL_ID} .hiba-launcher:hover { background:rgba(148,163,184,.12); }
         #${PANEL_ID} .hiba-title { min-width:0; font-weight:800; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        #${PANEL_ID}.hiba-minimized .hiba-title { overflow:visible; text-overflow:clip; }
         #${PANEL_ID} .hiba-kicker { color:#94a3b8; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
         #${PANEL_ID} .hiba-orb { width:9px; height:9px; border-radius:999px; background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.14); flex:0 0 auto; }
         #${PANEL_ID} .hiba-mode-pill, #${PANEL_ID} .hiba-chip { display:inline-flex; align-items:center; min-height:22px; border:1px solid rgba(148,163,184,.24); border-radius:999px; padding:2px 8px; color:#cbd5e1; background:rgba(15,23,42,.78); font-size:11px; font-weight:800; white-space:nowrap; }
@@ -6675,7 +6677,7 @@ ${cards}
         #${PANEL_ID} .hiba-status.eligible { color:#bbf7d0; background:rgba(22,101,52,.38); }
         #${PANEL_ID} .hiba-status.skip { color:#fecaca; background:rgba(127,29,29,.34); }
         #${PANEL_ID} .hiba-live-card { border-radius:10px; padding:9px; background:rgba(2,6,23,.5); border:1px solid rgba(148,163,184,.16); }
-        @media (max-width:520px) { #${PANEL_ID} { right:8px; bottom:8px; width:min(356px, calc(100vw - 16px)); } #${PANEL_ID}.hiba-minimized { width:min(188px, calc(100vw - 16px)); } #${PANEL_ID} .hiba-row { grid-template-columns:1fr; } #${PANEL_ID} .hiba-row-actions { grid-template-columns:1fr; } }
+        @media (max-width:520px) { #${PANEL_ID} { right:8px; bottom:8px; width:min(356px, calc(100vw - 16px)); } #${PANEL_ID}.hiba-minimized { width:min(228px, calc(100vw - 16px)); } #${PANEL_ID} .hiba-row { grid-template-columns:1fr; } #${PANEL_ID} .hiba-row-actions { grid-template-columns:1fr; } }
       </style>
     `;
   }

@@ -1293,6 +1293,9 @@ test('panel markup is active-mode only, scraper-first, and keeps debug controls 
 
   const catalog = core.buildPanelHtml({ mode: 'catalog', debugEnabled: false });
   assert.match(catalog, /FlipperAddon by ALOS/);
+  assert.match(catalog, /<span class="hiba-title">FlipperAddon by ALOS<\/span>/);
+  assert.match(catalog, /#flipperaddon-panel\.hiba-minimized #hibid-bid-close \{ display:none; \}/);
+  assert.match(catalog, /#flipperaddon-panel\.hiba-minimized \{ width:min\(228px/);
   assert.match(catalog, /id="hibid-catalog-copy-llm"/);
   assert.match(catalog, /id="hibid-catalog-copy-json"/);
   assert.match(catalog, /id="hibid-scraper-stop"/);
