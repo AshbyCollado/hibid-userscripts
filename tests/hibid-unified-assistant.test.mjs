@@ -103,7 +103,9 @@ test('assistant shared route resolver covers HiBid route families', () => {
     ['https://hibid.com/newjersey/lots/40196/computers-and-electronics', 'catalog'],
     ['https://seuyco.hibid.com/catalog/752334/the-luxe-edit', 'catalog'],
     ['https://hibid.com/account/watchlist?status=OUTBID', 'watchlist-outbid'],
+    ['https://hibid.com/newjersey/account/watchlist', 'watchlist'],
     ['https://hibid.com/account/currentbids?status=WINNING', 'currentbids-winning'],
+    ['https://hibid.com/newjersey/account/currentbids?status=WINNING', 'currentbids-winning'],
     ['https://hibid.com/account/currentbids?status=OUTBID', 'currentbids-outbid'],
   ];
 
@@ -114,7 +116,7 @@ test('assistant shared route resolver covers HiBid route families', () => {
     assert.equal(core.shouldInitOnLocation(new URL(href)), true, href);
   });
 
-  assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/watchlist')), false);
+  assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/watchlist')), true);
   assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/currentbids')), false);
   assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/currentbids?status=CLOSED')), false);
   assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/help')), false);
@@ -764,6 +766,7 @@ test('assistant supports HiBid winning and outbid current-bids exports only', ()
   const core = loadCore();
   const winning = core.resolveAssistantMode(new URL('https://hibid.com/account/currentbids?status=WINNING'));
   const outbid = core.resolveAssistantMode(new URL('https://hibid.com/account/currentbids?status=OUTBID'));
+  const stateWatchlist = core.resolveAssistantMode(new URL('https://hibid.com/newjersey/account/watchlist'));
 
   assert.equal(winning.mode, 'catalog');
   assert.equal(winning.source, 'hibid');
@@ -771,6 +774,10 @@ test('assistant supports HiBid winning and outbid current-bids exports only', ()
   assert.equal(outbid.mode, 'catalog');
   assert.equal(outbid.source, 'hibid');
   assert.equal(outbid.route.kind, 'currentbids-outbid');
+  assert.equal(stateWatchlist.mode, 'catalog');
+  assert.equal(stateWatchlist.source, 'hibid');
+  assert.equal(stateWatchlist.route.kind, 'watchlist');
+  assert.equal(core.isHibidAccountExportRoute(stateWatchlist.route), true);
 
   assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
     source: 'dom-fallback',
@@ -790,11 +797,14 @@ test('assistant supports HiBid winning and outbid current-bids exports only', ()
 
   const winningHtml = core.buildPanelHtml({ mode: 'catalog', route: winning.route, debugEnabled: false });
   const outbidHtml = core.buildPanelHtml({ mode: 'catalog', route: outbid.route, debugEnabled: false });
+  const watchlistHtml = core.buildPanelHtml({ mode: 'catalog', route: stateWatchlist.route, debugEnabled: false });
   assert.match(winningHtml, /Winning Bids Export/);
   assert.match(winningHtml, /class="hiba-chip neutral">winning</);
   assert.match(outbidHtml, /Outbid Bids Export/);
   assert.match(outbidHtml, /class="hiba-chip neutral">outbid</);
-  assert.doesNotMatch(`${winningHtml}${outbidHtml}`, /Prepare Bid|Snipe Now|Auto-confirm|Max plan/i);
+  assert.match(watchlistHtml, /Watchlist Export/);
+  assert.match(watchlistHtml, /class="hiba-chip neutral">watchlist</);
+  assert.doesNotMatch(`${winningHtml}${outbidHtml}${watchlistHtml}`, /Prepare Bid|Snipe Now|Auto-confirm|Max plan/i);
 });
 
 test('assistant parses HiBid current-bids account card text fallback', () => {

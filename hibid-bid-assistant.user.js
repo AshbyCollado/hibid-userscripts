@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.41
+// @version      0.7.42
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.41';
+  const SCRIPT_VERSION = '0.7.42';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1540,7 +1540,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function validateCatalogExportAgainstVisibleState(result, visibleState, route = {}) {
     const items = result?.items || result?.lots || [];
     if (!visibleState) return { ok: true };
-    if (isHibidCurrentBidsRoute(route)) return { ok: true };
+    if (isHibidAccountExportRoute(route)) return { ok: true };
     if (visibleState.noMatches && items.length) {
       return { ok: false, reason: 'visible-no-matches-with-exported-lots' };
     }
@@ -1571,6 +1571,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function isHibidCurrentBidsRoute(route = {}) {
     const kind = String(route?.kind || '').trim();
     return kind === 'currentbids-winning' || kind === 'currentbids-outbid';
+  }
+
+  function isHibidAccountExportRoute(route = {}) {
+    const kind = String(route?.kind || '').trim();
+    return isHibidCurrentBidsRoute(route) || kind === 'watchlist' || kind === 'watchlist-outbid';
   }
 
   function scraperResultRows(result) {
@@ -1723,7 +1728,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function validateCatalogExportAgainstRoute(result, route = {}) {
     const routeKind = String(route?.kind || '').trim();
-    if (routeKind && !['catalog', 'watchlist-outbid', 'currentbids-winning', 'currentbids-outbid', 'lot'].includes(routeKind)) {
+    if (routeKind && !['catalog', 'watchlist', 'watchlist-outbid', 'currentbids-winning', 'currentbids-outbid', 'lot'].includes(routeKind)) {
       return { ok: false, reason: 'catalog-route-mismatch' };
     }
     const routeSource = String(route?.source || '').trim().toLowerCase();
@@ -1751,8 +1756,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       if (looksAjWillner || looksOtherAuctionSource) return { ok: false, reason: 'catalog-source-mismatch' };
     }
 
-    if (isHibidCurrentBidsRoute(route)) {
-      const countValidation = validateScraperResultCount(result, 'currentbids-count-exceeds-expected');
+    if (isHibidAccountExportRoute(route)) {
+      const countValidation = validateScraperResultCount(result, `${routeKind}-count-exceeds-expected`);
       if (!countValidation.ok) return countValidation;
       return { ok: true };
     }
@@ -2091,6 +2096,7 @@ ${cards}
     extractHibidApolloLots,
     extractHibidStateFromDocument,
     isHibidCurrentBidsRoute,
+    isHibidAccountExportRoute,
     validateCatalogExportAgainstVisibleState,
     validateScraperExportAgainstRoute,
     isCatalogScrapeComplete,
@@ -2579,6 +2585,7 @@ ${cards}
 
     const activeRoute = resolveAssistantMode(typeof location !== 'undefined' ? location : undefined).route || {};
     const currentBidsRoute = isHibidCurrentBidsRoute(activeRoute);
+    const accountExportRoute = isHibidAccountExportRoute(activeRoute);
     const visibleState = extractHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null);
     if (visibleState.noMatches) {
       debug('catalog scrape stopped at visible no-match state', visibleState);
@@ -2594,7 +2601,7 @@ ${cards}
       };
     }
 
-    if (!currentBidsRoute) {
+    if (!accountExportRoute) {
       const stateResult = await scrapeHibidStatePages(status, shouldStop).catch(err => {
         debug('catalog hibid-state scrape failed', { error: err.message });
         return null;
@@ -2618,39 +2625,40 @@ ${cards}
         });
       }
     } else {
-      debug('catalog hibid-state skipped for current-bids account route', activeRoute);
+      debug('catalog hibid-state skipped for account export route', activeRoute);
     }
 
     const itemsMap = new Map();
     const collect = () => {
-      const visibleLots = currentBidsRoute
+      const visibleLots = accountExportRoute
         ? uniqueLots(getLotTiles().map(extractCurrentBidsLot))
         : uniqueLots(getLotTiles().map(extractLot));
       visibleLots.forEach(lot => {
-        const key = currentBidsRoute ? lot.lot : (lot.id || lot.url || lot.lot);
+        const key = accountExportRoute ? lot.lot : (lot.id || lot.url || lot.lot);
         if (key && lot.title) itemsMap.set(String(key), lot);
       });
-      if (!currentBidsRoute || !itemsMap.size) mergeCatalogLots(itemsMap, extractTextLots());
+      if (!accountExportRoute || !itemsMap.size) mergeCatalogLots(itemsMap, extractTextLots());
       return itemsMap.size;
     };
 
     await loadLots(status, shouldStop, collect);
     collect();
     const items = Array.from(itemsMap.values());
-    const expectedTotal = currentBidsRoute ? items.length : (visibleState.expectedTotal ?? getExpectedLotTotal());
+    const expectedTotal = accountExportRoute ? items.length : (visibleState.expectedTotal ?? getExpectedLotTotal());
     debug('catalog scrape finished from dom fallback', {
       count: items.length,
       expectedTotal,
       stopped: shouldStop(),
-      currentBidsRoute
+      currentBidsRoute,
+      accountExportRoute
     });
     return {
-      source: currentBidsRoute ? 'hibid-currentbids-dom' : 'dom-fallback',
+      source: currentBidsRoute ? 'hibid-currentbids-dom' : (accountExportRoute ? 'hibid-watchlist-dom' : 'dom-fallback'),
       items,
       lots: items,
       expectedTotal,
       stopped: !!shouldStop(),
-      incomplete: currentBidsRoute ? false : Boolean(expectedTotal && items.length < expectedTotal),
+      incomplete: accountExportRoute ? false : Boolean(expectedTotal && items.length < expectedTotal),
       visibleState
     };
   }
@@ -4968,25 +4976,28 @@ ${cards}
       return { supported: false, kind: 'unsupported', host, reason: 'unsupported host' };
     }
 
-    if (parts[0] === 'account' && parts[1] === 'watchlist') {
+    const accountIndex = parts[0] === 'account' ? 0 : (parts[1] === 'account' ? 1 : -1);
+    const statePrefix = accountIndex === 1 ? parts[0] : '';
+
+    if (accountIndex >= 0 && parts[accountIndex + 1] === 'watchlist') {
       return /status=OUTBID/i.test(search)
-        ? { supported: true, kind: 'watchlist-outbid', host, reason: 'outbid watchlist route' }
-        : { supported: false, kind: 'watchlist', host, reason: 'watchlist is not OUTBID' };
+        ? { supported: true, kind: 'watchlist-outbid', host, statePrefix, reason: 'outbid watchlist route' }
+        : { supported: true, kind: 'watchlist', host, statePrefix, reason: 'watchlist route' };
     }
 
-    if (parts[0] === 'account' && parts[1] === 'currentbids') {
+    if (accountIndex >= 0 && parts[accountIndex + 1] === 'currentbids') {
       const status = String(
         loc.searchParams?.get?.('status')
         || search.match(/[?&]status=([^&]+)/i)?.[1]
         || ''
       ).trim().toUpperCase();
       if (status === 'WINNING') {
-        return { supported: true, kind: 'currentbids-winning', host, status, reason: 'winning current bids route' };
+        return { supported: true, kind: 'currentbids-winning', host, statePrefix, status, reason: 'winning current bids route' };
       }
       if (status === 'OUTBID') {
-        return { supported: true, kind: 'currentbids-outbid', host, status, reason: 'outbid current bids route' };
+        return { supported: true, kind: 'currentbids-outbid', host, statePrefix, status, reason: 'outbid current bids route' };
       }
-      return { supported: false, kind: 'currentbids', host, status, reason: 'current bids status is not WINNING or OUTBID' };
+      return { supported: false, kind: 'currentbids', host, statePrefix, status, reason: 'current bids status is not WINNING or OUTBID' };
     }
 
     if (parts[0] === 'livecatalog') {
@@ -6415,12 +6426,13 @@ ${cards}
     const isAjWillner = isAjWillnerRoute(route);
     const isWinningBids = route?.kind === 'currentbids-winning';
     const isOutbidBids = route?.kind === 'currentbids-outbid';
-    const isAccountBids = isWinningBids || isOutbidBids || route?.kind === 'watchlist-outbid';
+    const isWatchlist = route?.kind === 'watchlist' || route?.kind === 'watchlist-outbid';
+    const isAccountBids = isWinningBids || isOutbidBids || isWatchlist;
     const kicker = isAjWillner ? 'AJ Willner' : (isAccountBids ? 'HiBid account' : 'HiBid catalog');
     const title = isAjWillner
       ? 'AJ Willner Catalog Export'
-      : (isWinningBids ? 'Winning Bids Export' : (isOutbidBids ? 'Outbid Bids Export' : 'Catalog Export'));
-    const chip = isAjWillner ? 'api-first' : (isWinningBids ? 'winning' : (isOutbidBids ? 'outbid' : 'scraper'));
+      : (isWinningBids ? 'Winning Bids Export' : (isOutbidBids ? 'Outbid Bids Export' : (isWatchlist ? 'Watchlist Export' : 'Catalog Export')));
+    const chip = isAjWillner ? 'api-first' : (isWinningBids ? 'winning' : (isOutbidBids ? 'outbid' : (isWatchlist ? 'watchlist' : 'scraper')));
     const llmHelp = isAjWillner
       ? 'Copy the resale-analysis prompt plus scraped AJ Willner listing JSON for a desktop LLM.'
       : (isAccountBids
