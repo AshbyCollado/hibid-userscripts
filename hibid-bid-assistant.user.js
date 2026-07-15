@@ -2025,6 +2025,13 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return match ? parseSignedDollarAmount(match[1]) : null;
   }
 
+  function moneyBeforeLabel(value, label) {
+    const text = String(value || '');
+    const amountPattern = '((?:\\()?\\s*[-+\\u2212]?\\s*\\$\\s*[-+\\u2212]?\\s*[\\d,]+(?:\\.\\d{1,2})?\\s*\\)?)';
+    const match = text.match(new RegExp(amountPattern + '\\s*' + label, 'i'));
+    return match ? parseSignedDollarAmount(match[1]) : null;
+  }
+
   function parseSignedDollarAmount(value) {
     const match = String(value || '').match(/(\()?\s*([-+\u2212]?)\s*\$\s*([-+\u2212]?)\s*([\d,]+(?:\.\d{1,2})?)\s*(\))?/);
     if (!match) return null;
@@ -2156,10 +2163,51 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return rows.concat(cards).filter(chunk => marker.test(chunk));
   }
 
-  const EBAY_DATE_PATTERN = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+\\d{1,2},\\s+\\d{4}|\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\/\\d{1,2}\\/\\d{4}';
+  function htmlElementByClassToken(html, classToken) {
+    const escaped = String(classToken || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return extractBalancedHtmlElements(html)
+      .filter(element => new RegExp('class=["\'][^"\']*\\b' + escaped + '\\b[^"\']*["\']', 'i').test(element.openingTag))
+      .sort((left, right) => (left.end - left.start) - (right.end - right.start))[0]?.html || '';
+  }
+
+  function ebayHrefQueryParam(value, key) {
+    const escaped = String(key || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const encoded = firstMatch(value, [new RegExp('(?:[?&]|&amp;)' + escaped + '=([^&#"\']+)', 'i')]);
+    if (!encoded) return '';
+    try {
+      return decodeURIComponent(decodeHtml(encoded).replace(/\+/g, ' '));
+    } catch (_) {
+      return decodeHtml(encoded);
+    }
+  }
+
+  const EBAY_MONTH_PATTERN = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)';
+  const EBAY_DATE_PATTERN = EBAY_MONTH_PATTERN + '\\s+\\d{1,2}(?:,\\s+\\d{4})?|\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\/\\d{1,2}\\/\\d{4}';
+
+  function normalizeEbayDateText(value, referenceDate = new Date()) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(text) || /,\s*\d{4}$/.test(text)) {
+      return text.replace(/,\s*/, ', ');
+    }
+    const match = text.match(new RegExp('^(' + EBAY_MONTH_PATTERN + ')\\s+(\\d{1,2})$', 'i'));
+    if (!match) return text;
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthIndex = months.findIndex(month => match[1].slice(0, 3).toLowerCase() === month.toLowerCase());
+    if (monthIndex < 0) return text;
+    const day = Number(match[2]);
+    let year = referenceDate.getFullYear();
+    const candidate = new Date(year, monthIndex, day);
+    if (candidate.getTime() > referenceDate.getTime() + 31 * 24 * 60 * 60 * 1000) year -= 1;
+    return months[monthIndex] + ' ' + day + ', ' + year;
+  }
 
   function ebayDateAfterLabel(value, label) {
-    return firstMatch(value, [new RegExp(label + '\\s*:?\\s*(' + EBAY_DATE_PATTERN + ')', 'i')]);
+    return normalizeEbayDateText(firstMatch(value, [new RegExp(label + '\\s*:?\\s*(' + EBAY_DATE_PATTERN + ')', 'i')]));
+  }
+
+  function firstEbayDate(value) {
+    return normalizeEbayDateText(firstMatch(value, [new RegExp('\\b(' + EBAY_DATE_PATTERN + ')\\b', 'i')]));
   }
 
   function stableLifecycleId(parts) {
@@ -2226,7 +2274,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const text = String(html || '');
     const balancedCards = extractBalancedHtmlElements(text)
       .filter(element => /\bdata-order-id=["']/i.test(element.openingTag)
-        || /(?:data-testid|class)=["'][^"']*\border[-_\s]?card\b[^"']*["']/i.test(element.openingTag))
+        || /(?:data-testid|class)=["'][^"']*(?:\border[-_\s]?card\b|\bsold-itemcard\b)[^"']*["']/i.test(element.openingTag))
       .filter(element => extractEbayItemAnchors(element.html).length);
     const chunks = balancedCards.length
       ? balancedCards.map(element => element.html)
@@ -2236,10 +2284,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
     chunks.forEach(chunk => {
       const orderText = stripHtml(chunk);
+      const statusText = orderText.replace(/\bbuyer\s+paid\b/gi, '');
       const orderId = firstMatch(chunk, [
         /data-order-id=["']([^"']+)["']/i,
-        /Order\s*(?:number|ID)\s*:?\s*([\d-]{8,})/i,
-      ]);
+        /Order\s*(?:(?:number|ID)\s*)?:\s*([\d-]{8,})/i,
+      ]) || ebayHrefQueryParam(chunk, 'orderid');
       if (!orderId) return;
 
       const anchorByItem = new Map();
@@ -2281,11 +2330,12 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
           item_url: anchor.itemUrl,
           sale_date: ebayDateAfterLabel(orderText, '(?:Sold(?: on)?|Sale date)'),
           quantity: Number.isFinite(quantity) ? quantity : 1,
-          item_subtotal: moneyAfterLabel(lineText, '(?:Item subtotal|Item total|Subtotal)'),
-          shipping_charged: moneyAfterLabel(orderText, '(?:Shipping charged|Shipping)'),
+          item_subtotal: moneyAfterLabel(lineText, '(?:Item subtotal|Item total|Subtotal)')
+            ?? moneyBeforeLabel(lineText, '(?:Item subtotal|Item total|Subtotal)'),
+          shipping_charged: moneyAfterLabel(orderText, '(?:Shipping charged|Shipping)(?:\\s*\\(buyer paid)?'),
           sales_tax: moneyAfterLabel(orderText, '(?:Sales tax|Tax)'),
           order_total: moneyAfterLabel(orderText, 'Order total') ?? moneyAfterLabel(orderText, 'Total'),
-          status: firstMatch(orderText, [/\b(Paid|Shipped|Delivered|Cancelled|Refunded|Awaiting payment)\b/i]) || 'Sold',
+          status: firstMatch(statusText, [/\b(Paid|Shipped|Delivered|Canceled|Cancelled|Refunded|Awaiting payment)\b/i]) || 'Sold',
         };
         if (!title) {
           record.identity_stable = true;
@@ -2301,27 +2351,61 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function parseEbayTransactionsHtml(html) {
-    const chunks = ebayLifecycleChunks(html, /transaction(?:\s|_|-)?id|(?:gross|net|refund|amount)\s*:?\s*[-+\u2212]?\s*\$|final value fee|payout/i);
+    const transactionCards = extractBalancedHtmlElements(html)
+      .filter(element => /class=["'][^"']*\btransaction-row-v2\b[^"']*["']/i.test(element.openingTag));
+    const chunks = transactionCards.length
+      ? transactionCards.map(element => element.html)
+      : ebayLifecycleChunks(html, /transaction(?:\s|_|-)?id|(?:gross|net|refund|amount)\s*:?\s*[-+\u2212]?\s*\$|final value fee|payout/i);
     const records = [];
     const seen = new Set();
 
     chunks.forEach(chunk => {
       const rowText = stripHtml(chunk);
+      const dateText = stripHtml(htmlElementByClassToken(chunk, 'transactions-date'));
+      const descriptionText = stripHtml(htmlElementByClassToken(chunk, 'transaction--desc'));
+      const amountValue = parseSignedDollarAmount(stripHtml(htmlElementByClassToken(chunk, 'transaction--amount')));
+      const displayedFee = parseSignedDollarAmount(stripHtml(htmlElementByClassToken(chunk, 'transaction--fees')));
+      const netValue = parseSignedDollarAmount(stripHtml(htmlElementByClassToken(chunk, 'transaction--net')));
+      const queryType = ebayHrefQueryParam(chunk, 'type').toUpperCase();
+      const queryIdentity = ebayHrefQueryParam(chunk, 'transactionId')
+        || ebayHrefQueryParam(chunk, 'uuid')
+        || ebayHrefQueryParam(chunk, 'chargeId')
+        || ebayHrefQueryParam(chunk, 'cancelId');
       const explicitTransactionId = firstMatch(chunk, [
         /data-transaction-id=["']([^"']+)["']/i,
         /Transaction\s*ID\s*:?\s*([\w-]{4,})/i,
-      ]);
-      const orderId = firstMatch(rowText, [/Order\s*(?:number|ID)?\s*:?\s*([\d-]{8,})/i]);
+      ]) || queryIdentity;
+      const orderId = ebayHrefQueryParam(chunk, 'orderid')
+        || firstMatch(rowText, [/Order\s*(?:number|ID)?\s*:?\s*([\d-]{8,})/i]);
       const itemId = firstMatch(`${chunk} ${rowText}`, [/\/itm\/(\d+)/i, /Item\s*(?:ID)?\s*:?\s*(\d{9,15})/i]);
-      const transactionType = firstMatch(rowText, [/\b(Sale|Refund|Shipping label|Payout|Adjustment|Fee|Dispute)\b/i]);
+      let transactionType = '';
+      if (/refund/i.test(descriptionText) || queryType === 'REFUND') transactionType = 'Refund';
+      else if (queryType === 'ORDER') transactionType = 'Sale';
+      else if (queryType === 'SHIPPING_LABEL') transactionType = 'Shipping label';
+      else if (queryType === 'OTHER_FEE') transactionType = 'Fee';
+      else if (queryType === 'PAYOUT') transactionType = 'Payout';
+      else if (queryType === 'CHARGE') transactionType = 'Adjustment';
+      else transactionType = firstMatch(rowText, [/\b(Sale|Refund|Shipping label|Payout|Adjustment|Fee|Dispute)\b/i]);
       if (!transactionType && !orderId && !itemId) return;
-      const transactionDate = ebayDateAfterLabel(rowText, '(?:Transaction date|Date)')
-        || firstMatch(rowText, [new RegExp('\\b(' + EBAY_DATE_PATTERN + ')\\b', 'i')]);
-      const grossAmount = moneyAfterLabel(rowText, '(?:Gross|Amount)');
-      const platformFee = moneyAfterLabel(rowText, '(?:Final value fee|Platform fee|eBay fee)');
-      const promotedFee = moneyAfterLabel(rowText, '(?:Promoted listing fee|Ad fee)');
-      const refundAmount = moneyAfterLabel(rowText, '(?:Refund amount|Refund)');
-      const netAmount = moneyAfterLabel(rowText, '(?:Net amount|Net)');
+      const transactionDate = firstEbayDate(dateText)
+        || ebayDateAfterLabel(rowText, '(?:Transaction date|Date)')
+        || firstEbayDate(rowText);
+      const grossAmount = transactionType === 'Sale' && Number.isFinite(amountValue)
+        ? amountValue
+        : moneyAfterLabel(rowText, '(?:Gross|Amount)');
+      const labeledFee = moneyAfterLabel(rowText, '(?:Final value fee|Platform fee|eBay fee)');
+      const platformFee = Number.isFinite(displayedFee)
+        ? -displayedFee
+        : (Number.isFinite(labeledFee) ? -labeledFee : null);
+      const labeledPromotedFee = moneyAfterLabel(rowText, '(?:Promoted listing fee|Ad fee)');
+      const promotedFee = Number.isFinite(labeledPromotedFee) ? -labeledPromotedFee : null;
+      const refundAmount = /refund/i.test(transactionType) && Number.isFinite(amountValue)
+        ? Math.abs(amountValue)
+        : Math.abs(moneyAfterLabel(rowText, '(?:Refund amount|Refund)') || 0) || null;
+      const shippingLabelAmount = transactionType === 'Shipping label' && Number.isFinite(amountValue)
+        ? Math.abs(amountValue)
+        : null;
+      const netAmount = Number.isFinite(netValue) ? netValue : moneyAfterLabel(rowText, '(?:Net amount|Net)');
       const payoutId = firstMatch(rowText, [
         /Payout\s*ID\s*:?\s*([\w-]+)/i,
         /\bPayout\s+(?!date\b)(?=[\w-]*[\d-])([A-Z0-9][\w-]{3,})/i,
@@ -2338,6 +2422,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         platformFee,
         promotedFee,
         refundAmount,
+        shippingLabelAmount,
         netAmount,
       ];
       const transactionId = explicitTransactionId
@@ -2355,6 +2440,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         platform_fee: platformFee,
         promoted_fee: promotedFee,
         refund_amount: refundAmount,
+        shipping_label_amount: shippingLabelAmount,
         net_amount: netAmount,
         payout_id: payoutId,
         payout_date: ebayDateAfterLabel(rowText, '(?:Payout date|Paid)'),
@@ -2363,6 +2449,9 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       if (!explicitTransactionId) {
         record.transaction_id_source = hasStableComposite ? 'derived' : 'review';
         record.identity_stable = hasStableComposite;
+      } else {
+        record.transaction_id_source = queryIdentity ? 'ebay-query' : 'explicit';
+        record.identity_stable = true;
       }
       if (!hasStableComposite && !explicitTransactionId) {
         record.review_required = true;
@@ -2412,9 +2501,16 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function expectedEbayLifecycleCount(html, pageKind = '') {
     const text = stripHtml(html);
+    const cardPattern = pageKind === 'transactions'
+      ? /class=["'][^"']*\btransaction-row-v2\b[^"']*["']/gi
+      : (pageKind === 'sold'
+        ? /class=["'][^"']*\bsold-itemcard\b[^"']*["']/gi
+        : /\bqa-id=["']active-item-\d+["']/gi);
+    const cardCount = (String(html || '').match(cardPattern) || []).length;
+    if (pageKind === 'transactions' && cardCount) return cardCount;
     const labels = pageKind === 'transactions'
       ? ['Transactions', 'Results']
-      : (pageKind === 'sold' ? ['Sold', 'Orders', 'Results'] : ['Manage active listings', 'Active', 'Results']);
+      : (pageKind === 'sold' ? ['Sold', 'Orders', 'Results', 'All'] : ['Manage active listings', 'Active', 'Results', 'All']);
     for (const label of labels) {
       const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const count = parsePlainInteger(firstMatch(text, [
@@ -2429,6 +2525,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     ]));
     if (Number.isFinite(rangeTotal)) return rangeTotal;
 
+    if (cardCount) return cardCount;
+
     const emptyPattern = pageKind === 'transactions'
       ? /\b(?:no transactions|0 transactions|0 results)\b/i
       : (pageKind === 'sold'
@@ -2436,6 +2534,15 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         : /\b(?:no active listings|no listings(?: found)?|0 active listings|0 results)\b/i);
     if (emptyPattern.test(text)) return 0;
     return null;
+  }
+
+  function ebayLifecycleHasNextPage(html) {
+    return Array.from(String(html || '').matchAll(/<(?:button|a)\b[^>]*>/gi)).some(match => {
+      const tag = match[0];
+      const isNext = /(?:class=["'][^"']*\bpagination__next\b|aria-label=["'][^"']*\bnext\s+page\b)/i.test(tag);
+      const disabled = /\bdisabled(?:\s|=|>)/i.test(tag) || /aria-disabled=["']true["']/i.test(tag);
+      return isNext && !disabled;
+    });
   }
 
   function buildEbayLifecycleEnvelope(records, meta = {}) {
@@ -2447,11 +2554,13 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const reviewRequiredCount = rows.filter(row => row?.review_required || row?.identity_stable === false).length;
     const countKnown = expectedCount !== null;
     const countMatches = countKnown && parsedCount === expectedCount;
-    const complete = countMatches && reviewRequiredCount === 0;
+    const paginationPending = Boolean(meta.hasNextPage);
+    const complete = countMatches && reviewRequiredCount === 0 && !paginationPending;
     let reason = '';
     if (!countKnown) reason = `Expected count/pagination is unknown; parsed ${parsedCount} record(s).`;
     else if (!countMatches) reason = `Expected ${expectedCount} record(s), parsed ${parsedCount}.`;
     else if (reviewRequiredCount) reason = `${reviewRequiredCount} record(s) require identity review.`;
+    else if (paginationPending) reason = 'More eBay result pages are available; open the next page and sync it before treating this route as complete.';
     const envelope = {
       schema_version: EBAY_LIFECYCLE_SCHEMA,
       export_id: `ebay-${pageKind}-${safeTimestamp(new Date(generatedAt))}-${parsedCount}`,
@@ -2464,6 +2573,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         count_known: countKnown,
         parsed_count: parsedCount,
         review_required_count: reviewRequiredCount,
+        has_next_page: paginationPending,
         complete,
         reason,
       },
@@ -6661,6 +6771,7 @@ ${cards}
       pageUrl: location.href,
       generatedAt: new Date().toISOString(),
       expectedCount: expectedEbayLifecycleCount(html, pageKind),
+      hasNextPage: ebayLifecycleHasNextPage(html),
     });
     const validation = validateFlipTrackerExportAgainstRoute(envelope, route);
     if (!validation.ok) throw new Error('Current eBay lifecycle route does not match parsed records.');
@@ -6678,6 +6789,7 @@ ${cards}
         pageUrl,
         generatedAt: new Date().toISOString(),
         expectedCount: expectedEbayLifecycleCount(html, pageKind),
+        hasNextPage: ebayLifecycleHasNextPage(html),
       });
     } catch (error) {
       const envelope = buildEbayLifecycleEnvelope([], { pageKind, pageUrl, generatedAt: new Date().toISOString() });
