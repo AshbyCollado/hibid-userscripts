@@ -1243,6 +1243,7 @@ test('assistant panel exposes scraper-first catalog controls and gates debug con
     'Copy FlipperAddon Debug Log',
     'Clear FlipperAddon Debug Log',
     'Copy HiBid Lots Now',
+    'Set FlipTracker Sync Token',
   ]);
 });
 
@@ -1257,6 +1258,7 @@ test('assistant is branded as FlipperAddon by ALOS with FlipperAddon menu comman
     'Copy FlipperAddon Debug Log',
     'Clear FlipperAddon Debug Log',
     'Copy HiBid Lots Now',
+    'Set FlipTracker Sync Token',
   ]);
 });
 
@@ -1329,6 +1331,9 @@ test('assistant mode resolver activates only the current page module', () => {
     ['https://hibid.com/account/currentbids?status=OUTBID', 'catalog'],
     ['https://hibid.com/livecatalog/752334/the-luxe-edit', 'live'],
     ['https://www.ebay.com/sh/lst/active', 'fliptracker'],
+    ['https://www.ebay.com/mys/active', 'fliptracker'],
+    ['https://www.ebay.com/mys/sold', 'fliptracker'],
+    ['https://www.ebay.com/mes/transactionlist?sh=true', 'fliptracker'],
     ['https://www.facebook.com/marketplace/you/selling', 'fliptracker'],
     ['https://hibid.com/help', 'unsupported'],
   ];
@@ -1339,7 +1344,7 @@ test('assistant mode resolver activates only the current page module', () => {
 
   assert.deepEqual(plain(core.resolveAssistantMode(new URL('https://www.ebay.com/sh/lst/active')).route), {
     supported: true,
-    kind: 'fliptracker-ebay',
+    kind: 'fliptracker-ebay-active',
     source: 'ebay',
     host: 'www.ebay.com',
     reason: 'eBay active listing export route',

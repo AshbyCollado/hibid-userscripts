@@ -57,6 +57,9 @@ test('parses active eBay listing cards for FlipTracker export', () => {
       views: 1,
       watchers: 0,
       clicks: null,
+      customLabel: '',
+      quantityTotal: null,
+      quantityAvailable: null,
     },
   ]);
 });
@@ -77,8 +80,8 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
             <td><input type="checkbox"></td>
             <td><a href="/sh/lst?mode=ReviseItem&amp;itemId=336677465197&amp;ReturnURL=https%3A%2F%2Fwww.ebay.com%2Fsh%2Flst%2Factive">Edit</a></td>
             <td><a href="/itm/336677465197">eBay | Bids: 0. Show Bid History. Listing Rev-A-Shelf RV-DM17 KIT 5 Door Mounting Kit 278234 Pull Out Cabinet</a></td>
-            <td><span>$13.05</span><span>$25.00</span></td>
-            <td>1</td>
+            <td><span>Promoted listing fee $13.05</span><span>Current price $25.00</span></td>
+            <td>Custom label: RV-DM17 Total quantity: 4 Available quantity: 1</td>
             <td><span>12 views</span><span>2 watchers</span></td>
           </tr>
         </tbody>
@@ -95,7 +98,7 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
       source: 'eBay',
       itemId: '336677465197',
       title: 'Rev-A-Shelf RV-DM17 KIT 5 Door Mounting Kit 278234 Pull Out Cabinet',
-      price: 13.05,
+      price: 25,
       url: 'https://www.ebay.com/itm/336677465197',
       status: 'Active',
       listedDateText: '',
@@ -103,6 +106,9 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
       views: 12,
       watchers: 2,
       clicks: null,
+      customLabel: 'RV-DM17',
+      quantityTotal: 4,
+      quantityAvailable: 1,
     },
   ]);
 });
@@ -130,6 +136,20 @@ test('panel markup exposes modern drawer shell and stable controls', () => {
   assert.doesNotMatch(html, /id="hibid-bid-results"/);
   assert.doesNotMatch(html, /id="fliptracker-listing-results"/);
   assert.match(html, /id="flipperaddon-toast"/);
+});
+
+test('eBay lifecycle panel exposes page and all-page sync actions', () => {
+  const core = loadCore();
+  const html = core.buildPanelHtml({
+    mode: 'fliptracker',
+    debugEnabled: false,
+    route: { kind: 'fliptracker-ebay-sold', source: 'ebay' },
+  });
+  assert.match(html, /eBay Sold Orders/);
+  assert.match(html, /id="fliptracker-lifecycle-sync-page"/);
+  assert.match(html, /id="fliptracker-lifecycle-sync-all"/);
+  assert.match(html, /id="fliptracker-lifecycle-connect"/);
+  assert.match(html, /Copy JSON/);
 });
 
 test('parses Facebook Marketplace manager listing cards for FlipTracker export', () => {
@@ -215,7 +235,7 @@ test('blocks FlipTracker exports when current route source does not match rows',
     source: 'fliptracker-dom',
     context: { source: 'eBay', pageKind: 'fliptracker' },
     listings: [{ source: 'eBay', title: 'Active eBay listing', price: 40 }],
-  }, 'fliptracker', { kind: 'fliptracker-ebay', source: 'ebay' })), {
+  }, 'fliptracker', { kind: 'fliptracker-ebay-active', source: 'ebay' })), {
     ok: true,
   });
 
@@ -223,7 +243,7 @@ test('blocks FlipTracker exports when current route source does not match rows',
     source: 'fliptracker-dom',
     context: { source: 'Facebook Marketplace', pageKind: 'fliptracker' },
     listings: [{ source: 'Facebook Marketplace', title: 'Marketplace listing', price: 40 }],
-  }, 'fliptracker', { kind: 'fliptracker-ebay', source: 'ebay' })), {
+  }, 'fliptracker', { kind: 'fliptracker-ebay-active', source: 'ebay' })), {
     ok: false,
     reason: 'fliptracker-source-mismatch',
   });
