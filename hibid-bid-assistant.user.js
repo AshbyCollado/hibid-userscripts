@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.43
+// @version      0.7.44
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.43';
+  const SCRIPT_VERSION = '0.7.44';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -4098,7 +4098,9 @@ ${cards}
 
   function govDealsCloseTime(raw) {
     const text = cleanGovDealsText(raw);
-    return text.match(/\bEnds?\s*:?\s*([\s\S]*?)(?=\s+(?:Item Location|Location|Distance|Shipping|Local Pickup|Pickup|Condition|Used\/See|Seller:|$))/i)?.[1]?.trim()
+    const compact = text.match(/\b(?:Closes?|Ends?)\s*:?\s*((?:(?:\d+\s*[DHMS]\s*)+)(?:\([^)]*\))?)/i)?.[1]?.trim();
+    if (compact) return cleanGovDealsText(compact);
+    return text.match(/\b(?:Closes?|Ends?)\s*:?\s*([\s\S]*?)(?=\s+(?:Item Location|Location|Distance|Shipping|Local Pickup|Pickup|Condition|Used\/See|Seller:|Bid Increment|Sales\/Lot Type|$))/i)?.[1]?.trim()
       || govDealsCompactListingFields(text).closeTime
       || '';
   }
@@ -4108,8 +4110,8 @@ ${cards}
     const lineLocation = govDealsLines({ textContent: raw })
       .map(line => govDealsCompactPlaceMatch(line)?.[1]?.trim() || '')
       .find(Boolean);
-    return text.match(/\bItem Location\s*:?\s*([\s\S]*?)(?=\s+(?:Shipping|Local Pickup|Pickup|Condition|Used\/See|Distance|Bids?|Current Bid|OFFERED FOR AUCTION|Description|$))/i)?.[1]?.trim()
-      || text.match(/\bLocation\s*:?\s*([\s\S]*?)(?=\s+(?:Distance|Shipping|Local Pickup|Pickup|Condition|Used\/See|Bids?|Current Bid|OFFERED FOR AUCTION|Description|$))/i)?.[1]?.trim()
+    return text.match(/\bItem Location\s*:?\s*([\s\S]*?)(?=\s+(?:Account Type|Inspection|Payment|Removal|Special Instructions|Seller Information|Shipping|Local Pickup|Pickup|Condition|Used\/See|Distance|Bids?|Current Bid|OFFERED FOR AUCTION|Description|$))/i)?.[1]?.trim()
+      || text.match(/\bLocation\s*:?\s*([\s\S]*?)(?=\s+(?:Subject to|Account Type|Inspection|Payment|Removal|Special Instructions|Distance|Shipping|Local Pickup|Pickup|Condition|Used\/See|Bids?|Current Bid|OFFERED FOR AUCTION|Description|$))/i)?.[1]?.trim()
       || lineLocation
       || govDealsCompactListingFields(text).location
       || '';
@@ -4122,17 +4124,20 @@ ${cards}
   function govDealsShippingText(raw) {
     const text = cleanGovDealsText(raw);
     if (/Shipping\s+Available/i.test(text)) return 'Shipping Available';
-    return text.match(/\bShipping\s*:?\s*([\s\S]*?)(?=\s+(?:Pickup|Condition|Current Bid|Bids?|Ends?|Location|$))/i)?.[1]?.trim() || '';
+    return text.match(/\bShipping(?:\s+(?:Options?|Method))?\s*:\s*([\s\S]*?)(?=\s+(?:Pickup|Condition|Current Bid|Bids?|Ends?|Location|Payment|$))/i)?.[1]?.trim() || '';
   }
 
   function govDealsPickupText(raw) {
     const text = cleanGovDealsText(raw);
     if (/\bLocal Pickup Only\b/i.test(text)) return 'Local Pickup Only';
+    const pickupOnly = text.match(/\bPick\s*Up\s+ONLY\b[\s\S]*$/i)
+      || text.match(/\bPickup\s+only\b[\s\S]*$/i);
+    if (pickupOnly) return cleanGovDealsText(pickupOnly[0]);
     const lines = govDealsLines({ textContent: raw });
     const local = lines.find(line => /^Local Pickup Only$/i.test(line));
     if (local) return local;
-    const pickup = lines.find(line => /\bpickup\b/i.test(line) && !/\b(?:Item Location|Asset ID|Current Bid|Lot Number)\b/i.test(line));
-    return pickup || cleanGovDealsText(raw).match(/\b(Pickup\s+[\s\S]*?)(?=\s+(?:Payment|Inspection|Item Location|Current Bid|Bids?)|$)/i)?.[1]?.trim() || '';
+    const pickup = lines.find(line => /\b(?:Pickup|Pick\s*Up)\s+(?:Only|Location|Hours?)\b/i.test(line) && !/\b(?:Item Location|Asset ID|Current Bid|Lot Number)\b/i.test(line));
+    return pickup || cleanGovDealsText(raw).match(/\b((?:Pickup|Pick\s*Up)\s+(?:Only|Location|Hours?)\s*[\s\S]*?)(?=\s+(?:Payment|Inspection|Item Location|Current Bid|Bids?|Seller Information)|$)/i)?.[1]?.trim() || '';
   }
 
   function govDealsConditionText(raw) {
@@ -4362,6 +4367,100 @@ ${cards}
     return specs;
   }
 
+  function govDealsAssetContentRoot(root) {
+    const main = root?.querySelector?.('#main-content') || root;
+    return main?.querySelector?.('.col-md-10.mx-auto')
+      || main?.querySelector?.('.long-description')?.parentElement
+      || main?.querySelector?.('.description-table')?.parentElement
+      || null;
+  }
+
+  function govDealsAssetLabeledValue(root, label) {
+    const wanted = String(label || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!wanted || !root?.querySelectorAll) return '';
+    const rows = Array.from(root.querySelectorAll('#seller_information .row, .description-table tr, .description-body, tr'));
+    for (const row of rows) {
+      const labelNode = row.querySelector?.('h5, .td-att-label, th, dt');
+      const rowLabel = cleanGovDealsText(textOf(labelNode)).replace(/:$/, '').toLowerCase();
+      if (rowLabel !== wanted) continue;
+      const valueNode = row.querySelector?.('.td-att-value, td:nth-child(2), .col-6:last-child, dd, p');
+      const value = cleanGovDealsText(textOf(valueNode));
+      if (value && value.toLowerCase() !== wanted) return value;
+    }
+    return '';
+  }
+
+  function extractGovDealsSpecsFromDom(root) {
+    const specs = {};
+    const allowed = new Set(['Manufacturer', 'Model', 'Condition', 'Make', 'Year', 'VIN', 'Odometer', 'Serial Number']);
+    const rows = Array.from(root?.querySelectorAll?.('#table-id-0 tr, .description-table table tr') || []);
+    for (const row of rows) {
+      const label = cleanGovDealsText(textOf(row.querySelector?.('.td-att-label, th, td:first-child'))).replace(/:$/, '');
+      if (!allowed.has(label)) continue;
+      const value = cleanGovDealsText(textOf(row.querySelector?.('.td-att-value, td:nth-child(2), td:last-child')));
+      if (value) specs[label] = value;
+    }
+    return specs;
+  }
+
+  function govDealsAssetSeller(root, base) {
+    const cleanSeller = value => cleanGovDealsText(value).replace(/\s*\[\s*view seller(?:'s)? other assets\s*\]\s*$/i, '').trim();
+    const labeled = cleanSeller(govDealsAssetLabeledValue(root, 'Seller'));
+    const links = Array.from(root?.querySelectorAll?.('#seller_information a[href]') || []);
+    const seller = labeled || cleanSeller(textOf(links.find(link => cleanSeller(textOf(link)))));
+    const sellerLink = links.find(link => cleanSeller(textOf(link)).toLowerCase() === seller.toLowerCase());
+    return {
+      seller,
+      sellerUrl: sellerLink && labeled && cleanSeller(textOf(sellerLink)).toLowerCase() === labeled.toLowerCase() && controlHref(sellerLink)
+        ? absoluteUrl(controlHref(sellerLink), base)
+        : ''
+    };
+  }
+
+  function govDealsAssetImage(root, base, title = '') {
+    const selectors = [
+      'img.lg-object.lg-image',
+      '.lg-object.lg-image',
+      'img[alt]',
+      'img'
+    ];
+    const candidates = [];
+    let fallback = '';
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(image => {
+        if (!candidates.includes(image)) candidates.push(image);
+      });
+    });
+    const wantedTitle = cleanGovDealsText(title).toLowerCase();
+    for (const image of candidates) {
+      const src = image?.getAttribute?.('data-src')
+        || image?.getAttribute?.('data-original')
+        || image?.getAttribute?.('src')
+        || image?.src
+        || '';
+      const alt = cleanGovDealsText(image?.getAttribute?.('alt') || image?.alt || '');
+      const meta = `${src} ${alt} ${image?.getAttribute?.('class') || ''}`;
+      if (!src || /spacer|blank|pixel|logo|brand|favicon|icon|placeholder|allsurplus|govdeals/i.test(meta)) continue;
+      if (!fallback) fallback = absoluteUrl(src, base);
+      if (/webassets\.lqdt1\.com\/assets\/photos|\/assets\/photos\//i.test(src)
+        || (wantedTitle && alt.toLowerCase().includes(wantedTitle.slice(0, 24)))) {
+        return absoluteUrl(src, base);
+      }
+    }
+    return fallback;
+  }
+
+  function govDealsAssetScopedRawText(root, contentRoot) {
+    if (!contentRoot || contentRoot === root) return '';
+    const headerSelectors = ['h1.product-title', '#currentBid', '.numberofbids', '.sales-type', '.product-location'];
+    const header = headerSelectors
+      .map(selector => rawTextOf(root?.querySelector?.(selector)))
+      .filter(Boolean)
+      .join(' ');
+    const content = rawTextOf(contentRoot);
+    return cleanGovDealsText(`${header} ${content}`);
+  }
+
   function govDealsAssetDescription(raw) {
     const offered = cleanGovDealsText(raw).match(/\b(OFFERED FOR AUCTION:\s*[\s\S]*?)(?=\s+(?:Pickup|Payment|Inspection|Item Location|Current Bid|Bids?|$))/i)?.[1]?.trim();
     if (offered) return offered;
@@ -4369,16 +4468,36 @@ ${cards}
   }
 
   function extractGovDealsAssetDetail(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
-    const rawText = textOf(root?.body || root?.documentElement || root);
+    const contentRoot = govDealsAssetContentRoot(root);
+    const scopedRawText = govDealsAssetScopedRawText(root, contentRoot);
+    const rawText = scopedRawText || textOf(root?.body || root?.documentElement || root);
     const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.govdeals.com/');
     const ids = loc ? getGovDealsAssetParts(loc) : govDealsAssetPartsFromUrl(base);
-    const title = pickFirstText(root, ['h1', '[data-testid*="title"]', '.asset-title'])
+    const title = pickFirstText(root, ['h1.product-title', 'h1', '[data-testid*="title"]', '.asset-title'])
       || String(root?.title || '').replace(/\s*\|\s*GovDeals.*$/i, '').trim()
       || '';
-    const currentBid = govDealsCurrentBid(rawText);
-    const bidCount = govDealsBidCount(rawText, true);
+    const headerText = [
+      rawTextOf(root?.querySelector?.('#currentBid')),
+      rawTextOf(root?.querySelector?.('.numberofbids')),
+      rawTextOf(root?.querySelector?.('.sales-type')),
+      rawTextOf(root?.querySelector?.('.product-location'))
+    ].filter(Boolean).join(' ');
+    const parseText = cleanGovDealsText(`${headerText} ${rawText}`);
+    const currentBid = govDealsCurrentBid(parseText);
+    const bidCount = govDealsBidCount(parseText, true);
     const condition = govDealsConditionText(rawText);
-    const sellerLink = root?.querySelector?.('a[href*="/en/"]:not([href*="/asset/"])');
+    const sellerInfo = govDealsAssetSeller(root, base);
+    const longDescription = root?.querySelector?.('.long-description');
+    const description = longDescription
+      ? cleanGovDealsText(rawTextOf(longDescription))
+      : govDealsAssetDescription(rawText);
+    const itemLocation = govDealsAssetLabeledValue(root, 'Item Location')
+      || textOf(root?.querySelector?.('#lnkAssetDetailLocation'))
+      || govDealsLocation(rawText);
+    const pickupSource = longDescription ? description : (rawText || description);
+    const specsFromDom = extractGovDealsSpecsFromDom(root);
+    const specs = Object.keys(specsFromDom).length ? specsFromDom : extractGovDealsSpecs(rawText);
+    const image = govDealsAssetImage(root, base, title);
     return {
       source: 'GovDeals',
       pageKind: 'govdeals-asset',
@@ -4387,23 +4506,23 @@ ${cards}
       lotNumber: govDealsLotNumber(rawText),
       title,
       url: base,
-      image: pickFirstImage(root, base),
-      seller: textOf(sellerLink),
-      sellerUrl: controlHref(sellerLink) ? absoluteUrl(controlHref(sellerLink), base) : '',
+      image,
+      seller: sellerInfo.seller,
+      sellerUrl: sellerInfo.sellerUrl,
       category: '',
       status: condition,
       currentBid,
       currentBidAmount: moneyFromText(currentBid),
       bidCount,
       bidCountNumber: numberFromText(bidCount),
-      closeTime: govDealsCloseTime(rawText),
-      location: govDealsLocation(rawText),
+      closeTime: govDealsCloseTime(headerText || rawText),
+      location: itemLocation,
       distanceText: govDealsDistanceText(rawText),
-      shippingText: govDealsShippingText(rawText),
-      pickupText: govDealsPickupText(rawText),
+      shippingText: govDealsShippingText(pickupSource),
+      pickupText: govDealsPickupText(pickupSource),
       condition,
-      specs: extractGovDealsSpecs(rawText),
-      description: govDealsAssetDescription(rawText),
+      specs,
+      description,
       rawText
     };
   }

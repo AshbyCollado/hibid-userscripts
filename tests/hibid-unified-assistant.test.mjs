@@ -78,6 +78,71 @@ function makeFakeNode({ text = '', attrs = {}, selectors = {} } = {}) {
   };
 }
 
+function makeGovDealsAssetDomFixture({
+  title,
+  assetId,
+  accountId,
+  currentBid,
+  bidCount,
+  closeTime,
+  seller,
+  sellerUrl,
+  location,
+  image,
+  specs,
+  description,
+}) {
+  const valueNode = (value) => makeFakeNode({ text: value });
+  const specRows = Object.entries(specs).map(([label, value]) => makeFakeNode({
+    selectors: {
+      '.td-att-label': valueNode(label),
+      '.td-att-value': valueNode(value),
+    },
+  }));
+  const sellerRow = makeFakeNode({
+    selectors: {
+      h5: valueNode('Seller:'),
+      p: valueNode(seller),
+    },
+  });
+  const locationRow = makeFakeNode({
+    selectors: {
+      h5: valueNode('Item Location:'),
+      p: valueNode(location),
+    },
+  });
+  const sellerLink = makeFakeNode({ text: seller, attrs: { href: sellerUrl } });
+  const longDescription = makeFakeNode({ text: description });
+  const content = makeFakeNode({
+    text: `Description ${Object.entries(specs).map(([label, value]) => `${label} ${value}`).join(' ')} Lot Number ${accountId}-${assetId} ${description}`,
+  });
+  const main = makeFakeNode({
+    selectors: {
+      '.col-md-10.mx-auto': content,
+    },
+  });
+  const root = makeFakeNode({
+    selectors: {
+      '#main-content': main,
+      'h1.product-title': makeFakeNode({ text: title }),
+      '#currentBid': makeFakeNode({ text: `${currentBid} USD` }),
+      '.numberofbids': makeFakeNode({ text: `${bidCount} Bids Closes: ${closeTime}` }),
+      '.sales-type': makeFakeNode({ text: 'Sales/Lot Type: Online Auction' }),
+      '.product-location': makeFakeNode({ text: `Location: ${location}` }),
+      '#seller_information a[href]': sellerLink,
+      '#seller_information .row': [sellerRow, locationRow],
+      '#table-id-0 tr, .description-table table tr': specRows,
+      '.long-description': longDescription,
+      '#lnkAssetDetailLocation': makeFakeNode({ text: location }),
+      'img.lg-object.lg-image': makeFakeNode({
+        attrs: { src: image, alt: title, class: 'lg-object lg-image' },
+      }),
+    },
+  });
+  root.title = `${title} | GovDeals`;
+  return root;
+}
+
 test('assistant initializes on state-prefixed HiBid lots pages', () => {
   const core = loadCore();
   const stateLots = new URL('https://hibid.com/newjersey/lots/40196/computers-and-electronics');
@@ -2224,6 +2289,75 @@ Pickup only by appointment.`,
     description: 'OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer.',
     rawText: 'Trailer with 6 Current Designs Crosswind Kayaks Asset ID 43147 Lot Number 7484-43147 Manufacturer Current Designs Model Crosswind Condition Used/See Description Current Bid $1,250.00 Bids 9 Item Location: Piscataway, New Jersey 08854 OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer. Pickup only by appointment.',
   });
+});
+
+test('assistant scopes GovDeals asset exports to the item DOM for both observed shapes', () => {
+  const core = loadCore();
+  const printer = core.extractGovDealsAssetDetail(
+    makeGovDealsAssetDomFixture({
+      title: 'HP LaserJet Enterprise 600 m601n Laser Printer CE989A',
+      assetId: '72',
+      accountId: '6332',
+      currentBid: '$30.00',
+      bidCount: 1,
+      closeTime: '14h42m(Jul 15, 2026 03:30 PM EDT)',
+      seller: 'South Toms River Borough, NJ',
+      sellerUrl: 'http://boroughofsouthtomsriver.com',
+      location: '19 Double Trouble Rd, Toms River, New Jersey, 08757, USA',
+      image: 'https://webassets.lqdt1.com/assets/photos/6332/6332_72.jpg',
+      specs: { Condition: 'Used/See Description' },
+      description: 'HP LaserJet Enterprise 600 m601n Laser Printer CE989A Monochrome Black Printer Operational / Recently Removed from Use Sold As Is / Where Is',
+    }),
+    new URL('https://www.govdeals.com/en/asset/72/6332'),
+  );
+  const surfaces = core.extractGovDealsAssetDetail(
+    makeGovDealsAssetDomFixture({
+      title: "Lot of 3 Microsoft Surface Book 3's",
+      assetId: '6816',
+      accountId: '7529',
+      currentBid: '$321.00',
+      bidCount: 13,
+      closeTime: '15h54m(Jul 15, 2026 04:35 PM EDT)',
+      seller: 'Rutgers University, NJ',
+      sellerUrl: 'https://www.rutgers.edu',
+      location: '84 Warehouse Rd, Edison, New Jersey, 08817, USA',
+      image: 'https://webassets.lqdt1.com/assets/photos/7529/7529_6816.jpg',
+      specs: { Manufacturer: 'Microsoft', Model: '1867', Condition: 'Used/See Description' },
+      description: "Up for Auction is a Lot of 3 Used Microsoft Surface Book 3's. Does not come with wall charger. Pick Up ONLY - Rutgers does not pack or ship items. Pickup Location: 76 Warehouse Rd, Piscataway, NJ 08854",
+    }),
+    new URL('https://www.govdeals.com/en/asset/6816/7529'),
+  );
+
+  assert.deepEqual(plain({
+    title: printer.title,
+    image: printer.image,
+    seller: printer.seller,
+    sellerUrl: printer.sellerUrl,
+    location: printer.location,
+    closeTime: printer.closeTime,
+    description: printer.description,
+  }), {
+    title: 'HP LaserJet Enterprise 600 m601n Laser Printer CE989A',
+    image: 'https://webassets.lqdt1.com/assets/photos/6332/6332_72.jpg',
+    seller: 'South Toms River Borough, NJ',
+    sellerUrl: 'http://boroughofsouthtomsriver.com/',
+    location: '19 Double Trouble Rd, Toms River, New Jersey, 08757, USA',
+    closeTime: '14h42m(Jul 15, 2026 03:30 PM EDT)',
+    description: 'HP LaserJet Enterprise 600 m601n Laser Printer CE989A Monochrome Black Printer Operational / Recently Removed from Use Sold As Is / Where Is',
+  });
+  assert.equal(surfaces.image, 'https://webassets.lqdt1.com/assets/photos/7529/7529_6816.jpg');
+  assert.equal(surfaces.seller, 'Rutgers University, NJ');
+  assert.equal(surfaces.location, '84 Warehouse Rd, Edison, New Jersey, 08817, USA');
+  assert.equal(surfaces.closeTime, '15h54m(Jul 15, 2026 04:35 PM EDT)');
+  assert.equal(surfaces.specs.Manufacturer, 'Microsoft');
+  assert.equal(surfaces.specs.Model, '1867');
+  assert.match(surfaces.description, /does not come with wall charger/i);
+  assert.match(surfaces.pickupText, /76 Warehouse Rd, Piscataway/i);
+  assert.doesNotMatch(surfaces.image, /logo|allsurplus/i);
+  assert.doesNotMatch(surfaces.seller, /about us/i);
+  assert.doesNotMatch(surfaces.closeTime, /sign in|bid/i);
+  assert.doesNotMatch(surfaces.location, /Account Type|Inspection/i);
+  assert.doesNotMatch(surfaces.specs.Model, /reinstall|operating system/i);
 });
 
 test('assistant builds GovDeals distance-aware briefs and renders scraper-only UI', () => {
