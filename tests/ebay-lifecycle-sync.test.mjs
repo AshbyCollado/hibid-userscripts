@@ -117,6 +117,33 @@ test('parses nested multi-item sold orders into one stable line per item', () =>
   ]);
 });
 
+test('parses the current My eBay sold card shape with yearless dates and All counts', () => {
+  const core = loadCore();
+  const html = `
+    <main><button>All (1)</button>
+      <div class="sold-itemcard">
+        <div class="meui-item-tile sold-item--content" qa-id="sold-item--content-111111111111">
+          <a href="/itm/111111111111">Current sold card fixture</a>
+          <a href="/sh/ord/details?orderid=13-11111-22222&amp;sh=true">Order: 13-11111-22222</a>
+          <div>Sold Jul 14</div><div>$120.00 Subtotal</div>
+          <div>+ Shipping (buyer paid $12.00)</div><div>Canceled</div>
+          <div>Buyer: Redacted Fixture Person</div>
+        </div>
+      </div>
+    </main>`;
+
+  const rows = core.parseEbaySoldOrdersHtml(html);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].order_id, '13-11111-22222');
+  assert.equal(rows[0].item_id, '111111111111');
+  assert.match(rows[0].sale_date, /^Jul 14, \d{4}$/);
+  assert.equal(rows[0].item_subtotal, 120);
+  assert.equal(rows[0].shipping_charged, 12);
+  assert.equal(rows[0].status, 'Canceled');
+  assert.equal(core.expectedEbayLifecycleCount(html, 'sold'), 1);
+  assert.doesNotMatch(JSON.stringify(rows), /Redacted Fixture Person/i);
+});
+
 test('recursively sanitizes and asserts every lifecycle export value before posting', async () => {
   let postedPayload = null;
   const core = loadCore({
@@ -150,7 +177,7 @@ test('recursively sanitizes and asserts every lifecycle export value before post
   assert.doesNotMatch(JSON.stringify(postedPayload), /REDACTED BUYER|buyer-redacted|212-555|Example Street/i);
 });
 
-test('preserves signed eBay transaction amounts', () => {
+test('normalizes eBay fee charges and preserves signed net amounts', () => {
   const core = loadCore();
   const html = `
     <table><tbody><tr data-transaction-id="TXN-777">
@@ -167,13 +194,16 @@ test('preserves signed eBay transaction amounts', () => {
     transaction_type: 'Sale',
     transaction_date: 'Jul 13, 2026',
     gross_amount: 147.67,
-    platform_fee: -18.45,
-    promoted_fee: -2.4,
+    platform_fee: 18.45,
+    promoted_fee: 2.4,
     refund_amount: null,
+    shipping_label_amount: null,
     net_amount: 126.82,
     payout_id: 'PAY-91',
     payout_date: 'Jul 14, 2026',
     status: 'Paid',
+    transaction_id_source: 'explicit',
+    identity_stable: true,
   }]);
 
   const refund = core.parseEbayTransactionsHtml(`
@@ -181,8 +211,60 @@ test('preserves signed eBay transaction amounts', () => {
       <td>Transaction date Jul 14, 2026</td><td>Order 12-34567-89012</td><td>Refund</td>
       <td>Refund amount \u2212$25.00</td><td>Net -$25.00</td><td>Reversed</td>
     </tr></table>`)[0];
-  assert.equal(refund.refund_amount, -25);
+  assert.equal(refund.refund_amount, 25);
   assert.equal(refund.net_amount, -25);
+});
+
+test('parses current My eBay transaction cards with stable query identities and shipping labels', () => {
+  const core = loadCore();
+  const html = `
+    <main>
+      <div class="transaction-row-v2 transaction-border"><div class="transaction--content-wrapper">
+        <div class="transactions-date">Jul 14, 2026\n10:00 AM</div>
+        <div class="transaction--image"></div>
+        <div class="transaction--desc"><a href="/sh/ord/details?orderid=13-11111-22222&amp;sh=true">Order</a></div>
+        <div class="transaction--amount">$120.00</div><div class="transaction--fees">-$15.00</div>
+        <div class="transaction--net">$105.00\nAvailable $105.00</div><div class="transaction--running-total"></div>
+        <div class="transaction--details"><a href="/mes/transactiondetails?type=ORDER&amp;uuid=UUID-ORDER-1">Details</a></div>
+      </div></div>
+      <div class="transaction-row-v2 transaction-border"><div class="transaction--content-wrapper">
+        <div class="transactions-date">Jul 14, 2026\n11:00 AM</div>
+        <div class="transaction--image"></div>
+        <div class="transaction--desc">Shipping label <a href="/sh/ord/details?orderid=13-11111-22222&amp;sh=true">Order</a></div>
+        <div class="transaction--amount">-$12.00</div><div class="transaction--fees">-</div>
+        <div class="transaction--net">-$12.00\nAvailable $93.00</div><div class="transaction--running-total"></div>
+        <div class="transaction--details"><a href="/mes/transactiondetails?type=SHIPPING_LABEL&amp;transactionId=TX-LABEL-1&amp;uuid=UUID-LABEL-1">Details</a></div>
+      </div></div>
+    </main>`;
+
+  const rows = core.parseEbayTransactionsHtml(html);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(plain(rows.map((row) => ({
+    transaction_id: row.transaction_id,
+    order_id: row.order_id,
+    transaction_type: row.transaction_type,
+    gross_amount: row.gross_amount,
+    platform_fee: row.platform_fee,
+    shipping_label_amount: row.shipping_label_amount,
+    net_amount: row.net_amount,
+    identity_stable: row.identity_stable,
+  }))), [
+    {
+      transaction_id: 'UUID-ORDER-1', order_id: '13-11111-22222', transaction_type: 'Sale',
+      gross_amount: 120, platform_fee: 15, shipping_label_amount: null, net_amount: 105, identity_stable: true,
+    },
+    {
+      transaction_id: 'TX-LABEL-1', order_id: '13-11111-22222', transaction_type: 'Shipping label',
+      gross_amount: null, platform_fee: null, shipping_label_amount: 12, net_amount: -12, identity_stable: true,
+    },
+  ]);
+  assert.equal(core.expectedEbayLifecycleCount(html, 'transactions'), 2);
+  const paged = core.buildEbayLifecycleEnvelope(rows, {
+    pageKind: 'transactions', pageUrl: 'https://www.ebay.com/mes/transactionlist', expectedCount: 2, hasNextPage: true,
+  });
+  assert.equal(paged.completeness.complete, false);
+  assert.equal(paged.completeness.has_next_page, true);
+  assert.match(paged.completeness.reason, /next page/i);
 });
 
 test('derives stable transaction IDs without row position and flags unstable rows for review', () => {
@@ -262,6 +344,7 @@ test('represents unknown counts as incomplete and supports complete zero-result 
   assert.equal(unknown.page_url, 'https://www.ebay.com/mys/active');
 
   assert.equal(core.expectedEbayLifecycleCount('<h1>Manage active listings (0)</h1>', 'active'), 0);
+  assert.equal(core.expectedEbayLifecycleCount('<button>All (19)</button>', 'active'), 19);
   assert.equal(core.expectedEbayLifecycleCount('<main>No transactions found</main>', 'transactions'), 0);
   assert.equal(core.expectedEbayLifecycleCount('<div>Active 1 view</div>', 'active'), null);
   const zero = core.buildEbayLifecycleEnvelope([], {

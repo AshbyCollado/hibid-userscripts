@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.43`.
+- Current version: `0.7.44`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -21,9 +21,9 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Delivery: post sanitized JSON to the token-authenticated loopback bridge at `127.0.0.1:8468`; download the same JSON when the bridge is unavailable.
 - Truth ownership: FlipperAddon extracts page facts only. Flip Tracker owns matching/reconciliation. Gemini may rank sanitized inventory candidates but cannot invent prices or auto-link records.
 - Release gate: dedicated route/parser/privacy tests plus live authenticated verification on `/mys/active`, `/mys/sold`, and `/mes/transactionlist?sh=true` before the userscript version is merged to `main`.
-- Implementation status (2026-07-15): dedicated collectors, completeness checks, recursive PII sanitization, stable lifecycle identities, token-authenticated bridge delivery, download fallback, and guided `Sync All eBay` recovery are implemented on the branch.
-- Automated evidence: `npm test` passes `98/98`; `node --check hibid-bid-assistant.user.js` and `git diff --check` pass. The version intentionally remains `0.7.43` until authenticated live proof succeeds on all three routes.
-- Current release gate: the available in-app eBay session is signed out and Chrome is not running. Do not claim the collectors live-verified or bump the version until the signed-in browser pass records parsed/expected counts without buyer PII.
+- Implementation status (2026-07-15): dedicated collectors, completeness checks, recursive PII sanitization, stable lifecycle identities, token-authenticated bridge delivery, download fallback, and guided `Sync All eBay` recovery are implemented and live-verified on the branch.
+- Automated evidence: `npm test` passes `100/100`; `node --check hibid-bid-assistant.user.js` and `git diff --check` pass.
+- Authenticated release evidence: Active parsed `19/19`, Sold parsed `5/5`, and Transactions parsed `15/15`; each envelope was complete, identities were unique, and recursive unsafe-field checks found zero buyer PII fields. The live loopback bridge accepted all three envelopes and marked changed-timestamp replays as duplicates.
 
 ## Module Map
 
@@ -216,7 +216,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done on branch for FT-014: parse active listings, multi-line sold orders, signed transactions/refunds/fees, quantities, IDs, dates, URLs, and completeness metadata with stable replay identities.
 - Done on branch for FT-014: sanitize buyer names, usernames, email, phone, address, recipient, contact, and message fields recursively before export.
 - Done on branch for FT-014: add `Sync This Page`, `Sync All eBay`, token connection, loopback POST, offline JSON download, busy-state cleanup, cancellation, and guided incomplete-page follow-up.
-- Pending release gate for FT-014: authenticated live count/route proof on all three eBay pages, then bump from `0.7.43` and merge only after branch review.
+- Passed release gate for FT-014: authenticated live count/route proof succeeded on all three eBay pages; version `0.7.44` is ready for branch review before merging to `main`.
 - Done: rename active script/UI/menu/debug prefix to FlipperAddon by ALOS.
 - Done: keep hosted raw update/download URL unchanged.
 - Done: add active page module resolver.
