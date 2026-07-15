@@ -12,6 +12,19 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
 
+## Active Goal: eBay Lifecycle Sync
+
+- Tracking: GitHub issue `#1`; Flip Tracker integration is `AshbyCollado/marketplace-command-center#43`.
+- Branch: `codex/ebay-lifecycle-sync`.
+- Contract: `fliptracker.ebay.lifecycle.v1` carries active listings, sold order lines, and seller transactions with completeness metadata.
+- Privacy: never export buyer names, usernames, email addresses, shipping addresses, or messages.
+- Delivery: post sanitized JSON to the token-authenticated loopback bridge at `127.0.0.1:8468`; download the same JSON when the bridge is unavailable.
+- Truth ownership: FlipperAddon extracts page facts only. Flip Tracker owns matching/reconciliation. Gemini may rank sanitized inventory candidates but cannot invent prices or auto-link records.
+- Release gate: dedicated route/parser/privacy tests plus live authenticated verification on `/mys/active`, `/mys/sold`, and `/mes/transactionlist?sh=true` before the userscript version is merged to `main`.
+- Implementation status (2026-07-15): dedicated collectors, completeness checks, recursive PII sanitization, stable lifecycle identities, token-authenticated bridge delivery, download fallback, and guided `Sync All eBay` recovery are implemented on the branch.
+- Automated evidence: `npm test` passes `98/98`; `node --check hibid-bid-assistant.user.js` and `git diff --check` pass. The version intentionally remains `0.7.43` until authenticated live proof succeeds on all three routes.
+- Current release gate: the available in-app eBay session is signed out and Chrome is not running. Do not claim the collectors live-verified or bump the version until the signed-in browser pass records parsed/expected counts without buyer PII.
+
 ## Module Map
 
 - `catalog`: HiBid catalog/category/lot/OUTBID watchlist and AJ Willner auction pages.
@@ -217,6 +230,11 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 ## Issue Tracker
 
+- Done on branch for FT-014: resolve only `/mys/active`, `/mys/sold`, and `/mes/transactionlist?sh=true` as lifecycle routes instead of mounting on generic `/mys/*` pages.
+- Done on branch for FT-014: parse active listings, multi-line sold orders, signed transactions/refunds/fees, quantities, IDs, dates, URLs, and completeness metadata with stable replay identities.
+- Done on branch for FT-014: sanitize buyer names, usernames, email, phone, address, recipient, contact, and message fields recursively before export.
+- Done on branch for FT-014: add `Sync This Page`, `Sync All eBay`, token connection, loopback POST, offline JSON download, busy-state cleanup, cancellation, and guided incomplete-page follow-up.
+- Pending release gate for FT-014: authenticated live count/route proof on all three eBay pages, then bump from `0.7.43` and merge only after branch review.
 - Done: rename active script/UI/menu/debug prefix to FlipperAddon by ALOS.
 - Done: keep hosted raw update/download URL unchanged.
 - Done: add active page module resolver.
@@ -271,6 +289,11 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - `node --check .\hibid-bid-assistant.user.js`
 - `node --check .\hibid-lot-catalog-scraper.user.js`
 - `npm test`
+- FT-014 authenticated eBay lifecycle checks:
+  - `/mys/active`: parsed listing count matches the visible page count; custom label, price, quantity, traffic, URL, and listing ID are preserved.
+  - `/mys/sold`: every order line is unique by order-line identity; multi-item orders stay separate; no buyer PII exists in the envelope.
+  - `/mes/transactionlist?sh=true`: signed fees/refunds/net values and stable transaction IDs parse; incomplete identities are review-only.
+  - `Sync All eBay`: the local bridge accepts complete pages, rejected/background-blocked pages trigger guided follow-up/download, and the drawer always leaves busy state.
 - Waterfox manual checks:
   - Confirm only the current hosted FlipperAddon script is enabled.
   - Open `https://hibid.com/newjersey/lots/40196/computers-and-electronics`.
