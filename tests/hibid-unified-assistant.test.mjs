@@ -705,6 +705,21 @@ test('assistant accepts HiBid lots pages whose filtered Apollo key is eventItemI
   assert.equal(result.items.length, 15);
 });
 
+test('assistant bounds filtered HiBid fallback work and preserves the visible target', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.getHibidScrapeLimits(14)), {
+    expectedTotal: 14,
+    maxDurationMs: 25000,
+    maxSteps: 500,
+  });
+  assert.deepEqual(plain(core.getHibidScrapeLimits(null, { maxDurationMs: 3200, maxSteps: 12 })), {
+    expectedTotal: null,
+    maxDurationMs: 3200,
+    maxSteps: 12,
+  });
+});
+
 test('assistant ignores hidden HiBid empty-state templates when visible filtered lots exist', () => {
   const core = loadCore();
   const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&miles=50');

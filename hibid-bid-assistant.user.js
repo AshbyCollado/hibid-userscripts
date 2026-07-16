@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.46
+// @version      0.7.47
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.46';
+  const SCRIPT_VERSION = '0.7.47';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -69,6 +69,11 @@
     'Copy HiBid Lots Now'
   ];
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const HIBID_STATE_FETCH_TIMEOUT_MS = 6500;
+  const HIBID_STATE_SCRAPE_MAX_MS = 15000;
+  const HIBID_STATE_MAX_PAGES = 24;
+  const HIBID_DOM_SCRAPE_MAX_MS = 90000;
+  const HIBID_DOM_SCRAPE_MAX_STEPS = 500;
   const DEBUG_PREFIX = '[FlipperAddon]';
   const AUCTION_RESALE_COORDINATOR_PROMPT = `You are an auction resale analysis coordinator.
 
@@ -1388,6 +1393,22 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return parseHibidStateText(script?.textContent || '');
   }
 
+  function getHibidScrapeLimits(expectedTotal = null, options = {}) {
+    const total = Number(expectedTotal);
+    const hasExpectedTotal = Number.isFinite(total) && total > 0;
+    const maxDurationMs = Number.isFinite(Number(options.maxDurationMs))
+      ? Number(options.maxDurationMs)
+      : (hasExpectedTotal && total <= 50 ? 25000 : HIBID_DOM_SCRAPE_MAX_MS);
+    const maxSteps = Number.isFinite(Number(options.maxSteps))
+      ? Number(options.maxSteps)
+      : HIBID_DOM_SCRAPE_MAX_STEPS;
+    return {
+      expectedTotal: hasExpectedTotal ? total : null,
+      maxDurationMs: Math.max(1000, maxDurationMs),
+      maxSteps: Math.max(1, Math.floor(maxSteps))
+    };
+  }
+
   function mergeCatalogLots(target, lots) {
     lots.forEach(lot => {
       const key = lot?.id || lot?.url || lot?.lot;
@@ -1406,19 +1427,35 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') return null;
     const href = catalogPageUrl(pageNumber, baseHref);
     debug('hibid-state fetch page start', { pageNumber, href });
-    const response = await fetch(href, {
-      credentials: 'same-origin',
-      cache: 'no-cache'
-    });
-    if (!response.ok) {
-      debug('hibid-state fetch page failed', { pageNumber, href, status: response.status });
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller
+      ? setTimeout(() => controller.abort(), HIBID_STATE_FETCH_TIMEOUT_MS)
+      : null;
+    try {
+      const response = await fetch(href, {
+        credentials: 'same-origin',
+        cache: 'no-cache',
+        ...(controller ? { signal: controller.signal } : {})
+      });
+      if (!response.ok) {
+        debug('hibid-state fetch page failed', { pageNumber, href, status: response.status });
+        return null;
+      }
+      const html = await response.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const state = extractHibidStateFromDocument(doc);
+      debug('hibid-state fetch page parsed', { pageNumber, href, hasState: Boolean(state) });
+      return state;
+    } catch (error) {
+      debug('hibid-state fetch page timed out or failed', {
+        pageNumber,
+        href,
+        error: String(error?.name || error?.message || error)
+      });
       return null;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
-    const html = await response.text();
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const state = extractHibidStateFromDocument(doc);
-    debug('hibid-state fetch page parsed', { pageNumber, href, hasState: Boolean(state) });
-    return state;
   }
 
   async function scrapeHibidStatePages(onProgress = () => {}, shouldStop = () => false, root = document) {
@@ -1465,6 +1502,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     let pagesRead = first.items.length ? 1 : 0;
     let failedPage = null;
     let stopReason = '';
+    const startedAt = Date.now();
     debug('hibid-state first page extracted', {
       count: lotsByKey.size,
       expectedTotal,
@@ -1473,9 +1511,18 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     });
     onProgress(`Reading HiBid page data... ${lotsByKey.size}${expectedTotal ? `/${expectedTotal}` : ''}`);
 
-    for (let page = 2; page <= totalPages; page += 1) {
+    for (let page = 2; page <= totalPages && page <= HIBID_STATE_MAX_PAGES; page += 1) {
       if (shouldStop()) {
         stopReason = 'user-stop';
+        break;
+      }
+      if (Date.now() - startedAt >= HIBID_STATE_SCRAPE_MAX_MS) {
+        stopReason = 'state-scrape-timeout';
+        debug('hibid-state scrape timed out before page fetch', {
+          page,
+          totalPages,
+          elapsedMs: Date.now() - startedAt
+        });
         break;
       }
       const state = await fetchHibidApolloStatePage(page).catch(err => {
@@ -1505,6 +1552,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       });
       onProgress(`Reading HiBid page data... ${lotsByKey.size}${expectedTotal ? `/${expectedTotal}` : ''}`);
       if (expectedTotal && lotsByKey.size >= expectedTotal) break;
+    }
+
+    if (!stopReason && totalPages > HIBID_STATE_MAX_PAGES) {
+      stopReason = 'state-page-limit';
+      debug('hibid-state page limit reached', { totalPages, maxPages: HIBID_STATE_MAX_PAGES });
     }
 
     const items = Array.from(lotsByKey.values());
@@ -2114,6 +2166,7 @@ ${cards}
     validateCatalogExportAgainstVisibleState,
     validateScraperExportAgainstRoute,
     isCatalogScrapeComplete,
+    getHibidScrapeLimits,
     scrapeCatalogLots,
     findDialog,
     findBidButton,
@@ -2185,7 +2238,9 @@ ${cards}
     }
   }
 
-  async function loadLots(status, shouldStop, collectLots = () => {}) {
+  async function loadLots(status, shouldStop, collectLots = () => {}, options = {}) {
+    const limits = getHibidScrapeLimits(options.expectedTotal, options);
+    const startedAt = Date.now();
     await enableSinglePage(status);
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     await wait(500);
@@ -2193,11 +2248,29 @@ ${cards}
     let lastScrollY = Math.round(window.scrollY || document.documentElement.scrollTop || 0);
 
     let stuck = 0;
+    let stopReason = '';
 
-    for (let i = 0; i < 500; i += 1) {
-      if (shouldStop()) break;
+    for (let i = 0; i < limits.maxSteps; i += 1) {
+      if (shouldStop()) {
+        stopReason = 'user-stop';
+        break;
+      }
       const uniqueCount = collectLots() || 0;
-      status(`Loading lots... ${uniqueCount} unique`);
+      status(`Loading lots... ${uniqueCount}${limits.expectedTotal ? `/${limits.expectedTotal}` : ''} unique`);
+      if (limits.expectedTotal && uniqueCount >= limits.expectedTotal) {
+        stopReason = 'expected-total';
+        break;
+      }
+      if (Date.now() - startedAt >= limits.maxDurationMs) {
+        stopReason = 'dom-scrape-timeout';
+        debug('hibid DOM scrape timed out', {
+          uniqueCount,
+          expectedTotal: limits.expectedTotal,
+          maxDurationMs: limits.maxDurationMs,
+          steps: i
+        });
+        break;
+      }
       const scrollY = Math.round(window.scrollY || document.documentElement.scrollTop || 0);
       const maxScrollY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       const atBottom = scrollY >= Math.max(0, maxScrollY - 2);
@@ -2205,11 +2278,25 @@ ${cards}
       else stuck = 0;
       lastUniqueCount = uniqueCount;
       lastScrollY = scrollY;
-      if (stuck >= 8 || (atBottom && stuck >= 2)) break;
+      if (stuck >= 8 || (atBottom && stuck >= 2)) {
+        stopReason = atBottom ? 'dom-bottom-no-growth' : 'dom-no-growth';
+        break;
+      }
 
       window.scrollBy({ top: Math.max(700, Math.floor(window.innerHeight * 0.9)), left: 0, behavior: 'instant' });
       await wait(180);
     }
+
+    if (!stopReason) stopReason = 'dom-step-limit';
+    const finalCount = collectLots() || 0;
+    const result = {
+      expectedTotal: limits.expectedTotal,
+      finalCount,
+      stopReason,
+      steps: Math.ceil((Date.now() - startedAt) / 180)
+    };
+    debug('hibid DOM scrape finished', result);
+    return result;
   }
 
   function isAjWillnerHost(hostname = (typeof location !== 'undefined' ? location.hostname : '')) {
@@ -2655,16 +2742,19 @@ ${cards}
       return itemsMap.size;
     };
 
-    await loadLots(status, shouldStop, collect);
+    const expectedTotal = accountExportRoute
+      ? null
+      : (visibleState.expectedTotal ?? getExpectedLotTotal());
+    const loadResult = await loadLots(status, shouldStop, collect, { expectedTotal });
     collect();
     const items = Array.from(itemsMap.values());
-    const expectedTotal = accountExportRoute ? items.length : (visibleState.expectedTotal ?? getExpectedLotTotal());
     debug('catalog scrape finished from dom fallback', {
       count: items.length,
       expectedTotal,
       stopped: shouldStop(),
       currentBidsRoute,
-      accountExportRoute
+      accountExportRoute,
+      stopReason: loadResult?.stopReason || ''
     });
     return {
       source: currentBidsRoute ? 'hibid-currentbids-dom' : (accountExportRoute ? 'hibid-watchlist-dom' : 'dom-fallback'),
@@ -2673,6 +2763,7 @@ ${cards}
       expectedTotal,
       stopped: !!shouldStop(),
       incomplete: accountExportRoute ? false : Boolean(expectedTotal && items.length < expectedTotal),
+      stopReason: loadResult?.stopReason || '',
       visibleState
     };
   }

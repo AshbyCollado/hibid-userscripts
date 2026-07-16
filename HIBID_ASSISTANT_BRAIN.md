@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.46`.
+- Current version: `0.7.47`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -190,6 +190,11 @@ Do not mount on GovDeals login, register, account, cart, checkout, payment, invo
 6. Visible-state fix (`v0.7.46`):
    - Use `innerText` before `textContent` for page-level HiBid totals and no-match detection. HiBid keeps hidden empty-state templates in the DOM on non-empty filtered pages; hidden `No matches found` text must not turn a real result set into `[]`.
 
+7. Bounded filtered-page recovery (`v0.7.47`):
+   - Carry the visible HiBid expected total into the DOM fallback loader. A page such as `/lots/40198/...?...q=gaming%20pc` must stop when its visible `Total Lots: 14` target is collected instead of continuing through an unbounded dynamic scroll loop.
+   - Same-origin Apollo page fetches have an abort timeout, a total state-scrape budget, and a page cap. A slow or incomplete state response falls back to the live DOM rather than leaving Copy JSON/LLM busy forever.
+   - Every DOM fallback returns a stop reason (`expected-total`, `dom-bottom-no-growth`, `dom-scrape-timeout`, or `user-stop`) for debug diagnostics. Incomplete normal catalog results remain blocked by the route completeness guard.
+
 ## Legacy Max Plan State
 
 - Old max-plan data remains in storage for compatibility and tests, but scraper-first UI does not render or use max-plan controls.
@@ -254,6 +259,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.39` makes AJ Willner catalog exports API-first through `/api/items/search` pages before the old virtual-scroll fallback, trims repeated sale terms from API descriptions, and downloads the export if the browser blocks the clipboard after a completed scrape.
 - Done: `v0.7.40` relabels the AJ Willner module chip from `virtual list` to `api-first` so the UI matches the fast scraper path.
 - Done: `v0.7.41` adds a shared mandatory mixed/group-lot component review rule to every Copy LLM brief and preserves descriptions, image URLs, and raw text on DOM fallback records where the page exposes them.
+- Done: `v0.7.47` bounds HiBid Apollo/DOM fallback work and uses the visible expected lot count to finish filtered pages such as the 40198 gaming-PC search.
 - Done: `v0.7.42` recognizes state-prefixed HiBid account watchlist/current-bids routes such as `/newjersey/account/watchlist` and keeps them on the DOM-only account export path.
 - Done: `v0.7.43` makes the minimized launcher show the full `FlipperAddon by ALOS` name, widens it to 228px, and hides the close control until the drawer is expanded.
 - Verified in Waterfox on `v0.7.43`: representative HiBid, AJ Willner, eBay, Facebook, AuctionNinja, AAR, and GovDeals routes mount the expected module controls; the supplied `/livecatalog/752334/the-luxe-edit` target redirects to `/catalog/752334` because that auction is past, so it correctly presents catalog controls after the server redirect.
@@ -268,6 +274,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Waterfox manual checks:
   - Confirm only the current hosted FlipperAddon script is enabled.
   - Open `https://hibid.com/newjersey/lots/40196/computers-and-electronics`.
+  - Open the exact filtered recovery target `https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&zip=Carteret,%20NJ%2007008,%20USA&miles=-1&countryname=United%20States&shippingoffered=true&status=OPEN&status=UPCOMING&status=CLOSING_TODAY` and confirm Copy JSON/LLM exits busy and returns the visible 14 lots.
   - Open `https://hibid.com/livecatalog/752334/the-luxe-edit`.
   - Open eBay/Facebook active selling pages.
   - Open `https://www.auctionninja.com/clearinghouseestatesales/sales/details/a-glamorous-upper-west-side-brownstone-with-interiors-by-jonathan-adler-holly-hunt-lorin-marsh-restoration-hardware-arteriors-lighting-and-so-much-more-new-york-ny-referred-shipping-and-delivery-available--17395.html?an=20260709202533`.
