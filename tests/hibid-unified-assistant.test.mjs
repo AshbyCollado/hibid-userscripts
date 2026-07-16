@@ -653,6 +653,80 @@ test('assistant uses filtered HiBid Apollo connection when it matches active sea
   assert.deepEqual(plain(result.items.map(lot => lot.id)), ['lebron']);
 });
 
+test('assistant accepts HiBid lots pages whose filtered Apollo key is eventItemIds-based', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&zip=Carteret,%20NJ%2007008,%20USA&miles=-1&countryname=United%20States&shippingoffered=true&status=OPEN&status=UPCOMING&status=CLOSING_TODAY&s=TIME_LEFT');
+  const root = {
+    body: { textContent: 'Results for gaming pc Showing 1 - 15 of 15 lots' },
+    documentElement: { textContent: 'Results for gaming pc Showing 1 - 15 of 15 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const visibleState = core.extractHibidVisiblePageState(root, loc);
+  assert.equal(core.getExpectedLotTotal(root), 15);
+  assert.equal(visibleState.expectedTotal, 15);
+  assert.deepEqual(plain(visibleState.filters), {
+    q: 'gaming pc',
+    zip: 'Carteret, NJ 07008, USA',
+    miles: '-1',
+    countryname: 'United States',
+    shippingoffered: 'true',
+    status: ['OPEN', 'UPCOMING', 'CLOSING_TODAY'],
+    s: 'TIME_LEFT',
+  });
+  const refs = Array.from({ length: 15 }, (_, index) => ({ __ref: `Lot:gaming-${index}` }));
+  const apolloState = {
+    ROOT_QUERY: {
+      'lotSearch({"input":{"auctionId":null,"eventItemIds":[...],"sortOrder":"TIME_LEFT","status":"ALL"},"pageLength":15,"pageNumber":1,"sortDirection":"DESC"})': {
+        results: refs,
+        pageLength: 15,
+        pageNumber: 1,
+      },
+    },
+  };
+  refs.forEach((ref, index) => {
+    apolloState[ref.__ref] = {
+      id: `gaming-${index}`,
+      lotNumber: String(index + 1),
+      lead: index === 0 ? 'Gaming PC Desktop Computer' : `Gaming PC Component ${index}`,
+      lotState: { highBid: index, minBid: index + 1, bidCount: index, status: 'OPEN' },
+    };
+  });
+
+  const result = core.extractHibidApolloLots(apolloState, {
+    url: loc.href,
+    expectedTotal: visibleState.expectedTotal,
+    visibleState,
+  });
+
+  assert.equal(result.rejectedSource, '');
+  assert.equal(result.expectedTotal, 15);
+  assert.equal(result.items.length, 15);
+});
+
+test('assistant ignores hidden HiBid empty-state templates when visible filtered lots exist', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&miles=50');
+  const root = {
+    body: {
+      innerText: 'Results for gaming pc Showing 1 - 14 of 14 lots Lot 424 Gaming PC Desktop Computer',
+      textContent: 'Results for gaming pc Showing 1 - 14 of 14 lots No matches found. Try adjusting your filters.'
+    },
+    documentElement: {
+      innerText: 'Results for gaming pc Showing 1 - 14 of 14 lots Lot 424 Gaming PC Desktop Computer',
+      textContent: 'Results for gaming pc Showing 1 - 14 of 14 lots No matches found. Try adjusting your filters.'
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+
+  const state = core.extractHibidVisiblePageState(root, loc);
+  assert.equal(state.noMatches, false);
+  assert.equal(state.expectedTotal, 14);
+});
+
 test('assistant rejects ambiguous HiBid Apollo data on active filtered pages', () => {
   const core = loadCore();
   const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');

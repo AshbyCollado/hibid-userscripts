@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.44`.
+- Current version: `0.7.46`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -181,6 +181,14 @@ Do not mount on GovDeals login, register, account, cart, checkout, payment, invo
    - Never use the first page image or first `/en/` link as the asset image/seller; those are often global logos/navigation such as AllSurplus and About Us.
    - Normalized description, specs, seller, location, close time, pickup, and image fields are extracted from the asset section. The broad body is only a fallback for sparse/legacy markup.
    - Verification targets: `/en/asset/72/6332` and `/en/asset/6816/7529`; expected one-record exports with item photos, correct seller/location, clean close text, and description-only component/spec values.
+
+5. Filtered `/lots` fix (`v0.7.45`):
+   - Accept HiBid totals formatted as `Showing 1 - 15 of 15 lots`, not only `Showing 1 to 15 of 15 lots`.
+   - Preserve repeated `status` values and location/delivery query filters in visible-page diagnostics.
+   - Accept an Apollo `eventItemIds` connection only when its visible result count and page length confirm the filtered page total; broad mismatched connections remain rejected.
+
+6. Visible-state fix (`v0.7.46`):
+   - Use `innerText` before `textContent` for page-level HiBid totals and no-match detection. HiBid keeps hidden empty-state templates in the DOM on non-empty filtered pages; hidden `No matches found` text must not turn a real result set into `[]`.
 
 ## Legacy Max Plan State
 

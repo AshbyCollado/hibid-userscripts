@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.44
+// @version      0.7.46
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.44';
+  const SCRIPT_VERSION = '0.7.46';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -553,7 +553,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function getRootText(root = document) {
-    return textOf(root.body || root.documentElement || root);
+    return rawTextOf(root.body || root.documentElement || root);
   }
 
   function getExpectedLotTotal(root = document) {
@@ -564,7 +564,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const openMatch = text.match(/\bOpen Lots:\s*([\d,]+)/i);
     if (openMatch) return Number(openMatch[1].replace(/,/g, ''));
 
-    const showingMatch = text.match(/\bShowing\s+[\d,]+\s+to\s+[\d,]+\s+of\s+([\d,]+)\s+lots\b/i);
+    const showingMatch = text.match(/\bShowing\s+[\d,]+\s*(?:to|-)\s*[\d,]+\s+of\s+([\d,]+)\s+lots\b/i);
     if (showingMatch) return Number(showingMatch[1].replace(/,/g, ''));
 
     const ofMatch = text.match(/\b(?:of|total)\s+([\d,]+)\s+lots\b/i);
@@ -1102,19 +1102,22 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function extractHibidUrlFilters(loc = (typeof location !== 'undefined' ? location : null)) {
     const url = urlFromLocationLike(loc);
     const filters = {};
-    ['g', 'q', 'category', 'subCategory', 'apage'].forEach(key => {
-      const value = url.searchParams.get(key);
-      if (value !== null && value !== '') filters[key] = value;
+    ['g', 'q', 'category', 'subCategory', 'apage', 'zip', 'miles', 'countryname', 'shippingoffered', 'status', 's'].forEach(key => {
+      const values = url.searchParams.getAll(key).filter(value => value !== '');
+      if (!values.length) return;
+      filters[key] = values.length === 1 ? values[0] : values;
     });
 
     const activeFilterKeys = Object.entries(filters).filter(([key, value]) => {
-      const normalized = String(value || '').trim().toLowerCase();
-      if (!normalized) return false;
+      if (key === 'apage' || key === 's' || key === 'countryname') return false;
+      const values = Array.isArray(value) ? value : [value];
+      const normalizedValues = values.map(item => String(item || '').trim().toLowerCase()).filter(Boolean);
+      if (!normalizedValues.length) return false;
       if (key === 'apage') return false;
-      if (key === 'g') return normalized !== '-1';
-      if (key === 'category') return normalized !== 'all';
-      if (key === 'subCategory') return normalized !== 'active';
-      return true;
+      if (key === 'g') return normalizedValues.some(item => item !== '-1');
+      if (key === 'category') return normalizedValues.some(item => item !== 'all');
+      if (key === 'subCategory') return normalizedValues.some(item => item !== 'active');
+      return normalizedValues.some(Boolean);
     }).map(([key]) => key);
 
     return {
@@ -1158,9 +1161,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (!visibleState?.hasActiveFilters) return true;
     const normalizedKey = normalizedFilterText(key);
     return visibleState.activeFilterKeys.every(filterKey => {
-      const value = normalizedFilterText(visibleState.filters?.[filterKey]);
-      if (!value) return true;
-      return normalizedKey.includes(value);
+      const rawValue = visibleState.filters?.[filterKey];
+      const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+      const normalizedValues = values.map(value => normalizedFilterText(value)).filter(Boolean);
+      if (!normalizedValues.length) return true;
+      return normalizedValues.some(value => normalizedKey.includes(value));
     });
   }
 
@@ -1176,17 +1181,26 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
     const requiresKeyMatch = visibleState.activeFilterKeys.includes('q');
     if (apolloKeyMatchesActiveFilters(connection.key, visibleState)) return { ok: true };
+    const visibleExpected = Number(visibleState.expectedTotal);
+    const hasVisibleExpected = visibleState.expectedTotal !== null
+      && visibleState.expectedTotal !== undefined
+      && Number.isFinite(visibleExpected);
+    const refsMatchVisibleCount = hasVisibleExpected
+      && Array.isArray(connection.refs)
+      && connection.refs.length === visibleExpected
+      && (!Number.isFinite(connection.totalCount) || connection.totalCount === visibleExpected)
+      && (!Number.isFinite(connection.pageLength) || connection.pageLength === visibleExpected);
+    if (refsMatchVisibleCount) {
+      return { ok: true, reason: 'visible-count-confirmed' };
+    }
     if (requiresKeyMatch) return { ok: false, reason: 'active-search-filter-mismatch' };
 
     const hasExpectedTotal = options.expectedTotal !== null
       && options.expectedTotal !== undefined
       && Number.isFinite(Number(options.expectedTotal));
     const expectedTotal = Number(options.expectedTotal);
-    const hasVisibleExpected = visibleState.expectedTotal !== null
-      && visibleState.expectedTotal !== undefined
-      && Number.isFinite(Number(visibleState.expectedTotal));
     if (hasExpectedTotal && connection.totalCount === expectedTotal) return { ok: true };
-    if (hasVisibleExpected && connection.totalCount === Number(visibleState.expectedTotal)) {
+    if (hasVisibleExpected && connection.totalCount === visibleExpected) {
       return { ok: true };
     }
     return { ok: false, reason: 'active-filter-mismatch' };
