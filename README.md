@@ -55,6 +55,37 @@ Workflow:
 5. Put the downloaded `FlipTracker-listings-*.html` file into `C:\Users\ashby\Documents\MarketplaceScraper\ImportInbox`.
 6. In FlipTracker, run the import/review flow.
 
+## eBay to Facebook Marketplace Drafts
+
+This workflow keeps eBay as the listing source and fills one reviewable Facebook Marketplace draft. FlipperAddon never clicks Publish.
+
+One-time connection:
+
+1. Open `FlipTracker.xlsm` from the MarketplaceScraper project folder and enable macros.
+2. On `Import Review`, click `Start eBay Sync`, then `Copy Sync Token`.
+3. On a supported eBay or Facebook page, open FlipperAddon, click `Connect`, and paste the token. The token stays in Tampermonkey storage and the bridge listens only on `127.0.0.1:8468`.
+
+Create a draft:
+
+1. Open `https://www.ebay.com/mys/active` or `https://www.ebay.com/sh/lst/active` and load the active listings you need.
+2. Open FlipperAddon and click `Scan Page`.
+3. Choose the eBay listing under `Facebook draft source`, verify the Facebook location, and click `Queue Facebook Draft`.
+4. Review the confirmation. FlipperAddon enriches the listing from its public eBay item page before queueing it.
+5. Open `https://www.facebook.com/marketplace/create/item`.
+6. Open FlipperAddon and click `Fill Next eBay Draft`.
+7. Review the title, whole-dollar price, description, category, condition, location, and photos. Continue through Facebook and click Publish yourself only when the listing is correct.
+8. After Facebook opens the new Marketplace item page, open FlipperAddon and click `Confirm Published`. This stores the Facebook listing ID and prevents that eBay item from being queued again.
+
+Duplicate and recovery rules:
+
+- One durable queue record exists per eBay item ID.
+- Requeueing unchanged eBay evidence is a no-op.
+- Changed eBay evidence updates the existing unpublished queue record.
+- A confirmed Published record cannot be queued again unless it is explicitly reset in the local queue.
+- A failed form fill stays visible as Failed; queue the eBay item again after correcting the cause.
+- If `Connect` reports a bridge error, reopen FlipTracker and use `Start eBay Sync`, then copy and save the token again.
+- Do not confirm Published from an unrelated Facebook item page; FlipperAddon checks both the Marketplace listing ID and title evidence.
+
 ## Scraper-First UI
 
 FlipperAddon starts as a small bottom-right pill. Opening it shows only the current page's export actions. Copy buttons do not render lot previews in the drawer; they copy the payload and show a short toast. The Stop button appears while a scrape/export is running.

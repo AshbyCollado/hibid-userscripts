@@ -7,10 +7,39 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.47`.
+- Current version: `0.7.49`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
+
+## Active Goal: eBay-to-Facebook Marketplace Draft Assistant
+
+- Tracking: GitHub issue `#3`; command-center epic `AshbyCollado/marketplace-command-center#62`.
+- Branch: `codex/facebook-crosslist`.
+- Source truth: eBay item ID plus current listing evidence. A selected active eBay listing is enriched from its public item page before it can enter the cross-list queue.
+- Delivery: use the existing token-authenticated loopback service at `127.0.0.1:8468`; no Facebook credentials or cookies leave the browser.
+- Draft contract: title, price, clean description, condition, category evidence, item specifics, quantity, and full-resolution image URLs/files. Missing required facts remain visible review warnings.
+- Duplicate contract: one durable cross-list record per eBay item ID. Unchanged evidence is a no-op; changed evidence updates the existing queued draft; Published cannot return to Queued without an explicit reset.
+- Facebook contract: on `/marketplace/create/item`, fetch one queued draft, upload photos, fill semantic form controls, commit location through Facebook's autocomplete only when the existing Facebook-owned location differs, verify that the rendered draft can advance to review, and stop before Publish. FlipperAddon does not click Publish in v1.
+- Safety: no cookie export, stealth-driver modification, buyer PII, unattended bulk posting, or hidden retries. Every browser mismatch is shown to the user and recorded as Failed/Review.
+- Recursive release gate: item-detail fixtures, cross-list schema and transition tests, Facebook form fixture tests, live eBay enrichment, one authenticated Facebook draft, duplicate replay proof, green `npm test`, brain evidence, and pushed branch.
+- 2026-07-18 live evidence: eBay item `336694211286` produced one stable queue record; replay returned duplicate/no-op; rebased `v0.7.49` filled Facebook with the exact title, whole-dollar price, description, five source photos, `Electronics & computers`, and `Used - Good`; it preserved Facebook's already-selected Carteret location, enabled the `Next` review step, reported zero adapter errors, and did not click Publish. Screenshot: `C:\tmp\ft022-crosslist-live-20260718\facebook-draft-review-enabled-not-published.png`.
+- Verification: `npm test` passed `120/120`; the command-center artifact suite passed `273/273`; `node --check hibid-bid-assistant.user.js` passed. The strict live verifier now treats a disabled `Next` button as a failure and captures invalid-control diagnostics.
+- Operator documentation: `README.md` now covers one-time bridge/token setup, the eBay Active to Facebook draft workflow, duplicate rules, confirmation, and recovery. The command-center runbook is `docs/ft022-ebay-facebook-crosslist-runbook.md`.
+- Release status: PR `AshbyCollado/hibid-userscripts#4` is ready for review. Merging into `main` is intentionally pending explicit approval because raw `main` is the Tampermonkey update source.
+
+## Completed Foundation: eBay Lifecycle Sync
+
+- Tracking: GitHub issue `#1`; Flip Tracker integration is `AshbyCollado/marketplace-command-center#43`.
+- Branch: `codex/ebay-lifecycle-sync`.
+- Contract: `fliptracker.ebay.lifecycle.v1` carries active listings, sold order lines, and seller transactions with completeness metadata.
+- Privacy: never export buyer names, usernames, email addresses, shipping addresses, or messages.
+- Delivery: post sanitized JSON to the token-authenticated loopback bridge at `127.0.0.1:8468`; download the same JSON when the bridge is unavailable.
+- Truth ownership: FlipperAddon extracts page facts only. Flip Tracker owns matching/reconciliation. Gemini may rank sanitized inventory candidates but cannot invent prices or auto-link records.
+- Release gate: dedicated route/parser/privacy tests plus live authenticated verification on `/mys/active`, `/mys/sold`, and `/mes/transactionlist?sh=true` before the userscript version is merged to `main`.
+- Implementation status (2026-07-15): dedicated collectors, completeness checks, recursive PII sanitization, stable lifecycle identities, token-authenticated bridge delivery, download fallback, and guided `Sync All eBay` recovery are implemented and live-verified on the branch.
+- Automated evidence: `npm test` passes `100/100`; `node --check hibid-bid-assistant.user.js` and `git diff --check` pass.
+- Authenticated release evidence: Active parsed `19/19`, Sold parsed `5/5`, and Transactions parsed `15/15`; each envelope was complete, identities were unique, and recursive unsafe-field checks found zero buyer PII fields. The live loopback bridge accepted all three envelopes and marked changed-timestamp replays as duplicates.
 
 ## Module Map
 
@@ -217,6 +246,11 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 ## Issue Tracker
 
+- Done on branch for FT-014: resolve only `/mys/active`, `/mys/sold`, and `/mes/transactionlist?sh=true` as lifecycle routes instead of mounting on generic `/mys/*` pages.
+- Done on branch for FT-014: parse active listings, multi-line sold orders, signed transactions/refunds/fees, quantities, IDs, dates, URLs, and completeness metadata with stable replay identities.
+- Done on branch for FT-014: sanitize buyer names, usernames, email, phone, address, recipient, contact, and message fields recursively before export.
+- Done on branch for FT-014: add `Sync This Page`, `Sync All eBay`, token connection, loopback POST, offline JSON download, busy-state cleanup, cancellation, and guided incomplete-page follow-up.
+- Passed release gate for FT-014: authenticated live count/route proof succeeded on all three eBay pages; version `0.7.44` is ready for branch review before merging to `main`.
 - Done: rename active script/UI/menu/debug prefix to FlipperAddon by ALOS.
 - Done: keep hosted raw update/download URL unchanged.
 - Done: add active page module resolver.
@@ -271,6 +305,11 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - `node --check .\hibid-bid-assistant.user.js`
 - `node --check .\hibid-lot-catalog-scraper.user.js`
 - `npm test`
+- FT-014 authenticated eBay lifecycle checks:
+  - `/mys/active`: parsed listing count matches the visible page count; custom label, price, quantity, traffic, URL, and listing ID are preserved.
+  - `/mys/sold`: every order line is unique by order-line identity; multi-item orders stay separate; no buyer PII exists in the envelope.
+  - `/mes/transactionlist?sh=true`: signed fees/refunds/net values and stable transaction IDs parse; incomplete identities are review-only.
+  - `Sync All eBay`: the local bridge accepts complete pages, rejected/background-blocked pages trigger guided follow-up/download, and the drawer always leaves busy state.
 - Waterfox manual checks:
   - Confirm only the current hosted FlipperAddon script is enabled.
   - Open `https://hibid.com/newjersey/lots/40196/computers-and-electronics`.
