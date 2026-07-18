@@ -7,12 +7,26 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.47`.
+- Current version: `0.7.48`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
 
-## Active Goal: eBay Lifecycle Sync
+## Active Goal: eBay-to-Facebook Marketplace Draft Assistant
+
+- Tracking: GitHub issue `#3`; command-center epic `AshbyCollado/marketplace-command-center#62`.
+- Branch: `codex/facebook-crosslist`.
+- Source truth: eBay item ID plus current listing evidence. A selected active eBay listing is enriched from its public item page before it can enter the cross-list queue.
+- Delivery: use the existing token-authenticated loopback service at `127.0.0.1:8468`; no Facebook credentials or cookies leave the browser.
+- Draft contract: title, price, clean description, condition, category evidence, item specifics, quantity, and full-resolution image URLs/files. Missing required facts remain visible review warnings.
+- Duplicate contract: one durable cross-list record per eBay item ID. Unchanged evidence is a no-op; changed evidence updates the existing queued draft; Published cannot return to Queued without an explicit reset.
+- Facebook contract: on `/marketplace/create/item`, fetch one queued draft, upload photos, fill semantic form controls, verify the rendered values, and stop before Publish. FlipperAddon does not click Publish in v1.
+- Safety: no cookie export, stealth-driver modification, buyer PII, unattended bulk posting, or hidden retries. Every browser mismatch is shown to the user and recorded as Failed/Review.
+- Recursive release gate: item-detail fixtures, cross-list schema and transition tests, Facebook form fixture tests, live eBay enrichment, one authenticated Facebook draft, duplicate replay proof, green `npm test`, brain evidence, and pushed branch.
+- 2026-07-18 live evidence: eBay item `336694211286` produced one stable queue record; replay returned duplicate/no-op; Facebook accepted the exact title, whole-dollar price, description, five source photos, `Electronics & computers`, and `Used - Good`; the adapter reported zero warnings and did not click Publish. Screenshot: `C:\tmp\ft022-crosslist-live-20260718\facebook-draft-certified-not-published.png`.
+- Verification: `npm test` passed `114/114`; the command-center artifact suite passed `273/273`; `node --check hibid-bid-assistant.user.js` passed.
+
+## Completed Foundation: eBay Lifecycle Sync
 
 - Tracking: GitHub issue `#1`; Flip Tracker integration is `AshbyCollado/marketplace-command-center#43`.
 - Branch: `codex/ebay-lifecycle-sync`.

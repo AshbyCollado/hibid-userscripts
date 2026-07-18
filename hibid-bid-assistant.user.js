@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.47
+// @version      0.7.48
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -19,6 +19,8 @@
 // @match        https://www.ebay.com/mes/*
 // @match        https://www.facebook.com/marketplace/you/*
 // @match        https://www.facebook.com/marketplace/profile/*
+// @match        https://www.facebook.com/marketplace/create/item*
+// @match        https://www.facebook.com/marketplace/item/*
 // @match        https://www.auctionninja.com/auctions*
 // @match        https://www.auctionninja.com/bid-history*
 // @match        https://www.auctionninja.com/followed-items*
@@ -37,6 +39,9 @@
 // @grant        unsafeWindow
 // @grant        window.onurlchange
 // @connect      127.0.0.1
+// @connect      i.ebayimg.com
+// @connect      vi.vipr.ebaydesc.com
+// @connect      itm.ebaydesc.com
 // ==/UserScript==
 
 (function () {
@@ -45,7 +50,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.47';
+  const SCRIPT_VERSION = '0.7.48';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -57,6 +62,9 @@
   const FLIPTRACKER_SYNC_TOKEN_KEY = 'flipperaddon-fliptracker-sync-token-v1';
   const FLIPTRACKER_BRIDGE_URL = 'http://127.0.0.1:8468';
   const EBAY_LIFECYCLE_SCHEMA = 'fliptracker.ebay.lifecycle.v1';
+  const CROSSLIST_SCHEMA = 'fliptracker.crosslist.draft.v1';
+  const CROSSLIST_LOCATION_KEY = 'flipperaddon-crosslist-location-v1';
+  const CROSSLIST_PENDING_KEY = 'flipperaddon-crosslist-pending-v1';
   const DEBUG_LOG_LIMIT = 200;
   const OUTBID_WATCHLIST_URL = 'https://hibid.com/account/watchlist?status=OUTBID';
   const LEGACY_SCRAPER_IDS = [
@@ -925,6 +933,18 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return String(value || '')
       .replace(/&quot;/g, '"')
       .replace(/&#39;/g, "'")
+      .replace(/&#x([0-9a-f]+);/gi, (entity, digits) => {
+        const codePoint = Number.parseInt(digits, 16);
+        return Number.isInteger(codePoint) && codePoint <= 0x10FFFF
+          ? String.fromCodePoint(codePoint)
+          : entity;
+      })
+      .replace(/&#(\d+);/g, (entity, digits) => {
+        const codePoint = Number.parseInt(digits, 10);
+        return Number.isInteger(codePoint) && codePoint <= 0x10FFFF
+          ? String.fromCodePoint(codePoint)
+          : entity;
+      })
       .replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
@@ -954,7 +974,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function cleanListingTitle(value) {
-    return String(value || '')
+    return decodeHtml(String(value || ''))
       .replace(/\s+/g, ' ')
       .replace(/^Mark as sold\s+/i, '')
       .trim();
@@ -2018,6 +2038,175 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return dedupeListings(listings.concat(parseEbaySellerHubTableListingsHtml(text)));
   }
 
+  function normalizeEbayCrosslistImageUrl(value) {
+    const raw = decodeHtml(String(value || '')).trim();
+    if (!/^https:\/\/(?:i\.ebayimg\.com|thumbs\.ebaystatic\.com)\//i.test(raw)) return '';
+    return raw
+      .replace(/\/s-l\d+(?=\.(?:jpe?g|png|webp)(?:\?|$))/i, '/s-l1600')
+      .replace(/\/s-l\d+(?:\/|$)/i, '/s-l1600/');
+  }
+
+  function ebayJsonLdObjects(html) {
+    const objects = [];
+    const scripts = String(html || '').matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+    for (const match of scripts) {
+      const source = String(match[1] || '').trim();
+      if (!source) continue;
+      try {
+        let parsed;
+        try {
+          parsed = JSON.parse(source);
+        } catch (_) {
+          parsed = JSON.parse(decodeHtml(source));
+        }
+        const queue = Array.isArray(parsed) ? parsed.slice() : [parsed];
+        while (queue.length) {
+          const value = queue.shift();
+          if (!value || typeof value !== 'object') continue;
+          objects.push(value);
+          if (Array.isArray(value['@graph'])) queue.push(...value['@graph']);
+        }
+      } catch (_) {
+        // Malformed JSON-LD is ignored; OpenGraph and HTML evidence remain available.
+      }
+    }
+    return objects;
+  }
+
+  function ebayJsonLdType(value, type) {
+    const candidate = value?.['@type'];
+    return (Array.isArray(candidate) ? candidate : [candidate])
+      .some(entry => String(entry || '').toLowerCase() === String(type || '').toLowerCase());
+  }
+
+  function ebayMetaContent(html, selectorName, selectorValue) {
+    const tags = String(html || '').match(/<meta\b[^>]*>/gi) || [];
+    const target = String(selectorValue || '').toLowerCase();
+    for (const tag of tags) {
+      const name = firstMatch(tag, [new RegExp(`${selectorName}=["']([^"']+)["']`, 'i')]).toLowerCase();
+      if (name !== target) continue;
+      return firstMatch(tag, [/content=["']([^"']*)["']/i]);
+    }
+    return '';
+  }
+
+  function cleanEbayCrosslistDescription(value) {
+    return stripHtml(decodeHtml(value))
+      .replace(/\b(?:Visit (?:my|our) eBay store|See (?:my|our) other items|Thanks for looking)\b[.!]?/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 5000);
+  }
+
+  function extractEbayItemDetailHtml(html, context = {}) {
+    const source = String(html || '');
+    const objects = ebayJsonLdObjects(source);
+    const product = objects.find(value => ebayJsonLdType(value, 'Product')) || {};
+    const breadcrumbs = objects.find(value => ebayJsonLdType(value, 'BreadcrumbList')) || {};
+    const offers = Array.isArray(product.offers) ? product.offers[0] || {} : (product.offers || {});
+    const activeItemId = String(context.itemId || '').match(/\b\d{9,15}\b/)?.[0] || '';
+    const htmlItemId = firstMatch(source, [
+      /(?:itemId|item_id|legacyItemId)["']?\s*[:=]\s*["']?(\d{9,15})/i,
+      /\/itm\/(?:[^/?#]+\/)?(\d{9,15})/i,
+    ]);
+    const itemId = activeItemId || htmlItemId;
+    const title = cleanEbaySellerHubTitle(
+      product.name
+      || ebayMetaContent(source, 'property', 'og:title')
+      || firstMatch(source, [/<h1\b[^>]*>([\s\S]*?)<\/h1>/i])
+      || context.title
+    );
+    const priceCandidates = [
+      offers.price,
+      ebayMetaContent(source, 'property', 'product:price:amount'),
+      firstMatch(source, [/itemprop=["']price["'][^>]*content=["']([^"']+)/i]),
+      context.price,
+    ];
+    const price = priceCandidates.map(value => Number(String(value ?? '').replace(/[$,]/g, ''))).find(Number.isFinite);
+    const description = cleanEbayCrosslistDescription(
+      product.description
+      || ebayMetaContent(source, 'property', 'og:description')
+      || ebayMetaContent(source, 'name', 'description')
+    );
+    const descriptionUrl = decodeHtml(firstMatch(source, [
+      /<iframe\b[^>]*(?:id=["']desc_ifr["'][^>]*src|src)=["'](https:\/\/(?:vi\.vipr|itm)\.ebaydesc\.com\/[^"']+)/i,
+      /["'](https:\/\/(?:vi\.vipr|itm)\.ebaydesc\.com\/(?:ws\/eBayISAPI\.dll|itmdesc\/)[^"']+)["']/i,
+    ]));
+    const conditionSource = String(product.itemCondition || context.condition || '')
+      .split(/[\/#]/)
+      .filter(Boolean)
+      .pop() || '';
+    const condition = conditionSource.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/Condition$/i, '').trim();
+    const categoryPath = Array.isArray(breadcrumbs.itemListElement)
+      ? breadcrumbs.itemListElement
+        .map(entry => stripHtml(entry?.item?.name || entry?.name || ''))
+        .filter(Boolean)
+      : [];
+    const itemSpecifics = {};
+    (Array.isArray(product.additionalProperty) ? product.additionalProperty : []).forEach(property => {
+      const key = stripHtml(property?.name || '').slice(0, 120);
+      const value = stripHtml(property?.value || '').slice(0, 300);
+      if (key && value) itemSpecifics[key] = value;
+    });
+    const imageCandidates = [];
+    const productImages = Array.isArray(product.image) ? product.image : [product.image];
+    imageCandidates.push(...productImages.filter(Boolean));
+    imageCandidates.push(ebayMetaContent(source, 'property', 'og:image'));
+    for (const match of source.matchAll(/https:\/\/i\.ebayimg\.com\/images\/g\/[^"'<>\\\s]+/gi)) {
+      imageCandidates.push(match[0].replace(/\\u002F/g, '/').replace(/\\\//g, '/'));
+    }
+    const imageUrls = uniqueNonEmpty(imageCandidates.map(normalizeEbayCrosslistImageUrl)).slice(0, 20);
+    return {
+      itemId,
+      itemUrl: itemId ? `https://www.ebay.com/itm/${itemId}` : normalizeListingUrl(context.itemUrl || ''),
+      title,
+      price: Number.isFinite(price) ? price : null,
+      description,
+      descriptionUrl,
+      condition,
+      categoryPath,
+      itemSpecifics,
+      imageUrls,
+    };
+  }
+
+  function buildCrosslistEnvelope(detail, activeListing = {}, options = {}) {
+    const itemId = String(detail?.itemId || activeListing?.itemId || '').match(/\b\d{9,15}\b/)?.[0] || '';
+    const title = cleanEbaySellerHubTitle(detail?.title || activeListing?.title || '');
+    const price = Number.isFinite(Number(activeListing?.price))
+      ? Number(activeListing.price)
+      : (Number.isFinite(Number(detail?.price)) ? Number(detail.price) : null);
+    const description = cleanEbayCrosslistDescription(detail?.description || title);
+    const imageUrls = uniqueNonEmpty((detail?.imageUrls || []).map(normalizeEbayCrosslistImageUrl)).slice(0, 20);
+    const warnings = [];
+    if (!detail?.description) warnings.push('Seller description was not found; verify the generated draft text.');
+    if (!imageUrls.length) warnings.push('No full-resolution eBay photos were found.');
+    if (!detail?.condition) warnings.push('eBay condition evidence was not found.');
+    if (!(detail?.categoryPath || []).length) warnings.push('eBay category evidence was not found.');
+    return {
+      schema_version: CROSSLIST_SCHEMA,
+      source: 'ebay',
+      generated_at: options.generatedAt || new Date().toISOString(),
+      listing: {
+        item_id: itemId,
+        item_url: itemId ? `https://www.ebay.com/itm/${itemId}` : normalizeListingUrl(detail?.itemUrl || activeListing?.url || ''),
+        title,
+        price,
+        description,
+        condition: String(detail?.condition || ''),
+        category_path: Array.isArray(detail?.categoryPath) ? detail.categoryPath : [],
+        item_specifics: detail?.itemSpecifics && typeof detail.itemSpecifics === 'object' ? detail.itemSpecifics : {},
+        quantity_available: activeListing?.quantityAvailable ?? null,
+        custom_label: String(activeListing?.customLabel || ''),
+        image_urls: imageUrls,
+      },
+      facebook_draft: {
+        location: String(options.location || '').trim(),
+      },
+      warnings,
+    };
+  }
+
   function moneyAfterLabel(value, label) {
     const text = String(value || '');
     const amountPattern = '((?:\\()?\\s*[-+\\u2212]?\\s*\\$\\s*[-+\\u2212]?\\s*[\\d,]+(?:\\.\\d{1,2})?\\s*\\)?)';
@@ -2792,6 +2981,21 @@ ${cards}
     buildLlmAuctionBrief,
     parseEbayActiveListingsHtml,
     parseEbayActiveLifecycleHtml,
+    extractEbayItemDetailHtml,
+    normalizeEbayCrosslistImageUrl,
+    cleanEbayCrosslistDescription,
+    buildCrosslistEnvelope,
+    enrichEbayListingForCrosslist,
+    crosslistBridgeRequest,
+    getCrosslistLocation,
+    saveCrosslistLocation,
+    findFacebookLabeledControl,
+    setFacebookControlValue,
+    setFacebookTextField,
+    facebookCategoryParent,
+    chooseFacebookDropdownValue,
+    fillFacebookMarketplaceDraft,
+    downloadCrosslistImageFiles,
     parseEbaySoldOrdersHtml,
     parseEbayTransactionsHtml,
     parseEbayLifecycleHtml,
@@ -5893,7 +6097,9 @@ ${cards}
         || /^\/mes\/transactionlist\/?$/i.test(pathname);
     }
     if (host === 'www.facebook.com' || host === 'facebook.com') {
-      return /^\/marketplace\/(?:you|profile)\b/i.test(pathname);
+      return /^\/marketplace\/(?:you|profile)\b/i.test(pathname)
+        || /^\/marketplace\/create\/item\b/i.test(pathname)
+        || /^\/marketplace\/item\/\d+\b/i.test(pathname);
     }
     return false;
   }
@@ -5912,6 +6118,12 @@ ${cards}
     }
     if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/(?:you|profile)\b/i.test(pathname)) {
       return { supported: true, kind: 'fliptracker-facebook', source: 'facebook', host, reason: 'Facebook Marketplace listing export route' };
+    }
+    if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/create\/item\b/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-facebook-create', source: 'facebook', host, reason: 'Facebook Marketplace item draft route' };
+    }
+    if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/item\/\d+\b/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-facebook-published', source: 'facebook', host, reason: 'Facebook Marketplace published item route' };
     }
     return { supported: false, kind: 'unsupported', source: 'unknown', host, reason: 'unsupported FlipTracker listing route' };
   }
@@ -6707,6 +6919,388 @@ ${cards}
     const token = String(value || '').trim();
     if (typeof GM_setValue === 'function') GM_setValue(FLIPTRACKER_SYNC_TOKEN_KEY, token);
     return token;
+  }
+
+  function getCrosslistLocation() {
+    if (typeof GM_getValue !== 'function') return 'Carteret, NJ';
+    return String(GM_getValue(CROSSLIST_LOCATION_KEY, 'Carteret, NJ') || '').trim();
+  }
+
+  function saveCrosslistLocation(value) {
+    const locationValue = String(value || '').trim();
+    if (typeof GM_setValue === 'function') GM_setValue(CROSSLIST_LOCATION_KEY, locationValue);
+    return locationValue;
+  }
+
+  function getPendingCrosslist() {
+    if (typeof GM_getValue !== 'function') return null;
+    const value = GM_getValue(CROSSLIST_PENDING_KEY, null);
+    if (!value) return null;
+    if (typeof value === 'object') return value;
+    try { return JSON.parse(String(value)); } catch (_) { return null; }
+  }
+
+  function savePendingCrosslist(value) {
+    if (typeof GM_setValue === 'function') GM_setValue(CROSSLIST_PENDING_KEY, value || null);
+    return value || null;
+  }
+
+  function crosslistBridgeRequest(path, payload = {}, token = getFlipTrackerSyncToken()) {
+    return new Promise(resolve => {
+      if (!token) {
+        resolve({ ok: false, reason: 'missing-token' });
+        return;
+      }
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        resolve({ ok: false, reason: 'bridge-request-unavailable' });
+        return;
+      }
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: `${FLIPTRACKER_BRIDGE_URL}${path}`,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-FlipTracker-Token': token,
+        },
+        data: JSON.stringify(payload || {}),
+        timeout: 15000,
+        onload: response => {
+          const ok = response.status >= 200 && response.status < 300;
+          let body = {};
+          try { body = JSON.parse(response.responseText || '{}'); } catch (_) { body = {}; }
+          resolve({ ok, status: response.status, ...body, reason: ok ? '' : (body.error || `HTTP ${response.status}`) });
+        },
+        onerror: () => resolve({ ok: false, reason: 'bridge-unreachable' }),
+        ontimeout: () => resolve({ ok: false, reason: 'bridge-timeout' }),
+      });
+    });
+  }
+
+  function gmCrosslistRequest(url, responseType = 'text') {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        reject(new Error('Tampermonkey cross-origin request is unavailable.'));
+        return;
+      }
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        responseType,
+        timeout: 20000,
+        onload: response => {
+          if (response.status < 200 || response.status >= 300) {
+            reject(new Error(`HTTP ${response.status}`));
+            return;
+          }
+          resolve(responseType === 'blob' ? response.response : (response.responseText || response.response || ''));
+        },
+        onerror: () => reject(new Error('Cross-origin request failed.')),
+        ontimeout: () => reject(new Error('Cross-origin request timed out.')),
+      });
+    });
+  }
+
+  async function enrichEbayListingForCrosslist(activeListing, options = {}) {
+    const itemId = String(activeListing?.itemId || '').match(/\b\d{9,15}\b/)?.[0] || '';
+    if (!itemId) throw new Error('The selected eBay listing has no stable item ID.');
+    const itemUrl = `https://www.ebay.com/itm/${itemId}`;
+    const fetchText = options.fetchText || (async url => {
+      const response = await fetch(url, { credentials: 'include', redirect: 'follow' });
+      if (!response.ok) throw new Error(`eBay item fetch returned HTTP ${response.status}.`);
+      return response.text();
+    });
+    const html = await fetchText(itemUrl);
+    const detail = extractEbayItemDetailHtml(html, {
+      itemId,
+      itemUrl,
+      title: activeListing?.title,
+      price: activeListing?.price,
+    });
+    if (detail.descriptionUrl) {
+      try {
+        const fetchDescription = options.fetchDescriptionText || (url => gmCrosslistRequest(url, 'text'));
+        const descriptionHtml = await fetchDescription(detail.descriptionUrl);
+        const description = cleanEbayCrosslistDescription(descriptionHtml);
+        if (description && normalizedFacebookControlText(description) !== normalizedFacebookControlText(detail.title)) {
+          detail.description = description;
+        }
+      } catch (_) {
+        // The item-page description remains valid evidence when the iframe is unavailable.
+      }
+    }
+    return buildCrosslistEnvelope(detail, activeListing, {
+      generatedAt: options.generatedAt || new Date().toISOString(),
+      location: options.location ?? getCrosslistLocation(),
+    });
+  }
+
+  function normalizedFacebookControlText(value) {
+    return String(value || '')
+      .replace(/[\u2010-\u2015]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function findFacebookLabeledControl(root, label) {
+    const target = normalizedFacebookControlText(label);
+    const candidates = Array.from(root?.querySelectorAll?.('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="button"]') || []);
+    const scored = candidates.map(control => {
+      const values = [
+        control.getAttribute?.('aria-label'),
+        control.getAttribute?.('placeholder'),
+        control.getAttribute?.('name'),
+        control.getAttribute?.('data-testid'),
+      ].map(normalizedFacebookControlText).filter(Boolean);
+      let score = values.some(value => value === target) ? 100 : 0;
+      if (!score && values.some(value => value.includes(target) || target.includes(value))) score = 70;
+      const parentText = normalizedFacebookControlText(control.closest?.('label')?.textContent || '');
+      if (!score && parentText === target) score = 90;
+      if (!score && parentText.startsWith(target)) score = 60;
+      return { control, score };
+    }).filter(value => value.score > 0).sort((left, right) => right.score - left.score);
+    if (scored.length) return scored[0].control;
+
+    const labels = Array.from(root?.querySelectorAll?.('label') || []);
+    for (const labelElement of labels) {
+      const text = normalizedFacebookControlText(labelElement.textContent || '');
+      if (text !== target && !text.startsWith(target)) continue;
+      const nested = labelElement.querySelector?.('input, textarea, select, [contenteditable="true"], [role="combobox"]');
+      if (nested) return nested;
+      const htmlFor = labelElement.getAttribute?.('for');
+      if (htmlFor && root.getElementById?.(htmlFor)) return root.getElementById(htmlFor);
+    }
+    return null;
+  }
+
+  function dispatchFacebookInput(control) {
+    ['input', 'change', 'blur'].forEach(type => {
+      try {
+        control.dispatchEvent(new Event(type, { bubbles: true }));
+      } catch (_) {
+        // Tests and old browser contexts may not expose Event; value verification still applies.
+      }
+    });
+  }
+
+  function setFacebookControlValue(control, value) {
+    if (!control) return false;
+    const nextValue = String(value ?? '');
+    if (control.isContentEditable || control.getAttribute?.('contenteditable') === 'true') {
+      control.textContent = nextValue;
+      dispatchFacebookInput(control);
+      return normalizedFacebookControlText(control.textContent) === normalizedFacebookControlText(nextValue);
+    }
+    const tagName = String(control.tagName || '').toLowerCase();
+    const constructorName = tagName === 'textarea' ? 'HTMLTextAreaElement' : (tagName === 'select' ? 'HTMLSelectElement' : 'HTMLInputElement');
+    const constructor = globalThis?.[constructorName];
+    const setter = constructor?.prototype
+      ? Object.getOwnPropertyDescriptor(constructor.prototype, 'value')?.set
+      : null;
+    try {
+      if (setter) setter.call(control, nextValue);
+      else control.value = nextValue;
+    } catch (_) {
+      return false;
+    }
+    dispatchFacebookInput(control);
+    return String(control.value ?? '') === nextValue;
+  }
+
+  async function setFacebookTextField(root, label, value) {
+    const control = findFacebookLabeledControl(root, label);
+    if (!control) return { ok: false, reason: `${label} control was not found.` };
+    let ok = setFacebookControlValue(control, value);
+    if (!ok && normalizedFacebookControlText(label) === 'price') {
+      const actual = Number(String(control.value ?? '').replace(/[^\d.]/g, ''));
+      const expected = Number(String(value ?? '').replace(/[^\d.]/g, ''));
+      ok = Number.isFinite(actual) && Number.isFinite(expected) && actual === expected;
+    }
+    return { ok, reason: ok ? '' : `${label} did not retain the supplied value.` };
+  }
+
+  const FACEBOOK_CATEGORY_PARENTS = Object.freeze({
+    'appliances': 'home & garden',
+    'furniture': 'home & garden',
+    'garden': 'home & garden',
+    'household': 'home & garden',
+    'tools': 'home & garden',
+    'video games': 'entertainment',
+    'books, movies & music': 'entertainment',
+    'bags & luggage': 'clothing & accessories',
+    "men's clothing & shoes": 'clothing & accessories',
+    "women's clothing & shoes": 'clothing & accessories',
+    'jewelry & accessories': 'clothing & accessories',
+    'baby & kids': 'family',
+    'health & beauty': 'family',
+    'pet supplies': 'family',
+    'toys & games': 'family',
+    'electronics & computers': 'electronics',
+    'mobile phones': 'electronics',
+    'antiques & collectibles': 'hobbies',
+    'arts & crafts': 'hobbies',
+    'auto parts': 'hobbies',
+    'bicycles': 'hobbies',
+    'musical instruments': 'hobbies',
+    'sports & outdoors': 'hobbies',
+    'garage sale': 'classifieds',
+    'miscellaneous': 'classifieds',
+    'vehicles': 'classifieds',
+  });
+
+  function facebookCategoryParent(value) {
+    return FACEBOOK_CATEGORY_PARENTS[normalizedFacebookControlText(value)] || '';
+  }
+
+  async function chooseFacebookDropdownValue(root, label, value, options = {}) {
+    const control = findFacebookLabeledControl(root, label);
+    if (!control) return { ok: false, reason: `${label} control was not found.` };
+    control.click?.();
+    const deadline = Date.now() + (options.timeoutMs || 6000);
+    const target = normalizedFacebookControlText(value);
+    const aliases = uniqueNonEmpty([
+      target,
+      target.replace(/^used - /, ''),
+      target === 'miscellaneous' ? 'other' : '',
+    ]);
+    const parentCategory = normalizedFacebookControlText(label) === 'category'
+      ? facebookCategoryParent(target)
+      : '';
+    let parentOpened = false;
+    while (Date.now() < deadline) {
+      const dropdownSelector = '[role="dialog"][aria-label*="Dropdown" i], [role="listbox"], [role="menu"]';
+      const dropdowns = Array.from(root?.querySelectorAll?.(dropdownSelector) || []);
+      const fallbackDropdown = root?.querySelector?.(dropdownSelector);
+      if (!dropdowns.length && fallbackDropdown) dropdowns.push(fallbackDropdown);
+      const semanticLeafElements = dropdowns.flatMap(dropdown => (
+        Array.from(dropdown?.querySelectorAll?.('div, span') || []).filter(option => {
+          const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
+          return aliases.some(alias => alias && (text === alias || text.startsWith(alias)));
+        })
+      ));
+      const optionElements = Array.from(new Set([
+        ...Array.from(root?.querySelectorAll?.('[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"]') || []),
+        ...dropdowns.flatMap(dropdown => Array.from(dropdown?.querySelectorAll?.('[aria-disabled="false"]') || [])),
+        ...semanticLeafElements,
+      ]));
+      const exact = optionElements.find(option => aliases.includes(normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'))));
+      const partial = optionElements.find(option => aliases.some(alias => {
+        const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
+        return alias && (text.startsWith(alias) || text.includes(alias));
+      }));
+      const match = exact || partial;
+      if (match) {
+        match.click?.();
+        await wait(100);
+        return { ok: true, reason: '' };
+      }
+      if (parentCategory && !parentOpened) {
+        const parent = optionElements.find(option => {
+          const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
+          return text === parentCategory || text.startsWith(`${parentCategory} `);
+        });
+        if (parent) {
+          parent.click?.();
+          parentOpened = true;
+          await wait(150);
+          continue;
+        }
+      }
+      await wait(100);
+    }
+    return { ok: false, reason: `${label} option '${value}' was not found.` };
+  }
+
+  async function downloadCrosslistImageFiles(imageUrls, itemId, options = {}) {
+    const files = [];
+    const limit = Math.min(Number(options.limit) || 10, imageUrls.length);
+    const requestBlob = options.requestBlob || (url => gmCrosslistRequest(url, 'blob'));
+    for (let index = 0; index < limit; index += 1) {
+      const url = imageUrls[index];
+      const blob = await requestBlob(url);
+      const type = String(blob?.type || '').toLowerCase();
+      const extension = type.includes('png') ? 'png' : (type.includes('webp') ? 'webp' : 'jpg');
+      const filename = `ebay-${itemId}-${String(index + 1).padStart(2, '0')}.${extension}`;
+      files.push(new File([blob], filename, { type: blob?.type || `image/${extension === 'jpg' ? 'jpeg' : extension}` }));
+    }
+    return files;
+  }
+
+  async function uploadFacebookDraftPhotos(root, draft, itemId, options = {}) {
+    const imageUrls = Array.isArray(draft?.image_urls) ? draft.image_urls : [];
+    if (!imageUrls.length) return { ok: false, reason: 'The queued draft has no eBay photos.', count: 0 };
+    const input = Array.from(root?.querySelectorAll?.('input[type="file"]') || [])
+      .find(candidate => /image|jpeg|jpg|png|webp/i.test(candidate.getAttribute?.('accept') || 'image'));
+    if (!input) return { ok: false, reason: 'Facebook photo upload control was not found.', count: 0 };
+    const files = await downloadCrosslistImageFiles(imageUrls, itemId, options);
+    if (!files.length) return { ok: false, reason: 'No eBay photos could be downloaded.', count: 0 };
+    const Transfer = options.DataTransferClass || globalThis.DataTransfer;
+    if (!Transfer) return { ok: false, reason: 'This browser cannot assign selected photo files.', count: 0 };
+    const transfer = new Transfer();
+    files.forEach(file => transfer.items.add(file));
+    try {
+      input.files = transfer.files;
+    } catch (_) {
+      return { ok: false, reason: 'Facebook rejected the selected photo files.', count: 0 };
+    }
+    dispatchFacebookInput(input);
+    const count = Number(input.files?.length || 0);
+    return { ok: count === files.length, reason: count === files.length ? '' : `Facebook accepted ${count}/${files.length} photos.`, count };
+  }
+
+  async function fillFacebookMarketplaceDraft(record, options = {}) {
+    const draft = record?.facebook_draft || {};
+    const itemId = String(record?.item_id || record?.listing?.item_id || '');
+    const root = options.root || (typeof document !== 'undefined' ? document : null);
+    const setField = options.setField || ((label, value) => setFacebookTextField(root, label, value));
+    const selectField = options.selectField || ((label, value) => chooseFacebookDropdownValue(root, label, value, options));
+    const uploadPhotos = options.uploadPhotos || (() => uploadFacebookDraftPhotos(root, draft, itemId, options));
+    const errors = [];
+    const warnings = [...(Array.isArray(record?.warnings) ? record.warnings : [])];
+    const fields = {};
+
+    for (const [label, value, required] of [
+      ['Title', draft.title, true],
+      ['Price', Number.isFinite(Number(draft.price)) ? String(Number(draft.price)) : '', true],
+      ['Description', draft.description, true],
+    ]) {
+      if (!value && required) {
+        errors.push(`${label} is missing from the queued draft.`);
+        continue;
+      }
+      const result = await setField(label, value);
+      fields[label] = result;
+      if (!result?.ok) errors.push(result?.reason || `${label} could not be filled.`);
+    }
+
+    const photoResult = await uploadPhotos();
+    fields.Photos = photoResult;
+    if (!photoResult?.ok) errors.push(photoResult?.reason || 'Photos could not be uploaded.');
+
+    for (const [label, value] of [['Category', draft.category], ['Condition', draft.condition]]) {
+      if (!value) {
+        warnings.push(`${label} needs manual selection.`);
+        continue;
+      }
+      const result = await selectField(label, value);
+      fields[label] = result;
+      if (!result?.ok) warnings.push(result?.reason || `${label} needs manual selection.`);
+    }
+    if (draft.location) {
+      const locationResult = await setField('Location', draft.location);
+      fields.Location = locationResult;
+      if (!locationResult?.ok) warnings.push(locationResult?.reason || 'Location needs manual verification.');
+    }
+
+    return {
+      ok: errors.length === 0,
+      item_id: itemId,
+      evidence_hash: record?.evidence_hash || '',
+      fields,
+      photo_count: Number(photoResult?.count || 0),
+      errors,
+      warnings: uniqueNonEmpty(warnings),
+    };
   }
 
   function postEbayLifecycleEnvelope(envelope, token = getFlipTrackerSyncToken()) {
@@ -7608,7 +8202,31 @@ ${cards}
 
   function renderFlipTrackerSection(debugEnabled, route = {}) {
     const ebayLifecycle = String(route?.kind || '').startsWith('fliptracker-ebay-');
+    const ebayActive = route?.kind === 'fliptracker-ebay-active';
+    const facebookCreate = route?.kind === 'fliptracker-facebook-create';
+    const facebookPublished = route?.kind === 'fliptracker-facebook-published';
     const pageKind = ebayLifecyclePageKind(route);
+    if (facebookCreate || facebookPublished) {
+      const pending = getPendingCrosslist();
+      return `
+        <section id="fliptracker-listing-export-mode" class="hiba-section" data-module="fliptracker">
+          <div class="hiba-section-head">
+            <div>
+              <div class="hiba-kicker">Facebook cross-list</div>
+              <strong>${facebookCreate ? 'Marketplace Draft' : 'Published Listing'}</strong>
+            </div>
+            <span class="hiba-chip neutral">human review</span>
+          </div>
+          <div class="hiba-actions">
+            ${facebookCreate ? actionButton('fliptracker-crosslist-fill', 'upload', 'Fill Next eBay Draft', 'primary', '', 'Claim one queued eBay listing, upload its photos, and fill this form. Publish remains manual.') : ''}
+            ${facebookPublished ? actionButton('fliptracker-crosslist-confirm-published', 'check', 'Confirm Published', 'success', '', 'Link this Facebook listing to the pending eBay cross-list record.') : ''}
+            ${actionButton('fliptracker-lifecycle-connect', 'shield', 'Connect', 'secondary', '', 'Save the local Flip Tracker bridge token in Tampermonkey storage.')}
+          </div>
+          <div id="fliptracker-listing-status" class="hiba-meta">${pending ? `Pending eBay item ${escapeHtml(pending.item_id || '')}: ${escapeHtml(pending.title || '')}` : 'No draft is currently pending in this browser.'}</div>
+          ${renderDebugActions(debugEnabled)}
+        </section>
+      `;
+    }
     const heading = ebayLifecycle
       ? `eBay ${pageKind === 'transactions' ? 'Transactions' : (pageKind === 'sold' ? 'Sold Orders' : 'Active Listings')}`
       : 'FlipTracker Active Listing Export';
@@ -7628,7 +8246,12 @@ ${cards}
           ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-page', 'radio', 'Sync This Page', 'success', '', 'Send this page to the local Flip Tracker review queue.') : ''}
           ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-all', 'scan', 'Sync All eBay', 'primary', '', 'Collect active, sold, and transaction pages. Incomplete pages are named for guided follow-up.') : ''}
           ${ebayLifecycle ? actionButton('fliptracker-lifecycle-connect', 'shield', 'Connect', 'secondary', '', 'Save the local Flip Tracker bridge token in Tampermonkey storage.') : ''}
+          ${ebayActive ? actionButton('fliptracker-crosslist-queue', 'upload', 'Queue Facebook Draft', 'success', '', 'Enrich one selected active listing and add or update its Facebook draft queue record.') : ''}
         </div>
+        ${ebayActive ? `<label class="hiba-field-label" for="fliptracker-crosslist-item">Facebook draft source</label>
+          <select id="fliptracker-crosslist-item" class="hiba-select" aria-label="Facebook draft source"></select>
+          <label class="hiba-field-label" for="fliptracker-crosslist-location">Facebook location</label>
+          <input id="fliptracker-crosslist-location" class="hiba-input" value="${escapeHtml(getCrosslistLocation())}" aria-label="Facebook location">` : ''}
         ${renderDebugActions(debugEnabled)}
         <div id="fliptracker-listing-status" class="hiba-meta">Waiting to scan.</div>
       </section>
@@ -7720,7 +8343,8 @@ ${cards}
         #${PANEL_ID} .hiba-details { margin-top:9px; border:1px solid rgba(148,163,184,.16); border-radius:10px; background:rgba(2,6,23,.38); padding:8px 9px; }
         #${PANEL_ID} .hiba-details summary { cursor:pointer; font-weight:900; color:#e0f2fe; }
         #${PANEL_ID} .hiba-field { display:grid; gap:4px; margin-top:8px; color:#cbd5e1; font-size:12px; font-weight:800; }
-        #${PANEL_ID} .hiba-input { width:100%; min-height:32px; color:#f8fafc; background:#020617; border:1px solid rgba(148,163,184,.26); border-radius:9px; padding:6px 8px; font:12px/1.25 ui-sans-serif, system-ui, sans-serif; }
+        #${PANEL_ID} .hiba-input, #${PANEL_ID} .hiba-select { width:100%; min-height:32px; color:#f8fafc; background:#020617; border:1px solid rgba(148,163,184,.26); border-radius:7px; padding:6px 8px; font:12px/1.25 ui-sans-serif, system-ui, sans-serif; }
+        #${PANEL_ID} .hiba-field-label { display:block; margin:9px 0 4px; color:#cbd5e1; font-size:11px; font-weight:800; }
         #${PANEL_ID} .hiba-actions { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:9px; }
         #${PANEL_ID} .hiba-actions.compact { margin-top:0; justify-content:flex-end; }
         #${PANEL_ID} .hiba-btn, #${PANEL_ID} .hiba-prepare, #${PANEL_ID} .hiba-icon-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid rgba(147,197,253,.28); border-radius:9px; padding:7px 9px; color:#eff6ff; background:#1d4ed8; font-weight:800; cursor:pointer; min-height:34px; }
@@ -7801,6 +8425,9 @@ ${cards}
     const liveMode = activeMode === 'live';
     const listingExportMode = activeMode === 'fliptracker';
     const ebayLifecycleMode = listingExportMode && String(activeRoute?.kind || '').startsWith('fliptracker-ebay-');
+    const facebookCrosslistMode = listingExportMode && String(activeRoute?.kind || '').startsWith('fliptracker-facebook-');
+    const facebookCreateMode = activeRoute?.kind === 'fliptracker-facebook-create';
+    const facebookPublishedMode = activeRoute?.kind === 'fliptracker-facebook-published';
     const auctionNinjaMode = activeMode === 'auctionninja';
     const aarMode = activeMode === 'aar';
     const govDealsMode = activeMode === 'govdeals';
@@ -7819,6 +8446,11 @@ ${cards}
     const lifecycleSyncPageButton = panel.querySelector('#fliptracker-lifecycle-sync-page');
     const lifecycleSyncAllButton = panel.querySelector('#fliptracker-lifecycle-sync-all');
     const lifecycleConnectButton = panel.querySelector('#fliptracker-lifecycle-connect');
+    const crosslistQueueButton = panel.querySelector('#fliptracker-crosslist-queue');
+    const crosslistItemSelect = panel.querySelector('#fliptracker-crosslist-item');
+    const crosslistLocationInput = panel.querySelector('#fliptracker-crosslist-location');
+    const crosslistFillButton = panel.querySelector('#fliptracker-crosslist-fill');
+    const crosslistConfirmPublishedButton = panel.querySelector('#fliptracker-crosslist-confirm-published');
     const liveCopyJsonButton = panel.querySelector('#hibid-live-copy-json');
     const liveCopyLlmButton = panel.querySelector('#hibid-live-copy-llm');
     const catalogCopyJsonButton = panel.querySelector('#hibid-catalog-copy-json');
@@ -7906,6 +8538,18 @@ ${cards}
     const renderLifecycleExport = (envelope) => {
       state.lifecycleEnvelope = envelope;
       state.listingRows = envelope?.records || [];
+      if (crosslistItemSelect && envelope?.page_kind === 'active') {
+        const previous = crosslistItemSelect.value;
+        crosslistItemSelect.innerHTML = state.listingRows.map((listing, index) => {
+          const itemId = escapeHtml(listing.item_id || listing.itemId || '');
+          const title = escapeHtml(String(listing.title || '').slice(0, 70));
+          const price = Number.isFinite(Number(listing.price)) ? `$${Number(listing.price).toFixed(2)}` : 'no price';
+          return `<option value="${itemId || index}">${title} - ${escapeHtml(price)}</option>`;
+        }).join('');
+        if (previous && Array.from(crosslistItemSelect.options).some(option => option.value === previous)) {
+          crosslistItemSelect.value = previous;
+        }
+      }
       if (!listingExportStatusEl) return;
       const completeness = envelope?.completeness || {};
       listingExportStatusEl.textContent = completeness.complete
@@ -8026,7 +8670,12 @@ ${cards}
     });
 
     if (listingExportMode) {
-      status(ebayLifecycleMode ? 'Ready to collect eBay lifecycle facts for FlipTracker.' : 'Ready to export active listings for FlipTracker.');
+      status(facebookCreateMode
+        ? 'Ready to fill one queued eBay listing. Publish remains manual.'
+        : (facebookPublishedMode
+          ? 'Confirm only after this is the Facebook listing you just published.'
+          : (ebayLifecycleMode ? 'Ready to collect eBay lifecycle facts for FlipTracker.' : 'Ready to export active listings for FlipTracker.')));
+      if (!facebookCrosslistMode) {
       window.setTimeout(() => {
         try {
           scanListingsForExport();
@@ -8034,6 +8683,7 @@ ${cards}
           status(`Initial listing scan failed: ${error?.message || error}`);
         }
       }, 500);
+      }
     }
 
     if (auctionNinjaMode) {
@@ -8204,6 +8854,173 @@ ${cards}
       if (entered === null) return;
       const saved = saveFlipTrackerSyncToken(entered);
       status(saved ? 'FlipTracker sync token saved.' : 'Sync token cleared.');
+    });
+
+    crosslistLocationInput?.addEventListener('change', () => {
+      const saved = saveCrosslistLocation(crosslistLocationInput.value);
+      status(saved ? `Facebook location saved: ${saved}.` : 'Facebook location cleared; set it before queuing a draft.');
+    });
+
+    crosslistQueueButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      try {
+        scanListingsForExport();
+      } catch (error) {
+        status(`Queue blocked: ${error?.message || error}`);
+        return;
+      }
+      const selectedValue = crosslistItemSelect?.value || '';
+      const listing = state.listingRows.find(row => String(row.item_id || row.itemId || '') === selectedValue)
+        || state.listingRows[Number(selectedValue)]
+        || state.listingRows[0];
+      if (!listing) {
+        status('No active eBay listing is selected. Scan the page first.');
+        return;
+      }
+      const locationValue = saveCrosslistLocation(crosslistLocationInput?.value || getCrosslistLocation());
+      if (!locationValue) {
+        status('Set the Facebook listing location before queuing.');
+        return;
+      }
+      setScrapingBusy(true);
+      if (crosslistQueueButton) crosslistQueueButton.disabled = true;
+      try {
+        status(`Reading eBay item ${listing.item_id || listing.itemId} and its full-resolution photos...`);
+        const envelope = await enrichEbayListingForCrosslist({
+          ...listing,
+          itemId: listing.item_id || listing.itemId,
+          customLabel: listing.custom_label || listing.customLabel,
+          quantityAvailable: listing.quantity_available ?? listing.quantityAvailable,
+        }, { location: locationValue });
+        const summary = [
+          envelope.listing.title,
+          `$${Number(envelope.listing.price).toFixed(2)}`,
+          `${envelope.listing.image_urls.length} photo(s)`,
+          envelope.warnings.length ? `Warnings:\n- ${envelope.warnings.join('\n- ')}` : 'No extraction warnings.',
+          '',
+          'Queue this Facebook draft? Publishing will still require your click on Facebook.',
+        ].join('\n');
+        if (!window.confirm(summary)) {
+          status('Facebook draft queue cancelled.');
+          return;
+        }
+        const result = await crosslistBridgeRequest('/crosslist/queue', envelope);
+        if (!result.ok) {
+          status(`Draft queue failed: ${result.reason || 'unknown bridge error'}.`);
+          return;
+        }
+        const actionText = {
+          created: 'Queued a new Facebook draft.',
+          updated: 'Updated the existing queued Facebook draft.',
+          duplicate: 'Unchanged draft already exists; no duplicate created.',
+          'published-blocked': 'This eBay item is already linked to a published Facebook listing.',
+        }[result.action] || `Draft queue result: ${result.action}.`;
+        status(actionText);
+      } catch (error) {
+        status(`Draft queue failed: ${error?.message || error}`);
+      } finally {
+        if (crosslistQueueButton) crosslistQueueButton.disabled = false;
+        setScrapingBusy(false);
+      }
+    });
+
+    crosslistFillButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      setScrapingBusy(true);
+      crosslistFillButton.disabled = true;
+      let claimed = null;
+      try {
+        status('Claiming the next queued eBay listing...');
+        const claim = await crosslistBridgeRequest('/crosslist/claim', {});
+        if (!claim.ok) {
+          status(`Draft claim failed: ${claim.reason || 'unknown bridge error'}.`);
+          return;
+        }
+        claimed = claim.record;
+        if (!claimed) {
+          status('No queued eBay draft is waiting. Queue one from eBay Active first.');
+          return;
+        }
+        status(`Downloading ${claimed.facebook_draft?.image_urls?.length || 0} eBay photo(s) and filling Facebook...`);
+        const result = await fillFacebookMarketplaceDraft(claimed);
+        if (!result.ok) {
+          await crosslistBridgeRequest('/crosslist/result', {
+            item_id: claimed.item_id,
+            evidence_hash: claimed.evidence_hash,
+            state: 'Failed',
+            error: result.errors.join(' '),
+          });
+          status(`Draft fill stopped: ${result.errors[0] || 'required Facebook fields were not filled'}`);
+          return;
+        }
+        const transition = await crosslistBridgeRequest('/crosslist/result', {
+          item_id: claimed.item_id,
+          evidence_hash: claimed.evidence_hash,
+          state: 'Drafted',
+          reason: result.warnings.join(' '),
+        });
+        if (!transition.ok) {
+          status(`Draft was filled, but its audit state failed: ${transition.reason}. Do not publish until reconnected.`);
+          return;
+        }
+        savePendingCrosslist({
+          item_id: claimed.item_id,
+          evidence_hash: claimed.evidence_hash,
+          title: claimed.facebook_draft?.title || claimed.listing?.title || '',
+          filled_at: new Date().toISOString(),
+          warnings: result.warnings,
+        });
+        status(result.warnings.length
+          ? `Draft filled with ${result.photo_count} photo(s). Review ${result.warnings.length} warning(s), then publish manually.`
+          : `Draft filled with ${result.photo_count} photo(s). Review it, then publish manually.`);
+      } catch (error) {
+        if (claimed?.item_id) {
+          await crosslistBridgeRequest('/crosslist/result', {
+            item_id: claimed.item_id,
+            evidence_hash: claimed.evidence_hash,
+            state: 'Failed',
+            error: String(error?.message || error),
+          }).catch(() => null);
+        }
+        status(`Draft fill failed: ${error?.message || error}`);
+      } finally {
+        crosslistFillButton.disabled = false;
+        setScrapingBusy(false);
+      }
+    });
+
+    crosslistConfirmPublishedButton?.addEventListener('click', async () => {
+      const pending = getPendingCrosslist();
+      if (!pending?.item_id || !pending?.evidence_hash) {
+        status('No pending cross-list draft is stored in this browser.');
+        return;
+      }
+      const facebookListingId = String(location.pathname || '').match(/\/marketplace\/item\/(\d+)/i)?.[1] || '';
+      if (!facebookListingId) {
+        status('This page has no Facebook Marketplace listing ID.');
+        return;
+      }
+      const titleWords = normalizedFacebookControlText(pending.title).split(' ').filter(word => word.length >= 4).slice(0, 4);
+      const pageText = normalizedFacebookControlText(`${document.title || ''} ${textOf(document.querySelector('h1') || '')}`);
+      const titleEvidence = titleWords.length > 0 && titleWords.filter(word => pageText.includes(word)).length >= Math.min(2, titleWords.length);
+      if (!titleEvidence) {
+        status('Published-title check failed. Open the listing created from the pending eBay draft before confirming.');
+        return;
+      }
+      if (!window.confirm(`Confirm that this Facebook listing was published from eBay item ${pending.item_id}?\n\n${pending.title}`)) return;
+      const result = await crosslistBridgeRequest('/crosslist/result', {
+        item_id: pending.item_id,
+        evidence_hash: pending.evidence_hash,
+        state: 'Published',
+        facebook_listing_id: facebookListingId,
+        facebook_url: `https://www.facebook.com/marketplace/item/${facebookListingId}/`,
+      });
+      if (!result.ok) {
+        status(`Published link failed: ${result.reason || 'unknown bridge error'}.`);
+        return;
+      }
+      savePendingCrosslist(null);
+      status('Published listing linked. This eBay item is now protected from duplicate drafts.');
     });
 
     lifecycleSyncPageButton?.addEventListener('click', async () => {
