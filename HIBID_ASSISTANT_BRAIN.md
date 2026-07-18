@@ -25,6 +25,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Recursive release gate: item-detail fixtures, cross-list schema and transition tests, Facebook form fixture tests, live eBay enrichment, one authenticated Facebook draft, duplicate replay proof, green `npm test`, brain evidence, and pushed branch.
 - 2026-07-18 live evidence: eBay item `336694211286` produced one stable queue record; replay returned duplicate/no-op; Facebook accepted the exact title, whole-dollar price, description, five source photos, `Electronics & computers`, and `Used - Good`; the adapter reported zero warnings and did not click Publish. Screenshot: `C:\tmp\ft022-crosslist-live-20260718\facebook-draft-certified-not-published.png`.
 - Verification: `npm test` passed `114/114`; the command-center artifact suite passed `273/273`; `node --check hibid-bid-assistant.user.js` passed.
+- Release status: PR `AshbyCollado/hibid-userscripts#4` is ready for review. Merging into `main` is intentionally pending explicit approval because raw `main` is the Tampermonkey update source.
 
 ## Completed Foundation: eBay Lifecycle Sync
 
