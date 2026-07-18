@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.47
+// @version      0.7.48
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.47';
+  const SCRIPT_VERSION = '0.7.48';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -70,6 +70,8 @@
   ];
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   const HIBID_STATE_FETCH_TIMEOUT_MS = 6500;
+  const HIBID_STATE_HYDRATION_WAIT_MS = 5000;
+  const HIBID_STATE_HYDRATION_POLL_MS = 100;
   const HIBID_STATE_SCRAPE_MAX_MS = 15000;
   const HIBID_STATE_MAX_PAGES = 24;
   const HIBID_DOM_SCRAPE_MAX_MS = 90000;
@@ -1178,6 +1180,15 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return Boolean(visibleState?.noMatches || visibleState?.hasActiveFilters);
   }
 
+  function shouldRejectAmbiguousUnfilteredApollo(visibleState) {
+    const expectedTotal = Number(visibleState?.expectedTotal);
+    return Boolean(visibleState
+      && !visibleState.noMatches
+      && !visibleState.hasActiveFilters
+      && Number.isFinite(expectedTotal)
+      && expectedTotal > 0);
+  }
+
   function apolloConnectionMatchesVisibleState(connection, options = {}) {
     const visibleState = options.visibleState;
     if (!visibleState) return { ok: true };
@@ -1218,6 +1229,31 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       && options.expectedTotal !== undefined
       && Number.isFinite(Number(options.expectedTotal));
     const expectedTotal = Number(options.expectedTotal);
+    const visibleExpectedTotal = Number(options.visibleState?.expectedTotal);
+    const hasVisibleExpectedTotal = !options.visibleState?.hasActiveFilters
+      && Number.isFinite(visibleExpectedTotal)
+      && visibleExpectedTotal > 0;
+    const pageBoundConnections = connections.filter(connection => /eventItemIds/i.test(connection.key));
+    const hasExactVisibleConnection = hasVisibleExpectedTotal
+      && connections.some(connection => connection.totalCount === visibleExpectedTotal);
+
+    // HiBid's catalog page can expose several Apollo lot connections at once.
+    // A broad/featured connection is not safe just because it contains Lot refs.
+    // When the page tells us its unfiltered total, prefer the page-bound
+    // eventItemIds connection; if neither a page-bound nor exact-total
+    // connection exists, fail closed and let the DOM path decide.
+    if (hasVisibleExpectedTotal && !hasExactVisibleConnection && !pageBoundConnections.length) {
+      debug('apollo lot connections ambiguous for unfiltered catalog', {
+        visibleExpectedTotal,
+        connections: connections.map(connection => ({
+          key: connection.key.slice(0, 220),
+          refs: connection.refs.length,
+          totalCount: connection.totalCount,
+          pageLength: connection.pageLength
+        })).slice(0, 10)
+      });
+      return null;
+    }
     const rejected = [];
     const allowed = connections.filter(connection => {
       const match = apolloConnectionMatchesVisibleState(connection, options);
@@ -1243,6 +1279,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const scored = allowed.map(connection => {
       let score = 0;
       if (hasExpectedTotal && connection.totalCount === expectedTotal) score += 1000;
+      if (hasVisibleExpectedTotal && /eventItemIds/i.test(connection.key)) score += 600;
       if (apolloKeyMatchesActiveFilters(connection.key, options.visibleState)) score += 750;
       if (/lotSearch/i.test(connection.key)) score += 250;
       if (!/featured|hot|recommend|similar|related/i.test(connection.key)) score += 100;
@@ -1251,7 +1288,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       return { connection, score };
     }).sort((a, b) => b.score - a.score);
     debug('apollo lot connections', scored.map(item => ({
-      key: item.connection.key,
+      key: item.connection.key.slice(0, 220),
       refs: item.connection.refs.length,
       totalCount: item.connection.totalCount,
       pageLength: item.connection.pageLength,
@@ -1265,7 +1302,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function collectLotRefsFromApolloState(state, options = {}) {
     const chosen = chooseApolloLotConnection(state, options);
     if (chosen) return chosen.refs;
-    if (shouldGuardApolloForVisibleState(options.visibleState)) return [];
+    if (shouldGuardApolloForVisibleState(options.visibleState)
+      || shouldRejectAmbiguousUnfilteredApollo(options.visibleState)) return [];
 
     const refs = [];
     const seen = new Set();
@@ -1362,7 +1400,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       const key = lot?.id || lot?.lot || lot?.url;
       if (key && lot?.title) unique.set(String(key), lot);
     });
-    const rejectedSource = !refs.length && shouldGuardApolloForVisibleState(context.visibleState) ? 'filter-mismatch' : '';
+    const rejectedSource = !refs.length && shouldGuardApolloForVisibleState(context.visibleState)
+      ? 'filter-mismatch'
+      : (!refs.length && shouldRejectAmbiguousUnfilteredApollo(context.visibleState)
+        ? 'ambiguous-unfiltered-state'
+        : '');
     const hasExpectedFromContext = context.expectedTotal !== null
       && context.expectedTotal !== undefined
       && Number.isFinite(Number(context.expectedTotal));
@@ -1458,6 +1500,19 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     }
   }
 
+  async function waitForHibidState(root = document, timeoutMs = HIBID_STATE_HYDRATION_WAIT_MS) {
+    const startedAt = Date.now();
+    let state = extractHibidStateFromDocument(root);
+    while (!state && Date.now() - startedAt < timeoutMs) {
+      await wait(HIBID_STATE_HYDRATION_POLL_MS);
+      state = extractHibidStateFromDocument(root);
+    }
+    debug(state ? 'hibid-state became available after hydration wait' : 'hibid-state unavailable after hydration wait', {
+      waitedMs: Date.now() - startedAt
+    });
+    return state;
+  }
+
   async function scrapeHibidStatePages(onProgress = () => {}, shouldStop = () => false, root = document) {
     const visibleState = extractHibidVisiblePageState(root, typeof location !== 'undefined' ? location : null);
     debug('hibid visible page state', visibleState);
@@ -1478,7 +1533,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       };
     }
 
-    const firstState = extractHibidStateFromDocument(root);
+    const firstState = await waitForHibidState(root);
     if (!firstState) {
       debug('hibid-state unavailable on current document');
       return null;

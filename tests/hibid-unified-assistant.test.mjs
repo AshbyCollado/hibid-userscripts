@@ -550,6 +550,96 @@ test('assistant ignores stray Apollo lot connections when visible total identifi
   assert.deepEqual(plain(result.items.map(lot => lot.id)), ['main']);
 });
 
+test('assistant prefers page-bound Apollo connections on unfiltered catalogs', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/761410/great-deals-overstock---liquidation---returns-w29');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 to 100 of 483 lots' },
+    documentElement: { textContent: 'Showing 1 to 100 of 483 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  }, loc);
+  const state = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 455,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:stale' }],
+        },
+      },
+      'lotSearch({"input":{"eventItemIds":[1,2],"sortOrder":"LOT_NUMBER"},"pageLength":2,"pageNumber":1})': {
+        pagedResults: {
+          totalCount: 2,
+          pageLength: 2,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:page-bound' }],
+        },
+      },
+    },
+    'Lot:stale': {
+      id: 'stale',
+      lotNumber: '900',
+      lead: 'Unrelated stale lot',
+      lotState: { highBid: 99, minBid: 100, bidCount: 1, status: 'OPEN' },
+    },
+    'Lot:page-bound': {
+      id: 'page-bound',
+      lotNumber: '1',
+      lead: 'Visible page-bound lot',
+      lotState: { highBid: 10, minBid: 12, bidCount: 1, status: 'OPEN' },
+    },
+  };
+
+  const result = core.extractHibidApolloLots(state, {
+    url: loc.href,
+    expectedTotal: visibleState.expectedTotal,
+    visibleState,
+  });
+
+  assert.deepEqual(plain(result.items.map(lot => lot.id)), ['page-bound']);
+  assert.equal(result.expectedTotal, 483);
+});
+
+test('assistant rejects ambiguous unfiltered Apollo state instead of exporting a broad connection', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/761410/great-deals-overstock---liquidation---returns-w29');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 to 100 of 483 lots' },
+    documentElement: { textContent: 'Showing 1 to 100 of 483 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  }, loc);
+  const result = core.extractHibidApolloLots({
+    ROOT_QUERY: {
+      'featuredLotSearch({"limit":100})': {
+        pagedResults: {
+          totalCount: 455,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:stale' }],
+        },
+      },
+    },
+    'Lot:stale': {
+      id: 'stale',
+      lotNumber: '900',
+      lead: 'Unrelated stale lot',
+      lotState: { highBid: 99, minBid: 100, bidCount: 1, status: 'OPEN' },
+    },
+  }, {
+    url: loc.href,
+    expectedTotal: visibleState.expectedTotal,
+    visibleState,
+  });
+
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(result.rejectedSource, 'ambiguous-unfiltered-state');
+});
+
 test('assistant fails closed when filtered HiBid page has no matches but Apollo has broad catalog data', () => {
   const core = loadCore();
   const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');
