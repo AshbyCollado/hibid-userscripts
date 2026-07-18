@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.48
+// @version      0.7.49
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -50,7 +50,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.48';
+  const SCRIPT_VERSION = '0.7.49';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -2994,6 +2994,7 @@ ${cards}
     setFacebookTextField,
     facebookCategoryParent,
     chooseFacebookDropdownValue,
+    chooseFacebookLocationValue,
     fillFacebookMarketplaceDraft,
     downloadCrosslistImageFiles,
     parseEbaySoldOrdersHtml,
@@ -7107,6 +7108,27 @@ ${cards}
     return String(control.value ?? '') === nextValue;
   }
 
+  function setFacebookAutocompleteValue(control, value) {
+    if (!control) return false;
+    const nextValue = String(value ?? '');
+    const setter = globalThis?.HTMLInputElement?.prototype
+      ? Object.getOwnPropertyDescriptor(globalThis.HTMLInputElement.prototype, 'value')?.set
+      : null;
+    try {
+      if (setter) setter.call(control, nextValue);
+      else control.value = nextValue;
+      const InputEventClass = globalThis.InputEvent || globalThis.Event;
+      control.dispatchEvent(new InputEventClass('input', {
+        bubbles: true,
+        data: nextValue,
+        inputType: 'insertText',
+      }));
+    } catch (_) {
+      return false;
+    }
+    return String(control.value ?? '') === nextValue;
+  }
+
   async function setFacebookTextField(root, label, value) {
     const control = findFacebookLabeledControl(root, label);
     if (!control) return { ok: false, reason: `${label} control was not found.` };
@@ -7211,6 +7233,70 @@ ${cards}
     return { ok: false, reason: `${label} option '${value}' was not found.` };
   }
 
+  async function chooseFacebookLocationValue(root, value, options = {}) {
+    const target = String(value || '').trim();
+    if (!target) return { ok: false, reason: 'Location is missing from the queued draft.' };
+    const searchText = target.split(',')[0].trim() || target;
+    const city = normalizedFacebookControlText(searchText);
+    const existingLocation = Array.from(root?.querySelectorAll?.(
+      '[role="button"][aria-disabled="true"], input[aria-label="Location"][role="combobox"]'
+    ) || []).find(node => {
+      const text = normalizedFacebookControlText(node.value ?? node.textContent);
+      const selectedInput = String(node.tagName || '').toLowerCase() === 'input'
+        && node.getAttribute?.('aria-expanded') !== 'true';
+      const selectedSummary = node.getAttribute?.('role') === 'button'
+        && node.getAttribute?.('aria-disabled') === 'true';
+      return (selectedInput || selectedSummary) && text && (text === city || text.startsWith(`${city},`));
+    });
+    if (existingLocation) return { ok: true, reason: '', preserved: true };
+
+    const control = findFacebookLabeledControl(root, 'Location');
+    if (!control) return { ok: false, reason: 'Location control was not found.' };
+    control.focus?.();
+    control.click?.();
+    setFacebookAutocompleteValue(control, '');
+    control.select?.();
+    const inserted = setFacebookAutocompleteValue(control, searchText);
+    if (!inserted) {
+      return { ok: false, reason: 'Location did not retain the supplied search text.' };
+    }
+    try {
+      control.dispatchEvent(new KeyboardEvent('keyup', {
+        bubbles: true,
+        key: searchText.slice(-1),
+      }));
+    } catch (_) {
+      // The input event dispatched above is sufficient in older test contexts.
+    }
+
+    const normalizedTarget = normalizedFacebookControlText(target);
+    const deadline = Date.now() + (options.timeoutMs || 6000);
+    while (Date.now() < deadline) {
+      const optionElements = Array.from(new Set([
+        ...Array.from(root?.querySelectorAll?.('[role="option"], [role="listbox"] [role="button"], [role="menuitem"]') || []),
+        ...Array.from(root?.querySelectorAll?.('[aria-selected]') || []),
+      ])).filter(option => {
+        const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
+        return text && (text === normalizedTarget || text.startsWith(normalizedTarget) || (city && text.startsWith(city)));
+      });
+      const match = optionElements.find(option => {
+        const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
+        return text === normalizedTarget || text.startsWith(normalizedTarget);
+      }) || optionElements[0];
+      if (match) {
+        match.click?.();
+        await wait(150);
+        const selectedValue = normalizedFacebookControlText(control.value ?? control.textContent);
+        const collapsed = control.getAttribute?.('aria-expanded') !== 'true';
+        if (collapsed && selectedValue && (!city || selectedValue.startsWith(city))) {
+          return { ok: true, reason: '' };
+        }
+      }
+      await wait(100);
+    }
+    return { ok: false, reason: `Location suggestion '${value}' was not selected.` };
+  }
+
   async function downloadCrosslistImageFiles(imageUrls, itemId, options = {}) {
     const files = [];
     const limit = Math.min(Number(options.limit) || 10, imageUrls.length);
@@ -7254,6 +7340,10 @@ ${cards}
     const root = options.root || (typeof document !== 'undefined' ? document : null);
     const setField = options.setField || ((label, value) => setFacebookTextField(root, label, value));
     const selectField = options.selectField || ((label, value) => chooseFacebookDropdownValue(root, label, value, options));
+    const selectLocation = options.selectLocation
+      || (options.setField
+        ? (value => setField('Location', value))
+        : (value => chooseFacebookLocationValue(root, value, options)));
     const uploadPhotos = options.uploadPhotos || (() => uploadFacebookDraftPhotos(root, draft, itemId, options));
     const errors = [];
     const warnings = [...(Array.isArray(record?.warnings) ? record.warnings : [])];
@@ -7287,9 +7377,11 @@ ${cards}
       if (!result?.ok) warnings.push(result?.reason || `${label} needs manual selection.`);
     }
     if (draft.location) {
-      const locationResult = await setField('Location', draft.location);
+      const locationResult = await selectLocation(draft.location);
       fields.Location = locationResult;
-      if (!locationResult?.ok) warnings.push(locationResult?.reason || 'Location needs manual verification.');
+      if (!locationResult?.ok) errors.push(locationResult?.reason || 'Location could not be selected.');
+    } else {
+      errors.push('Location is missing from the queued draft.');
     }
 
     return {

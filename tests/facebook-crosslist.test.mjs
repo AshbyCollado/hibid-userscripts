@@ -356,6 +356,77 @@ test('selects Facebook leaf text even when only group rows expose aria-disabled'
 });
 
 
+test('commits Facebook location through its autocomplete suggestion', async () => {
+  const core = loadCore({
+    Event: class Event { constructor(type) { this.type = type; } },
+    KeyboardEvent: class KeyboardEvent { constructor(type) { this.type = type; } },
+    setTimeout,
+  });
+  let storedValue = '';
+  let expanded = 'false';
+  const locationControl = {
+    tagName: 'INPUT',
+    focus() {},
+    click() { expanded = 'true'; },
+    dispatchEvent() {},
+    getAttribute(name) {
+      if (name === 'aria-label') return 'Location';
+      if (name === 'role') return 'combobox';
+      if (name === 'aria-expanded') return expanded;
+      return null;
+    },
+  };
+  Object.defineProperty(locationControl, 'value', {
+    get: () => storedValue,
+    set: value => { storedValue = String(value); },
+  });
+  const locationOption = {
+    textContent: 'Carteret, New Jersey',
+    getAttribute() { return null; },
+    click() {
+      storedValue = 'Carteret, NJ';
+      expanded = 'false';
+    },
+  };
+  const root = {
+    querySelectorAll(selector) {
+      if (selector.includes('input, textarea')) return [locationControl];
+      if (selector.includes('[role="option"]')) return [locationOption];
+      return [];
+    },
+  };
+
+  const result = await core.chooseFacebookLocationValue(root, 'Carteret, NJ', { timeoutMs: 500 });
+  assert.equal(result.ok, true);
+  assert.equal(storedValue, 'Carteret, NJ');
+  assert.equal(expanded, 'false');
+});
+
+
+test('preserves a matching Facebook-owned default location', async () => {
+  const core = loadCore();
+  const locationSummary = {
+    tagName: 'DIV',
+    textContent: 'Carteret',
+    getAttribute(name) {
+      if (name === 'role') return 'button';
+      if (name === 'aria-disabled') return 'true';
+      return null;
+    },
+  };
+  const root = {
+    querySelectorAll(selector) {
+      if (selector.includes('[aria-disabled="true"]')) return [locationSummary];
+      return [];
+    },
+  };
+
+  const result = await core.chooseFacebookLocationValue(root, 'Carteret, NJ');
+  assert.equal(result.ok, true);
+  assert.equal(result.preserved, true);
+});
+
+
 test('fails a Facebook draft when a required value or photo upload is missing', async () => {
   const core = loadCore();
   const result = await core.fillFacebookMarketplaceDraft({
