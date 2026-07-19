@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.49
+// @version      0.7.50
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -1983,6 +1983,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         customLabel: activeFacts.customLabel,
         quantityTotal: activeFacts.quantityTotal,
         quantityAvailable: activeFacts.quantityAvailable,
+        offersEnabled: activeFacts.offersEnabled,
       });
     });
 
@@ -2032,6 +2033,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         customLabel: activeFacts.customLabel,
         quantityTotal: activeFacts.quantityTotal,
         quantityAvailable: activeFacts.quantityAvailable,
+        offersEnabled: activeFacts.offersEnabled,
       });
     });
 
@@ -2282,6 +2284,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       customLabel: extractEbayCustomLabel(chunk),
       quantityTotal: Number.isFinite(quantityTotal) ? quantityTotal : null,
       quantityAvailable: Number.isFinite(quantityAvailable) ? quantityAvailable : null,
+      offersEnabled: /\b(?:or best offer|best offer|accepts? offers?|send offers?|allow offers?)\b/i.test(text),
     };
   }
 
@@ -2668,7 +2671,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       shipping_text: listing.shippingText || '',
       views: Number.isFinite(listing.views) ? listing.views : null,
       watchers: Number.isFinite(listing.watchers) ? listing.watchers : null,
-      offers: null,
+      offers_enabled: Boolean(listing.offersEnabled),
+      offers: listing.offersEnabled ? 'Best Offer' : null,
       promoted_rate: null,
     }));
   }

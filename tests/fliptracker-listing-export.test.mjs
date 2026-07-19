@@ -60,6 +60,7 @@ test('parses active eBay listing cards for FlipTracker export', () => {
       customLabel: '',
       quantityTotal: null,
       quantityAvailable: null,
+      offersEnabled: false,
     },
   ]);
 });
@@ -109,8 +110,27 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
       customLabel: 'RV-DM17',
       quantityTotal: 4,
       quantityAvailable: 1,
+      offersEnabled: false,
     },
   ]);
+});
+
+test('detects Best Offer on active eBay listing exports', () => {
+  const core = loadCore();
+  const html = `
+    <div qa-id="active-item-336677465198" class="active-item">
+      <h3 class="item-title"><a href="/itm/336677465198"><span>Offer-enabled fixture</span></a></h3>
+      <div class="item__price"><span>$70.00</span><span> Buy It Now</span></div>
+      <div class="item__price-attrs">Or best offer</div>
+    </div>
+  `;
+
+  const rows = core.parseFlipTrackerActiveListingsHtml(html, {
+    url: 'https://www.ebay.com/mys/active',
+  });
+
+  assert.equal(rows[0].offersEnabled, true);
+  assert.equal(core.parseEbayActiveLifecycleHtml(html)[0].offers_enabled, true);
 });
 
 test('assistant panel defaults to minimized before a stored preference exists', () => {

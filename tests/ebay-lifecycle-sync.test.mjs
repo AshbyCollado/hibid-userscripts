@@ -306,6 +306,7 @@ test('extracts active SKU and quantities and chooses the labeled listing price',
         <h3 class="item-title"><a href="/itm/333333333333"><span>Labeled active fixture</span></a></h3>
         <div>Promoted price $4.25</div>
         <div aria-label="Current price"><span>Current price $85.00</span></div>
+        <div>Or best offer</div>
         <div>Custom label (SKU): RACK C3</div>
         <div>Total quantity: 5</div><div>Available quantity: 3</div>
         <div class="item__shipping-price">Free shipping</div><div>7 views</div><div>2 watchers</div>
@@ -319,6 +320,8 @@ test('extracts active SKU and quantities and chooses the labeled listing price',
   assert.equal(row.quantity_available, 3);
   assert.equal(row.views, 7);
   assert.equal(row.watchers, 2);
+  assert.equal(row.offers_enabled, true);
+  assert.equal(row.offers, 'Best Offer');
 
   const availableOnly = core.parseEbayActiveLifecycleHtml(`
     <div qa-id="active-item-444444444444" class="active-item">
