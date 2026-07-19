@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.49`.
+- Current version: `0.7.50`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -268,6 +268,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.47` bounds HiBid Apollo/DOM fallback work and uses the visible expected lot count to finish filtered pages such as the 40198 gaming-PC search.
 - Done: `v0.7.48` waits for late HiBid state hydration, prefers page-bound `eventItemIds` Apollo connections on unfiltered catalogs, and fails closed when only an ambiguous broad connection is available.
 - Done: `v0.7.49` adds AuctionNinja `/category/{slug}` product-card exports with ZIP/miles context and safe background View All loading.
+- Done: `v0.7.50` uses the category heading's result total, preserves location/sort filters across pagination, rejects unfiltered View All links, and loads every safe category page instead of stopping at eight fetches.
 - Done: `v0.7.42` recognizes state-prefixed HiBid account watchlist/current-bids routes such as `/newjersey/account/watchlist` and keeps them on the DOM-only account export path.
 - Done: `v0.7.43` makes the minimized launcher show the full `FlipperAddon by ALOS` name, widens it to 228px, and hides the close control until the drawer is expanded.
 - Verified in Waterfox on `v0.7.43`: representative HiBid, AJ Willner, eBay, Facebook, AuctionNinja, AAR, and GovDeals routes mount the expected module controls; the supplied `/livecatalog/752334/the-luxe-edit` target redirects to `/catalog/752334` because that auction is past, so it correctly presents catalog controls after the server redirect.

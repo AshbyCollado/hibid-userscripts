@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.49
+// @version      0.7.50
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -42,7 +42,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.49';
+  const SCRIPT_VERSION = '0.7.50';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -2173,6 +2173,7 @@ ${cards}
     getExpectedLotTotal,
     findCatalogNextPageButton,
     parseAuctionNinjaCatalogRange,
+    parseAuctionNinjaCategoryResultCount,
     findAuctionNinjaCatalogPageUrls,
     extractAuctionNinjaSaleContext,
     extractAuctionNinjaCatalogLots,
@@ -3706,6 +3707,13 @@ ${cards}
     return sales;
   }
 
+  function parseAuctionNinjaCategoryResultCount(value) {
+    const match = String(value || '').match(/\b([\d,]+)\s+results?\b/i);
+    if (!match) return null;
+    const total = Number(match[1].replace(/,/g, ''));
+    return Number.isFinite(total) ? total : null;
+  }
+
   function getAuctionNinjaCategoryCards(root = document) {
     const selectors = [
       '.hot-items-box',
@@ -3732,6 +3740,12 @@ ${cards}
   function findAuctionNinjaCategoryPageUrls(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
     const base = getAuctionNinjaBaseUrl(root, loc);
     const route = loc ? resolveAuctionNinjaPage(loc) : {};
+    let sourceUrl;
+    try {
+      sourceUrl = new URL(base, 'https://www.auctionninja.com/');
+    } catch {
+      sourceUrl = null;
+    }
     const pages = new Map();
     Array.from(root?.querySelectorAll?.('a[href]') || []).forEach(anchor => {
       const href = controlHref(anchor);
@@ -3747,6 +3761,7 @@ ${cards}
       const targetRoute = resolveAuctionNinjaPage(url);
       if (!targetRoute.supported || targetRoute.kind !== 'category-search') return;
       if (route.categorySlug && targetRoute.categorySlug !== route.categorySlug) return;
+      if (sourceUrl && !auctionNinjaCategoryFiltersMatch(sourceUrl, url)) return;
       if (url.href === base) return;
       pages.set(url.href, url.href);
     });
@@ -3755,10 +3770,20 @@ ${cards}
     return out;
   }
 
+  function auctionNinjaCategoryFiltersMatch(sourceUrl, targetUrl) {
+    const filterKeys = ['zip', 'miles', 'srt', 'keyword', 'kword', 'auc_date', 'shipopt1', 'shipopt2'];
+    return filterKeys.every(key => {
+      if (!sourceUrl.searchParams.has(key)) return true;
+      return sourceUrl.searchParams.getAll(key).join('\u0001') === targetUrl.searchParams.getAll(key).join('\u0001');
+    });
+  }
+
   function extractAuctionNinjaCategoryContext(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
     const raw = textOf(root?.body || root?.documentElement || root);
     const route = loc ? resolveAuctionNinjaPage(loc) : {};
     const range = parseAuctionNinjaCatalogRange(raw);
+    const heading = root?.querySelector?.('.category-search-item-title.desktop-show, .category-search-item-title.mobile-show, h1');
+    const resultCount = parseAuctionNinjaCategoryResultCount(textOf(heading) || raw);
     const title = String(root?.title || '')
       .replace(/\s*\|\s*AuctionNinja.*$/i, '')
       .replace(/\s+Online Auctions?\s*[-|].*$/i, '')
@@ -3772,7 +3797,7 @@ ${cards}
       url: loc?.href || (typeof location !== 'undefined' ? location.href : ''),
       zip: String(route.zip || loc?.searchParams?.get?.('zip') || ''),
       miles: String(route.miles || loc?.searchParams?.get?.('miles') || ''),
-      totalItems: range?.total || null,
+      totalItems: range?.total || resultCount || null,
       visibleItems: getAuctionNinjaCategoryCards(root).length,
       generatedAt: new Date().toISOString()
     };
@@ -3860,7 +3885,8 @@ ${cards}
 
     const queuedPageUrls = findAuctionNinjaCategoryPageUrls(root);
     const seenPageUrls = new Set(queuedPageUrls);
-    while (queuedPageUrls.length && !shouldStop() && steps < 8 && typeof fetch === 'function' && typeof DOMParser !== 'undefined') {
+    const maxSteps = Math.max(20, Math.ceil(Number(context.totalItems || 0) / 20) + 2);
+    while (queuedPageUrls.length && !shouldStop() && steps < maxSteps && typeof fetch === 'function' && typeof DOMParser !== 'undefined') {
       const url = queuedPageUrls.shift();
       if (!url || seenPageUrls.has(`${url}:fetched`)) continue;
       seenPageUrls.add(`${url}:fetched`);
@@ -3881,6 +3907,11 @@ ${cards}
           break;
         }
         mergeAuctionNinjaCategoryItems(itemsByKey, extractAuctionNinjaCategoryItems(pageDoc, new URL(url)));
+        if (context.totalItems && itemsByKey.size >= context.totalItems) {
+          stopReason = 'expected-total-reached';
+          debug('auctionninja category expected total reached', { step: steps, expectedTotal: context.totalItems, count: itemsByKey.size });
+          break;
+        }
         findAuctionNinjaCategoryPageUrls(pageDoc, new URL(url)).forEach(nextUrl => {
           if (!seenPageUrls.has(nextUrl) && !seenPageUrls.has(`${nextUrl}:fetched`)) {
             seenPageUrls.add(nextUrl);

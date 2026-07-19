@@ -3134,6 +3134,12 @@ test('assistant mounts AuctionNinja category pages and preserves location filter
   assert.equal(route.miles, '30');
   assert.equal(core.shouldInitOnLocation(loc), true);
   assert.equal(core.resolveAssistantMode(loc).mode, 'auctionninja');
+
+  const context = core.extractAuctionNinjaCategoryContext(
+    makeFakeNode({ text: 'Electronics & Computers 193 results' }),
+    loc,
+  );
+  assert.equal(context.totalItems, 193);
 });
 
 test('assistant accepts only safe same-category View All links for AuctionNinja category loading', () => {
@@ -3141,16 +3147,25 @@ test('assistant accepts only safe same-category View All links for AuctionNinja 
   const loc = new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008');
   const viewAll = makeFakeNode({
     text: 'View All Items',
-    attrs: { href: 'https://www.auctionninja.com/category/electronics?show=all&miles=30&zip=07008' },
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?show=all' },
   });
   const bidLink = makeFakeNode({
     text: 'Bid Now',
     attrs: { href: 'https://www.auctionninja.com/category/electronics?show=all&bid=1' },
   });
-  const root = makeFakeNode({ selectors: { 'a[href]': [viewAll, bidLink] } });
+  const pageFour = makeFakeNode({
+    text: '4',
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?Page=4&srt=Distance&miles=30&zip=07008' },
+  });
+  const pageSix = makeFakeNode({
+    text: '6',
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?Page=6&srt=Distance&miles=30&zip=07008' },
+  });
+  const root = makeFakeNode({ selectors: { 'a[href]': [viewAll, bidLink, pageFour, pageSix] } });
 
   assert.deepEqual(plain(core.findAuctionNinjaCategoryPageUrls(root, loc)), [
-    'https://www.auctionninja.com/category/electronics?show=all&miles=30&zip=07008',
+    'https://www.auctionninja.com/category/electronics?Page=4&srt=Distance&miles=30&zip=07008',
+    'https://www.auctionninja.com/category/electronics?Page=6&srt=Distance&miles=30&zip=07008',
   ]);
 });
 
