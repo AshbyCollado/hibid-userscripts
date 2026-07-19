@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.48`.
+- Current version: `0.7.49`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -26,6 +26,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
   - Followed-items controls: Copy Watchlist LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Items-won controls: Copy Won Items LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Bid-history controls: Copy Bid History LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Category controls: Copy Category LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Safety: research/export only; no bid clicks, no bid-field writes, no checkout/invoice/payment/account actions.
 - `aar`: AAR Auctions calendar and catalog export pages.
   - Auction calendar controls: Copy Auctions LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
@@ -66,6 +67,7 @@ Mount without waiting for lot tiles on:
 - `https://www.auctionninja.com/followed-items*`
 - `https://www.auctionninja.com/items-won*`
 - `https://www.auctionninja.com/bid-history*`
+- `https://www.auctionninja.com/category/{slug}*`, including `/category/electronics?miles=30&zip=07008`
 - `https://www.auctionninja.com/*/sales/details/*.html*`
 - `https://www.auctionninja.com/*/product/*.html*`
 - `https://aarauctions.com/auctions*`
@@ -144,6 +146,10 @@ Do not mount on GovDeals login, register, account, cart, checkout, payment, invo
    - Some AuctionNinja search rows use the sale URL for count-only anchors like `(9)` before or instead of a readable title link; treat those as URL-only and recover the title from line-preserved card text.
    - Prefer background fetches from discovered `marketplace_ajax.php?Page=...` pagination controls; merge sale rows by URL/title and avoid visible-tab clicks unless future guarded fallback is added.
    - Auction-search LLM briefs rank whole sales for resale potential before drilling into lot catalogs.
+7. Category exports:
+   - `/category/{slug}` is a product-card discovery route, not a sale catalog or account page. The category module reads `.hot-items-box` cards and product anchors directly from the visible DOM.
+   - Normalize product URL/id, title, image, current/starting price, time left, seller, location, shipping signal, status, watched signal, and raw card text. Preserve URL `zip` and `miles` filters in the context and LLM brief.
+   - Safe same-category `View All Items` / `show=all` links are fetched in the background with `credentials: include`, parsed with `DOMParser`, deduped by product URL/id, and capped/stoppable. Bid, account, checkout, payment, watch/follow, search, and sort links are rejected.
 
 ### AAR Auctions
 
@@ -261,6 +267,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.41` adds a shared mandatory mixed/group-lot component review rule to every Copy LLM brief and preserves descriptions, image URLs, and raw text on DOM fallback records where the page exposes them.
 - Done: `v0.7.47` bounds HiBid Apollo/DOM fallback work and uses the visible expected lot count to finish filtered pages such as the 40198 gaming-PC search.
 - Done: `v0.7.48` waits for late HiBid state hydration, prefers page-bound `eventItemIds` Apollo connections on unfiltered catalogs, and fails closed when only an ambiguous broad connection is available.
+- Done: `v0.7.49` adds AuctionNinja `/category/{slug}` product-card exports with ZIP/miles context and safe background View All loading.
 - Done: `v0.7.42` recognizes state-prefixed HiBid account watchlist/current-bids routes such as `/newjersey/account/watchlist` and keeps them on the DOM-only account export path.
 - Done: `v0.7.43` makes the minimized launcher show the full `FlipperAddon by ALOS` name, widens it to 228px, and hides the close control until the drawer is expanded.
 - Verified in Waterfox on `v0.7.43`: representative HiBid, AJ Willner, eBay, Facebook, AuctionNinja, AAR, and GovDeals routes mount the expected module controls; the supplied `/livecatalog/752334/the-luxe-edit` target redirects to `/catalog/752334` because that auction is past, so it correctly presents catalog controls after the server redirect.

@@ -3122,6 +3122,109 @@ Pink Lady Liquidation
   ]);
 });
 
+test('assistant mounts AuctionNinja category pages and preserves location filters', () => {
+  const core = loadCore();
+  const loc = new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008');
+  const route = core.resolveAuctionNinjaPage(loc);
+
+  assert.equal(route.supported, true);
+  assert.equal(route.kind, 'category-search');
+  assert.equal(route.categorySlug, 'electronics');
+  assert.equal(route.zip, '07008');
+  assert.equal(route.miles, '30');
+  assert.equal(core.shouldInitOnLocation(loc), true);
+  assert.equal(core.resolveAssistantMode(loc).mode, 'auctionninja');
+});
+
+test('assistant accepts only safe same-category View All links for AuctionNinja category loading', () => {
+  const core = loadCore();
+  const loc = new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008');
+  const viewAll = makeFakeNode({
+    text: 'View All Items',
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?show=all&miles=30&zip=07008' },
+  });
+  const bidLink = makeFakeNode({
+    text: 'Bid Now',
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?show=all&bid=1' },
+  });
+  const root = makeFakeNode({ selectors: { 'a[href]': [viewAll, bidLink] } });
+
+  assert.deepEqual(plain(core.findAuctionNinjaCategoryPageUrls(root, loc)), [
+    'https://www.auctionninja.com/category/electronics?show=all&miles=30&zip=07008',
+  ]);
+});
+
+test('assistant extracts AuctionNinja category item cards from the category DOM', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    attrs: { href: 'https://www.auctionninja.com/billy-reyes/product/olympus-50mm-f-1-8-lens-canon-powershot-cameras-yashica-cs-14-flash-sony-m-527v-lot-206233.html' },
+  });
+  const image = makeFakeNode({
+    attrs: {
+      src: 'https://images.example.test/olympus.jpg',
+      alt: 'Olympus 50mm F/1.8 Lens, Canon PowerShot Cameras, Yashica CS-14 Flash & Sony M-527V Lot',
+    },
+  });
+  const sellerLink = makeFakeNode({
+    text: 'Billy Reyes',
+    attrs: { href: 'https://www.auctionninja.com/billy-reyes/' },
+  });
+  const card = makeFakeNode({
+    text: 'Starting Bid $5.00 2 days 9 hours left Bid Now Billy Reyes Carteret, NJ',
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'hot-items-title': makeFakeNode({ text: 'Olympus 50mm F/1.8 Lens, Canon PowerShot Cameras...' }),
+      'img': image,
+      'hot-items-bottoms': makeFakeNode({ text: '$5.00' }),
+      'day-left': makeFakeNode({ text: '2 days 9 hours left' }),
+      'hi-auction-company-title': sellerLink,
+      'hi-auction-company p': makeFakeNode({ text: 'Carteret, NJ' }),
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Electronics & Computers 1-1 of 1 items',
+    selectors: { '.hot-items-box': [card] },
+  });
+  root.title = 'Electronics & Computers Online Auctions - Consumer Electronics Auctions';
+
+  const items = core.extractAuctionNinjaCategoryItems(root, new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008'));
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].pageKind, 'category-search');
+  assert.equal(items[0].title, 'Olympus 50mm F/1.8 Lens, Canon PowerShot Cameras, Yashica CS-14 Flash & Sony M-527V Lot');
+  assert.equal(items[0].id, '206233');
+  assert.equal(items[0].currentBid, 5);
+  assert.equal(items[0].timeText, '2 days 9 hours left');
+  assert.equal(items[0].location, 'Carteret, NJ');
+  assert.equal(items[0].seller, 'Billy Reyes');
+});
+
+test('assistant renders AuctionNinja category-only copy controls and brief context', () => {
+  const core = loadCore();
+  const html = core.buildPanelHtml({
+    mode: 'auctionninja',
+    debugEnabled: false,
+    route: { kind: 'category-search' },
+  });
+  assert.match(html, /Category Item Export/);
+  assert.match(html, /id="auctionninja-category-copy-llm"/);
+  assert.match(html, /id="auctionninja-category-copy-json"/);
+  assert.doesNotMatch(html, /Copy Auctions LLM|Sale Catalog Research|Copy Watchlist LLM|Prepare Bid|Snipe Now|Max plan/i);
+
+  const brief = core.buildAuctionNinjaCategoryLlmBrief([
+    { source: 'AuctionNinja', pageKind: 'category-search', title: 'Portable Receiver', currentBid: 5, location: 'Carteret, NJ' },
+  ], {
+    source: 'AuctionNinja',
+    pageKind: 'category-search',
+    category: 'Electronics',
+    zip: '07008',
+    miles: '30',
+  });
+  assert.match(brief, /AuctionNinja category-search task/i);
+  assert.match(brief, /07008/);
+  assert.match(brief, /Portable Receiver/);
+});
+
 test('assistant recovers AuctionNinja auction-search title when sale link is count-only', () => {
   const core = loadCore();
   const countOnlySaleLink = makeFakeNode({

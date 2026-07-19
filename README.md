@@ -17,6 +17,7 @@ Tampermonkey updates use that same raw GitHub URL through the script metadata. I
 - HiBid catalog/category/watchlist/current-bids pages: copy JSON and resale LLM brief, including OUTBID watchlist and WINNING/OUTBID current bids.
 - HiBid livecatalog pages: expand/copy live lot JSON and resale LLM brief.
 - AuctionNinja sale catalog pages: copy sale terms plus lot JSON or resale LLM brief.
+- AuctionNinja category pages such as `/category/electronics?miles=30&zip=07008`: copy the visible product-card JSON or a location-filtered resale LLM brief; safe `View All Items` pages are fetched in the background when available.
 - AuctionNinja followed-items, items-won, and bid-history pages: copy account item JSON or page-specific LLM briefs for watchlist triage, won-item inventory planning, or bid-history review.
 - AuctionNinja auction search / nearby sales pages: copy whole-auction JSON or an LLM brief that ranks sales before drilling into lots.
 - AAR Auctions calendar and catalog pages: copy auction cards or catalog lots as JSON, or copy an LLM brief with persisted origin/radius distance-verification instructions.
