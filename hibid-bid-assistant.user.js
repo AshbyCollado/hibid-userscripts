@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.59
+// @version      0.7.60
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.59';
+  const SCRIPT_VERSION = '0.7.60';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -8554,9 +8554,14 @@ ${cards}
       })();
     if (activeMode === 'catalog' && pendingCopyIsFresh) {
       const pendingMode = pendingCopy.mode;
-      clearPendingCatalogCopy();
-      window.setTimeout(() => {
-        if (!panelIsCurrent() || state.busy) return;
+      window.setTimeout(async () => {
+        // HiBid may normalize filters more than once. Keep the intent alive
+        // until this panel has stayed current long enough for the route to
+        // settle; an intermediate panel must not consume it.
+        if (!panelIsCurrent() || state.busy || !pendingCatalogCopy()) return;
+        const settled = await waitForCatalogRouteToSettle(pendingMode);
+        if (!settled || !panelIsCurrent() || state.busy) return;
+        clearPendingCatalogCopy();
         debug('resuming catalog copy after HiBid panel remount', { mode: pendingMode });
         (pendingMode === 'llm' ? catalogCopyLlmButton : catalogCopyJsonButton)?.click();
       }, 900);
