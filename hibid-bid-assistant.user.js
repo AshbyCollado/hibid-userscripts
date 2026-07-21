@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.61
+// @version      0.7.62
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.61';
+  const SCRIPT_VERSION = '0.7.62';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -8588,8 +8588,7 @@ ${cards}
       }
     };
 
-    catalogCopyJsonButton?.addEventListener('click', () => copyCatalogLots('json'));
-    catalogCopyLlmButton?.addEventListener('click', () => copyCatalogLots('llm'));
+    globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__ = (copyMode) => copyCatalogLots(copyMode);
     const pendingCopy = pendingCatalogCopy();
     const pendingCopyIsFresh = pendingCopy
       && Date.now() - Number(pendingCopy.at || 0) <= 10000
@@ -8613,7 +8612,9 @@ ${cards}
         if (!settled || !panelIsCurrent() || state.busy) return;
         clearPendingCatalogCopy();
         debug('resuming catalog copy after HiBid panel remount', { mode: pendingMode });
-        (pendingMode === 'llm' ? catalogCopyLlmButton : catalogCopyJsonButton)?.click();
+        const handler = globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__;
+        if (typeof handler === 'function') handler(pendingMode);
+        else (pendingMode === 'llm' ? catalogCopyLlmButton : catalogCopyJsonButton)?.click();
       }, 900);
     }
     debugCopyButton?.addEventListener('click', async () => {
@@ -8733,6 +8734,13 @@ ${cards}
           mode: intent.mode,
           href: intent.href
         });
+        const handler = globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__;
+        if (typeof handler === 'function') {
+          window.setTimeout(() => {
+            const pending = readSharedCatalogCopyIntent();
+            if (pending?.at === intent.at) handler(intent.mode);
+          }, 0);
+        }
       };
       const eventDocuments = new Set([document]);
       try {

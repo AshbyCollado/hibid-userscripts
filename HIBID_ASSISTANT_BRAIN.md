@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.61`.
+- Current version: `0.7.62`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -296,7 +296,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Run the supported route smoke matrix before live copy tests: HiBid catalog/filter/live/account, AJ Willner, AuctionNinja sale/category/account/search, AAR calendar/catalog, GovDeals seller/search/new-listings, eBay, and Facebook.
 - For each active module, verify only its own copy controls are rendered and then perform one JSON or LLM copy. “Page opened” is navigation evidence only; it is not an export pass.
 
-### Export guard diagnostics (`v0.7.61`)
+### Export guard diagnostics (`v0.7.62`)
 
 - Catalog copy now maps guard reasons into a compact status message. `catalog-incomplete` means the scraper collected fewer rows than the page total; `catalog-source-mismatch` means another site/source was mixed into the result; filter-specific reasons identify stale Apollo/DOM data.
 - Debug remains opt-in. When enabled, the ring buffer records version, boot route, current route, source, count, expected total, and rejection reason. When disabled, the user still sees a compact reason toast without a verbose result console.
@@ -304,6 +304,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - `v0.7.59` installs a document-level HiBid catalog copy-intent capture hook that survives panel teardown. This handles the early-click window where HiBid normalizes the URL and inserts the replacement panel before its local listeners bind.
 - `v0.7.60` keeps that intent pending through multiple HiBid URL-normalization remounts and only resumes after the current panel and route have remained stable.
 - `v0.7.61` mirrors the pending intent to the page window and tab `sessionStorage`, and listens through both document wrappers. This is the recovery path for Firefox/Waterfox sandbox boundaries where panel-local event state may not survive a redraw.
+- `v0.7.62` makes the document-level capture the active catalog-copy dispatcher instead of relying on a panel-local button listener. The shared pending state remains the fallback across remounts.
 
 - `node --check .\hibid-bid-assistant.user.js`
 - `node --check .\hibid-lot-catalog-scraper.user.js`
