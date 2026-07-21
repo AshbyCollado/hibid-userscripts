@@ -187,6 +187,23 @@ test('assistant shared route resolver covers HiBid route families', () => {
   assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/help')), false);
 });
 
+test('assistant metadata-covered host variants resolve to their site modules', () => {
+  const core = loadCore();
+  const auctionNinjaSeller = new URL('https://seller.auctionninja.com/clearinghouseestatesales/sales/details/example--17395.html');
+  const aarWww = new URL('https://www.aarauctions.com/auctions/');
+  const govDealsSeller = new URL('https://rutgers.govdeals.com/en/rutgers');
+  const facebookBare = new URL('https://facebook.com/marketplace/you/selling');
+
+  assert.equal(core.shouldInitOnLocation(auctionNinjaSeller), true);
+  assert.equal(core.resolveAuctionNinjaPage(auctionNinjaSeller).kind, 'sale-catalog');
+  assert.equal(core.shouldInitOnLocation(aarWww), true);
+  assert.equal(core.resolveAarAuctionsPage(aarWww).kind, 'aar-auction-list');
+  assert.equal(core.shouldInitOnLocation(govDealsSeller), true);
+  assert.equal(core.resolveGovDealsPage(govDealsSeller).kind, 'govdeals-seller');
+  assert.equal(core.shouldInitOnLocation(facebookBare), true);
+  assert.equal(core.resolveFlipTrackerPage(facebookBare).kind, 'fliptracker-facebook');
+});
+
 test('assistant resolves AJ Willner auction pages as source-aware catalog exports', () => {
   const core = loadCore();
   const loc = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');

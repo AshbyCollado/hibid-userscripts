@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.53
+// @version      0.7.54
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -23,14 +23,23 @@
 // @match        https://www.auctionninja.com/followed-items*
 // @match        https://www.auctionninja.com/items-won*
 // @match        https://www.auctionninja.com/*
+// @match        https://auctionninja.com/*
+// @match        https://*.auctionninja.com/*
 // @match        https://aarauctions.com/auctions*
 // @match        https://aarauctions.com/servlet/Search.do*
 // @match        https://aarauctions.com/*
+// @match        https://www.aarauctions.com/*
+// @match        https://*.aarauctions.com/*
 // @match        https://www.govdeals.com/*
+// @match        https://govdeals.com/*
+// @match        https://*.govdeals.com/*
+// @match        https://facebook.com/marketplace/you/*
+// @match        https://facebook.com/marketplace/profile/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_setClipboard
 // @grant        GM.setClipboard
+// @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
 // @grant        unsafeWindow
 // @grant        window.onurlchange
@@ -43,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.53';
+  const SCRIPT_VERSION = '0.7.54';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1534,6 +1543,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   async function scrapeHibidStatePages(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const sourceUrl = String(root?.location?.href || (typeof location !== 'undefined' ? location.href : ''));
     const visibleState = extractHibidVisiblePageState(root, typeof location !== 'undefined' ? location : null);
     debug('hibid visible page state', visibleState);
     if (visibleState.noMatches) {
@@ -1561,7 +1571,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
     const lotsByKey = new Map();
     const visibleTotal = visibleState.expectedTotal;
-    const first = extractHibidApolloLots(firstState, { url: location.href, expectedTotal: visibleTotal, visibleState });
+    const first = extractHibidApolloLots(firstState, { url: sourceUrl, expectedTotal: visibleTotal, visibleState });
     if (first.rejectedSource && visibleState.hasActiveFilters) {
       debug('hibid-state first page rejected for active filters', {
         rejectedSource: first.rejectedSource,
@@ -1600,7 +1610,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         });
         break;
       }
-      const state = await fetchHibidApolloStatePage(page).catch(err => {
+      const state = await fetchHibidApolloStatePage(page, sourceUrl).catch(err => {
         debug('hibid-state page fetch threw', { page, error: err.message });
         failedPage = page;
         return null;
@@ -1610,7 +1620,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         stopReason = 'missing-page-state';
         break;
       }
-      const pageLots = extractHibidApolloLots(state, { url: catalogPageUrl(page), expectedTotal, visibleState });
+      const pageLots = extractHibidApolloLots(state, { url: catalogPageUrl(page, sourceUrl), expectedTotal, visibleState });
       if (!pageLots.items.length) {
         failedPage = page;
         stopReason = 'empty-page-state';
@@ -1650,7 +1660,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       pagesRead,
       failedPage,
       stopReason: stopReason || (incomplete ? 'below-expected-total' : 'complete'),
-      visibleState
+      visibleState,
+      sourceUrl
     };
   }
 
@@ -2922,7 +2933,7 @@ ${cards}
 
   function isAuctionNinjaHost(hostname) {
     const host = String(hostname || '').toLowerCase();
-    return host === 'auctionninja.com' || host === 'www.auctionninja.com';
+    return host === 'auctionninja.com' || host.endsWith('.auctionninja.com');
   }
 
   function resolveAuctionNinjaPage(loc = location) {
@@ -3015,7 +3026,7 @@ ${cards}
 
   function isAarAuctionsHost(hostname) {
     const host = String(hostname || '').toLowerCase();
-    return host === 'aarauctions.com' || host === 'www.aarauctions.com';
+    return host === 'aarauctions.com' || host.endsWith('.aarauctions.com');
   }
 
   function getAarAuctionId(loc = location) {
@@ -3057,7 +3068,7 @@ ${cards}
 
   function isGovDealsHost(hostname) {
     const host = String(hostname || '').toLowerCase();
-    return host === 'govdeals.com' || host === 'www.govdeals.com';
+    return host === 'govdeals.com' || host.endsWith('.govdeals.com');
   }
 
   function getGovDealsAssetParts(loc = location) {
@@ -7316,21 +7327,23 @@ ${cards}
         #${PANEL_ID} .hiba-status.eligible { color:#bbf7d0; background:rgba(22,101,52,.38); }
         #${PANEL_ID} .hiba-status.skip { color:#fecaca; background:rgba(127,29,29,.34); }
         #${PANEL_ID} .hiba-live-card { border-radius:10px; padding:9px; background:rgba(2,6,23,.5); border:1px solid rgba(148,163,184,.16); }
+        #${PANEL_ID}.hiba-body-hidden #hibid-bid-body { display:none !important; }
+        #${PANEL_ID} .hiba-busy-only-hidden { display:none !important; }
+        #${PANEL_ID} .hiba-chevron-rotated { transform:rotate(180deg); }
         @media (max-width:520px) { #${PANEL_ID} { right:8px; bottom:8px; width:min(356px, calc(100vw - 16px)); } #${PANEL_ID}.hiba-minimized { width:min(228px, calc(100vw - 16px)); } #${PANEL_ID} .hiba-row { grid-template-columns:1fr; } #${PANEL_ID} .hiba-row-actions { grid-template-columns:1fr; } }
       </style>
     `;
   }
 
   function setPanelMinimized(panel, minimized) {
-    const body = panel.querySelector('#hibid-bid-body');
     const button = panel.querySelector('#hibid-bid-minimize');
-    if (body) body.style.display = minimized ? 'none' : '';
+    panel.classList.toggle('hiba-body-hidden', Boolean(minimized));
     panel.classList.toggle('hiba-minimized', Boolean(minimized));
     if (button) {
       button.setAttribute('title', minimized ? 'Show assistant' : 'Minimize assistant');
       button.setAttribute('aria-label', minimized ? 'Show assistant' : 'Minimize assistant');
       const chevron = button.querySelector('.hiba-icon');
-      if (chevron) chevron.style.transform = minimized ? 'rotate(180deg)' : '';
+      if (chevron) chevron.classList.toggle('hiba-chevron-rotated', Boolean(minimized));
     }
   }
 
@@ -7343,13 +7356,29 @@ ${cards}
   function createPanel(mode = resolveAssistantMode().mode, debugEnabled = getStoredDebugEnabled(), route = resolveAssistantMode().route) {
     removeLegacyScraperArtifacts('createPanel');
     const old = document.getElementById(PANEL_ID);
-    if (old) old.remove();
+    if (old) {
+      old.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason: 'create-panel' } }));
+      old.remove();
+    }
 
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
     panel.dataset.flipperaddonMode = mode;
     panel.dataset.flipperaddonVersion = SCRIPT_VERSION;
-    panel.innerHTML = buildPanelHtml({ mode, debugEnabled, route });
+    panel.dataset.flipperaddonHref = typeof location !== 'undefined' ? location.href : '';
+    const panelHtml = buildPanelHtml({ mode, debugEnabled, route });
+    const styleMatch = panelHtml.match(/<style>([\s\S]*?)<\/style>/i);
+    panel.innerHTML = styleMatch ? panelHtml.replace(styleMatch[0], '') : panelHtml;
+    if (styleMatch) {
+      if (typeof GM_addStyle === 'function') {
+        GM_addStyle(styleMatch[1]);
+      } else if (document.head || document.documentElement) {
+        const style = document.createElement('style');
+        style.id = 'flipperaddon-panel-styles';
+        style.textContent = styleMatch[1];
+        (document.head || document.documentElement).appendChild(style);
+      }
+    }
 
     document.body.appendChild(panel);
     setPanelMinimized(panel, true);
@@ -7418,7 +7447,19 @@ ${cards}
     const debugClearButton = panel.querySelector('#hibid-debug-clear');
     const siteSwitcherToggle = panel.querySelector('#flipperaddon-site-switcher-toggle');
     const siteSwitcherMenu = panel.querySelector('#flipperaddon-site-switcher-menu');
-    const state = { stop: false, rows: [], busy: false, listingRows: [], toastTimer: null };
+    const state = { stop: false, stale: false, rows: [], busy: false, listingRows: [], toastTimer: null };
+    const panelIsCurrent = () => Boolean(
+      !state.stale
+      && document.getElementById(PANEL_ID) === panel
+      && panel.dataset.flipperaddonVersion === SCRIPT_VERSION
+      && panel.dataset.flipperaddonHref === (typeof location !== 'undefined' ? location.href : '')
+    );
+    panel.addEventListener('flipperaddon-panel-teardown', () => {
+      state.stop = true;
+      state.stale = true;
+      clearTimeout(state.toastTimer);
+      debug('panel work invalidated on teardown', { href: panel.dataset.flipperaddonHref || '' });
+    }, { once: true });
     const setSiteSwitcherOpen = (open) => {
       if (!siteSwitcherMenu || !siteSwitcherToggle) return;
       const nextOpen = Boolean(open) && !state.busy;
@@ -7429,7 +7470,7 @@ ${cards}
     setActiveModeTab(panel, activeMode);
     const setScrapingBusy = (busy) => {
       state.busy = Boolean(busy);
-      if (scraperStopButton) scraperStopButton.style.display = busy ? '' : 'none';
+      if (scraperStopButton) scraperStopButton.classList.toggle('hiba-busy-only-hidden', !state.busy);
       panel.querySelectorAll('[data-site-shortcut-url]').forEach(shortcut => {
         shortcut.disabled = state.busy;
         shortcut.setAttribute('aria-disabled', state.busy ? 'true' : 'false');
@@ -7559,8 +7600,7 @@ ${cards}
     }, { once: true });
 
     panel.querySelector('#hibid-bid-minimize').addEventListener('click', () => {
-      const body = panel.querySelector('#hibid-bid-body');
-      const minimized = body.style.display !== 'none';
+      const minimized = !panel.classList.contains('hiba-body-hidden');
       setSiteSwitcherOpen(false);
       setPanelMinimized(panel, minimized);
       saveMinimized(minimized);
@@ -8067,6 +8107,10 @@ ${cards}
       try {
         status(mode === 'llm' ? 'Scraping catalog for LLM brief...' : 'Scraping catalog for JSON...');
         const result = await scrapeCatalogLots(status, () => state.stop);
+        if (!panelIsCurrent()) {
+          debug('catalog export discarded after panel or route changed');
+          return;
+        }
         if (!result) {
           status('No catalog lots found. Copy debug log and check route/data source.');
           return;
@@ -8125,6 +8169,10 @@ ${cards}
         const payload = mode === 'llm'
           ? buildLlmAuctionBrief(lots, catalogAuctionContext())
           : JSON.stringify(lots, null, 2);
+        if (!panelIsCurrent()) {
+          debug('catalog clipboard write skipped after panel or route changed');
+          return;
+        }
         const copied = await writeClipboard(payload).catch(() => false);
         const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
         let downloaded = false;
@@ -8189,6 +8237,10 @@ ${cards}
       try {
         status('Loading all open live lots before copy...');
         const expanded = await expandLivePageLots(status, () => state.stop);
+        if (!panelIsCurrent()) {
+          debug('live export discarded after panel or route changed');
+          return;
+        }
         const validation = validateScraperExportAgainstRoute(expanded, 'live', currentActiveRoute());
         if (!validation.ok) {
           debug('live export blocked by route guard', {
@@ -8208,6 +8260,10 @@ ${cards}
         }
         const context = liveAuctionContext();
         const payload = mode === 'llm' ? buildLlmAuctionBrief(lots, context) : JSON.stringify(lots, null, 2);
+        if (!panelIsCurrent()) {
+          debug('live clipboard write skipped after panel or route changed');
+          return;
+        }
         const copied = await writeClipboard(payload).catch(() => false);
         const countText = expanded.expectedOpenLots ? `${lots.length}/${expanded.expectedOpenLots}` : String(lots.length);
         if (copied) {
@@ -8275,11 +8331,17 @@ ${cards}
       if (!document.body) return false;
       const existingPanel = document.getElementById(PANEL_ID);
       const existingMode = existingPanel?.dataset?.flipperaddonMode || existingPanel?.querySelector?.('.hiba-drawer')?.dataset?.flipperaddonMode || '';
+      const existingVersion = existingPanel?.dataset?.flipperaddonVersion || '';
+      const existingHref = existingPanel?.dataset?.flipperaddonHref || '';
       if (!allowed) {
         teardownPanel(`unsupported:${reason}`);
         return false;
       }
-      if (shouldRebuildPanelForMode(existingMode, modeInfo.mode, allowed, Boolean(existingPanel))) {
+      if (existingPanel && existingVersion && existingVersion !== SCRIPT_VERSION) {
+        teardownPanel(`version-change:${existingVersion}:${SCRIPT_VERSION}:${reason}`);
+      } else if (existingPanel && existingHref && existingHref !== location.href) {
+        teardownPanel(`route-change:${reason}`);
+      } else if (shouldRebuildPanelForMode(existingMode, modeInfo.mode, allowed, Boolean(existingPanel))) {
         teardownPanel(`mode-change:${existingMode || 'none'}:${modeInfo.mode}:${reason}`);
       }
       if (location.href !== lastMountedHref) {
@@ -8353,6 +8415,15 @@ ${cards}
     if ('onurlchange' in window) {
       window.addEventListener('urlchange', () => ensureMounted('urlchange'));
     }
+    ['pushState', 'replaceState'].forEach(method => {
+      const original = window.history?.[method];
+      if (typeof original !== 'function') return;
+      window.history[method] = function (...args) {
+        const result = original.apply(this, args);
+        window.setTimeout(() => ensureMounted(`history:${method}`), 0);
+        return result;
+      };
+    });
     window.addEventListener('load', () => ensureMounted('window load'));
     window.addEventListener('popstate', () => ensureMounted('popstate'));
     window.addEventListener('hashchange', () => ensureMounted('hashchange'));
