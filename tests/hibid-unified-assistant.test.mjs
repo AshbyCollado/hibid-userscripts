@@ -855,6 +855,30 @@ test('assistant ignores hidden HiBid empty-state templates when visible filtered
   assert.equal(state.expectedTotal, 14);
 });
 
+test('assistant ignores a transient HiBid no-match phrase when lot tiles are already hydrating', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics?q=gaming%20pc');
+  const tile = {
+    id: 'lot-123',
+    textContent: 'Lot 123 | Hydrating gaming item',
+    querySelector() { return { id: 'lot-link' }; },
+    getAttribute() { return ''; }
+  };
+  const root = {
+    body: {
+      innerText: 'No matches found. Try adjusting your filters. Showing 1 - 8 of 8 lots',
+      textContent: 'No matches found. Try adjusting your filters. Showing 1 - 8 of 8 lots'
+    },
+    documentElement: { textContent: 'No matches found. Try adjusting your filters. Showing 1 - 8 of 8 lots' },
+    querySelectorAll() { return [tile]; }
+  };
+
+  const state = core.extractHibidVisiblePageState(root, loc);
+  assert.equal(state.noMatches, false);
+  assert.equal(state.expectedTotal, 8);
+  assert.equal(state.visibleLotCount, 1);
+});
+
 test('assistant rejects ambiguous HiBid Apollo data on active filtered pages', () => {
   const core = loadCore();
   const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.55
+// @version      0.7.56
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.55';
+  const SCRIPT_VERSION = '0.7.56';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -586,6 +586,15 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function getRootText(root = document) {
     return rawTextOf(root.body || root.documentElement || root);
+  }
+
+  function hasLikelyHibidLotTiles(root = document) {
+    const selectors = 'app-lot-tile, app-lot-card, lot-card, .lot-card, [class*="lot-card"], [class*="lotTile"], [class*="lot-tile"]';
+    return Array.from(root?.querySelectorAll?.(selectors) || []).some(tile => {
+      if (tile.id && /^lot-/i.test(tile.id)) return true;
+      const label = `${textOf(tile)} ${tile.getAttribute?.('aria-label') || ''}`;
+      return /\bLot\s+\S+/i.test(label) && Boolean(tile.querySelector?.('a, img, button'));
+    });
   }
 
   function getExpectedLotTotal(root = document) {
@@ -1163,8 +1172,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function extractHibidVisiblePageState(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
     const filterState = extractHibidUrlFilters(loc);
     const text = getRootText(root);
-    const noMatches = /\bNo matches found\b/i.test(text) || /\bTry adjusting your filters\b/i.test(text);
-    const expectedTotal = noMatches ? 0 : getExpectedLotTotal(root);
+    const noMatchPhrase = /\bNo matches found\b/i.test(text) || /\bTry adjusting your filters\b/i.test(text);
+    const parsedExpectedTotal = getExpectedLotTotal(root);
     let visibleLotCount = null;
     try {
       const visibleTiles = root.querySelectorAll?.('app-lot-card, lot-card, .lot-card, [class*="lot-card"], [class*="lotTile"], [class*="lot-tile"]');
@@ -1173,12 +1182,47 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       visibleLotCount = null;
     }
 
+    // HiBid briefly renders an empty filter state while the Angular lot grid hydrates.
+    // A no-match phrase is authoritative only when the grid is actually empty and no
+    // positive result count is visible; transient template copy must not zero a real page.
+    const noMatches = noMatchPhrase
+      && !hasLikelyHibidLotTiles(root)
+      && (!Number.isFinite(Number(parsedExpectedTotal)) || Number(parsedExpectedTotal) === 0);
+    const expectedTotal = noMatches ? 0 : parsedExpectedTotal;
+
     return {
       ...filterState,
       noMatches,
       expectedTotal,
       visibleLotCount: noMatches ? 0 : visibleLotCount
     };
+  }
+
+  async function waitForHibidVisiblePageState(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    let state = extractHibidVisiblePageState(root, loc);
+    if (!state.noMatches) return state;
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < HIBID_STATE_HYDRATION_WAIT_MS) {
+      await wait(HIBID_STATE_HYDRATION_POLL_MS);
+      const next = extractHibidVisiblePageState(root, loc);
+      if (!next.noMatches) {
+        debug('hibid no-match state cleared during hydration', {
+          waitedMs: Date.now() - startedAt,
+          visibleLotCount: next.visibleLotCount,
+          expectedTotal: next.expectedTotal
+        });
+        return next;
+      }
+      state = next;
+    }
+
+    debug('hibid no-match state settled after hydration wait', {
+      waitedMs: Date.now() - startedAt,
+      visibleLotCount: state.visibleLotCount,
+      expectedTotal: state.expectedTotal
+    });
+    return state;
   }
 
   function normalizedFilterText(value) {
@@ -1544,7 +1588,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   async function scrapeHibidStatePages(onProgress = () => {}, shouldStop = () => false, root = document) {
     const sourceUrl = String(root?.location?.href || (typeof location !== 'undefined' ? location.href : ''));
-    const visibleState = extractHibidVisiblePageState(root, typeof location !== 'undefined' ? location : null);
+    const visibleState = await waitForHibidVisiblePageState(root, typeof location !== 'undefined' ? location : null);
     debug('hibid visible page state', visibleState);
     if (visibleState.noMatches) {
       return {
@@ -2857,7 +2901,7 @@ ${cards}
     const activeRoute = resolveAssistantMode(typeof location !== 'undefined' ? location : undefined).route || {};
     const currentBidsRoute = isHibidCurrentBidsRoute(activeRoute);
     const accountExportRoute = isHibidAccountExportRoute(activeRoute);
-    const visibleState = extractHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null);
+    const visibleState = await waitForHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null);
     if (visibleState.noMatches) {
       debug('catalog scrape stopped at visible no-match state', visibleState);
       return {
