@@ -1893,6 +1893,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const routeKind = String(route?.kind || '');
     const lifecyclePageKind = {
       'fliptracker-ebay-active': 'active',
+      'fliptracker-ebay-ended': 'ended',
       'fliptracker-ebay-sold': 'sold',
       'fliptracker-ebay-transactions': 'transactions',
     }[routeKind] || '';
@@ -1903,12 +1904,14 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     }
     if (lifecyclePageKind) {
       const resultPageKind = String(result?.page_kind || result?.context?.pageKind || '');
-      if (['active', 'sold', 'transactions'].includes(resultPageKind) && resultPageKind !== lifecyclePageKind) {
+      if (['active', 'ended', 'sold', 'transactions'].includes(resultPageKind) && resultPageKind !== lifecyclePageKind) {
         return { ok: false, reason: 'fliptracker-page-kind-mismatch' };
       }
       const expectedRecordType = lifecyclePageKind === 'active'
         ? 'active_listing'
-        : (lifecyclePageKind === 'sold' ? 'sold_order_line' : 'transaction');
+        : (lifecyclePageKind === 'ended'
+          ? 'ended_listing'
+          : (lifecyclePageKind === 'sold' ? 'sold_order_line' : 'transaction'));
       if (lifecycleRows.some(row => row.record_type !== expectedRecordType)) {
         return { ok: false, reason: 'fliptracker-page-kind-mismatch' };
       }
@@ -1937,10 +1940,15 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return { ok: true };
   }
 
-  function parseEbaySellerHubTableListingsHtml(html) {
+  function ebaySellerHubTableRowChunks(html) {
     const text = String(html || '');
-    const rowChunks = Array.from(text.matchAll(/<tr\b[\s\S]*?<\/tr>/gi)).map(match => match[0])
+    return Array.from(text.matchAll(/<tr\b[\s\S]*?<\/tr>/gi)).map(match => match[0])
       .concat(Array.from(text.matchAll(/<div\b[^>]+role=["']row["'][\s\S]*?(?=<div\b[^>]+role=["']row["']|$)/gi)).map(match => match[0]));
+  }
+
+  function parseEbaySellerHubTableListingsHtml(html, options = {}) {
+    const rowChunks = ebaySellerHubTableRowChunks(html);
+    const requirePrice = options.requirePrice !== false;
     const listings = [];
 
     rowChunks.forEach(chunk => {
@@ -1966,13 +1974,13 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       const rowText = stripHtml(chunk);
       const activeFacts = parseEbayActiveListingFacts(chunk);
       const price = activeFacts.price;
-      if (!title || !Number.isFinite(price)) return;
+      if (!title || !itemId || (requirePrice && !Number.isFinite(price))) return;
 
       listings.push({
         source: 'eBay',
         itemId,
         title,
-        price,
+        price: Number.isFinite(price) ? price : null,
         url,
         status: /inactive|ended|sold/i.test(rowText) ? 'Inactive' : 'Active',
         listedDateText: firstMatch(rowText, [/\b(Listed\s+(?:today|yesterday|on\s+[^|]+?))(?:\s{2,}|$)/i]),
@@ -2207,6 +2215,55 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       },
       warnings,
     };
+  }
+
+  function parseEbayEndedLifecycleHtml(html) {
+    const rowChunks = ebaySellerHubTableRowChunks(html);
+    const rowsByItemId = new Map();
+    rowChunks.forEach(chunk => {
+      const itemId = firstMatch(chunk, [/\/itm\/(\d+)/i, /itemId=(\d+)/i, /itemid=(\d+)/i]);
+      if (itemId && !rowsByItemId.has(itemId)) rowsByItemId.set(itemId, chunk);
+    });
+
+    return parseEbaySellerHubTableListingsHtml(html, { requirePrice: false }).map(listing => {
+      const chunk = rowsByItemId.get(listing.itemId) || '';
+      const rowText = stripHtml(chunk);
+      let status = 'Ended';
+      if (/\b(?:unsold|did not sell|not sold|ended without a buyer)\b/i.test(rowText)) status = 'Ended - Unsold';
+      else if (/\b(?:sold|sold for|quantity sold)\b/i.test(rowText)) status = 'Sold';
+
+      const quantitySold = integerAfterLabel(rowText, '(?:Quantity sold|Sold quantity)');
+      const endedDateText = ebayDateAfterLabel(rowText, '(?:Ended(?: on)?|End date|Listing ended)')
+        || firstEbayDate(rowText);
+      let endReason = firstMatch(rowText, [
+        /(?:End reason|Ended because|Reason)\s*:?\s*([^|\r\n]+?)(?=\s{2,}|$)/i,
+      ]).trim();
+      if (!endReason) {
+        if (status === 'Sold') endReason = 'Sold';
+        else if (/out of stock/i.test(rowText)) endReason = 'Out of stock';
+        else if (/ended by (?:seller|you)|you ended/i.test(rowText)) endReason = 'Ended by seller';
+        else if (status === 'Ended - Unsold') endReason = 'Unsold';
+      }
+
+      return sanitizeEbayLifecycleValue({
+        record_type: 'ended_listing',
+        item_id: listing.itemId || '',
+        custom_label: listing.customLabel || '',
+        title: listing.title || '',
+        item_url: listing.url || '',
+        status,
+        ended_date_text: endedDateText,
+        end_reason: endReason,
+        price: Number.isFinite(listing.price) ? listing.price : null,
+        quantity_total: Number.isFinite(listing.quantityTotal) ? listing.quantityTotal : null,
+        quantity_available: Number.isFinite(listing.quantityAvailable) ? listing.quantityAvailable : null,
+        quantity_sold: Number.isFinite(quantitySold) ? quantitySold : null,
+        views: Number.isFinite(listing.views) ? listing.views : null,
+        watchers: Number.isFinite(listing.watchers) ? listing.watchers : null,
+        sale_evidence: 'ended_snapshot_only',
+        identity_stable: Boolean(listing.itemId),
+      });
+    });
   }
 
   function moneyAfterLabel(value, label) {
@@ -2458,8 +2515,20 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function canonicalEbayLifecyclePageUrl(value) {
-    const match = String(value || '').match(/^https:\/\/www\.ebay\.com(\/[^?#\s]*)/i);
-    return match ? 'https://www.ebay.com' + match[1] : '';
+    try {
+      const url = new URL(String(value || ''));
+      if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'www.ebay.com') return '';
+      const canonical = new URL(`https://www.ebay.com${url.pathname}`);
+      if (/^\/sh\/lst\/ended\/?$/i.test(url.pathname)) {
+        ['status', 'timePeriod', 'source', 'action'].forEach(key => {
+          const parameter = url.searchParams.get(key);
+          if (parameter) canonical.searchParams.set(key, parameter);
+        });
+      }
+      return canonical.toString().replace(/\/$/, '');
+    } catch (_) {
+      return '';
+    }
   }
 
   function parseEbaySoldOrdersHtml(html) {
@@ -2679,6 +2748,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function ebayLifecyclePageKind(route = {}) {
     const kind = String(route?.kind || '');
+    if (kind === 'fliptracker-ebay-ended') return 'ended';
     if (kind === 'fliptracker-ebay-sold') return 'sold';
     if (kind === 'fliptracker-ebay-transactions') return 'transactions';
     if (kind === 'fliptracker-ebay-active') return 'active';
@@ -2687,6 +2757,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function parseEbayLifecycleHtml(html, context = {}) {
     const pageKind = context.pageKind || ebayLifecyclePageKind(context.route || {}) || 'active';
+    if (pageKind === 'ended') return parseEbayEndedLifecycleHtml(html);
     if (pageKind === 'sold') return parseEbaySoldOrdersHtml(html);
     if (pageKind === 'transactions') return parseEbayTransactionsHtml(html);
     return parseEbayActiveLifecycleHtml(html);
@@ -2698,12 +2769,18 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       ? /class=["'][^"']*\btransaction-row-v2\b[^"']*["']/gi
       : (pageKind === 'sold'
         ? /class=["'][^"']*\bsold-itemcard\b[^"']*["']/gi
-        : /\bqa-id=["']active-item-\d+["']/gi);
-    const cardCount = (String(html || '').match(cardPattern) || []).length;
+        : (pageKind === 'ended' ? /(?:\/itm\/\d+|itemId=\d+)/gi : /\bqa-id=["']active-item-\d+["']/gi));
+    const cardCount = pageKind === 'ended'
+      ? new Set(ebaySellerHubTableRowChunks(html)
+        .map(chunk => firstMatch(chunk, [/\/itm\/(\d+)/i, /itemId=(\d+)/i, /itemid=(\d+)/i]))
+        .filter(Boolean)).size
+      : (String(html || '').match(cardPattern) || []).length;
     if (pageKind === 'transactions' && cardCount) return cardCount;
     const labels = pageKind === 'transactions'
       ? ['Transactions', 'Results']
-      : (pageKind === 'sold' ? ['Sold', 'Orders', 'Results', 'All'] : ['Manage active listings', 'Active', 'Results', 'All']);
+      : (pageKind === 'sold'
+        ? ['Sold', 'Orders', 'Results', 'All']
+        : (pageKind === 'ended' ? ['Ended', 'Results', 'All'] : ['Manage active listings', 'Active', 'Results', 'All']));
     for (const label of labels) {
       const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const count = parsePlainInteger(firstMatch(text, [
@@ -2724,7 +2801,9 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       ? /\b(?:no transactions|0 transactions|0 results)\b/i
       : (pageKind === 'sold'
         ? /\b(?:no sold items|no orders(?: found)?|0 orders|0 results)\b/i
-        : /\b(?:no active listings|no listings(?: found)?|0 active listings|0 results)\b/i);
+        : (pageKind === 'ended'
+          ? /\b(?:no ended listings|no listings(?: found)?|0 ended listings|0 results)\b/i
+          : /\b(?:no active listings|no listings(?: found)?|0 active listings|0 results)\b/i));
     if (emptyPattern.test(text)) return 0;
     return null;
   }
@@ -3001,6 +3080,7 @@ ${cards}
     chooseFacebookLocationValue,
     fillFacebookMarketplaceDraft,
     downloadCrosslistImageFiles,
+    parseEbayEndedLifecycleHtml,
     parseEbaySoldOrdersHtml,
     parseEbayTransactionsHtml,
     parseEbayLifecycleHtml,
@@ -6098,6 +6178,7 @@ ${cards}
     const pathname = String(loc.pathname || '');
     if (host === 'www.ebay.com') {
       return /^\/sh\/lst\/active\/?$/i.test(pathname)
+        || /^\/sh\/lst\/ended\/?$/i.test(pathname)
         || /^\/mys\/(?:active|sold)\/?$/i.test(pathname)
         || /^\/mes\/transactionlist\/?$/i.test(pathname);
     }
@@ -6114,6 +6195,9 @@ ${cards}
     const pathname = String(loc.pathname || '');
     if (host === 'www.ebay.com' && (/^\/sh\/lst\/active\/?$/i.test(pathname) || /^\/mys\/active\/?$/i.test(pathname))) {
       return { supported: true, kind: 'fliptracker-ebay-active', source: 'ebay', host, reason: 'eBay active listing export route' };
+    }
+    if (host === 'www.ebay.com' && /^\/sh\/lst\/ended\/?$/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-ebay-ended', source: 'ebay', host, reason: 'eBay ended listing reconciliation route' };
     }
     if (host === 'www.ebay.com' && /^\/mys\/sold\/?$/i.test(pathname)) {
       return { supported: true, kind: 'fliptracker-ebay-sold', source: 'ebay', host, reason: 'eBay sold order export route' };
@@ -7492,7 +7576,8 @@ ${cards}
 
   async function runEbayLifecycleSyncAll(options = {}) {
     const pages = options.pages || [
-      { pageKind: 'active', pageUrl: 'https://www.ebay.com/mys/active' },
+      { pageKind: 'active', pageUrl: 'https://www.ebay.com/sh/lst/active' },
+      { pageKind: 'ended', pageUrl: 'https://www.ebay.com/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS&source=filterbar&action=search' },
       { pageKind: 'sold', pageUrl: 'https://www.ebay.com/mys/sold' },
       { pageKind: 'transactions', pageUrl: 'https://www.ebay.com/mes/transactionlist?sh=true' },
     ];
@@ -8324,7 +8409,7 @@ ${cards}
       `;
     }
     const heading = ebayLifecycle
-      ? `eBay ${pageKind === 'transactions' ? 'Transactions' : (pageKind === 'sold' ? 'Sold Orders' : 'Active Listings')}`
+      ? `eBay ${pageKind === 'transactions' ? 'Transactions' : (pageKind === 'sold' ? 'Sold Orders' : (pageKind === 'ended' ? 'Ended Listings' : 'Active Listings'))}`
       : 'FlipTracker Active Listing Export';
     return `
       <section id="fliptracker-listing-export-mode" class="hiba-section" data-module="fliptracker">
@@ -8339,8 +8424,8 @@ ${cards}
           ${actionButton('fliptracker-listing-scan', 'scan', ebayLifecycle ? 'Scan Page' : 'Scan Listings', 'primary', '', 'Read the current selling page without changing the account.')}
           ${actionButton('fliptracker-listing-copy', 'copy', ebayLifecycle ? 'Copy JSON' : 'Copy HTML', 'secondary', '', 'Copy the current FlipTracker export.')}
           ${actionButton('fliptracker-listing-download', 'download', 'Download', 'success', '', 'Download the current FlipTracker export.')}
-          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-page', 'radio', 'Sync This Page', 'success', '', 'Send this page to the local Flip Tracker review queue.') : ''}
-          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-all', 'scan', 'Sync All eBay', 'primary', '', 'Collect active, sold, and transaction pages. Incomplete pages are named for guided follow-up.') : ''}
+          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-page', 'radio', 'Update Tracker', 'success', '', 'Send this page to Flip Tracker. Ended listings update listing state and never invent sales.') : ''}
+          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-all', 'scan', 'Sync All eBay', 'primary', '', 'Collect active, ended, sold-order, and transaction pages. Incomplete pages are named for guided follow-up.') : ''}
           ${ebayLifecycle ? actionButton('fliptracker-lifecycle-connect', 'shield', 'Connect', 'secondary', '', 'Save the local Flip Tracker bridge token in Tampermonkey storage.') : ''}
           ${ebayActive ? actionButton('fliptracker-crosslist-queue', 'upload', 'Queue Facebook Draft', 'success', '', 'Enrich one selected active listing and add or update its Facebook draft queue record.') : ''}
         </div>

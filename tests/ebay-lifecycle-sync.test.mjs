@@ -9,7 +9,7 @@ function plain(value) {
 
 function loadCore(overrides = {}) {
   const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
-  const sandbox = { console, globalThis: {}, ...overrides };
+  const sandbox = { console, URL, globalThis: {}, ...overrides };
   sandbox.globalThis = sandbox;
   sandbox.__HIBID_BID_ASSISTANT_TEST__ = true;
   vm.runInNewContext(source, sandbox, { filename: 'hibid-bid-assistant.user.js' });
@@ -21,12 +21,12 @@ test('resolves only dedicated eBay lifecycle routes', () => {
 
   assert.equal(core.resolveFlipTrackerPage(new URL('https://www.ebay.com/sh/lst/active')).kind, 'fliptracker-ebay-active');
   assert.equal(core.resolveFlipTrackerPage(new URL('https://www.ebay.com/mys/active')).kind, 'fliptracker-ebay-active');
+  assert.equal(core.resolveFlipTrackerPage(new URL('https://www.ebay.com/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS')).kind, 'fliptracker-ebay-ended');
   assert.equal(core.resolveFlipTrackerPage(new URL('https://www.ebay.com/mys/sold')).kind, 'fliptracker-ebay-sold');
   assert.equal(core.resolveFlipTrackerPage(new URL('https://www.ebay.com/mes/transactionlist?sh=true')).kind, 'fliptracker-ebay-transactions');
 
   [
     'https://www.ebay.com/sh/lst',
-    'https://www.ebay.com/sh/lst/ended',
     'https://www.ebay.com/sh/lst/active/revise',
     'https://www.ebay.com/mys/overview',
     'https://www.ebay.com/mys/active/archive',
@@ -332,6 +332,57 @@ test('extracts active SKU and quantities and chooses the labeled listing price',
   assert.equal(availableOnly.quantity_total, null);
 });
 
+test('parses ended listings as state evidence without inventing a sale', () => {
+  const core = loadCore();
+  const pageUrl = 'https://www.ebay.com/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS&source=filterbar&action=search&buyer=redacted';
+  const html = `
+    <main><h1>Ended (2)</h1><table><tbody>
+      <tr data-testid="listing-row">
+        <td><a href="/itm/555555555555">Ended sold fixture camera</a></td>
+        <td>Custom label (SKU): CAM-A1</td><td>Current price $300.00</td>
+        <td>Sold</td><td>Ended on Jul 20, 2026</td><td>Quantity sold: 1</td><td>End reason: Sold</td>
+      </tr>
+      <tr data-testid="listing-row">
+        <td><a href="/itm/666666666666">Ended unsold fixture monitor</a></td>
+        <td>SKU: MON-B2</td><td>Unsold</td><td>Listing ended Jul 18, 2026</td><td>Ended by seller</td>
+      </tr>
+    </tbody></table></main>`;
+
+  const rows = core.parseEbayEndedLifecycleHtml(html);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(plain(rows.map(row => ({
+    record_type: row.record_type,
+    item_id: row.item_id,
+    custom_label: row.custom_label,
+    status: row.status,
+    ended_date_text: row.ended_date_text,
+    end_reason: row.end_reason,
+    price: row.price,
+    quantity_sold: row.quantity_sold,
+    sale_evidence: row.sale_evidence,
+  }))), [
+    {
+      record_type: 'ended_listing', item_id: '555555555555', custom_label: 'CAM-A1', status: 'Sold',
+      ended_date_text: 'Jul 20, 2026', end_reason: 'Sold', price: 300, quantity_sold: 1,
+      sale_evidence: 'ended_snapshot_only',
+    },
+    {
+      record_type: 'ended_listing', item_id: '666666666666', custom_label: 'MON-B2', status: 'Ended - Unsold',
+      ended_date_text: 'Jul 18, 2026', end_reason: 'Ended by seller', price: null, quantity_sold: null,
+      sale_evidence: 'ended_snapshot_only',
+    },
+  ]);
+  assert.equal(core.expectedEbayLifecycleCount(html, 'ended'), 2);
+
+  const envelope = core.buildEbayLifecycleEnvelope(rows, {
+    pageKind: 'ended', pageUrl, expectedCount: 2,
+  });
+  assert.equal(envelope.completeness.complete, true);
+  assert.equal(envelope.page_url, 'https://www.ebay.com/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS&source=filterbar&action=search');
+  assert.equal(Object.hasOwn(rows[0], 'order_id'), false);
+  assert.equal(Object.hasOwn(rows[0], 'item_subtotal'), false);
+});
+
 test('represents unknown counts as incomplete and supports complete zero-result snapshots', () => {
   const core = loadCore();
   const unknown = core.buildEbayLifecycleEnvelope([
@@ -374,6 +425,13 @@ test('marks count mismatches and route-kind mismatches incomplete or blocked', (
     { record_type: 'sold_order_line', order_id: '11-22222-33333', order_line_id: 'LINE-1', item_id: '111111111111' },
   ], { pageKind: 'sold', pageUrl: 'https://www.ebay.com/mys/sold', expectedCount: 1 });
   assert.deepEqual(plain(core.validateScraperExportAgainstRoute(sold, 'fliptracker', {
+    kind: 'fliptracker-ebay-active', source: 'ebay',
+  })), { ok: false, reason: 'fliptracker-page-kind-mismatch' });
+
+  const ended = core.buildEbayLifecycleEnvelope([
+    { record_type: 'ended_listing', item_id: '555555555555', title: 'Ended fixture', status: 'Sold' },
+  ], { pageKind: 'ended', pageUrl: 'https://www.ebay.com/sh/lst/ended', expectedCount: 1 });
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(ended, 'fliptracker', {
     kind: 'fliptracker-ebay-active', source: 'ebay',
   })), { ok: false, reason: 'fliptracker-page-kind-mismatch' });
 });
