@@ -972,6 +972,26 @@ test('assistant blocks DOM fallback exports when search-filtered lots do not mat
   });
 });
 
+test('assistant rejects filtered exports that exceed the visible result total', () => {
+  const core = loadCore();
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 to 6 of 6 lots' },
+    documentElement: { textContent: 'Showing 1 to 6 of 6 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  }, new URL('https://hibid.com/lots/40198/computers/desktop---all-in-ones?q=gaming%20pc'));
+
+  assert.deepEqual(plain(core.validateCatalogExportAgainstVisibleState({
+    source: 'hibid-state',
+    items: Array.from({ length: 12 }, (_, index) => ({ id: String(index), title: `Gaming PC ${index}` })),
+    expectedTotal: 6,
+  }, visibleState)), {
+    ok: false,
+    reason: 'filtered-result-exceeds-visible-total',
+  });
+});
+
 test('assistant blocks AuctionNinja exports from the wrong active page kind', () => {
   const core = loadCore();
 
@@ -1780,6 +1800,7 @@ test('assistant resolves supported and blocked AAR Auctions route families', () 
   const core = loadCore();
   const list = new URL('https://aarauctions.com/auctions/');
   const catalog = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8563');
+  const item = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8573&itemId=221770');
 
   assert.deepEqual(plain(core.resolveAarAuctionsPage(list)), {
     supported: true,
@@ -1794,10 +1815,20 @@ test('assistant resolves supported and blocked AAR Auctions route families', () 
     auctionId: '8563',
     reason: 'AAR auction catalog route',
   });
+  assert.deepEqual(plain(core.resolveAarAuctionsPage(item)), {
+    supported: true,
+    kind: 'aar-item-detail',
+    host: 'aarauctions.com',
+    auctionId: '8573',
+    itemId: '221770',
+    reason: 'AAR single-item detail route',
+  });
   assert.equal(core.shouldInitOnLocation(list), true);
   assert.equal(core.shouldInitOnLocation(catalog), true);
+  assert.equal(core.shouldInitOnLocation(item), true);
   assert.equal(core.resolveAssistantMode(list).mode, 'aar');
   assert.equal(core.resolveAssistantMode(catalog).source, 'aar');
+  assert.equal(core.resolveAssistantMode(item).route.kind, 'aar-item-detail');
 
   [
     'https://aarauctions.com/login',
@@ -1810,6 +1841,39 @@ test('assistant resolves supported and blocked AAR Auctions route families', () 
     assert.equal(core.resolveAarAuctionsPage(url).supported, false, href);
     assert.equal(core.shouldInitOnLocation(url), false, href);
   });
+});
+
+test('assistant extracts and validates an AAR single-item detail export', () => {
+  const core = loadCore();
+  const script = makeFakeNode({
+    text: `var lot221770 = new Lot(8573, 0, '39', '221770', '', 'Pallet of HPE / Aruba network switches. Approx 69 total network switches.', '', '', '', '', '', '', '', '', 'One Lot', 1, 0, 'seller', '', 325, 0, 350, 0, 0, '325.00', '0.00', '350.00', '0.00', '0.00', 1, 2, 3, 1784159400, 1784159430, '08:19 PM', '08:19 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`,
+  });
+  const root = makeFakeNode({
+    selectors: {
+      'script': [script],
+      'h1': makeFakeNode({ text: 'Longwood Central School District Surplus Auction Ending 7/21' }),
+      'img': makeFakeNode({ attrs: { src: '/images/network-switches.jpg' } }),
+    },
+  });
+  const loc = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8573&itemId=221770');
+  const item = core.extractAarItemDetail(root, loc);
+  const context = core.extractAarItemContext(root, loc, { originLabel: 'Edison, NJ 08817', radiusMiles: 100 });
+
+  assert.equal(item.itemId, '221770');
+  assert.equal(item.pageKind, 'aar-item-detail');
+  assert.equal(item.lot, '39');
+  assert.match(item.title, /HPE \/ Aruba network switches/i);
+  assert.equal(context.pageKind, 'aar-item-detail');
+  assert.equal(context.expectedTotal, 1);
+  assert.equal(context.itemId, '221770');
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'aar-item-dom',
+    context,
+    items: [item],
+    expectedTotal: 1,
+  }, 'aar', { kind: 'aar-item-detail', auctionId: '8573', itemId: '221770' })), { ok: true });
+  assert.match(core.buildAarItemLlmBrief(item, context), /single-item research task/i);
+  assert.match(core.buildAarItemLlmBrief(item, context), /221770/);
 });
 
 test('assistant extracts AAR auction calendar cards', () => {
@@ -2059,6 +2123,11 @@ test('assistant renders AAR copy controls and research settings only', () => {
     debugEnabled: false,
     route: { kind: 'aar-auction-catalog' },
   });
+  const itemHtml = core.buildPanelHtml({
+    mode: 'aar',
+    debugEnabled: false,
+    route: { kind: 'aar-item-detail' },
+  });
 
   assert.match(listHtml, /Copy Auctions LLM/);
   assert.match(listHtml, /id="aar-auctions-copy-json"/);
@@ -2070,6 +2139,10 @@ test('assistant renders AAR copy controls and research settings only', () => {
   assert.match(catalogHtml, /id="aar-catalog-copy-json"/);
   assert.match(catalogHtml, /radius/i);
   assert.doesNotMatch(catalogHtml, /Copy Auctions LLM|Prepare Bid|Snipe Now|Max plan|checkout|payment/i);
+
+  assert.match(itemHtml, /Copy Item LLM/);
+  assert.match(itemHtml, /id="aar-item-copy-json"/);
+  assert.doesNotMatch(itemHtml, /Copy Catalog LLM|Copy Auctions LLM|Prepare Bid|Snipe Now|Max plan|checkout|payment/i);
 });
 
 test('assistant resolves supported and blocked GovDeals route families', () => {

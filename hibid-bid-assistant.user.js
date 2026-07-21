@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.54
+// @version      0.7.55
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.54';
+  const SCRIPT_VERSION = '0.7.55';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1580,6 +1580,24 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       });
       return null;
     }
+    const hasFilteredVisibleTotal = visibleState.hasActiveFilters
+      && Number.isFinite(Number(visibleTotal))
+      && Number(visibleTotal) >= 0;
+    if (hasFilteredVisibleTotal && first.items.length > Number(visibleTotal)) {
+      debug('hibid-state result exceeded filtered visible total; falling back to visible DOM', {
+        extracted: first.items.length,
+        visibleTotal,
+        visibleState
+      });
+      return {
+        ...first,
+        expectedTotal: Number(visibleTotal),
+        incomplete: true,
+        stopReason: 'exceeds-filtered-visible-total',
+        visibleState,
+        sourceUrl
+      };
+    }
     mergeCatalogLots(lotsByKey, first.items);
     const expectedTotal = first.expectedTotal || visibleTotal || first.items.length;
     const pageLength = first.pageLength || first.items.length || 100;
@@ -1628,6 +1646,16 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         break;
       }
       mergeCatalogLots(lotsByKey, pageLots.items);
+      if (hasFilteredVisibleTotal && lotsByKey.size > Number(visibleTotal)) {
+        stopReason = 'exceeds-filtered-visible-total';
+        debug('hibid-state pagination exceeded filtered visible total; falling back to visible DOM', {
+          page,
+          extracted: lotsByKey.size,
+          visibleTotal,
+          visibleState
+        });
+        break;
+      }
       pagesRead += 1;
       debug('hibid-state page merged', {
         page,
@@ -1704,6 +1732,12 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       && Number.isFinite(Number(result?.expectedTotal));
     const visibleExpected = Number(visibleState.expectedTotal);
     const resultExpected = Number(result?.expectedTotal);
+    if (visibleState.hasActiveFilters
+      && Number.isFinite(visibleExpected)
+      && visibleExpected >= 0
+      && items.length > visibleExpected) {
+      return { ok: false, reason: 'filtered-result-exceeds-visible-total' };
+    }
     if (visibleState.hasActiveFilters && hasVisibleExpected && hasResultExpected
       && visibleExpected !== resultExpected && String(result?.source || '').includes('hibid')) {
       return { ok: false, reason: 'filtered-count-mismatch' };
@@ -1827,6 +1861,15 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       if ((contextAuctionId && contextAuctionId !== routeAuctionId)
         || rowAuctionIds.some(auctionId => auctionId !== routeAuctionId)) {
         return { ok: false, reason: 'aar-auction-id-mismatch' };
+      }
+    }
+    if (routeKind === 'aar-item-detail' && route.itemId) {
+      const routeItemId = String(route.itemId);
+      const contextItemId = String(result?.context?.itemId || '');
+      const rowItemIds = uniqueNonEmpty(scraperResultRows(result).map(row => row?.itemId || String(row?.url || '').match(/[?&]itemId=([^&]+)/i)?.[1] || ''));
+      if ((contextItemId && contextItemId !== routeItemId)
+        || rowItemIds.some(itemId => itemId !== routeItemId)) {
+        return { ok: false, reason: 'aar-item-id-mismatch' };
       }
     }
     const completeValidation = validateScraperCompleteness(result, 'aar-incomplete');
@@ -2227,6 +2270,7 @@ ${cards}
     resolveFlipTrackerPage,
     resolveAuctionNinjaPage,
     resolveAarAuctionsPage,
+    getAarItemId,
     resolveGovDealsPage,
     resolveAssistantMode,
     getExpectedLotTotal,
@@ -2245,6 +2289,8 @@ ${cards}
     extractAarAuctionCards,
     extractAarCatalogContext,
     extractAarCatalogLots,
+    extractAarItemDetail,
+    extractAarItemContext,
     extractGovDealsSellerContext,
     extractGovDealsSearchContext,
     extractGovDealsAssetDetail,
@@ -2264,6 +2310,7 @@ ${cards}
     scrapeAuctionNinjaCategoryItems,
     scrapeAarAuctionCards,
     scrapeAarCatalogLots,
+    scrapeAarItemDetail,
     scrapeGovDealsListings,
     buildAuctionNinjaLlmBrief,
     buildAuctionNinjaFollowedItemsLlmBrief,
@@ -2273,6 +2320,7 @@ ${cards}
     buildAuctionNinjaCategoryLlmBrief,
     buildAarAuctionListLlmBrief,
     buildAarCatalogLlmBrief,
+    buildAarItemLlmBrief,
     buildGovDealsLlmBrief,
     getAarResearchSettings,
     saveAarResearchSettings,
@@ -2853,9 +2901,14 @@ ${cards}
 
     const itemsMap = new Map();
     const collect = () => {
+      const tileCandidates = getLotTiles().filter(tile => (
+        !visibleState.hasActiveFilters
+        || accountExportRoute
+        || isVisible(tile)
+      ));
       const visibleLots = accountExportRoute
-        ? uniqueLots(getLotTiles().map(extractCurrentBidsLot))
-        : uniqueLots(getLotTiles().map(extractLot));
+        ? uniqueLots(tileCandidates.map(extractCurrentBidsLot))
+        : uniqueLots(tileCandidates.map(extractLot));
       visibleLots.forEach(lot => {
         const key = accountExportRoute ? lot.lot : (lot.id || lot.url || lot.lot);
         if (key && lot.title) itemsMap.set(String(key), lot);
@@ -3037,6 +3090,14 @@ ${cards}
     }
   }
 
+  function getAarItemId(loc = location) {
+    try {
+      return new URL(loc.href || String(loc), 'https://aarauctions.com/').searchParams.get('itemId') || '';
+    } catch {
+      return '';
+    }
+  }
+
   function resolveAarAuctionsPage(loc = location) {
     const host = String(loc.hostname || '').toLowerCase();
     const path = String(loc.pathname || '');
@@ -3054,11 +3115,23 @@ ${cards}
     }
 
     if (/^\/servlet\/Search\.do$/i.test(path) && getAarAuctionId(loc)) {
+      const auctionId = getAarAuctionId(loc);
+      const itemId = getAarItemId(loc);
+      if (itemId) {
+        return {
+          supported: true,
+          kind: 'aar-item-detail',
+          host,
+          auctionId,
+          itemId,
+          reason: 'AAR single-item detail route'
+        };
+      }
       return {
         supported: true,
         kind: 'aar-auction-catalog',
         host,
-        auctionId: getAarAuctionId(loc),
+        auctionId,
         reason: 'AAR auction catalog route'
       };
     }
@@ -4364,6 +4437,40 @@ ${cards}
     }));
   }
 
+  function extractAarItemDetail(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const itemId = loc ? getAarItemId(loc) : '';
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
+    const lots = extractAarCatalogLots(root, loc);
+    const match = lots.find(lot => {
+      if (!itemId) return false;
+      try {
+        return new URL(lot.url || '', base).searchParams.get('itemId') === itemId;
+      } catch {
+        return String(lot.url || '').includes(`itemId=${itemId}`);
+      }
+    }) || (lots.length === 1 ? lots[0] : null);
+    if (!match) return null;
+    return {
+      ...match,
+      pageKind: 'aar-item-detail',
+      itemId: itemId || String(match.url || '').match(/[?&]itemId=([^&]+)/i)?.[1] || '',
+      image: match.image || pickFirstImage(root, base)
+    };
+  }
+
+  function extractAarItemContext(root = document, loc = (typeof location !== 'undefined' ? location : null), settings = getAarResearchSettings()) {
+    const item = extractAarItemDetail(root, loc);
+    const catalogContext = extractAarCatalogContext(root, loc, settings);
+    return {
+      ...catalogContext,
+      pageKind: 'aar-item-detail',
+      itemId: loc ? getAarItemId(loc) : (item?.itemId || ''),
+      expectedTotal: item ? 1 : 0,
+      itemTitle: item?.title || '',
+      researchSettings: settings
+    };
+  }
+
   function mergeAarLots(target, lots) {
     lots.forEach(lot => {
       const key = lot.lot ? `${lot.auctionId || ''}:${lot.lot}` : (lot.url || lot.title);
@@ -4485,6 +4592,32 @@ ${cards}
       stopReason,
       incomplete: expectedTotal ? lots.length < expectedTotal : false,
       pageSteps: steps
+    };
+  }
+
+  async function scrapeAarItemDetail(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const settings = getAarResearchSettings();
+    const item = extractAarItemDetail(root, loc);
+    const context = extractAarItemContext(root, loc, settings);
+    const items = item && !shouldStop() ? [item] : [];
+    const stopReason = shouldStop() ? 'stopped-by-user' : (item ? 'single-item-detail' : 'item-not-found');
+    onProgress(`Read ${items.length} AAR item detail record(s).`);
+    debug('aar item detail scrape finished', {
+      itemId: context.itemId || '',
+      count: items.length,
+      stopReason,
+      context
+    });
+    return {
+      source: 'aar-item-dom',
+      items,
+      lots: items,
+      expectedTotal: item ? 1 : 0,
+      context,
+      stopped: shouldStop(),
+      incomplete: false,
+      stopReason
     };
   }
 
@@ -6283,6 +6416,32 @@ ${cards}
     ].join('\n');
   }
 
+  function buildAarItemLlmBrief(item, context = {}, settings = getAarResearchSettings()) {
+    const itemContext = {
+      ...context,
+      pageKind: 'aar-item-detail',
+      itemId: context.itemId || item?.itemId || '',
+      itemTitle: context.itemTitle || item?.title || '',
+      expectedTotal: 1,
+      researchSettings: settings
+    };
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      'AAR Auctions single-item research task:',
+      'Review this exact item detail as one lot. Use the full description and every available photo before making a resale judgment.',
+      'Do not treat the parent auction count as the number of exported items. This payload contains only the requested item detail.',
+      '',
+      buildAarDistanceResearchBlock(settings),
+      '',
+      'AAR item context:',
+      JSON.stringify(itemContext, null, 2),
+      '',
+      'AAR item JSON:',
+      JSON.stringify({ context: itemContext, items: item ? [item] : [] }, null, 2)
+    ].join('\n');
+  }
+
   function buildGovDealsDistanceResearchBlock(settings = getAarResearchSettings(), context = {}) {
     const origin = String(settings?.originLabel || defaultAarResearchSettings().originLabel).trim();
     const radius = Number(settings?.radiusMiles) || defaultAarResearchSettings().radiusMiles;
@@ -7000,22 +7159,27 @@ ${cards}
 
   function renderAarSection(debugEnabled, route = {}) {
     const isCatalog = route?.kind === 'aar-auction-catalog';
+    const isItem = route?.kind === 'aar-item-detail';
     return `
       <section id="aar-auctions-mode" class="hiba-section" data-module="aar" data-page-kind="${escapeHtml(route?.kind || 'aar-auction-list')}">
         <div class="hiba-section-head">
           <div>
             <div class="hiba-kicker">AAR Auctions</div>
-            <strong>${isCatalog ? 'Catalog Export' : 'Auction Calendar Export'}</strong>
+            <strong>${isItem ? 'Item Export' : (isCatalog ? 'Catalog Export' : 'Auction Calendar Export')}</strong>
           </div>
-          <span class="hiba-chip neutral">${isCatalog ? 'catalog' : 'calendar'}</span>
+          <span class="hiba-chip neutral">${isItem ? 'item' : (isCatalog ? 'catalog' : 'calendar')}</span>
         </div>
         <div class="hiba-actions">
-          ${isCatalog
-            ? actionButton('aar-catalog-copy-llm', 'file', 'Copy Catalog LLM', 'primary', '', 'Copy AAR sale terms, distance research instructions, and lot JSON for a desktop LLM.')
-            : actionButton('aar-auctions-copy-llm', 'file', 'Copy Auctions LLM', 'primary', '', 'Copy AAR auction cards with distance research instructions for a desktop LLM.')}
-          ${isCatalog
-            ? actionButton('aar-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy the current AAR catalog as normalized JSON.')
-            : actionButton('aar-auctions-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy AAR auction calendar cards as normalized JSON.')}
+          ${isItem
+            ? actionButton('aar-item-copy-llm', 'file', 'Copy Item LLM', 'primary', '', 'Copy this exact AAR item, sale terms, distance research instructions, and item JSON for a desktop LLM.')
+            : (isCatalog
+              ? actionButton('aar-catalog-copy-llm', 'file', 'Copy Catalog LLM', 'primary', '', 'Copy AAR sale terms, distance research instructions, and lot JSON for a desktop LLM.')
+              : actionButton('aar-auctions-copy-llm', 'file', 'Copy Auctions LLM', 'primary', '', 'Copy AAR auction cards with distance research instructions for a desktop LLM.'))}
+          ${isItem
+            ? actionButton('aar-item-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy this exact AAR item detail as normalized JSON.')
+            : (isCatalog
+              ? actionButton('aar-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy the current AAR catalog as normalized JSON.')
+              : actionButton('aar-auctions-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy AAR auction calendar cards as normalized JSON.'))}
           ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current AAR scrape/export work.')}
         </div>
         ${renderAarResearchSettings()}
@@ -7433,6 +7597,8 @@ ${cards}
     const aarAuctionsCopyLlmButton = panel.querySelector('#aar-auctions-copy-llm');
     const aarCatalogCopyJsonButton = panel.querySelector('#aar-catalog-copy-json');
     const aarCatalogCopyLlmButton = panel.querySelector('#aar-catalog-copy-llm');
+    const aarItemCopyJsonButton = panel.querySelector('#aar-item-copy-json');
+    const aarItemCopyLlmButton = panel.querySelector('#aar-item-copy-llm');
     const aarOriginInput = panel.querySelector('#aar-origin-label');
     const aarRadiusInput = panel.querySelector('#aar-radius-miles');
     const govDealsModeEl = panel.querySelector('[data-module="govdeals"]');
@@ -7669,7 +7835,13 @@ ${cards}
 
     if (aarMode) {
       const settings = getAarResearchSettings();
-      if (aarKind === 'aar-auction-catalog') {
+      if (aarKind === 'aar-item-detail') {
+        const context = extractAarItemContext(document, location, settings);
+        const visibleItem = extractAarItemDetail(document, location);
+        renderAarRows(visibleItem ? [visibleItem] : [], context);
+        status(`AAR item ready. ${visibleItem ? '1 item detail loaded.' : 'Item detail not found.'}`);
+        debug('aar item mode ready', { route: activeRoute, visibleItems: visibleItem ? 1 : 0, context, settings });
+      } else if (aarKind === 'aar-auction-catalog') {
         const context = extractAarCatalogContext(document, location, settings);
         const visibleLots = extractAarCatalogLots(document, location);
         renderAarRows(visibleLots, context);
@@ -7930,19 +8102,26 @@ ${cards}
         aarAuctionsCopyJsonButton,
         aarAuctionsCopyLlmButton,
         aarCatalogCopyJsonButton,
-        aarCatalogCopyLlmButton
+        aarCatalogCopyLlmButton,
+        aarItemCopyJsonButton,
+        aarItemCopyLlmButton
       ].forEach(button => {
         if (button) button.disabled = true;
       });
       try {
         const settings = saveAarSettingsFromUi();
         const isCatalog = aarKind === 'aar-auction-catalog';
-        status(isCatalog
-          ? (mode === 'llm' ? 'Scraping AAR catalog for LLM brief...' : 'Scraping AAR catalog...')
-          : (mode === 'llm' ? 'Scraping AAR auction calendar for LLM brief...' : 'Scraping AAR auction calendar...'));
-        const result = isCatalog
-          ? await scrapeAarCatalogLots(status, () => state.stop)
-          : await scrapeAarAuctionCards(status, () => state.stop);
+        const isItem = aarKind === 'aar-item-detail';
+        status(isItem
+          ? (mode === 'llm' ? 'Reading AAR item detail for LLM brief...' : 'Reading AAR item detail...')
+          : (isCatalog
+            ? (mode === 'llm' ? 'Scraping AAR catalog for LLM brief...' : 'Scraping AAR catalog...')
+            : (mode === 'llm' ? 'Scraping AAR auction calendar for LLM brief...' : 'Scraping AAR auction calendar...')));
+        const result = isItem
+          ? await scrapeAarItemDetail(status, () => state.stop)
+          : (isCatalog
+            ? await scrapeAarCatalogLots(status, () => state.stop)
+            : await scrapeAarAuctionCards(status, () => state.stop));
         result.context = { ...(result.context || {}), researchSettings: settings };
         const validation = validateScraperExportAgainstRoute(result, 'aar', activeRoute);
         if (!validation.ok) {
@@ -7965,7 +8144,7 @@ ${cards}
           stopReason: result.stopReason || '-'
         });
         if (!rows.length) {
-          status(`No AAR ${isCatalog ? 'lots' : 'auctions'} found. Enable debug and copy logs if this page has rows.`);
+          status(`No AAR ${isItem ? 'item detail' : (isCatalog ? 'lots' : 'auctions')} found. Enable debug and copy logs if this page has rows.`);
         }
         return result;
       } finally {
@@ -7974,7 +8153,9 @@ ${cards}
           aarAuctionsCopyJsonButton,
           aarAuctionsCopyLlmButton,
           aarCatalogCopyJsonButton,
-          aarCatalogCopyLlmButton
+          aarCatalogCopyLlmButton,
+          aarItemCopyJsonButton,
+          aarItemCopyLlmButton
         ].forEach(button => {
           if (button) button.disabled = false;
         });
@@ -8021,6 +8202,26 @@ ${cards}
       const copied = await writeClipboard(payload).catch(() => false);
       const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
       status(copied ? `Copied AAR catalog LLM brief for ${countText} lot(s).` : 'AAR catalog LLM brief built, but clipboard failed.');
+    });
+
+    aarItemCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('json');
+      if (!result) return;
+      const items = result.items || result.lots || [];
+      if (!items.length) return;
+      const payload = JSON.stringify({ context: result.context, items }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied ? 'Copied AAR item JSON for 1 item.' : 'AAR item JSON built, but clipboard failed.');
+    });
+
+    aarItemCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('llm');
+      if (!result) return;
+      const item = (result.items || result.lots || [])[0];
+      if (!item) return;
+      const payload = buildAarItemLlmBrief(item, result.context, getAarResearchSettings());
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied ? 'Copied AAR item LLM brief for 1 item.' : 'AAR item LLM brief built, but clipboard failed.');
     });
 
     const govDealsButtons = [

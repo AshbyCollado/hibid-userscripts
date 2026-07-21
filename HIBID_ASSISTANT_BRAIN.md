@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.50`.
+- Current version: `0.7.55`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -31,6 +31,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - `aar`: AAR Auctions calendar and catalog export pages.
   - Auction calendar controls: Copy Auctions LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Catalog controls: Copy Catalog LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Single-item controls: Copy Item LLM, Copy JSON, Stop while scraping on `Search.do?auctionId=...&itemId=...`; the parent auction total does not make a single-item export incomplete.
   - Research settings: collapsed origin/radius editor persisted under `flipperaddon-aar-research-settings-v1`, default `Edison, NJ 08817` and `100` miles.
   - Safety: research/export only; no bid, register, payment, invoice, login, or account actions.
 - `govdeals`: GovDeals seller, search/new-listings filter, and asset export pages.
@@ -273,6 +274,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.52` removes the legacy `#hibid-bid-assistant-panel` on mount so old pre-FlipperAddon installs cannot cover or intercept the current panel.
 - Done: `v0.7.53` raises the bounded HiBid state-pagination window to three minutes so large catalogs such as `1,999` lots can finish all page fetches before the incomplete-export guard rejects a partial result.
 - Done: `v0.7.54` adds stale-panel/version recovery, same-mode SPA route remounting, teardown invalidation for in-flight exports, CSP-friendlier panel styling, and host matches for supported seller-domain variants.
+- Done: `v0.7.55` adds AAR single-item detail exports and prevents filtered HiBid Apollo over-counts from being copied by falling back to visible DOM tiles and rejecting any result above the visible filtered total.
 - Done: `v0.7.42` recognizes state-prefixed HiBid account watchlist/current-bids routes such as `/newjersey/account/watchlist` and keeps them on the DOM-only account export path.
 - Done: `v0.7.43` makes the minimized launcher show the full `FlipperAddon by ALOS` name, widens it to 228px, and hides the close control until the drawer is expanded.
 - Verified in Waterfox on `v0.7.43`: representative HiBid, AJ Willner, eBay, Facebook, AuctionNinja, AAR, and GovDeals routes mount the expected module controls; the supplied `/livecatalog/752334/the-luxe-edit` target redirects to `/catalog/752334` because that auction is past, so it correctly presents catalog controls after the server redirect.
@@ -281,20 +283,21 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 ## Verification Checklist
 
-### Cross-browser stale-install check (`v0.7.54`)
+### Cross-browser stale-install check (`v0.7.55`)
 
 - The screenshot-era comma message (`Blocked stale catalog export, current page did not match copied lots.`) belongs to an older installed script; it is not present in the current source. The current build uses the semicolon-free reason form and includes the exact guard reason.
-- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.54`, `#flipperaddon-panel[data-flipperaddon-version="0.7.54"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.54'` when page access exposes the canary.
+- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.55`, `#flipperaddon-panel[data-flipperaddon-version="0.7.55"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.55'` when page access exposes the canary.
 - A current build remounts when an existing panel has an older version or a different page URL, and invalidates in-flight export work when that panel is torn down.
 - The first current-script mount removes the old `#hibid-bid-assistant-panel` used by pre-FlipperAddon builds. Seeing two dialogs means stale scripts are still enabled or the current build has not mounted yet.
 - Chrome, Firefox, and Waterfox have separate extension/profile state. A raw GitHub push does not update an already-installed copy until that browser's Tampermonkey update check or raw-URL install is completed.
 - Run the supported route smoke matrix before live copy tests: HiBid catalog/filter/live/account, AJ Willner, AuctionNinja sale/category/account/search, AAR calendar/catalog, GovDeals seller/search/new-listings, eBay, and Facebook.
 - For each active module, verify only its own copy controls are rendered and then perform one JSON or LLM copy. “Page opened” is navigation evidence only; it is not an export pass.
 
-### Export guard diagnostics (`v0.7.54`)
+### Export guard diagnostics (`v0.7.55`)
 
 - Catalog copy now maps guard reasons into a compact status message. `catalog-incomplete` means the scraper collected fewer rows than the page total; `catalog-source-mismatch` means another site/source was mixed into the result; filter-specific reasons identify stale Apollo/DOM data.
 - Debug remains opt-in. When enabled, the ring buffer records version, boot route, current route, source, count, expected total, and rejection reason. When disabled, the user still sees a compact reason toast without a verbose result console.
+- Cross-browser audit evidence: Chrome and Firefox both mounted `v0.7.54` on AAR 8573 item 221770 but both rejected the old full-catalog interpretation; Chrome also reproduced a transient `12/6` HiBid filtered over-count while Firefox copied `6/6`. GovDeals copied `16` seller rows and `39` nearby rows in Firefox; Chrome received the site's Access Denied page. Account pages redirected to sign-in and eBay/Facebook were auth/anti-bot gated, so those are environment limitations rather than export passes.
 
 - `node --check .\hibid-bid-assistant.user.js`
 - `node --check .\hibid-lot-catalog-scraper.user.js`
