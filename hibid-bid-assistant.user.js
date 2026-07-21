@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.56
+// @version      0.7.57
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.56';
+  const SCRIPT_VERSION = '0.7.57';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -8343,7 +8343,48 @@ ${cards}
     govDealsAssetCopyJsonButton?.addEventListener('click', () => copyGovDeals('json'));
     govDealsAssetCopyLlmButton?.addEventListener('click', () => copyGovDeals('llm'));
 
+    const waitForCatalogRouteToSettle = async (mode) => {
+      const selector = mode === 'llm' ? '#hibid-catalog-copy-llm' : '#hibid-catalog-copy-json';
+      let lastHref = typeof location !== 'undefined' ? location.href : '';
+      let stableSince = Date.now();
+      const deadline = Date.now() + 6000;
+
+      while (Date.now() < deadline && Date.now() - stableSince < 800) {
+        await wait(200);
+        const href = typeof location !== 'undefined' ? location.href : '';
+        if (href !== lastHref) {
+          debug('catalog copy observed HiBid URL normalization', { from: lastHref, to: href });
+          lastHref = href;
+          stableSince = Date.now();
+        }
+      }
+
+      if (panelIsCurrent()) return true;
+
+      // HiBid can normalize filters after the first panel mounts. Forward the
+      // user's click to the current panel instead of losing it with the old DOM.
+      await wait(300);
+      const currentPanel = document.getElementById(PANEL_ID);
+      const currentButton = currentPanel?.querySelector(selector);
+      if (currentPanel && currentPanel !== panel && currentButton && !currentButton.disabled) {
+        debug('catalog copy forwarded after HiBid panel remount', {
+          mode,
+          href: currentPanel.dataset.flipperaddonHref || location.href
+        });
+        currentButton.click();
+      } else {
+        debug('catalog copy could not forward after HiBid panel remount', {
+          mode,
+          hasCurrentPanel: Boolean(currentPanel),
+          hasCurrentButton: Boolean(currentButton)
+        });
+      }
+      return false;
+    };
+
     const copyCatalogLots = async (mode) => {
+      if (state.busy) return;
+      if (!await waitForCatalogRouteToSettle(mode)) return;
       if (state.busy) return;
       setScrapingBusy(true);
       if (catalogCopyJsonButton) catalogCopyJsonButton.disabled = true;
