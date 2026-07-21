@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.51
+// @version      0.7.52
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -43,7 +43,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.51';
+  const SCRIPT_VERSION = '0.7.52';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -61,6 +61,9 @@
     'hibid-scraper-json',
     'auction-scraper-copy-button',
     'auction-scraper-json'
+  ];
+  const LEGACY_PANEL_IDS = [
+    'hibid-bid-assistant-panel'
   ];
   const MENU_COMMANDS = [
     'Remount FlipperAddon',
@@ -379,13 +382,22 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function removeLegacyScraperArtifacts(reason = 'cleanup') {
     if (typeof document === 'undefined') return 0;
     let removed = 0;
+    const removedIds = [];
     LEGACY_SCRAPER_IDS.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
       el.remove();
       removed += 1;
+      removedIds.push(id);
     });
-    if (removed) debug('removed legacy scraper artifacts', { reason, removed, ids: LEGACY_SCRAPER_IDS });
+    LEGACY_PANEL_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.remove();
+      removed += 1;
+      removedIds.push(id);
+    });
+    if (removed) debug('removed legacy scraper artifacts', { reason, removed, ids: removedIds });
     return removed;
   }
 

@@ -269,6 +269,8 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.48` waits for late HiBid state hydration, prefers page-bound `eventItemIds` Apollo connections on unfiltered catalogs, and fails closed when only an ambiguous broad connection is available.
 - Done: `v0.7.49` adds AuctionNinja `/category/{slug}` product-card exports with ZIP/miles context and safe background View All loading.
 - Done: `v0.7.50` uses the category heading's result total, preserves location/sort filters across pagination, rejects unfiltered View All links, and loads every safe category page instead of stopping at eight fetches.
+- Done: `v0.7.51` adds explicit document-idle startup, version/canary diagnostics, a cross-site route smoke matrix, and compact export-guard reasons.
+- Done: `v0.7.52` removes the legacy `#hibid-bid-assistant-panel` on mount so old pre-FlipperAddon installs cannot cover or intercept the current panel.
 - Done: `v0.7.42` recognizes state-prefixed HiBid account watchlist/current-bids routes such as `/newjersey/account/watchlist` and keeps them on the DOM-only account export path.
 - Done: `v0.7.43` makes the minimized launcher show the full `FlipperAddon by ALOS` name, widens it to 228px, and hides the close control until the drawer is expanded.
 - Verified in Waterfox on `v0.7.43`: representative HiBid, AJ Willner, eBay, Facebook, AuctionNinja, AAR, and GovDeals routes mount the expected module controls; the supplied `/livecatalog/752334/the-luxe-edit` target redirects to `/catalog/752334` because that auction is past, so it correctly presents catalog controls after the server redirect.
@@ -277,15 +279,16 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 ## Verification Checklist
 
-### Cross-browser stale-install check (`v0.7.51`)
+### Cross-browser stale-install check (`v0.7.52`)
 
 - The screenshot-era comma message (`Blocked stale catalog export, current page did not match copied lots.`) belongs to an older installed script; it is not present in the current source. The current build uses the semicolon-free reason form and includes the exact guard reason.
-- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.51`, `#flipperaddon-panel[data-flipperaddon-version="0.7.51"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.51'` when page access exposes the canary.
+- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.52`, `#flipperaddon-panel[data-flipperaddon-version="0.7.52"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.52'` when page access exposes the canary.
+- The first current-script mount removes the old `#hibid-bid-assistant-panel` used by pre-FlipperAddon builds. Seeing two dialogs means stale scripts are still enabled or the current build has not mounted yet.
 - Chrome, Firefox, and Waterfox have separate extension/profile state. A raw GitHub push does not update an already-installed copy until that browser's Tampermonkey update check or raw-URL install is completed.
 - Run the supported route smoke matrix before live copy tests: HiBid catalog/filter/live/account, AJ Willner, AuctionNinja sale/category/account/search, AAR calendar/catalog, GovDeals seller/search/new-listings, eBay, and Facebook.
 - For each active module, verify only its own copy controls are rendered and then perform one JSON or LLM copy. “Page opened” is navigation evidence only; it is not an export pass.
 
-### Export guard diagnostics (`v0.7.51`)
+### Export guard diagnostics (`v0.7.52`)
 
 - Catalog copy now maps guard reasons into a compact status message. `catalog-incomplete` means the scraper collected fewer rows than the page total; `catalog-source-mismatch` means another site/source was mixed into the result; filter-specific reasons identify stale Apollo/DOM data.
 - Debug remains opt-in. When enabled, the ring buffer records version, boot route, current route, source, count, expected total, and rejection reason. When disabled, the user still sees a compact reason toast without a verbose result console.
