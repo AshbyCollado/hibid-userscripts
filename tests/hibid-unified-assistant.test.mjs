@@ -810,6 +810,12 @@ test('assistant bounds filtered HiBid fallback work and preserves the visible ta
   });
 });
 
+test('assistant permits bounded state pagination for large HiBid catalogs', () => {
+  const core = loadCore();
+
+  assert.equal(core.getHibidStateScrapeMaxMs(), 180000);
+});
+
 test('assistant ignores hidden HiBid empty-state templates when visible filtered lots exist', () => {
   const core = loadCore();
   const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&miles=50');

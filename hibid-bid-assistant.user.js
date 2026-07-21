@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.52
+// @version      0.7.53
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -43,7 +43,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.52';
+  const SCRIPT_VERSION = '0.7.53';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -76,7 +76,10 @@
   const HIBID_STATE_FETCH_TIMEOUT_MS = 6500;
   const HIBID_STATE_HYDRATION_WAIT_MS = 5000;
   const HIBID_STATE_HYDRATION_POLL_MS = 100;
-  const HIBID_STATE_SCRAPE_MAX_MS = 15000;
+  // Large HiBid catalogs can require one same-origin state fetch per page.
+  // Keep a finite upper bound, but allow a 1,999-lot catalog to finish before
+  // falling back to a partial DOM scrape that must be rejected as incomplete.
+  const HIBID_STATE_SCRAPE_MAX_MS = 180000;
   const HIBID_STATE_MAX_PAGES = 24;
   const HIBID_DOM_SCRAPE_MAX_MS = 90000;
   const HIBID_DOM_SCRAPE_MAX_STEPS = 500;
@@ -1464,6 +1467,10 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     };
   }
 
+  function getHibidStateScrapeMaxMs() {
+    return HIBID_STATE_SCRAPE_MAX_MS;
+  }
+
   function mergeCatalogLots(target, lots) {
     lots.forEach(lot => {
       const key = lot?.id || lot?.url || lot?.lot;
@@ -2270,6 +2277,7 @@ ${cards}
     validateScraperExportAgainstRoute,
     isCatalogScrapeComplete,
     getHibidScrapeLimits,
+    getHibidStateScrapeMaxMs,
     scrapeCatalogLots,
     findDialog,
     findBidButton,
