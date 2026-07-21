@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.58
+// @version      0.7.59
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.58';
+  const SCRIPT_VERSION = '0.7.59';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -8658,6 +8658,31 @@ ${cards}
 
     let panelClosed = false;
     let lastMountedHref = location.href;
+
+    // HiBid can replace the panel in the same navigation turn that it
+    // normalizes catalog filters. Capture the user's copy intent above the
+    // panel lifecycle so a newly mounted panel can resume it reliably.
+    const installGlobalCatalogCopyCapture = () => {
+      if (globalThis.__FLIPPERADDON_CATALOG_COPY_CAPTURE_INSTALLED__) return;
+      const capture = (event) => {
+        const target = event.target?.closest?.('#hibid-catalog-copy-json, #hibid-catalog-copy-llm');
+        const owner = target?.closest?.(`#${PANEL_ID}`);
+        if (!target || !owner || owner.dataset.flipperaddonMode !== 'catalog') return;
+        globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ = {
+          mode: target.id.endsWith('-llm') ? 'llm' : 'json',
+          href: typeof location !== 'undefined' ? location.href : '',
+          at: Date.now()
+        };
+        debug('catalog copy intent captured at document boundary', {
+          mode: globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__.mode,
+          href: globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__.href
+        });
+      };
+      document.addEventListener('click', capture, true);
+      globalThis.__FLIPPERADDON_CATALOG_COPY_CAPTURE_INSTALLED__ = true;
+      debug('document catalog copy capture installed');
+    };
+    installGlobalCatalogCopyCapture();
 
     const teardownPanel = (reason = 'remount') => {
       const existing = document.getElementById(PANEL_ID);

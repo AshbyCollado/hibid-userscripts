@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.58`.
+- Current version: `0.7.59`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -296,11 +296,12 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Run the supported route smoke matrix before live copy tests: HiBid catalog/filter/live/account, AJ Willner, AuctionNinja sale/category/account/search, AAR calendar/catalog, GovDeals seller/search/new-listings, eBay, and Facebook.
 - For each active module, verify only its own copy controls are rendered and then perform one JSON or LLM copy. “Page opened” is navigation evidence only; it is not an export pass.
 
-### Export guard diagnostics (`v0.7.58`)
+### Export guard diagnostics (`v0.7.59`)
 
 - Catalog copy now maps guard reasons into a compact status message. `catalog-incomplete` means the scraper collected fewer rows than the page total; `catalog-source-mismatch` means another site/source was mixed into the result; filter-specific reasons identify stale Apollo/DOM data.
 - Debug remains opt-in. When enabled, the ring buffer records version, boot route, current route, source, count, expected total, and rejection reason. When disabled, the user still sees a compact reason toast without a verbose result console.
 - Cross-browser audit evidence: the current source passed Chrome and Firefox targeted checks for AAR item `8573/221770`, filtered HiBid guard behavior, and the live-catalog redirect. The real Waterfox profile now has one enabled `v0.7.56`; its exact AAR item copied a one-item JSON payload, and the contaminated `q=lebron` page copied `[]`. The Waterfox route smoke matrix mounted the page-appropriate module on HiBid, AJ Willner, AuctionNinja, AAR, GovDeals, Facebook, and account routes; eBay was gated by its security challenge. Auth/anti-bot-gated pages remain environment limitations, not silent export passes.
+- `v0.7.59` installs a document-level HiBid catalog copy-intent capture hook that survives panel teardown. This handles the early-click window where HiBid normalizes the URL and inserts the replacement panel before its local listeners bind.
 
 - `node --check .\hibid-bid-assistant.user.js`
 - `node --check .\hibid-lot-catalog-scraper.user.js`
@@ -325,7 +326,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
   - Confirm scrolling, filters, lot links, watch buttons, and bid buttons still work when not actively scraping.
   - For AuctionNinja, confirm sale, followed, and won pages never expose or click bid/checkout/payment/invoice/account mutation actions.
   - For AAR Auctions, confirm the drawer shows only calendar/catalog copy controls, research settings persist, and bid/register/payment routes do not mount.
-  - For GovDeals, confirm seller/new-listings/asset pages expose only copy controls and do not click bid, offer, cart, checkout, payment, login, registration, or account controls.
+- For GovDeals, confirm seller/new-listings/asset pages expose only copy controls and do not click bid, offer, cart, checkout, payment, login, registration, or account controls.
 
 ## Known Pitfalls
 

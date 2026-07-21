@@ -2,7 +2,7 @@
 
 Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
 
-Current hosted build: `v0.7.58`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.7.58` captures catalog copy intent before HiBid route normalization and resumes it on the remounted panel.
+Current hosted build: `v0.7.59`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.7.59` captures catalog copy intent at the document boundary before HiBid route normalization, including the short window before a replacement panel's listeners are bound, and resumes it on the remounted panel.
 
 ## Install
 
@@ -74,4 +74,4 @@ npm test
 
 ## Browser Verification
 
-The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version is `0.7.58`, and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox.
+The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version is `0.7.59`, and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox.
