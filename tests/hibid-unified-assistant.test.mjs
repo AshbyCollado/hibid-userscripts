@@ -1532,6 +1532,52 @@ test('assistant mode resolver activates only the current page module', () => {
   });
 });
 
+test('assistant cross-site smoke matrix resolves every supported export page to its own module', () => {
+  const core = loadCore();
+  const cases = [
+    ['hibid-catalog', 'https://hibid.com/lots', 'catalog', 'hibid-bid-controls'],
+    ['hibid-filtered-catalog', 'https://hibid.com/newjersey/lots/40198/computers?q=gaming%20pc', 'catalog', 'hibid-bid-controls'],
+    ['hibid-live', 'https://hibid.com/livecatalog/752334/the-luxe-edit', 'live', 'hibid-live-mode'],
+    ['hibid-watchlist', 'https://hibid.com/account/watchlist?status=OUTBID', 'catalog', 'hibid-bid-controls'],
+    ['hibid-winning', 'https://hibid.com/account/currentbids?status=WINNING', 'catalog', 'hibid-bid-controls'],
+    ['aj-willner', 'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active', 'catalog', 'hibid-bid-controls'],
+    ['auctionninja-sale', 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/example--17395.html?an=20260709202533', 'auctionninja', 'auctionninja-catalog-mode'],
+    ['auctionninja-category', 'https://www.auctionninja.com/category/electronics?miles=30&zip=07008', 'auctionninja', 'auctionninja-category-mode'],
+    ['auctionninja-followed', 'https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo', 'auctionninja', 'auctionninja-account-mode'],
+    ['auctionninja-won', 'https://www.auctionninja.com/items-won?an=hwfmhr2h2qi', 'auctionninja', 'auctionninja-account-mode'],
+    ['auctionninja-history', 'https://www.auctionninja.com/bid-history?an=sp2i8ac5q0n', 'auctionninja', 'auctionninja-account-mode'],
+    ['auctionninja-search', 'https://www.auctionninja.com/auctions?an=6av06rjyogk', 'auctionninja', 'auctionninja-auctions-mode'],
+    ['aar-calendar', 'https://aarauctions.com/auctions/', 'aar', 'aar-auctions-mode'],
+    ['aar-catalog', 'https://aarauctions.com/servlet/Search.do?auctionId=8563', 'aar', 'aar-auctions-mode'],
+    ['govdeals-seller', 'https://www.govdeals.com/en/rutgers', 'govdeals', 'govdeals-mode'],
+    ['govdeals-location', 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0', 'govdeals', 'govdeals-mode'],
+    ['govdeals-new-listings', 'https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25', 'govdeals', 'govdeals-mode'],
+    ['ebay', 'https://www.ebay.com/sh/lst/active', 'fliptracker', 'fliptracker-listing-export-mode'],
+    ['facebook', 'https://www.facebook.com/marketplace/you/selling', 'fliptracker', 'fliptracker-listing-export-mode'],
+  ];
+
+  cases.forEach(([label, href, mode, moduleId]) => {
+    const location = new URL(href);
+    const resolved = core.resolveAssistantMode(location);
+    assert.equal(resolved.mode, mode, label);
+    assert.equal(resolved.supported, true, label);
+    const html = core.buildPanelHtml({ mode, route: resolved.route, debugEnabled: false });
+    assert.match(html, new RegExp(`id="${moduleId}"`), label);
+  });
+});
+
+test('assistant explains export guard failures with the actual rejection reason and count', () => {
+  const core = loadCore();
+  assert.equal(
+    core.describeExportGuardFailure('catalog-incomplete', { count: 62, expectedTotal: 193 }),
+    'scrape stopped before the page total was collected (62/193).'
+  );
+  assert.equal(
+    core.describeExportGuardFailure('filtered-search-results-do-not-match-query'),
+    'copied lots do not match the active search.'
+  );
+});
+
 test('panel markup is active-mode only, scraper-first, and keeps debug controls gated', () => {
   const core = loadCore();
 

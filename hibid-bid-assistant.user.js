@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.50
+// @version      0.7.51
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -34,6 +34,7 @@
 // @grant        GM_registerMenuCommand
 // @grant        unsafeWindow
 // @grant        window.onurlchange
+// @run-at       document-idle
 // ==/UserScript==
 
 (function () {
@@ -42,7 +43,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.50';
+  const SCRIPT_VERSION = '0.7.51';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1847,6 +1848,34 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     ]);
   }
 
+  function describeExportGuardFailure(reason, context = {}) {
+    const labels = {
+      'catalog-route-mismatch': 'active page route is not a catalog export route',
+      'catalog-source-mismatch': 'copied data came from a different site source',
+      'catalog-auction-id-mismatch': 'copied lots belong to a different auction',
+      'catalog-incomplete': 'scrape stopped before the page total was collected',
+      'catalog-count-exceeds-expected': 'copied count exceeds the page total',
+      'visible-no-matches-with-exported-lots': 'the page shows no matches but copied lots were found',
+      'filtered-count-mismatch': 'copied count does not match the active filter result',
+      'filtered-search-results-do-not-match-query': 'copied lots do not match the active search',
+      'filtered-source-mismatch': 'filtered data source did not match the active page',
+      'filter-mismatch': 'copied data did not match the active filters',
+      'ambiguous-unfiltered-state': 'embedded page data was ambiguous, so it was rejected',
+      'live-route-mismatch': 'active page is not a live catalog route',
+      'live-page-kind-mismatch': 'copied data is not live-lot data',
+      'live-source-mismatch': 'copied live data came from a different source',
+      'live-incomplete': 'live scrape stopped before all open lots were collected',
+      'live-count-exceeds-expected': 'copied live count exceeds the page total',
+    };
+    const label = labels[String(reason || '')] || String(reason || 'unknown export guard failure');
+    const count = Number(context.count);
+    const expected = Number(context.expectedTotal);
+    const countSuffix = Number.isFinite(count) && Number.isFinite(expected) && expected > 0
+      ? ` (${count}/${expected})`
+      : '';
+    return `${label}${countSuffix}.`;
+  }
+
   function validateCatalogExportAgainstRoute(result, route = {}) {
     const routeKind = String(route?.kind || '').trim();
     if (routeKind && !['catalog', 'watchlist', 'watchlist-outbid', 'currentbids-winning', 'currentbids-outbid', 'lot'].includes(routeKind)) {
@@ -2225,6 +2254,7 @@ ${cards}
     isHibidCurrentBidsRoute,
     isHibidAccountExportRoute,
     validateCatalogExportAgainstVisibleState,
+    describeExportGuardFailure,
     validateScraperExportAgainstRoute,
     isCatalogScrapeComplete,
     getHibidScrapeLimits,
@@ -7298,6 +7328,7 @@ ${cards}
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
     panel.dataset.flipperaddonMode = mode;
+    panel.dataset.flipperaddonVersion = SCRIPT_VERSION;
     panel.innerHTML = buildPanelHtml({ mode, debugEnabled, route });
 
     document.body.appendChild(panel);
@@ -8033,7 +8064,7 @@ ${cards}
             visibleState,
             route: activeCatalogRoute
           });
-          status('Blocked stale HiBid export; current filters do not match copied lots.');
+          status(`Blocked stale HiBid export: ${describeExportGuardFailure(validation.reason, { count: lots.length, expectedTotal: result.expectedTotal })}`);
           return;
         }
         const routeValidation = validateScraperExportAgainstRoute(result, 'catalog', activeCatalogRoute);
@@ -8046,7 +8077,7 @@ ${cards}
             count: lots.length,
             expectedTotal: result.expectedTotal
           });
-          status('Blocked stale catalog export; current page does not match copied lots.');
+          status(`Blocked stale catalog export: ${describeExportGuardFailure(routeValidation.reason, { count: lots.length, expectedTotal: result.expectedTotal })}`);
           return;
         }
         if (!lots.length) {
@@ -8200,7 +8231,7 @@ ${cards}
   }
 
   if (!globalThis.__HIBID_BID_ASSISTANT_TEST__) {
-    debug('boot', routeDebug());
+    debug('boot', { version: SCRIPT_VERSION, ...routeDebug() });
 
     let panelClosed = false;
     let lastMountedHref = location.href;

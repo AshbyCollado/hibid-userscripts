@@ -277,6 +277,19 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 ## Verification Checklist
 
+### Cross-browser stale-install check (`v0.7.51`)
+
+- The screenshot-era comma message (`Blocked stale catalog export, current page did not match copied lots.`) belongs to an older installed script; it is not present in the current source. The current build uses the semicolon-free reason form and includes the exact guard reason.
+- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.51`, `#flipperaddon-panel[data-flipperaddon-version="0.7.51"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.51'` when page access exposes the canary.
+- Chrome, Firefox, and Waterfox have separate extension/profile state. A raw GitHub push does not update an already-installed copy until that browser's Tampermonkey update check or raw-URL install is completed.
+- Run the supported route smoke matrix before live copy tests: HiBid catalog/filter/live/account, AJ Willner, AuctionNinja sale/category/account/search, AAR calendar/catalog, GovDeals seller/search/new-listings, eBay, and Facebook.
+- For each active module, verify only its own copy controls are rendered and then perform one JSON or LLM copy. “Page opened” is navigation evidence only; it is not an export pass.
+
+### Export guard diagnostics (`v0.7.51`)
+
+- Catalog copy now maps guard reasons into a compact status message. `catalog-incomplete` means the scraper collected fewer rows than the page total; `catalog-source-mismatch` means another site/source was mixed into the result; filter-specific reasons identify stale Apollo/DOM data.
+- Debug remains opt-in. When enabled, the ring buffer records version, boot route, current route, source, count, expected total, and rejection reason. When disabled, the user still sees a compact reason toast without a verbose result console.
+
 - `node --check .\hibid-bid-assistant.user.js`
 - `node --check .\hibid-lot-catalog-scraper.user.js`
 - `npm test`

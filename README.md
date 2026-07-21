@@ -2,6 +2,8 @@
 
 Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
 
+Current hosted build: `v0.7.51`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy.
+
 ## Install
 
 Open the unified addon URL in a browser with Tampermonkey enabled:
@@ -40,6 +42,8 @@ Debug UI and console/log capture are hidden until enabled from the Tampermonkey 
 
 When enabled, the drawer exposes copy/clear debug controls. Logs use the `[FlipperAddon]` prefix.
 
+When an export is rejected, the current build reports the specific guard reason (for example, incomplete scrape, active-filter mismatch, or wrong route) instead of the generic legacy stale-export message. If another computer still shows the old comma-form error wording, update/reinstall the raw GitHub script there before diagnosing page data.
+
 ## FlipTracker Active Listing Export
 
 Open an active selling page:
@@ -67,3 +71,7 @@ node --check .\hibid-bid-assistant.user.js
 node --check .\hibid-lot-catalog-scraper.user.js
 npm test
 ```
+
+## Browser Verification
+
+The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version is `0.7.51`, and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox.
