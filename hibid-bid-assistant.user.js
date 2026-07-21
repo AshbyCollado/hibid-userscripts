@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.62
+// @version      0.7.63
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.62';
+  const SCRIPT_VERSION = '0.7.63';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -8588,35 +8588,11 @@ ${cards}
       }
     };
 
-    globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__ = (copyMode) => copyCatalogLots(copyMode);
-    const pendingCopy = pendingCatalogCopy();
-    const pendingCopyIsFresh = pendingCopy
-      && Date.now() - Number(pendingCopy.at || 0) <= 10000
-      && ['json', 'llm'].includes(pendingCopy.mode)
-      && (() => {
-        try {
-          const previous = new URL(pendingCopy.href || '');
-          return previous.hostname === location.hostname && previous.pathname === location.pathname;
-        } catch {
-          return false;
-        }
-      })();
-    if (activeMode === 'catalog' && pendingCopyIsFresh) {
-      const pendingMode = pendingCopy.mode;
-      window.setTimeout(async () => {
-        // HiBid may normalize filters more than once. Keep the intent alive
-        // until this panel has stayed current long enough for the route to
-        // settle; an intermediate panel must not consume it.
-        if (!panelIsCurrent() || state.busy || !pendingCatalogCopy()) return;
-        const settled = await waitForCatalogRouteToSettle(pendingMode);
-        if (!settled || !panelIsCurrent() || state.busy) return;
-        clearPendingCatalogCopy();
-        debug('resuming catalog copy after HiBid panel remount', { mode: pendingMode });
-        const handler = globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__;
-        if (typeof handler === 'function') handler(pendingMode);
-        else (pendingMode === 'llm' ? catalogCopyLlmButton : catalogCopyJsonButton)?.click();
-      }, 900);
-    }
+    globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__ = {
+      panel,
+      run: (copyMode) => copyCatalogLots(copyMode)
+    };
+    if (activeMode === 'catalog') scheduleCatalogCopyResume();
     debugCopyButton?.addEventListener('click', async () => {
       const copied = await copyDebugLog();
       status(copied ? `Copied ${getDebugLog().length} debug log entries.` : 'Debug log empty or clipboard failed.');
@@ -8715,6 +8691,52 @@ ${cards}
     let panelClosed = false;
     let lastMountedHref = location.href;
 
+    const scheduleCatalogCopyResume = () => {
+      if (globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__) return;
+      const tick = () => {
+        globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__ = null;
+        const pending = readSharedCatalogCopyIntent();
+        if (!pending) return;
+        if (Date.now() - Number(pending.at || 0) > 15000) {
+          clearSharedCatalogCopyIntent();
+          debug('catalog copy intent expired before dispatch', { mode: pending.mode });
+          return;
+        }
+        try {
+          const previous = new URL(pending.href || '');
+          if (previous.hostname !== location.hostname || previous.pathname !== location.pathname) {
+            clearSharedCatalogCopyIntent();
+            debug('catalog copy intent discarded after route changed', {
+              from: pending.href,
+              to: location.href
+            });
+            return;
+          }
+        } catch {
+          clearSharedCatalogCopyIntent();
+          return;
+        }
+        const panel = document.getElementById(PANEL_ID);
+        const handler = globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__;
+        const panelReady = panel
+          && handler?.panel === panel
+          && panel.dataset.flipperaddonVersion === SCRIPT_VERSION
+          && panel.dataset.flipperaddonHref === location.href
+          && typeof handler.run === 'function';
+        if (panelReady) {
+          const dispatched = globalThis.__FLIPPERADDON_CATALOG_COPY_DISPATCHED__;
+          if (!dispatched || dispatched.at !== pending.at || dispatched.panel !== panel) {
+            globalThis.__FLIPPERADDON_CATALOG_COPY_DISPATCHED__ = { at: pending.at, panel };
+            debug('dispatching pending catalog copy', { mode: pending.mode });
+            handler.run(pending.mode);
+          }
+          return;
+        }
+        globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__ = window.setTimeout(tick, 200);
+      };
+      tick();
+    };
+
     // HiBid can replace the panel in the same navigation turn that it
     // normalizes catalog filters. Capture the user's copy intent above the
     // panel lifecycle so a newly mounted panel can resume it reliably.
@@ -8734,13 +8756,7 @@ ${cards}
           mode: intent.mode,
           href: intent.href
         });
-        const handler = globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__;
-        if (typeof handler === 'function') {
-          window.setTimeout(() => {
-            const pending = readSharedCatalogCopyIntent();
-            if (pending?.at === intent.at) handler(intent.mode);
-          }, 0);
-        }
+        scheduleCatalogCopyResume();
       };
       const eventDocuments = new Set([document]);
       try {
