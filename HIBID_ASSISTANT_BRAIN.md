@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.57`.
+- Current version: `0.7.58`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -277,6 +277,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done: `v0.7.55` adds AAR single-item detail exports and prevents filtered HiBid Apollo over-counts from being copied by falling back to visible DOM tiles and rejecting any result above the visible filtered total.
 - Done: `v0.7.56` waits through HiBid Angular hydration before accepting a no-match state and ignores transient empty-state copy when a real lot grid or positive visible total is present.
 - Done: `v0.7.57` waits for HiBid URL/filter normalization to settle before catalog copy and forwards the click to the current remounted panel when the site changes the route during hydration.
+- Done: `v0.7.58` captures catalog copy intent at the document boundary before teardown, then resumes the requested action from the remounted panel after HiBid route normalization.
 - Done: `v0.7.42` recognizes state-prefixed HiBid account watchlist/current-bids routes such as `/newjersey/account/watchlist` and keeps them on the DOM-only account export path.
 - Done: `v0.7.43` makes the minimized launcher show the full `FlipperAddon by ALOS` name, widens it to 228px, and hides the close control until the drawer is expanded.
 - Verified in Waterfox on `v0.7.43`: representative HiBid, AJ Willner, eBay, Facebook, AuctionNinja, AAR, and GovDeals routes mount the expected module controls; the supplied `/livecatalog/752334/the-luxe-edit` target redirects to `/catalog/752334` because that auction is past, so it correctly presents catalog controls after the server redirect.
@@ -285,17 +286,17 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 ## Verification Checklist
 
-### Cross-browser stale-install check (`v0.7.57`)
+### Cross-browser stale-install check (`v0.7.58`)
 
 - The screenshot-era comma message (`Blocked stale catalog export, current page did not match copied lots.`) belongs to an older installed script; it is not present in the current source. The current build uses the semicolon-free reason form and includes the exact guard reason.
-- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.57`, `#flipperaddon-panel[data-flipperaddon-version="0.7.57"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.57'` when page access exposes the canary.
+- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.58`, `#flipperaddon-panel[data-flipperaddon-version="0.7.58"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.58'` when page access exposes the canary.
 - A current build remounts when an existing panel has an older version or a different page URL, and invalidates in-flight export work when that panel is torn down.
 - The first current-script mount removes the old `#hibid-bid-assistant-panel` used by pre-FlipperAddon builds. Seeing two dialogs means stale scripts are still enabled or the current build has not mounted yet.
 - Chrome, Firefox, and Waterfox have separate extension/profile state. A raw GitHub push does not update an already-installed copy until that browser's Tampermonkey update check or raw-URL install is completed.
 - Run the supported route smoke matrix before live copy tests: HiBid catalog/filter/live/account, AJ Willner, AuctionNinja sale/category/account/search, AAR calendar/catalog, GovDeals seller/search/new-listings, eBay, and Facebook.
 - For each active module, verify only its own copy controls are rendered and then perform one JSON or LLM copy. “Page opened” is navigation evidence only; it is not an export pass.
 
-### Export guard diagnostics (`v0.7.57`)
+### Export guard diagnostics (`v0.7.58`)
 
 - Catalog copy now maps guard reasons into a compact status message. `catalog-incomplete` means the scraper collected fewer rows than the page total; `catalog-source-mismatch` means another site/source was mixed into the result; filter-specific reasons identify stale Apollo/DOM data.
 - Debug remains opt-in. When enabled, the ring buffer records version, boot route, current route, source, count, expected total, and rejection reason. When disabled, the user still sees a compact reason toast without a verbose result console.

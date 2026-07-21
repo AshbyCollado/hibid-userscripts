@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.57
+// @version      0.7.58
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.57';
+  const SCRIPT_VERSION = '0.7.58';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -7809,6 +7809,33 @@ ${cards}
       document.removeEventListener('keydown', closeSiteSwitcherOnEscape);
     }, { once: true });
 
+    const pendingCatalogCopy = () => globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ || null;
+    const clearPendingCatalogCopy = () => {
+      try {
+        delete globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__;
+      } catch {
+        globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ = null;
+      }
+    };
+    const captureCatalogCopyIntent = (event) => {
+      if (activeMode !== 'catalog' || !panel.contains(event.target)) return;
+      const target = event.target?.closest?.('#hibid-catalog-copy-json, #hibid-catalog-copy-llm');
+      if (!target) return;
+      globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ = {
+        mode: target.id.endsWith('-llm') ? 'llm' : 'json',
+        href: typeof location !== 'undefined' ? location.href : '',
+        at: Date.now()
+      };
+      debug('catalog copy intent captured before possible HiBid remount', {
+        mode: globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__.mode,
+        href: globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__.href
+      });
+    };
+    document.addEventListener('click', captureCatalogCopyIntent, true);
+    panel.addEventListener('flipperaddon-panel-teardown', () => {
+      document.removeEventListener('click', captureCatalogCopyIntent, true);
+    }, { once: true });
+
     panel.querySelector('#hibid-bid-minimize').addEventListener('click', () => {
       const minimized = !panel.classList.contains('hiba-body-hidden');
       setSiteSwitcherOpen(false);
@@ -8345,6 +8372,8 @@ ${cards}
 
     const waitForCatalogRouteToSettle = async (mode) => {
       const selector = mode === 'llm' ? '#hibid-catalog-copy-llm' : '#hibid-catalog-copy-json';
+      const pending = pendingCatalogCopy();
+      if (pending && Date.now() - Number(pending.at || 0) > 10000) clearPendingCatalogCopy();
       let lastHref = typeof location !== 'undefined' ? location.href : '';
       let stableSince = Date.now();
       const deadline = Date.now() + 6000;
@@ -8359,19 +8388,30 @@ ${cards}
         }
       }
 
-      if (panelIsCurrent()) return true;
+      if (panelIsCurrent()) {
+        clearPendingCatalogCopy();
+        return true;
+      }
 
-      // HiBid can normalize filters after the first panel mounts. Forward the
-      // user's click to the current panel instead of losing it with the old DOM.
+      // HiBid can normalize filters after the first panel mounts. The new panel
+      // consumes the pending intent after its listeners are ready; keep a direct
+      // fallback for non-user-generated clicks that did not reach the capture hook.
       await wait(300);
       const currentPanel = document.getElementById(PANEL_ID);
       const currentButton = currentPanel?.querySelector(selector);
       if (currentPanel && currentPanel !== panel && currentButton && !currentButton.disabled) {
-        debug('catalog copy forwarded after HiBid panel remount', {
-          mode,
-          href: currentPanel.dataset.flipperaddonHref || location.href
-        });
-        currentButton.click();
+        if (pendingCatalogCopy()) {
+          debug('catalog copy left pending for the remounted HiBid panel', {
+            mode,
+            href: currentPanel.dataset.flipperaddonHref || location.href
+          });
+        } else {
+          debug('catalog copy forwarded after HiBid panel remount', {
+            mode,
+            href: currentPanel.dataset.flipperaddonHref || location.href
+          });
+          currentButton.click();
+        }
       } else {
         debug('catalog copy could not forward after HiBid panel remount', {
           mode,
@@ -8500,6 +8540,27 @@ ${cards}
 
     catalogCopyJsonButton?.addEventListener('click', () => copyCatalogLots('json'));
     catalogCopyLlmButton?.addEventListener('click', () => copyCatalogLots('llm'));
+    const pendingCopy = pendingCatalogCopy();
+    const pendingCopyIsFresh = pendingCopy
+      && Date.now() - Number(pendingCopy.at || 0) <= 10000
+      && ['json', 'llm'].includes(pendingCopy.mode)
+      && (() => {
+        try {
+          const previous = new URL(pendingCopy.href || '');
+          return previous.hostname === location.hostname && previous.pathname === location.pathname;
+        } catch {
+          return false;
+        }
+      })();
+    if (activeMode === 'catalog' && pendingCopyIsFresh) {
+      const pendingMode = pendingCopy.mode;
+      clearPendingCatalogCopy();
+      window.setTimeout(() => {
+        if (!panelIsCurrent() || state.busy) return;
+        debug('resuming catalog copy after HiBid panel remount', { mode: pendingMode });
+        (pendingMode === 'llm' ? catalogCopyLlmButton : catalogCopyJsonButton)?.click();
+      }, 900);
+    }
     debugCopyButton?.addEventListener('click', async () => {
       const copied = await copyDebugLog();
       status(copied ? `Copied ${getDebugLog().length} debug log entries.` : 'Debug log empty or clipboard failed.');
