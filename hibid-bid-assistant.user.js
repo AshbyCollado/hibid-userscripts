@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.60
+// @version      0.7.61
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.60';
+  const SCRIPT_VERSION = '0.7.61';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -61,6 +61,7 @@
   const DEBUG_ENABLED_KEY = 'flipperaddon-debug-enabled-v1';
   const DEBUG_LOG_KEY = 'flipperaddon-debug-log-v1';
   const AAR_RESEARCH_SETTINGS_KEY = 'flipperaddon-aar-research-settings-v1';
+  const PENDING_CATALOG_COPY_KEY = 'flipperaddon-pending-catalog-copy-v1';
   const DEBUG_LOG_LIMIT = 200;
   const OUTBID_WATCHLIST_URL = 'https://hibid.com/account/watchlist?status=OUTBID';
   const LEGACY_SCRAPER_IDS = [
@@ -93,6 +94,60 @@
   const HIBID_DOM_SCRAPE_MAX_MS = 90000;
   const HIBID_DOM_SCRAPE_MAX_STEPS = 500;
   const DEBUG_PREFIX = '[FlipperAddon]';
+
+  function readSharedCatalogCopyIntent() {
+    const candidates = [
+      globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__,
+      (typeof unsafeWindow !== 'undefined' ? unsafeWindow.__FLIPPERADDON_PENDING_CATALOG_COPY__ : null)
+    ];
+    for (const candidate of candidates) {
+      if (candidate && ['json', 'llm'].includes(candidate.mode)) return candidate;
+    }
+    try {
+      const stored = sessionStorage.getItem(PENDING_CATALOG_COPY_KEY);
+      const parsed = stored ? JSON.parse(stored) : null;
+      if (parsed && ['json', 'llm'].includes(parsed.mode)) return parsed;
+    } catch {
+      // Session storage is best-effort on restricted pages.
+    }
+    return null;
+  }
+
+  function writeSharedCatalogCopyIntent(value) {
+    globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ = value;
+    try {
+      if (typeof unsafeWindow !== 'undefined') {
+        unsafeWindow.__FLIPPERADDON_PENDING_CATALOG_COPY__ = value;
+      }
+    } catch {
+      // Page-window sharing is best-effort in isolated userscript sandboxes.
+    }
+    try {
+      sessionStorage.setItem(PENDING_CATALOG_COPY_KEY, JSON.stringify(value));
+    } catch {
+      // Session storage is best-effort on restricted pages.
+    }
+  }
+
+  function clearSharedCatalogCopyIntent() {
+    try {
+      delete globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__;
+    } catch {
+      globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ = null;
+    }
+    try {
+      if (typeof unsafeWindow !== 'undefined') {
+        delete unsafeWindow.__FLIPPERADDON_PENDING_CATALOG_COPY__;
+      }
+    } catch {
+      // Page-window sharing is best-effort on isolated userscript sandboxes.
+    }
+    try {
+      sessionStorage.removeItem(PENDING_CATALOG_COPY_KEY);
+    } catch {
+      // Session storage is best-effort on restricted pages.
+    }
+  }
   const AUCTION_RESALE_COORDINATOR_PROMPT = `You are an auction resale analysis coordinator.
 
 Goal:
@@ -7809,26 +7864,21 @@ ${cards}
       document.removeEventListener('keydown', closeSiteSwitcherOnEscape);
     }, { once: true });
 
-    const pendingCatalogCopy = () => globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ || null;
-    const clearPendingCatalogCopy = () => {
-      try {
-        delete globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__;
-      } catch {
-        globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ = null;
-      }
-    };
+    const pendingCatalogCopy = () => readSharedCatalogCopyIntent();
+    const clearPendingCatalogCopy = () => clearSharedCatalogCopyIntent();
     const captureCatalogCopyIntent = (event) => {
       if (activeMode !== 'catalog' || !panel.contains(event.target)) return;
       const target = event.target?.closest?.('#hibid-catalog-copy-json, #hibid-catalog-copy-llm');
       if (!target) return;
-      globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ = {
+      const intent = {
         mode: target.id.endsWith('-llm') ? 'llm' : 'json',
         href: typeof location !== 'undefined' ? location.href : '',
         at: Date.now()
       };
+      writeSharedCatalogCopyIntent(intent);
       debug('catalog copy intent captured before possible HiBid remount', {
-        mode: globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__.mode,
-        href: globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__.href
+        mode: intent.mode,
+        href: intent.href
       });
     };
     document.addEventListener('click', captureCatalogCopyIntent, true);
@@ -8673,19 +8723,28 @@ ${cards}
         const target = event.target?.closest?.('#hibid-catalog-copy-json, #hibid-catalog-copy-llm');
         const owner = target?.closest?.(`#${PANEL_ID}`);
         if (!target || !owner || owner.dataset.flipperaddonMode !== 'catalog') return;
-        globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ = {
+        const intent = {
           mode: target.id.endsWith('-llm') ? 'llm' : 'json',
           href: typeof location !== 'undefined' ? location.href : '',
           at: Date.now()
         };
+        writeSharedCatalogCopyIntent(intent);
         debug('catalog copy intent captured at document boundary', {
-          mode: globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__.mode,
-          href: globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__.href
+          mode: intent.mode,
+          href: intent.href
         });
       };
-      document.addEventListener('click', capture, true);
+      const eventDocuments = new Set([document]);
+      try {
+        if (typeof unsafeWindow !== 'undefined' && unsafeWindow.document) {
+          eventDocuments.add(unsafeWindow.document);
+        }
+      } catch {
+        // The page document may be unavailable in a restricted sandbox.
+      }
+      eventDocuments.forEach(eventDocument => eventDocument.addEventListener('click', capture, true));
       globalThis.__FLIPPERADDON_CATALOG_COPY_CAPTURE_INSTALLED__ = true;
-      debug('document catalog copy capture installed');
+      debug('document catalog copy capture installed', { documents: eventDocuments.size });
     };
     installGlobalCatalogCopyCapture();
 
