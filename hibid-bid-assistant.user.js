@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.67
+// @version      0.7.68
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.67';
+  const SCRIPT_VERSION = '0.7.68';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -852,7 +852,50 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return candidates[0]?.button || null;
   }
 
+  function getHibidLotTileIdentity(tile) {
+    if (!tile) return '';
+    const href = tile.querySelector?.('a[href*="/lot/"]')?.getAttribute?.('href') || '';
+    const lotLabel = textOf(tile.querySelector?.('.lot-number-lead, [class*="lot-number"]'))
+      || textOf(tile).match(/\bLot\s+#?\s*\d+[A-Za-z-]*/i)?.[0]
+      || '';
+    return href || lotLabel || tile.id || '';
+  }
+
+  function getCanonicalHibidLotTiles(root = document) {
+    const selectors = [
+      'app-lot-tile',
+      'app-lot-card',
+      'lot-card',
+      '.lot-card',
+      '[class*="lot-card"]',
+      '[class*="lotTile"]',
+      '[class*="lot-tile"]'
+    ].join(',');
+    const roots = getLotSearchRoots(root);
+    const candidates = roots.flatMap(searchRoot => Array.from(searchRoot.querySelectorAll?.(selectors) || []))
+      .filter(isVisible)
+      .filter(tile => {
+        const identity = getHibidLotTileIdentity(tile);
+        return Boolean(identity) && (Boolean(tile.querySelector?.('a[href*="/lot/"], img, .lot-title, h2, [class*="lot-title"]')) || /^Lot\s+#?\s*\d+/i.test(textOf(tile)));
+      });
+
+    const unique = new Map();
+    candidates.forEach(tile => {
+      const identity = getHibidLotTileIdentity(tile);
+      if (identity && !unique.has(identity)) unique.set(identity, tile);
+    });
+
+    debug('canonical HiBid lot tiles', {
+      candidateCount: candidates.length,
+      uniqueCount: unique.size
+    });
+    return Array.from(unique.values());
+  }
+
   function getLotTiles(root = document) {
+    const canonicalTiles = getCanonicalHibidLotTiles(root);
+    if (canonicalTiles.length) return canonicalTiles;
+
     const roots = getLotSearchRoots(root);
     const candidates = roots.flatMap(searchRoot => Array.from(searchRoot.querySelectorAll([
         'app-lot-tile[id^="lot-"]',
@@ -889,7 +932,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       });
     }
 
-    if (root === document) {
+    if (typeof document !== 'undefined' && root === document) {
       Array.from(document.querySelectorAll('iframe')).forEach(frame => {
         try {
           const frameDoc = frame.contentDocument;
@@ -2559,6 +2602,7 @@ ${cards}
     isFlipTrackerListingPage,
     shouldInitOnLocation,
     getLotTiles,
+    getCanonicalHibidLotTiles,
     extractLot,
     extractCurrentBidsLot,
     extractTextLots,

@@ -1082,6 +1082,47 @@ test('assistant prefers the deduped visible filtered grid when the catalog heade
   assert.equal(visibleState.expectedTotal, 8);
 });
 
+test('assistant uses canonical HiBid lot cards instead of stray broad lot-number seeds', () => {
+  const core = loadCore();
+  const makeTile = (lot, title = `Gaming PC ${lot}`) => ({
+    id: `lot-${lot}`,
+    offsetParent: {},
+    textContent: `Lot ${lot} | ${title}`,
+    getClientRects: () => [{ width: 1, height: 1 }],
+    getAttribute() {
+      return '';
+    },
+    querySelector(selector) {
+      if (selector.includes('/lot/')) {
+        return { getAttribute: () => `/lot/${lot}`, textContent: '' };
+      }
+      if (selector.includes('lot-number')) {
+        return { textContent: `Lot ${lot}` };
+      }
+      if (selector.includes('img') || selector.includes('lot-title') || selector.includes('h2')) {
+        return { textContent: title };
+      }
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  });
+  const canonical = Array.from({ length: 16 }, (_, index) => makeTile(index + 1));
+  const stray = makeTile('stale', 'Unrelated stale template');
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === '*') return [];
+      if (/app-lot-tile|app-lot-card|lot-card|lotTile|lot-tile/.test(selector)) return canonical;
+      if (/lot-number|\/lot\//.test(selector)) return canonical.concat(stray);
+      return [];
+    },
+  };
+
+  assert.equal(core.getCanonicalHibidLotTiles(root).length, 16);
+  assert.equal(core.getLotTiles(root).length, 16);
+});
+
 test('assistant rejects filtered exports that exceed the visible result total', () => {
   const core = loadCore();
   const visibleState = core.extractHibidVisiblePageState({
