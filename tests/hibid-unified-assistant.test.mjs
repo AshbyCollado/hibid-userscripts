@@ -812,6 +812,48 @@ test('assistant accepts HiBid lots pages whose filtered Apollo key is eventItemI
   assert.equal(result.items.length, 15);
 });
 
+test('assistant preserves nested Apollo text fields instead of dropping real HiBid lots', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/lots/40198?q=nested');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Results for nested Showing 1 to 2 of 2 lots' },
+    documentElement: { textContent: 'Results for nested Showing 1 to 2 of 2 lots' },
+    querySelectorAll() { return []; },
+  }, loc);
+  const result = core.extractHibidApolloLots({
+    ROOT_QUERY: {
+      'lotSearch({"q":"nested","apage":1})': {
+        pagedResults: {
+          totalCount: 2,
+          pageLength: 2,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:nested-1' }, { __ref: 'Lot:nested-2' }],
+        },
+      },
+    },
+    'Lot:nested-1': {
+      id: 'nested-1',
+      lotNumber: '1',
+      lead: { text: 'Nested Gaming Desktop' },
+      description: { value: 'Description survives normalization.' },
+      lotState: { highBid: 10, minBid: 12, bidCount: 1, status: { label: 'OPEN' } },
+    },
+    'Lot:nested-2': {
+      id: 'nested-2',
+      lotNumber: '2',
+      title: { name: 'Nested Monitor' },
+      lotState: { highBid: 5, minBid: 7, bidCount: 2, status: { displayValue: 'OPEN' } },
+    },
+  }, { url: loc.href, visibleState });
+
+  assert.equal(result.items.length, 2);
+  assert.deepEqual(plain(result.items.map(item => ({ lot: item.lot, title: item.title }))), [
+    { lot: '1', title: 'Nested Gaming Desktop' },
+    { lot: '2', title: 'Nested Monitor' },
+  ]);
+  assert.equal(result.items[0].description, 'Description survives normalization.');
+});
+
 test('assistant bounds filtered HiBid fallback work and preserves the visible target', () => {
   const core = loadCore();
 
@@ -1323,6 +1365,89 @@ test('assistant still rejects incomplete normal HiBid catalog exports', () => {
     ok: false,
     reason: 'catalog-incomplete',
   });
+});
+
+test('assistant accepts a DOM export that proves it settled at the virtualized bottom', () => {
+  const core = loadCore();
+  const rows = Array.from({ length: 108 }, (_, index) => ({ lot: String(index + 1), title: `Lot ${index + 1}` }));
+  const result = {
+    source: 'dom-fallback',
+    items: rows,
+    lots: rows,
+    expectedTotal: 111,
+    incomplete: true,
+    coverage: {
+      proof: 'dom-bottom-settled',
+      reachedBottom: true,
+      discoverableCount: 108,
+      expectedTotal: 111,
+    },
+  };
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', { kind: 'catalog', source: 'hibid' })), {
+    ok: true,
+  });
+});
+
+test('assistant keeps shared research settings editable and includes them in GovDeals briefs', () => {
+  const storage = new Map();
+  const core = loadCore({ storage });
+  assert.deepEqual(plain(core.getResearchSettings()), {
+    originLabel: 'Edison, NJ 08817',
+    radiusMiles: 100,
+    salesTaxRate: '6.625%',
+    vehicleProfile: 'CT200h sedan',
+    researchNotes: '',
+  });
+
+  core.saveResearchSettings({
+    originLabel: 'Metuchen, NJ 08840',
+    radiusMiles: 75,
+    salesTaxRate: '6.625%',
+    vehicleProfile: 'Transit Connect',
+    researchNotes: 'Prefer pickup lots with removable components.',
+  });
+
+  assert.deepEqual(plain(core.getResearchSettings()), {
+    originLabel: 'Metuchen, NJ 08840',
+    radiusMiles: 75,
+    salesTaxRate: '6.625%',
+    vehicleProfile: 'Transit Connect',
+    researchNotes: 'Prefer pickup lots with removable components.',
+  });
+  assert.deepEqual(plain(core.getAarResearchSettings()), {
+    originLabel: 'Metuchen, NJ 08840',
+    radiusMiles: 75,
+  });
+
+  const brief = core.buildGovDealsLlmBrief([], {
+    source: 'GovDeals',
+    pageKind: 'govdeals-new-listings',
+    zipcode: '07008',
+    miles: '25',
+  }, core.getResearchSettings());
+  assert.match(brief, /Metuchen, NJ 08840/);
+  assert.match(brief, /75 miles/);
+  assert.match(brief, /Transit Connect/);
+  assert.match(brief, /Prefer pickup lots/);
+  assert.match(brief, /6\.625%/);
+  assert.match(brief, /zipcode.*07008/is);
+  assert.match(brief, /radius filter.*25 miles/is);
+});
+
+test('assistant exposes explicit debug menu state without leaking debug controls when off', () => {
+  const storage = new Map();
+  const core = loadCore({ storage });
+  assert.match(core.getDebugMenuLabel(), /OFF\]$/);
+  storage.set('flipperaddon-debug-enabled-v1', 'false');
+  assert.equal(core.getStoredDebugEnabled(), false);
+  const html = core.buildPanelHtml({ mode: 'govdeals', debugEnabled: false, route: { kind: 'govdeals-seller' } });
+  assert.doesNotMatch(html, /Copy Debug|Clear Debug/);
+  storage.set('flipperaddon-debug-enabled-v1', true);
+  assert.match(core.getDebugMenuLabel(), /ON\]$/);
+  const debugHtml = core.buildPanelHtml({ mode: 'govdeals', debugEnabled: true, route: { kind: 'govdeals-seller' } });
+  assert.match(debugHtml, /Copy Debug/);
+  assert.match(debugHtml, /Clear Debug/);
 });
 
 test('assistant blocks AAR exports from the wrong route or auction id', () => {

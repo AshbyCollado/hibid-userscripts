@@ -2,7 +2,7 @@
 
 Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
 
-Current hosted build: `v0.7.66`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.7.66` treats a filtered no-match state as authoritative even when HiBid leaves a stale broad total, and reconciles stale low headers against the deduplicated visible filtered grid without allowing broader exports.
+Current hosted build: `v0.7.67`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.7.67` keeps filtered no-match exports fail-closed, recovers nested Apollo text fields, and accepts a HiBid virtualized DOM export only after its bottom settle cycles prove the page is exhausted. It also shares editable research settings across AAR and GovDeals.
 
 ## Install
 
@@ -32,13 +32,13 @@ The older `hibid-lot-catalog-scraper.user.js` remains in the repo for legacy ref
 
 Copy LLM Brief includes the full auction-resale coordinator prompt plus enriched lot JSON. The prompt tells the model to prioritize eBay sold/completed comps, calculate profit after buyer premium, tax, eBay fees, promoted listing friction, travel, shipping, and sedan-fit risk.
 
-AAR and GovDeals LLM briefs also include a `Distance Agent` instruction. The default shared research setting is `Edison, NJ 08817` with a `100` mile radius. GovDeals search/new-listings exports also preserve URL filters such as `categoryName=Consumer Electronics`, `zipcode=07008`, and `miles=25`.
+AAR and GovDeals LLM briefs also include a `Distance Agent` instruction. Expand `Research Settings` on either module to edit the persisted origin/ZIP, radius, sales-tax assumption, vehicle/logistics profile, and extra research notes. The first-run shared defaults are `Edison, NJ 08817`, `100` miles, `6.625%`, and `CT200h sedan`. GovDeals search/new-listings exports also preserve URL filters such as `categoryName=Consumer Electronics`, `zipcode=07008`, and `miles=25`.
 
 ## Debug
 
 Debug UI and console/log capture are hidden until enabled from the Tampermonkey menu command:
 
-`Toggle FlipperAddon Debug Mode`
+`Toggle FlipperAddon Debug Mode [OFF]` (the label changes to `[ON]` after enabling it)
 
 When enabled, the drawer exposes copy/clear debug controls. Logs use the `[FlipperAddon]` prefix.
 
@@ -74,4 +74,4 @@ npm test
 
 ## Browser Verification
 
-The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version is `0.7.66`, and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. The Chrome audit confirmed that site navigation works but the selected Chrome profile has no active FlipperAddon/Tampermonkey install, so Chrome is not counted as verified until the hosted script is installed there from `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
+The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version is `0.7.67`, and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. The Chrome audit confirmed that site navigation works but the selected Chrome profile has no active FlipperAddon/Tampermonkey install, so Chrome is not counted as verified until the hosted script is installed there from `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.

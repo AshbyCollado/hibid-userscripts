@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.66
+// @version      0.7.67
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.66';
+  const SCRIPT_VERSION = '0.7.67';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -60,6 +60,7 @@
   const MINIMIZED_KEY = 'flipperaddon-minimized-v1';
   const DEBUG_ENABLED_KEY = 'flipperaddon-debug-enabled-v1';
   const DEBUG_LOG_KEY = 'flipperaddon-debug-log-v1';
+  const RESEARCH_SETTINGS_KEY = 'flipperaddon-research-settings-v2';
   const AAR_RESEARCH_SETTINGS_KEY = 'flipperaddon-aar-research-settings-v1';
   const PENDING_CATALOG_COPY_KEY = 'flipperaddon-pending-catalog-copy-v1';
   const DEBUG_LOG_LIMIT = 200;
@@ -93,6 +94,8 @@
   const HIBID_STATE_MAX_PAGES = 24;
   const HIBID_DOM_SCRAPE_MAX_MS = 90000;
   const HIBID_DOM_SCRAPE_MAX_STEPS = 500;
+  const HIBID_DOM_BOTTOM_SETTLE_MS = 900;
+  const HIBID_DOM_BOTTOM_SETTLE_RETRIES = 4;
   const DEBUG_PREFIX = '[FlipperAddon]';
 
   function readSharedCatalogCopyIntent() {
@@ -203,7 +206,7 @@ Look for hidden value in vague titles, bundles, quantities, pro gear, tools, ele
 Profit math:
 Assume auction buyer premium is 15%.
 Assume sales tax applies to hammer price plus buyer premium unless stated otherwise.
-Use sales tax rate: [INSERT TAX RATE].
+Use the configured sales tax rate from the Research Settings block below. If it is missing, state the assumption instead of hiding it.
 Rough quick math: auction all-in = bid x 1.25 for buyer premium/tax estimate; eBay net = sold price x 0.87 before shipping complications.
 Assume eBay resale has seller fees and promoted listing friction:
 - eBay final value fee default: 13.25%
@@ -394,19 +397,40 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function getStoredDebugEnabled() {
+    let enabled = false;
     try {
-      return Boolean(GM_getValue(DEBUG_ENABLED_KEY, false));
+      const stored = GM_getValue(DEBUG_ENABLED_KEY, false);
+      enabled = stored === true || stored === 1 || String(stored).toLowerCase() === 'true';
     } catch {
-      return false;
+      enabled = false;
     }
+    try {
+      globalThis.__FLIPPERADDON_DEBUG_MODE__ = enabled;
+      if (typeof unsafeWindow !== 'undefined') unsafeWindow.__FLIPPERADDON_DEBUG_MODE__ = enabled;
+    } catch {
+      // The runtime flag is diagnostic only.
+    }
+    return enabled;
   }
 
   function saveDebugEnabled(value) {
+    const enabled = Boolean(value);
     try {
-      GM_setValue(DEBUG_ENABLED_KEY, Boolean(value));
+      GM_setValue(DEBUG_ENABLED_KEY, enabled);
     } catch {
       // Tampermonkey storage may be unavailable in tests.
     }
+    try {
+      globalThis.__FLIPPERADDON_DEBUG_MODE__ = enabled;
+      if (typeof unsafeWindow !== 'undefined') unsafeWindow.__FLIPPERADDON_DEBUG_MODE__ = enabled;
+    } catch {
+      // The runtime flag is diagnostic only.
+    }
+    return enabled;
+  }
+
+  function getDebugMenuLabel() {
+    return `${MENU_COMMANDS[1]} [${getStoredDebugEnabled() ? 'ON' : 'OFF'}]`;
   }
 
   function debug(message, data) {
@@ -892,16 +916,25 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     for (let depth = 0; el && depth < 10; depth += 1, el = el.parentElement) {
       const hasLotIdentity = Boolean(el.querySelector?.('.lot-number-lead, a[href*="/lot/"], [class*="lot-number"]')) || /^Lot\s+\d+/i.test(textOf(el));
       const hasBidSurface = Boolean(el.querySelector?.('.lot-bid-button, .TileDisplayMinBid, .lot-high-bid, .lot-tile-bid-status, .bid-status, [class*="high-bid"], [class*="bid-status"]'));
-      if (hasLotIdentity && hasBidSurface) return el;
+      // Closed, newly hydrated, and shipping-only cards can lack the bid/status
+      // subtree even though they are real lot records. Keep the lot identity
+      // plus a card anchor as a sufficient DOM proof; the export guard still
+      // rejects unrelated page text and stale data sources.
+      const hasCardAnchor = Boolean(el.querySelector?.('a[href*="/lot/"], img, .lot-title, h2, [class*="lot-title"]'));
+      if (hasLotIdentity && (hasBidSurface || hasCardAnchor)) return el;
     }
 
     return null;
   }
 
   function extractLot(tile) {
-    const titleLink = tile.querySelector('a.lot-number-lead[href], a.lot-preview-link[href]');
-    const titleEl = tile.querySelector('.lot-title, h2');
-    const lotLabel = textOf(tile.querySelector('.lot-number-lead .text-primary, .lot-number-lead span'));
+    const rawText = rawTextOf(tile);
+    const tileText = textOf(tile);
+    const titleLink = tile.querySelector('a.lot-number-lead[href], a.lot-preview-link[href], a[href*="/lot/"]');
+    const titleEl = tile.querySelector('.lot-title, h2, [class*="lot-title"], [data-testid*="lot-title"]');
+    const lotLabel = textOf(tile.querySelector('.lot-number-lead .text-primary, .lot-number-lead span, [class*="lot-number"]'))
+      || tileText.match(/\bLot\s*#?\s*\d+[A-Za-z-]*/i)?.[0]
+      || '';
     const lotNumber = lotLabel.match(/\d+[A-Za-z-]*/)?.[0] || '';
     const highBidText = textOf(tile.querySelector('.lot-high-bid, .lot-bid-container'));
     const bidCountText = textOf(tile.querySelector('.lot-bid-history'));
@@ -924,16 +957,20 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const userBidStatus = extractUserBidStatus(allStatus);
     const href = titleLink?.getAttribute('href') || '';
     const base = typeof location !== 'undefined' ? location.href : 'https://hibid.com/';
-    const rawText = rawTextOf(tile);
     const image = pickFirstImage(tile, base);
     const description = pickFirstDescription(tile);
+    const rawTitle = tileText.match(/\bLot\s*#?\s*\d+[A-Za-z-]*\s*(?:\||[-:])\s*([\s\S]*?)(?=\s+(?:Watch|Unwatch|Notes|READ DESCRIPTION|High Bid|Current Bid|Price Realized|Bidding Closed|Sold For|Starting Bid|Opening Bid|\d+\s+Bids?\b|Bid\s+[\d,.]+\s*USD\b)|$)/i)?.[1] || '';
+    const title = (textOf(titleEl) || titleLink?.getAttribute('aria-label') || rawTitle || (lotNumber ? `Lot ${lotNumber}` : ''))
+      .replace(/^Lot\s*#?\s*\d+[A-Za-z-]*\s*(?:\||[-:])\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
 
     return {
       tile,
       bidButton,
       id: (tile.id || '').replace(/^lot-/, ''),
       lot: lotNumber,
-      title: textOf(titleEl) || titleLink?.getAttribute('aria-label') || '',
+      title,
       url: href ? absoluteUrl(href, base) : '',
       image,
       pictureCount: tile.querySelectorAll?.('img')?.length || 0,
@@ -1157,6 +1194,25 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       return amountFromState(value.amount ?? value.value ?? value.current ?? value.bid);
     }
     return null;
+  }
+
+  function stateText(value, depth = 0) {
+    if (depth > 4 || value === undefined || value === null) return '';
+    if (typeof value === 'string' || typeof value === 'number') return stripHtml(String(value)).trim();
+    if (Array.isArray(value)) return value.map(item => stateText(item, depth + 1)).filter(Boolean).join(' ').trim();
+    if (typeof value !== 'object') return '';
+    const nested = firstDefined(
+      value.text,
+      value.value,
+      value.title,
+      value.name,
+      value.lead,
+      value.label,
+      value.description,
+      value.displayValue,
+      value.message
+    );
+    return stateText(nested, depth + 1);
   }
 
   function formatUsd(amount) {
@@ -1516,16 +1572,17 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const auction = deref(state, lot.auction || lot.auctionInfo || lot.event) || {};
     const id = String(firstDefined(lot.id, lot.eventItemId, lot.eventitemId, lot.itemId, refId(lotRef).replace(/^Lot:/i, '')) || '');
     const lotNumber = String(firstDefined(lot.lotNumber, lot.lotNumberExtension, lot.number, lot.lot, id) || '');
-    const title = stripHtml(firstDefined(lot.lead, lot.title, lot.name, lot.descriptionShort) || '');
+    const title = stateText(firstDefined(lot.lead, lot.title, lot.name, lot.descriptionShort))
+      || (lotNumber ? `Lot ${lotNumber}` : '');
     if (!lotNumber && !title) return null;
 
     const highBidAmount = amountFromState(firstDefined(lotState.highBid, lot.highBid, lotState.currentBid, lotState.currentPrice, lot.currentBid));
     const nextBidAmount = amountFromState(firstDefined(lotState.minBid, lotState.nextBid, lot.minBid, lot.nextBid));
     const bidCountNumber = Number(firstDefined(lotState.bidCount, lot.bidCount, lotState.bids, lot.bids));
-    const statusText = String(firstDefined(lotState.status, lot.status, lotState.priceRealizedMessage, '') || '');
+    const statusText = stateText(firstDefined(lotState.status, lot.status, lotState.priceRealizedMessage, ''));
     const userBidStatus = extractUserBidStatus(`${statusText} ${lotState.userBidStatus || ''}`);
     const picture = deref(state, lot.featuredPicture || lot.picture || lot.primaryPicture) || {};
-    const description = stripHtml(firstDefined(lot.description, lot.fullDescription, lot.notes, lot.longDescription) || '');
+    const description = stateText(firstDefined(lot.description, lot.fullDescription, lot.notes, lot.longDescription));
 
     return {
       id,
@@ -1541,7 +1598,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       nextBidAmount,
       bidCount: Number.isFinite(bidCountNumber) ? `${bidCountNumber} ${bidCountNumber === 1 ? 'Bid' : 'Bids'}` : '',
       bidCountNumber: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
-      timeLeft: String(firstDefined(lotState.timeLeft, lot.timeLeft, lotState.closingTimeText, '') || ''),
+      timeLeft: stateText(firstDefined(lotState.timeLeft, lot.timeLeft, lotState.closingTimeText, '')),
       status: statusText,
       userBidStatus,
       isWinning: userBidStatus === 'Winning',
@@ -1549,8 +1606,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       watched: Boolean(firstDefined(lotState.isWatching, lot.isWatching, lot.watchListed, false)),
       pictureCount: Number(firstDefined(lot.pictureCount, lotState.pictureCount, 0)) || 0,
       description,
-      auctionTitle: String(firstDefined(auction.title, auction.name, lot.auctionTitle, '') || ''),
-      buyerPremium: String(firstDefined(auction.buyerPremium, auction.buyersPremium, lot.buyerPremium, '') || '')
+      auctionTitle: stateText(firstDefined(auction.title, auction.name, lot.auctionTitle, '')),
+      buyerPremium: stateText(firstDefined(auction.buyerPremium, auction.buyersPremium, lot.buyerPremium, ''))
     };
   }
 
@@ -1956,8 +2013,18 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function validateScraperCompleteness(result, reason) {
-    if (result?.incomplete) return { ok: false, reason };
-    return { ok: true };
+    if (!result?.incomplete) return { ok: true };
+
+    // HiBid's virtualized grid can report a stale header total after filters,
+    // closed lots, or shipping-only cards have been removed from the DOM. A
+    // DOM fallback that reached the bottom and completed its settle cycles has
+    // a direct coverage proof; an interrupted scrape does not.
+    const settledDomCoverage = result?.source === 'dom-fallback'
+      && result?.coverage?.proof === 'dom-bottom-settled'
+      && result?.coverage?.reachedBottom === true;
+    if (settledDomCoverage) return { ok: true, reason: 'settled-dom-bottom' };
+
+    return { ok: false, reason };
   }
 
   function trimRowsToExpectedTotal(rows, expectedTotal) {
@@ -2462,6 +2529,9 @@ ${cards}
     buildAarCatalogLlmBrief,
     buildAarItemLlmBrief,
     buildGovDealsLlmBrief,
+    defaultResearchSettings,
+    getResearchSettings,
+    saveResearchSettings,
     getAarResearchSettings,
     saveAarResearchSettings,
     getSiteShortcuts,
@@ -2513,7 +2583,8 @@ ${cards}
     scanPlan,
     lotSummary,
     getStoredMinimized,
-    getStoredDebugEnabled
+    getStoredDebugEnabled,
+    getDebugMenuLabel
   };
   globalThis.HiBidBidAssistantCore = Core;
 
@@ -2558,6 +2629,7 @@ ${cards}
     let lastScrollY = Math.round(window.scrollY || document.documentElement.scrollTop || 0);
 
     let stuck = 0;
+    let bottomSettleAttempts = 0;
     let stopReason = '';
 
     for (let i = 0; i < limits.maxSteps; i += 1) {
@@ -2584,12 +2656,46 @@ ${cards}
       const scrollY = Math.round(window.scrollY || document.documentElement.scrollTop || 0);
       const maxScrollY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       const atBottom = scrollY >= Math.max(0, maxScrollY - 2);
-      if (uniqueCount === lastUniqueCount && scrollY === lastScrollY) stuck += 1;
-      else stuck = 0;
+      const noGrowth = uniqueCount === lastUniqueCount && scrollY === lastScrollY;
+      if (noGrowth) stuck += 1;
+      else {
+        stuck = 0;
+        bottomSettleAttempts = 0;
+      }
       lastUniqueCount = uniqueCount;
       lastScrollY = scrollY;
-      if (stuck >= 8 || (atBottom && stuck >= 2)) {
-        stopReason = atBottom ? 'dom-bottom-no-growth' : 'dom-no-growth';
+      if (atBottom && noGrowth) {
+        // HiBid's virtual grid can append the final cards after the viewport
+        // has already reached the bottom. Give the page a few explicit settle
+        // cycles before treating bottom/no-growth as a terminal condition.
+        if (bottomSettleAttempts < HIBID_DOM_BOTTOM_SETTLE_RETRIES) {
+          bottomSettleAttempts += 1;
+          debug('hibid DOM bottom settle wait', {
+            attempt: bottomSettleAttempts,
+            maxAttempts: HIBID_DOM_BOTTOM_SETTLE_RETRIES,
+            uniqueCount,
+            expectedTotal: limits.expectedTotal
+          });
+          try {
+            window.dispatchEvent(new Event('scroll'));
+          } catch {
+            // Event dispatch is best-effort on test/fallback roots.
+          }
+          await wait(HIBID_DOM_BOTTOM_SETTLE_MS);
+          const settledCount = collectLots() || 0;
+          if (settledCount > uniqueCount) {
+            stuck = 0;
+            bottomSettleAttempts = 0;
+            lastUniqueCount = settledCount;
+            continue;
+          }
+        }
+        if (bottomSettleAttempts >= HIBID_DOM_BOTTOM_SETTLE_RETRIES && stuck >= 2) {
+          stopReason = 'dom-bottom-no-growth';
+          break;
+        }
+      } else if (stuck >= 8) {
+        stopReason = 'dom-no-growth';
         break;
       }
 
@@ -2603,6 +2709,8 @@ ${cards}
       expectedTotal: limits.expectedTotal,
       finalCount,
       stopReason,
+      reachedBottom: stopReason === 'dom-bottom-no-growth' || Math.round(window.scrollY || document.documentElement.scrollTop || 0) >= Math.max(0, document.documentElement.scrollHeight - window.innerHeight - 2),
+      bottomSettleAttempts,
       steps: Math.ceil((Date.now() - startedAt) / 180)
     };
     debug('hibid DOM scrape finished', result);
@@ -3103,13 +3211,22 @@ ${cards}
     const loadResult = await loadLots(status, shouldStop, collect, { expectedTotal });
     collect();
     const items = Array.from(itemsMap.values());
+    const settledAtDomBottom = Boolean(loadResult?.reachedBottom && loadResult?.stopReason === 'dom-bottom-no-growth');
+    const coverage = {
+      proof: settledAtDomBottom ? 'dom-bottom-settled' : (loadResult?.stopReason || 'unknown'),
+      reachedBottom: Boolean(loadResult?.reachedBottom),
+      bottomSettleAttempts: Number(loadResult?.bottomSettleAttempts || 0),
+      discoverableCount: items.length,
+      expectedTotal: expectedTotal || null,
+    };
     debug('catalog scrape finished from dom fallback', {
       count: items.length,
       expectedTotal,
       stopped: shouldStop(),
       currentBidsRoute,
       accountExportRoute,
-      stopReason: loadResult?.stopReason || ''
+      stopReason: loadResult?.stopReason || '',
+      coverage
     });
     return {
       source: currentBidsRoute ? 'hibid-currentbids-dom' : (accountExportRoute ? 'hibid-watchlist-dom' : 'dom-fallback'),
@@ -3117,9 +3234,15 @@ ${cards}
       lots: items,
       expectedTotal,
       stopped: !!shouldStop(),
-      incomplete: accountExportRoute ? false : Boolean(expectedTotal && items.length < expectedTotal),
+      // A settled virtualized bottom is a stronger page-coverage signal than a
+      // stale header total: HiBid can count cards that are not currently
+      // renderable (closed/filtered/shipping-only). Preserve that proof so a
+      // near-complete export is not discarded after the page has exhausted its
+      // discoverable DOM records.
+      incomplete: accountExportRoute ? false : Boolean(expectedTotal && items.length < expectedTotal && !settledAtDomBottom),
       stopReason: loadResult?.stopReason || '',
-      visibleState
+      visibleState,
+      coverage
     };
   }
 
@@ -3397,37 +3520,81 @@ ${cards}
   }
 
   function defaultAarResearchSettings() {
-    return { originLabel: 'Edison, NJ 08817', radiusMiles: 100 };
+    const defaults = defaultResearchSettings();
+    return { originLabel: defaults.originLabel, radiusMiles: defaults.radiusMiles };
   }
 
-  function getAarResearchSettings() {
-    const defaults = defaultAarResearchSettings();
+  function defaultResearchSettings() {
+    return {
+      originLabel: 'Edison, NJ 08817',
+      radiusMiles: 100,
+      salesTaxRate: '6.625%',
+      vehicleProfile: 'CT200h sedan',
+      researchNotes: ''
+    };
+  }
+
+  function normalizeResearchSettings(settings = {}, defaults = defaultResearchSettings()) {
+    const radius = Number(settings?.radiusMiles);
+    return {
+      originLabel: String(settings?.originLabel ?? defaults.originLabel).trim() || defaults.originLabel,
+      radiusMiles: Number.isFinite(radius) && radius > 0 ? radius : defaults.radiusMiles,
+      salesTaxRate: String(settings?.salesTaxRate ?? defaults.salesTaxRate).trim() || defaults.salesTaxRate,
+      vehicleProfile: String(settings?.vehicleProfile ?? defaults.vehicleProfile).trim() || defaults.vehicleProfile,
+      researchNotes: String(settings?.researchNotes ?? defaults.researchNotes).trim()
+    };
+  }
+
+  function readStoredResearchSettings(key, fallback = null) {
     try {
-      const stored = GM_getValue(AAR_RESEARCH_SETTINGS_KEY, null);
-      const parsed = typeof stored === 'string' ? JSON.parse(stored) : stored;
-      const radius = Number(parsed?.radiusMiles);
-      return {
-        originLabel: String(parsed?.originLabel || defaults.originLabel).trim() || defaults.originLabel,
-        radiusMiles: Number.isFinite(radius) && radius > 0 ? radius : defaults.radiusMiles
-      };
+      const stored = GM_getValue(key, fallback);
+      if (typeof stored === 'string') return JSON.parse(stored);
+      return stored;
     } catch {
-      return defaults;
+      return null;
     }
   }
 
-  function saveAarResearchSettings(settings = {}) {
-    const defaults = defaultAarResearchSettings();
-    const radius = Number(settings.radiusMiles);
-    const next = {
-      originLabel: String(settings.originLabel || defaults.originLabel).trim() || defaults.originLabel,
-      radiusMiles: Number.isFinite(radius) && radius > 0 ? radius : defaults.radiusMiles
-    };
+  function getResearchSettings() {
+    const defaults = defaultResearchSettings();
+    const current = readStoredResearchSettings(RESEARCH_SETTINGS_KEY, null);
+    const legacy = readStoredResearchSettings(AAR_RESEARCH_SETTINGS_KEY, null);
+    return normalizeResearchSettings({
+      ...(legacy && typeof legacy === 'object' ? legacy : {}),
+      ...(current && typeof current === 'object' ? current : {})
+    }, defaults);
+  }
+
+  function saveResearchSettings(settings = {}) {
+    const next = normalizeResearchSettings({ ...getResearchSettings(), ...settings });
     try {
-      GM_setValue(AAR_RESEARCH_SETTINGS_KEY, next);
+      GM_setValue(RESEARCH_SETTINGS_KEY, next);
+      // Keep the legacy key in sync so older FlipperAddon builds do not
+      // silently revert the user's origin/radius when they are opened.
+      GM_setValue(AAR_RESEARCH_SETTINGS_KEY, {
+        originLabel: next.originLabel,
+        radiusMiles: next.radiusMiles
+      });
     } catch {
       // Tampermonkey storage may be unavailable in tests.
     }
     return next;
+  }
+
+  function getAarResearchSettings() {
+    const settings = getResearchSettings();
+    return {
+      originLabel: settings.originLabel,
+      radiusMiles: settings.radiusMiles
+    };
+  }
+
+  function saveAarResearchSettings(settings = {}) {
+    const next = saveResearchSettings(settings);
+    return {
+      originLabel: next.originLabel,
+      radiusMiles: next.radiusMiles
+    };
   }
 
   function normalizeAuctionNinjaTitle(value) {
@@ -6530,13 +6697,17 @@ ${cards}
     ].join('\n');
   }
 
-  function buildAarDistanceResearchBlock(settings = getAarResearchSettings()) {
-    const origin = String(settings?.originLabel || defaultAarResearchSettings().originLabel).trim();
-    const radius = Number(settings?.radiusMiles) || defaultAarResearchSettings().radiusMiles;
+  function buildAarDistanceResearchBlock(settings = getResearchSettings()) {
+    const research = normalizeResearchSettings(settings);
+    const origin = research.originLabel;
+    const radius = research.radiusMiles;
     return [
       'AAR Auctions distance research requirement:',
       `Origin: ${origin}`,
       `Radius: ${radius} miles`,
+      `Sales tax assumption: ${research.salesTaxRate}`,
+      `Vehicle/logistics profile: ${research.vehicleProfile}`,
+      research.researchNotes ? `Additional research notes: ${research.researchNotes}` : '',
       'Distance Agent: assign one research lane/subagent to verify every auction location and every recommended lead against this origin/radius using live map/search results, not assumptions.',
       'Do not recommend an AAR auction or lot as a buy unless its pickup/location is proven within the configured radius, shipping is explicitly available, or it is marked needs_distance_verification.',
       'For the spreadsheet, add and fill these columns: distance_miles, distance_proof_url, distance_status, assigned_agent.',
@@ -6544,7 +6715,7 @@ ${cards}
     ].join('\n');
   }
 
-  function buildAarAuctionListLlmBrief(sales, context = {}, settings = getAarResearchSettings()) {
+  function buildAarAuctionListLlmBrief(sales, context = {}, settings = getResearchSettings()) {
     const ctx = { ...context, researchSettings: settings };
     return [
       AUCTION_RESALE_COORDINATOR_PROMPT,
@@ -6565,7 +6736,7 @@ ${cards}
     ].join('\n');
   }
 
-  function buildAarCatalogLlmBrief(lots, context = {}, settings = getAarResearchSettings()) {
+  function buildAarCatalogLlmBrief(lots, context = {}, settings = getResearchSettings()) {
     const ctx = { ...context, researchSettings: settings };
     const saleTerms = [
       'AAR Auctions sale terms:',
@@ -6596,7 +6767,7 @@ ${cards}
     ].join('\n');
   }
 
-  function buildAarItemLlmBrief(item, context = {}, settings = getAarResearchSettings()) {
+  function buildAarItemLlmBrief(item, context = {}, settings = getResearchSettings()) {
     const itemContext = {
       ...context,
       pageKind: 'aar-item-detail',
@@ -6622,15 +6793,19 @@ ${cards}
     ].join('\n');
   }
 
-  function buildGovDealsDistanceResearchBlock(settings = getAarResearchSettings(), context = {}) {
-    const origin = String(settings?.originLabel || defaultAarResearchSettings().originLabel).trim();
-    const radius = Number(settings?.radiusMiles) || defaultAarResearchSettings().radiusMiles;
+  function buildGovDealsDistanceResearchBlock(settings = getResearchSettings(), context = {}) {
+    const research = normalizeResearchSettings(settings);
+    const origin = research.originLabel;
+    const radius = research.radiusMiles;
     const urlZip = context?.zipcode ? `GovDeals URL zipcode filter: ${context.zipcode}` : '';
     const urlMiles = context?.miles ? `GovDeals URL radius filter: ${context.miles} miles` : '';
     return [
       'GovDeals distance research requirement:',
       `Shared origin: ${origin}`,
       `Shared radius: ${radius} miles`,
+      `Sales tax assumption: ${research.salesTaxRate}`,
+      `Vehicle/logistics profile: ${research.vehicleProfile}`,
+      research.researchNotes ? `Additional research notes: ${research.researchNotes}` : '',
       urlZip,
       urlMiles,
       'Distance Agent: verify every recommended GovDeals asset location against the shared origin and any URL zipcode/miles filter using live map/search proof, not assumptions.',
@@ -6640,7 +6815,7 @@ ${cards}
     ].filter(Boolean).join('\n');
   }
 
-  function buildGovDealsLlmBrief(listings, context = {}, settings = getAarResearchSettings()) {
+  function buildGovDealsLlmBrief(listings, context = {}, settings = getResearchSettings()) {
     const ctx = { ...context, researchSettings: settings };
     const taskLabel = context.pageKind === 'govdeals-seller'
       ? 'GovDeals seller task: triage one seller/storefront for resale opportunities before opening individual assets.'
@@ -7320,21 +7495,38 @@ ${cards}
     `;
   }
 
-  function renderAarResearchSettings() {
-    const settings = getAarResearchSettings();
+  function renderResearchSettings() {
+    const settings = getResearchSettings();
     return `
-      <details class="hiba-details" id="aar-research-settings">
+      <details class="hiba-details" id="flipperaddon-research-settings">
         <summary>Research Settings</summary>
         <label class="hiba-field">
-          <span>Origin</span>
-          <input id="aar-origin-label" class="hiba-input" type="text" value="${escapeHtml(settings.originLabel)}" title="Origin used in AAR LLM briefs for the distance verification agent." aria-label="AAR distance origin">
+          <span>Origin / ZIP</span>
+          <input id="flipperaddon-origin-label" data-legacy-id="aar-origin-label" class="hiba-input" type="text" value="${escapeHtml(settings.originLabel)}" title="Shared origin used by AAR and GovDeals distance research instructions." aria-label="Research origin or ZIP">
         </label>
         <label class="hiba-field">
           <span>Radius miles</span>
-          <input id="aar-radius-miles" class="hiba-input" type="number" min="1" step="1" value="${escapeHtml(String(settings.radiusMiles))}" title="Maximum driving/search radius used in AAR LLM briefs." aria-label="AAR radius miles">
+          <input id="flipperaddon-radius-miles" data-legacy-id="aar-radius-miles" class="hiba-input" type="number" min="1" step="1" value="${escapeHtml(String(settings.radiusMiles))}" title="Maximum driving/search radius used in AAR and GovDeals LLM briefs." aria-label="Research radius miles">
+        </label>
+        <label class="hiba-field">
+          <span>Sales tax</span>
+          <input id="flipperaddon-sales-tax-rate" class="hiba-input" type="text" value="${escapeHtml(settings.salesTaxRate)}" title="Tax assumption the downstream resale analysis should expose in profit math." aria-label="Sales tax rate">
+        </label>
+        <label class="hiba-field">
+          <span>Vehicle / logistics</span>
+          <input id="flipperaddon-vehicle-profile" class="hiba-input" type="text" value="${escapeHtml(settings.vehicleProfile)}" title="Vehicle and transport constraints for resale recommendations." aria-label="Vehicle profile">
+        </label>
+        <label class="hiba-field">
+          <span>Research notes</span>
+          <textarea id="flipperaddon-research-notes" class="hiba-input" rows="2" title="Extra context included in AAR and GovDeals LLM briefs." aria-label="Research notes">${escapeHtmlText(settings.researchNotes)}</textarea>
         </label>
       </details>
     `;
+  }
+
+  // Keep the old helper name available for callers from earlier builds/tests.
+  function renderAarResearchSettings() {
+    return renderResearchSettings();
   }
 
   function renderAarSection(debugEnabled, route = {}) {
@@ -7362,7 +7554,7 @@ ${cards}
               : actionButton('aar-auctions-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy AAR auction calendar cards as normalized JSON.'))}
           ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current AAR scrape/export work.')}
         </div>
-        ${renderAarResearchSettings()}
+        ${renderResearchSettings()}
         ${renderDebugActions(debugEnabled)}
       </section>
     `;
@@ -7391,6 +7583,7 @@ ${cards}
           ${actionButton(jsonId, 'copy', 'Copy JSON', 'secondary', '', 'Copy GovDeals listings as normalized JSON.')}
           ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current GovDeals scrape/export work.')}
         </div>
+        ${renderResearchSettings()}
         ${renderDebugActions(debugEnabled)}
       </section>
     `;
@@ -7779,8 +7972,11 @@ ${cards}
     const aarCatalogCopyLlmButton = panel.querySelector('#aar-catalog-copy-llm');
     const aarItemCopyJsonButton = panel.querySelector('#aar-item-copy-json');
     const aarItemCopyLlmButton = panel.querySelector('#aar-item-copy-llm');
-    const aarOriginInput = panel.querySelector('#aar-origin-label');
-    const aarRadiusInput = panel.querySelector('#aar-radius-miles');
+    const researchOriginInput = panel.querySelector('#flipperaddon-origin-label, #aar-origin-label');
+    const researchRadiusInput = panel.querySelector('#flipperaddon-radius-miles, #aar-radius-miles');
+    const researchTaxInput = panel.querySelector('#flipperaddon-sales-tax-rate');
+    const researchVehicleInput = panel.querySelector('#flipperaddon-vehicle-profile');
+    const researchNotesInput = panel.querySelector('#flipperaddon-research-notes');
     const govDealsModeEl = panel.querySelector('[data-module="govdeals"]');
     const govDealsSellerCopyJsonButton = panel.querySelector('#govdeals-seller-copy-json');
     const govDealsSellerCopyLlmButton = panel.querySelector('#govdeals-seller-copy-llm');
@@ -8032,20 +8228,25 @@ ${cards}
       }
     }
 
-    const saveAarSettingsFromUi = () => {
-      if (!aarMode) return getAarResearchSettings();
-      const settings = saveAarResearchSettings({
-        originLabel: aarOriginInput?.value || defaultAarResearchSettings().originLabel,
-        radiusMiles: aarRadiusInput?.value || defaultAarResearchSettings().radiusMiles
+    const saveResearchSettingsFromUi = () => {
+      if (!aarMode && !govDealsMode) return getResearchSettings();
+      const current = getResearchSettings();
+      const settings = saveResearchSettings({
+        originLabel: researchOriginInput?.value || current.originLabel,
+        radiusMiles: researchRadiusInput?.value || current.radiusMiles,
+        salesTaxRate: researchTaxInput?.value || current.salesTaxRate,
+        vehicleProfile: researchVehicleInput?.value || current.vehicleProfile,
+        researchNotes: researchNotesInput?.value || current.researchNotes
       });
-      debug('aar research settings saved', settings);
+      debug('shared research settings saved', settings);
       return settings;
     };
-    aarOriginInput?.addEventListener('change', saveAarSettingsFromUi);
-    aarRadiusInput?.addEventListener('change', saveAarSettingsFromUi);
+    [researchOriginInput, researchRadiusInput, researchTaxInput, researchVehicleInput, researchNotesInput]
+      .filter(Boolean)
+      .forEach(input => input.addEventListener('change', saveResearchSettingsFromUi));
 
     if (aarMode) {
-      const settings = getAarResearchSettings();
+      const settings = getResearchSettings();
       if (aarKind === 'aar-item-detail') {
         const context = extractAarItemContext(document, location, settings);
         const visibleItem = extractAarItemDetail(document, location);
@@ -8320,7 +8521,7 @@ ${cards}
         if (button) button.disabled = true;
       });
       try {
-        const settings = saveAarSettingsFromUi();
+        const settings = saveResearchSettingsFromUi();
         const isCatalog = aarKind === 'aar-auction-catalog';
         const isItem = aarKind === 'aar-item-detail';
         status(isItem
@@ -8388,7 +8589,7 @@ ${cards}
       if (!result) return;
       const sales = result.sales || result.items || [];
       if (!sales.length) return;
-      const payload = buildAarAuctionListLlmBrief(sales, result.context, getAarResearchSettings());
+      const payload = buildAarAuctionListLlmBrief(sales, result.context, getResearchSettings());
       const copied = await writeClipboard(payload).catch(() => false);
       status(copied ? `Copied AAR auctions LLM brief for ${sales.length} auction(s).` : 'AAR auctions LLM brief built, but clipboard failed.');
     });
@@ -8409,7 +8610,7 @@ ${cards}
       if (!result) return;
       const lots = result.lots || result.items || [];
       if (!lots.length) return;
-      const payload = buildAarCatalogLlmBrief(lots, result.context, getAarResearchSettings());
+      const payload = buildAarCatalogLlmBrief(lots, result.context, getResearchSettings());
       const copied = await writeClipboard(payload).catch(() => false);
       const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
       status(copied ? `Copied AAR catalog LLM brief for ${countText} lot(s).` : 'AAR catalog LLM brief built, but clipboard failed.');
@@ -8430,7 +8631,7 @@ ${cards}
       if (!result) return;
       const item = (result.items || result.lots || [])[0];
       if (!item) return;
-      const payload = buildAarItemLlmBrief(item, result.context, getAarResearchSettings());
+      const payload = buildAarItemLlmBrief(item, result.context, getResearchSettings());
       const copied = await writeClipboard(payload).catch(() => false);
       status(copied ? 'Copied AAR item LLM brief for 1 item.' : 'AAR item LLM brief built, but clipboard failed.');
     });
@@ -8452,10 +8653,11 @@ ${cards}
         if (button) button.disabled = true;
       });
       try {
+        const settings = saveResearchSettingsFromUi();
         const label = govDealsKind === 'govdeals-seller' ? 'seller page' : (govDealsKind === 'govdeals-asset' ? 'asset page' : 'listings page');
         status(mode === 'llm' ? `Scraping GovDeals ${label} for LLM brief...` : `Scraping GovDeals ${label}...`);
         const result = await scrapeGovDealsListings(status, () => state.stop);
-        result.context = { ...(result.context || {}), researchSettings: getAarResearchSettings() };
+        result.context = { ...(result.context || {}), researchSettings: settings };
         const validation = validateScraperExportAgainstRoute(result, 'govdeals', activeRoute);
         if (!validation.ok) {
           debug('govdeals export blocked by route guard', {
@@ -8494,7 +8696,7 @@ ${cards}
       const listings = result.listings || result.items || [];
       if (!listings.length) return;
       const payload = mode === 'llm'
-        ? buildGovDealsLlmBrief(listings, result.context, getAarResearchSettings())
+        ? buildGovDealsLlmBrief(listings, result.context, result.context?.researchSettings || getResearchSettings())
         : JSON.stringify({ context: result.context, listings }, null, 2);
       const copied = await writeClipboard(payload).catch(() => false);
       const countText = result.expectedTotal ? `${listings.length}/${result.expectedTotal}` : String(listings.length);
@@ -8931,7 +9133,7 @@ ${cards}
         return;
       }
       GM_registerMenuCommand(MENU_COMMANDS[0], () => ensureMounted('menu remount'));
-      GM_registerMenuCommand(MENU_COMMANDS[1], async () => {
+      GM_registerMenuCommand(getDebugMenuLabel(), async () => {
         const enabled = !getStoredDebugEnabled();
         saveDebugEnabled(enabled);
         const panel = document.getElementById(PANEL_ID);
