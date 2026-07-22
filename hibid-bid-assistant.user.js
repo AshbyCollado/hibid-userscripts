@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.63
+// @version      0.7.64
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.63';
+  const SCRIPT_VERSION = '0.7.64';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -7713,11 +7713,20 @@ ${cards}
     const siteSwitcherToggle = panel.querySelector('#flipperaddon-site-switcher-toggle');
     const siteSwitcherMenu = panel.querySelector('#flipperaddon-site-switcher-menu');
     const state = { stop: false, stale: false, rows: [], busy: false, listingRows: [], toastTimer: null };
+    const panelMatchesCatalogPath = () => {
+      if (activeMode !== 'catalog') return false;
+      try {
+        const panelUrl = new URL(panel.dataset.flipperaddonHref || '', location.href);
+        return panelUrl.hostname === location.hostname && panelUrl.pathname === location.pathname;
+      } catch {
+        return false;
+      }
+    };
     const panelIsCurrent = () => Boolean(
       !state.stale
       && document.getElementById(PANEL_ID) === panel
       && panel.dataset.flipperaddonVersion === SCRIPT_VERSION
-      && panel.dataset.flipperaddonHref === (typeof location !== 'undefined' ? location.href : '')
+      && (panel.dataset.flipperaddonHref === (typeof location !== 'undefined' ? location.href : '') || panelMatchesCatalogPath())
     );
     panel.addEventListener('flipperaddon-panel-teardown', () => {
       state.stop = true;
@@ -8718,10 +8727,19 @@ ${cards}
         }
         const panel = document.getElementById(PANEL_ID);
         const handler = globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__;
+        let panelHrefMatches = panel?.dataset.flipperaddonHref === location.href;
+        if (!panelHrefMatches && panel?.dataset.flipperaddonMode === 'catalog') {
+          try {
+            const panelUrl = new URL(panel.dataset.flipperaddonHref || '', location.href);
+            panelHrefMatches = panelUrl.hostname === location.hostname && panelUrl.pathname === location.pathname;
+          } catch {
+            panelHrefMatches = false;
+          }
+        }
         const panelReady = panel
           && handler?.panel === panel
           && panel.dataset.flipperaddonVersion === SCRIPT_VERSION
-          && panel.dataset.flipperaddonHref === location.href
+          && panelHrefMatches
           && typeof handler.run === 'function';
         if (panelReady) {
           const dispatched = globalThis.__FLIPPERADDON_CATALOG_COPY_DISPATCHED__;
