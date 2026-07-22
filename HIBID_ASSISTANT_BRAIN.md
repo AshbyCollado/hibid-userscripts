@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.68`.
+- Current version: `0.7.69`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -286,17 +286,17 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 ## Verification Checklist
 
-### Cross-browser stale-install check (`v0.7.68`)
+### Cross-browser stale-install check (`v0.7.69`)
 
 - The screenshot-era comma message (`Blocked stale catalog export, current page did not match copied lots.`) belongs to an older installed script; it is not present in the current source. The current build uses the semicolon-free reason form and includes the exact guard reason.
-- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.68`, `#flipperaddon-panel[data-flipperaddon-version="0.7.68"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.68'` when page access exposes the canary.
+- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.69`, `#flipperaddon-panel[data-flipperaddon-version="0.7.69"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.69'` when page access exposes the canary.
 - A current build remounts when an existing panel has an older version or a different page URL, and invalidates in-flight export work when that panel is torn down.
 - The first current-script mount removes the old `#hibid-bid-assistant-panel` used by pre-FlipperAddon builds. Seeing two dialogs means stale scripts are still enabled or the current build has not mounted yet.
 - Chrome, Firefox, and Waterfox have separate extension/profile state. A raw GitHub push does not update an already-installed copy until that browser's Tampermonkey update check or raw-URL install is completed.
 - Run the supported route smoke matrix before live copy tests: HiBid catalog/filter/live/account, AJ Willner, AuctionNinja sale/category/account/search, AAR calendar/catalog, GovDeals seller/search/new-listings, eBay, and Facebook.
 - For each active module, verify only its own copy controls are rendered and then perform one JSON or LLM copy. “Page opened” is navigation evidence only; it is not an export pass.
 
-### Export guard diagnostics (`v0.7.68`)
+### Export guard diagnostics (`v0.7.69`)
 
 - Catalog copy now maps guard reasons into a compact status message. `catalog-incomplete` means the scraper stopped before proving coverage; `dom-bottom-settled` is the explicit exception for a virtualized HiBid grid that reached the bottom and completed settle cycles even when its header total is stale. `catalog-source-mismatch` means another site/source was mixed into the result; filter-specific reasons identify stale Apollo/DOM data.
 - Debug remains opt-in. When enabled, the ring buffer records version, boot route, current route, source, count, expected total, and rejection reason. When disabled, the user still sees a compact reason toast without a verbose result console.
@@ -311,7 +311,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - `v0.7.66` treats filtered no-match copy as authoritative after hydration even when a stale broad total remains in the page shell, and uses a deduplicated visible-card count to reconcile stale low filtered headers without widening the export.
 - `v0.7.68` adds a canonical HiBid lot-card pass before broad DOM discovery. On the reproduced New Jersey page, the canonical card set was 16 while broad lot-number seeds produced 17; only the canonical set is exported when it exists. Broad discovery remains the fallback for pages without canonical card containers.
 
-### Full audit matrix (`v0.7.68`)
+### Full audit matrix (`v0.7.69`)
 
 - Route coverage verified in tests: HiBid catalog/search/live/account, AJ Willner catalog, AuctionNinja sale/category/account/search, AAR calendar/catalog/item, GovDeals seller/search/new-listings/asset, eBay active listings, and Facebook Marketplace selling.
 - Exact AAR target: `https://aarauctions.com/servlet/Search.do?auctionId=8573&itemId=221770` mounted `aar-item-detail` and copied `1` item with the HPE/Aruba switch title.

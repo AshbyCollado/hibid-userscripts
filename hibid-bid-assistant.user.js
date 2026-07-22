@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.68
+// @version      0.7.69
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,8 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.68';
+  const SCRIPT_VERSION = '0.7.69';
+  const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -6999,17 +7000,36 @@ ${cards}
   }
 
   async function writeClipboard(payload) {
-    if (typeof GM_setClipboard === 'function') {
-      GM_setClipboard(payload, 'text');
-      return true;
-    }
-    if (globalThis.GM?.setClipboard) {
-      await globalThis.GM.setClipboard(payload, 'text');
-      return true;
-    }
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(payload);
-      return true;
+    const waitForClipboard = (operation, method) => {
+      let timeoutId;
+      const timeout = new Promise((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          reject(new Error(`${method} timed out after ${CLIPBOARD_WRITE_TIMEOUT_MS}ms`));
+        }, CLIPBOARD_WRITE_TIMEOUT_MS);
+      });
+      return Promise.race([Promise.resolve(operation), timeout]).finally(() => {
+        window.clearTimeout(timeoutId);
+      });
+    };
+
+    try {
+      if (typeof GM_setClipboard === 'function') {
+        GM_setClipboard(payload, 'text');
+        return true;
+      }
+      if (globalThis.GM?.setClipboard) {
+        await waitForClipboard(globalThis.GM.setClipboard(payload, 'text'), 'GM.setClipboard');
+        return true;
+      }
+      if (navigator.clipboard?.writeText) {
+        await waitForClipboard(navigator.clipboard.writeText(payload), 'navigator.clipboard.writeText');
+        return true;
+      }
+    } catch (error) {
+      debug('clipboard write failed', {
+        method: error?.message?.includes('GM.setClipboard') ? 'GM.setClipboard' : 'browser clipboard',
+        error: String(error?.message || error)
+      });
     }
     return false;
   }
