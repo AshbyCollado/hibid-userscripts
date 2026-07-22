@@ -1946,34 +1946,119 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       .concat(Array.from(text.matchAll(/<div\b[^>]+role=["']row["'][\s\S]*?(?=<div\b[^>]+role=["']row["']|$)/gi)).map(match => match[0]));
   }
 
+  function ebaySellerHubRowCells(rowHtml, header = false) {
+    const tag = header ? 'th' : 'td';
+    const tableCells = Array.from(String(rowHtml || '').matchAll(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi')))
+      .map(match => match[0]);
+    if (tableCells.length) return tableCells;
+    const role = header ? 'columnheader' : 'gridcell';
+    return extractBalancedHtmlElements(rowHtml, ['div'])
+      .filter(element => new RegExp(`\\brole=["']${role}["']`, 'i').test(element.openingTag))
+      .map(element => element.html);
+  }
+
+  function normalizeEbaySellerHubColumnName(value) {
+    return stripHtml(value)
+      .replace(/\bSort (?:ascending|descending)\b/gi, ' ')
+      .replace(/\bResize column\b[\s\S]*$/i, ' ')
+      .replace(/\b\d+\s+pixels\b/gi, ' ')
+      .replace(/\bInfo about view counts\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function ebaySellerHubColumnMap(html) {
+    const headerRow = ebaySellerHubTableRowChunks(html).find(row => {
+      const text = stripHtml(row);
+      return /\bItem number\b/i.test(text) && /\bItem\b/i.test(text) && /\bCurrent price\b/i.test(text);
+    }) || '';
+    const cells = ebaySellerHubRowCells(headerRow, true);
+    const map = new Map();
+    cells.forEach((cell, index) => {
+      const label = normalizeEbaySellerHubColumnName(cell);
+      if (label) map.set(label, index);
+    });
+    return map;
+  }
+
+  function ebaySellerHubCellByColumn(cells, columnMap, labels) {
+    for (const label of labels) {
+      const normalized = normalizeEbaySellerHubColumnName(label);
+      if (columnMap.has(normalized)) return cells[columnMap.get(normalized)] || '';
+      for (const [columnName, index] of columnMap.entries()) {
+        if (columnName === normalized || columnName.startsWith(`${normalized} `)) return cells[index] || '';
+      }
+    }
+    return '';
+  }
+
+  function cleanEbaySellerHubCell(value) {
+    const text = stripHtml(value).replace(/\bNot Editable\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    return /^[-\u2013\u2014]$/.test(text) ? '' : text;
+  }
+
   function parseEbaySellerHubTableListingsHtml(html, options = {}) {
     const rowChunks = ebaySellerHubTableRowChunks(html);
+    const columnMap = ebaySellerHubColumnMap(html);
     const requirePrice = options.requirePrice !== false;
     const listings = [];
 
     rowChunks.forEach(chunk => {
       if (!/(?:\/itm\/\d+|itemId=\d+|itemid=\d+)/i.test(chunk)) return;
+      const cells = ebaySellerHubRowCells(chunk);
+      const itemNumberCell = ebaySellerHubCellByColumn(cells, columnMap, ['Item number']);
+      const itemCell = ebaySellerHubCellByColumn(cells, columnMap, ['Item']);
+      const priceCell = ebaySellerHubCellByColumn(cells, columnMap, ['Current price']);
+      const quantityCell = ebaySellerHubCellByColumn(cells, columnMap, ['Available quantity']);
+      const viewsCell = ebaySellerHubCellByColumn(cells, columnMap, ['Views (30 days)', 'Views']);
+      const watchersCell = ebaySellerHubCellByColumn(cells, columnMap, ['Watchers']);
+      const bidsCell = ebaySellerHubCellByColumn(cells, columnMap, ['Bids']);
+      const endDateCell = ebaySellerHubCellByColumn(cells, columnMap, ['End date']);
+      const soldStatusCell = ebaySellerHubCellByColumn(cells, columnMap, ['Sold status', 'Status']);
+      const formatCell = ebaySellerHubCellByColumn(cells, columnMap, ['Format']);
+      const durationCell = ebaySellerHubCellByColumn(cells, columnMap, ['Duration']);
+      const customLabelCell = ebaySellerHubCellByColumn(cells, columnMap, ['Custom label (SKU)', 'Custom label', 'SKU']);
       const anchors = Array.from(chunk.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)).map(match => {
         const attrs = match[1] || '';
         const href = decodeHtml(firstMatch(attrs, [/href="([^"]+)"/i, /data-href="([^"]+)"/i]));
         const text = cleanListingTitle(stripHtml(match[2] || '').replace(/\bopens in new window\b.*$/i, ''));
         return { href, text };
       });
-      const itemHref = anchors.find(anchor => /\/itm\/\d+/i.test(anchor.href))?.href || '';
+      const itemAnchors = itemCell
+        ? Array.from(itemCell.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)).map(match => ({
+          href: decodeHtml(firstMatch(match[1] || '', [/href="([^"]+)"/i, /data-href="([^"]+)"/i])),
+          text: cleanEbaySellerHubTitle(stripHtml(match[2] || '')),
+        }))
+        : [];
+      const itemHref = itemAnchors.find(anchor => /\/itm\/\d+/i.test(anchor.href))?.href
+        || anchors.find(anchor => /\/itm\/\d+/i.test(anchor.href))?.href || '';
       const idHref = anchors.find(anchor => /(?:\/itm\/\d+|itemId=\d+|itemid=\d+)/i.test(anchor.href))?.href || '';
-      const itemId = firstMatch(`${itemHref} ${idHref} ${chunk}`, [
+      const itemId = firstMatch(`${cleanEbaySellerHubCell(itemNumberCell)} ${itemHref} ${idHref} ${chunk}`, [
+        /\b(\d{9,15})\b/i,
         /\/itm\/(\d+)/i,
         /itemId=(\d+)/i,
         /itemid=(\d+)/i
       ]);
-      const titleAnchor = anchors
+      const titleAnchor = itemAnchors
+        .concat(anchors)
         .filter(anchor => anchor.text && !/^(edit|actions?|sell similar|sell it faster|promote|preview|view|download|upload)$/i.test(anchor.text))
         .sort((a, b) => b.text.length - a.text.length)[0];
-      const title = cleanEbaySellerHubTitle(titleAnchor?.text || stripHtml(firstMatch(chunk, [/aria-label="([^"]+)"/i])));
+      const title = cleanEbaySellerHubTitle(
+        itemAnchors.filter(anchor => anchor.text).sort((a, b) => b.text.length - a.text.length)[0]?.text
+        || cleanEbaySellerHubCell(itemCell)
+        || titleAnchor?.text
+        || stripHtml(firstMatch(chunk, [/aria-label="([^"]+)"/i]))
+      );
       const url = normalizeListingUrl(itemHref || (itemId ? `/itm/${itemId}` : idHref));
       const rowText = stripHtml(chunk);
       const activeFacts = parseEbayActiveListingFacts(chunk);
-      const price = activeFacts.price;
+      const cellPrice = parseSignedDollarAmount(cleanEbaySellerHubCell(priceCell));
+      const price = Number.isFinite(cellPrice) ? cellPrice : activeFacts.price;
+      const cellQuantity = parsePlainInteger(cleanEbaySellerHubCell(quantityCell));
+      const cellViews = parsePlainInteger(cleanEbaySellerHubCell(viewsCell));
+      const cellWatchers = parsePlainInteger(cleanEbaySellerHubCell(watchersCell));
+      const cellBids = parsePlainInteger(cleanEbaySellerHubCell(bidsCell));
       if (!title || !itemId || (requirePrice && !Number.isFinite(price))) return;
 
       listings.push({
@@ -1985,13 +2070,18 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         status: /inactive|ended|sold/i.test(rowText) ? 'Inactive' : 'Active',
         listedDateText: firstMatch(rowText, [/\b(Listed\s+(?:today|yesterday|on\s+[^|]+?))(?:\s{2,}|$)/i]),
         shippingText: firstMatch(rowText, [/(\+\s*Shipping|Free shipping|Buyer pays shipping)/i]),
-        views: parsePlainInteger(firstMatch(rowText, [/\b([\d,]+)\s+Views?\b/i, /\b([\d,]+)\s+View\b/i])),
-        watchers: parsePlainInteger(firstMatch(rowText, [/\b([\d,]+)\s+Watchers?\b/i])),
+        views: Number.isFinite(cellViews) ? cellViews : parsePlainInteger(firstMatch(rowText, [/\b([\d,]+)\s+Views?\b/i, /\b([\d,]+)\s+View\b/i])),
+        watchers: Number.isFinite(cellWatchers) ? cellWatchers : parsePlainInteger(firstMatch(rowText, [/\b([\d,]+)\s+Watchers?\b/i])),
+        bids: Number.isFinite(cellBids) ? cellBids : null,
         clicks: null,
-        customLabel: activeFacts.customLabel,
+        customLabel: cleanEbaySellerHubCell(customLabelCell) || activeFacts.customLabel,
         quantityTotal: activeFacts.quantityTotal,
-        quantityAvailable: activeFacts.quantityAvailable,
-        offersEnabled: activeFacts.offersEnabled,
+        quantityAvailable: Number.isFinite(cellQuantity) ? cellQuantity : activeFacts.quantityAvailable,
+        offersEnabled: activeFacts.offersEnabled || /\b(?:or best offer|best offer)\b/i.test(cleanEbaySellerHubCell(priceCell)),
+        listingFormat: cleanEbaySellerHubCell(formatCell),
+        listingDuration: cleanEbaySellerHubCell(durationCell),
+        endedAtText: cleanEbaySellerHubCell(endDateCell),
+        soldStatus: cleanEbaySellerHubCell(soldStatusCell),
       });
     });
 
@@ -2228,12 +2318,15 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return parseEbaySellerHubTableListingsHtml(html, { requirePrice: false }).map(listing => {
       const chunk = rowsByItemId.get(listing.itemId) || '';
       const rowText = stripHtml(chunk);
+      const explicitStatus = String(listing.soldStatus || '').trim();
       let status = 'Ended';
-      if (/\b(?:unsold|did not sell|not sold|ended without a buyer)\b/i.test(rowText)) status = 'Ended - Unsold';
-      else if (/\b(?:sold|sold for|quantity sold)\b/i.test(rowText)) status = 'Sold';
+      if (/\b(?:unsold|did not sell|not sold|ended without a buyer)\b/i.test(explicitStatus || rowText)) status = 'Ended - Unsold';
+      else if (/^sold$/i.test(explicitStatus) || /\b(?:sold for|quantity sold)\b/i.test(rowText)) status = 'Sold';
 
       const quantitySold = integerAfterLabel(rowText, '(?:Quantity sold|Sold quantity)');
-      const endedDateText = ebayDateAfterLabel(rowText, '(?:Ended(?: on)?|End date|Listing ended)')
+      const endedAtText = String(listing.endedAtText || '').trim();
+      const endedDateText = firstEbayDate(endedAtText)
+        || ebayDateAfterLabel(rowText, '(?:Ended(?: on)?|End date|Listing ended)')
         || firstEbayDate(rowText);
       let endReason = firstMatch(rowText, [
         /(?:End reason|Ended because|Reason)\s*:?\s*([^|\r\n]+?)(?=\s{2,}|$)/i,
@@ -2253,6 +2346,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         item_url: listing.url || '',
         status,
         ended_date_text: endedDateText,
+        ended_at_text: endedAtText,
         end_reason: endReason,
         price: Number.isFinite(listing.price) ? listing.price : null,
         quantity_total: Number.isFinite(listing.quantityTotal) ? listing.quantityTotal : null,
@@ -2260,6 +2354,9 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         quantity_sold: Number.isFinite(quantitySold) ? quantitySold : null,
         views: Number.isFinite(listing.views) ? listing.views : null,
         watchers: Number.isFinite(listing.watchers) ? listing.watchers : null,
+        bids: Number.isFinite(listing.bids) ? listing.bids : null,
+        listing_format: listing.listingFormat || '',
+        listing_duration: listing.listingDuration || '',
         sale_evidence: 'ended_snapshot_only',
         identity_stable: Boolean(listing.itemId),
       });
@@ -2740,6 +2837,9 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       shipping_text: listing.shippingText || '',
       views: Number.isFinite(listing.views) ? listing.views : null,
       watchers: Number.isFinite(listing.watchers) ? listing.watchers : null,
+      bids: Number.isFinite(listing.bids) ? listing.bids : null,
+      listing_format: listing.listingFormat || '',
+      listing_duration: listing.listingDuration || '',
       offers_enabled: Boolean(listing.offersEnabled),
       offers: listing.offersEnabled ? 'Best Offer' : null,
       promoted_rate: null,
@@ -2776,6 +2876,12 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         .filter(Boolean)).size
       : (String(html || '').match(cardPattern) || []).length;
     if (pageKind === 'transactions' && cardCount) return cardCount;
+    const rangeTotal = parsePlainInteger(firstMatch(text, [
+      /\bResults\s*:\s*[\d,]+\s*(?:-|to)\s*[\d,]+\s+of\s+([\d,]+)\b/i,
+      /(?:Showing\s+)?[\d,]+\s*(?:-|to)\s*[\d,]+\s+of\s+([\d,]+)\s+(?:results|orders|transactions|listings|items)\b/i,
+      /\b([\d,]+)\s+(?:results|orders|transactions|listings)\b/i,
+    ]));
+    if (Number.isFinite(rangeTotal)) return rangeTotal;
     const labels = pageKind === 'transactions'
       ? ['Transactions', 'Results']
       : (pageKind === 'sold'
@@ -2789,11 +2895,6 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       ]));
       if (Number.isFinite(count)) return count;
     }
-    const rangeTotal = parsePlainInteger(firstMatch(text, [
-      /(?:Showing\s+)?[\d,]+\s*(?:-|to)\s*[\d,]+\s+of\s+([\d,]+)\s+(?:results|orders|transactions|listings|items)\b/i,
-      /\b([\d,]+)\s+(?:results|orders|transactions|listings)\b/i,
-    ]));
-    if (Number.isFinite(rangeTotal)) return rangeTotal;
 
     if (cardCount) return cardCount;
 
@@ -2808,13 +2909,27 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return null;
   }
 
-  function ebayLifecycleHasNextPage(html) {
-    return Array.from(String(html || '').matchAll(/<(?:button|a)\b[^>]*>/gi)).some(match => {
-      const tag = match[0];
-      const isNext = /(?:class=["'][^"']*\bpagination__next\b|aria-label=["'][^"']*\bnext\s+page\b)/i.test(tag);
+  function ebayLifecycleNextPageUrl(html, pageUrl = 'https://www.ebay.com/') {
+    const tags = Array.from(String(html || '').matchAll(/<(?:button|a)\b[^>]*>/gi)).map(match => match[0]);
+    const nextTag = tags.find(tag => {
+      const isNext = /(?:class=["'][^"']*\bpagination__next\b|aria-label=["'][^"']*\bnext\s+page\b|type=["']next["'])/i.test(tag);
       const disabled = /\bdisabled(?:\s|=|>)/i.test(tag) || /aria-disabled=["']true["']/i.test(tag);
       return isNext && !disabled;
     });
+    if (!nextTag) return '';
+    const href = decodeHtml(firstMatch(nextTag, [/href=["']([^"']+)["']/i]));
+    if (!href) return '';
+    try {
+      const next = new URL(href, pageUrl || 'https://www.ebay.com/');
+      if (next.protocol !== 'https:' || next.hostname.toLowerCase() !== 'www.ebay.com') return '';
+      return next.toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function ebayLifecycleHasNextPage(html) {
+    return Boolean(ebayLifecycleNextPageUrl(html));
   }
 
   function buildEbayLifecycleEnvelope(records, meta = {}) {
@@ -3090,7 +3205,10 @@ ${cards}
     prepareEbayLifecycleEnvelopeForExport,
     ebayLifecyclePageKind,
     expectedEbayLifecycleCount,
+    ebayLifecycleNextPageUrl,
+    ebayLifecycleHasNextPage,
     buildEbayLifecycleEnvelope,
+    collectPaginatedEbayLifecycleEnvelope,
     canExportEbayLifecycleEnvelope,
     runEbayLifecycleSyncAll,
     postEbayLifecycleEnvelope,
@@ -7552,7 +7670,102 @@ ${cards}
     return envelope;
   }
 
+  function ebayLifecycleRecordIdentity(record, index = 0) {
+    const row = record && typeof record === 'object' ? record : {};
+    const type = String(row.record_type || 'record');
+    const stableId = row.transaction_id
+      || row.order_line_id
+      || ([row.order_id, row.item_id].filter(Boolean).join('|'))
+      || row.item_id
+      || row.custom_label;
+    return stableId ? `${type}|${stableId}` : `${type}|review-${index}`;
+  }
+
+  async function fetchEbayLifecycleHtml(pageUrl, options = {}) {
+    const response = await fetch(pageUrl, { credentials: 'include', redirect: 'follow', signal: options.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return {
+      html: await response.text(),
+      pageUrl: response.url || pageUrl,
+    };
+  }
+
+  async function collectPaginatedEbayLifecycleEnvelope(pageKind, pageUrl, options = {}) {
+    const fetchHtml = options.fetchHtml || fetchEbayLifecycleHtml;
+    const maxPages = Math.max(1, Math.min(100, Number(options.maxPages) || 25));
+    const recordsByIdentity = new Map();
+    const seenUrls = new Set();
+    let currentUrl = String(pageUrl || '');
+    let currentHtml = options.initialHtml == null ? null : String(options.initialHtml);
+    let expectedCount = null;
+    let pageCount = 0;
+    let pendingNextUrl = '';
+    let collectionError = '';
+
+    while (currentUrl && pageCount < maxPages) {
+      if (options.signal?.aborted) {
+        collectionError = 'Fetch cancelled.';
+        break;
+      }
+      const normalizedUrl = currentUrl.replace(/#.*$/, '');
+      if (seenUrls.has(normalizedUrl)) {
+        collectionError = 'Pagination loop detected.';
+        break;
+      }
+      seenUrls.add(normalizedUrl);
+
+      try {
+        if (currentHtml == null) {
+          const fetched = await fetchHtml(currentUrl, { signal: options.signal });
+          currentHtml = String(fetched?.html || '');
+          currentUrl = String(fetched?.pageUrl || currentUrl);
+        }
+      } catch (error) {
+        collectionError = options.signal?.aborted
+          ? 'Fetch cancelled.'
+          : sanitizeEbayLifecycleString(`Fetch failed: ${error?.message || error}`);
+        break;
+      }
+
+      pageCount += 1;
+      const pageExpected = expectedEbayLifecycleCount(currentHtml, pageKind);
+      if (Number.isFinite(pageExpected)) {
+        expectedCount = expectedCount == null ? pageExpected : Math.max(expectedCount, pageExpected);
+      }
+      parseEbayLifecycleHtml(currentHtml, { pageKind }).forEach((record, index) => {
+        const identity = ebayLifecycleRecordIdentity(record, recordsByIdentity.size + index);
+        if (!recordsByIdentity.has(identity)) recordsByIdentity.set(identity, record);
+      });
+
+      pendingNextUrl = ebayLifecycleNextPageUrl(currentHtml, currentUrl);
+      if (!pendingNextUrl) break;
+      currentUrl = pendingNextUrl;
+      currentHtml = null;
+    }
+
+    const hasNextPage = Boolean(pendingNextUrl && (collectionError || pageCount >= maxPages));
+    const envelope = buildEbayLifecycleEnvelope(Array.from(recordsByIdentity.values()), {
+      pageKind,
+      pageUrl,
+      generatedAt: options.generatedAt || new Date().toISOString(),
+      expectedCount,
+      hasNextPage,
+    });
+    envelope.completeness.page_count = pageCount;
+    if (collectionError) {
+      envelope.completeness.complete = false;
+      envelope.completeness.reason = collectionError;
+    } else if (hasNextPage) {
+      envelope.completeness.complete = false;
+      envelope.completeness.reason = `Stopped after ${pageCount} page(s); more eBay result pages remain.`;
+    }
+    return prepareEbayLifecycleEnvelopeForExport(envelope);
+  }
+
   async function fetchEbayLifecycleEnvelope(pageKind, pageUrl, options = {}) {
+    if (pageKind === 'ended') {
+      return collectPaginatedEbayLifecycleEnvelope(pageKind, pageUrl, options);
+    }
     try {
       const response = await fetch(pageUrl, { credentials: 'include', redirect: 'follow', signal: options.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -7584,7 +7797,14 @@ ${cards}
     const currentRoute = options.currentRoute || {};
     const currentKind = ebayLifecyclePageKind(currentRoute);
     const setBusy = typeof options.setBusy === 'function' ? options.setBusy : () => {};
-    const scanCurrent = options.scanCurrent || scanCurrentEbayLifecycle;
+    const scanCurrent = options.scanCurrent || ((route) => {
+      const pageKind = ebayLifecyclePageKind(route);
+      if (pageKind !== 'ended') return scanCurrentEbayLifecycle(route);
+      return collectPaginatedEbayLifecycleEnvelope(pageKind, location.href, {
+        initialHtml: document.documentElement?.outerHTML || '',
+        signal: options.signal,
+      });
+    });
     const fetchPage = options.fetchPage || fetchEbayLifecycleEnvelope;
     const postEnvelope = options.postEnvelope || postEbayLifecycleEnvelope;
     const downloadEnvelope = options.downloadEnvelope || downloadEbayLifecycleEnvelope;
@@ -7616,7 +7836,7 @@ ${cards}
         let envelope;
         try {
           envelope = page.pageKind === currentKind
-            ? await scanCurrent(currentRoute)
+            ? await scanCurrent(currentRoute, { signal: options.signal })
             : await fetchPage(page.pageKind, page.pageUrl, { signal: options.signal });
           if (isCancelled()) {
             summary.cancelled = true;
@@ -9205,20 +9425,38 @@ ${cards}
     });
 
     lifecycleSyncPageButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      setScrapingBusy(true);
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
+      let envelope;
       try {
-        scanListingsForExport();
+        const route = currentActiveRoute();
+        const pageKind = ebayLifecyclePageKind(route);
+        envelope = pageKind === 'ended'
+          ? await collectPaginatedEbayLifecycleEnvelope(pageKind, location.href, {
+            initialHtml: document.documentElement?.outerHTML || '',
+            signal: state.abortController?.signal,
+          })
+          : scanCurrentEbayLifecycle(route);
+        renderLifecycleExport(envelope);
       } catch (error) {
         status(`Sync blocked: ${error?.message || error}`);
+        state.abortController = null;
+        setScrapingBusy(false);
         return;
       }
-      const envelope = state.lifecycleEnvelope;
       if (!canExportEbayLifecycleEnvelope(envelope)) {
         status(`Nothing synced: ${envelope?.completeness?.reason || 'no records parsed'}`);
+        state.abortController = null;
+        setScrapingBusy(false);
         return;
       }
       const result = await postEbayLifecycleEnvelope(envelope).catch(error => ({ ok: false, reason: error?.message || 'post-failed' }));
       if (result.ok) {
         status(result.duplicate ? 'Already synced; no duplicate created.' : `Synced ${envelope.records.length} ${envelope.page_kind} record(s).`);
+        state.abortController = null;
+        setScrapingBusy(false);
         return;
       }
       try {
@@ -9226,6 +9464,9 @@ ${cards}
         status(`Bridge unavailable (${result.reason}); downloaded ${filename}.`);
       } catch (error) {
         status(`Sync and fallback download failed: ${error?.message || error}`);
+      } finally {
+        state.abortController = null;
+        setScrapingBusy(false);
       }
     });
 

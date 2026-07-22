@@ -7,12 +7,29 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.49`.
+- Current version: `0.7.50`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
 
-## Active Goal: eBay-to-Facebook Marketplace Draft Assistant
+## Active Goal: eBay Ended Listings State Sync
+
+- Tracking: GitHub issue `#5`; command-center epic `AshbyCollado/marketplace-command-center#68`.
+- Branch: `codex/ebay-ended-sync`.
+- Exact source: `https://www.ebay.com/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS&source=filterbar&action=search`.
+- Truth contract: the ended table is listing-state evidence only. It may update status, ended date, end reason, quantity, views, and watchers; it cannot create Sales, fees, refunds, or payouts.
+- Source ownership: `/mys/sold` owns sold order lines and quantities; `/mes/transactionlist?sh=true` owns fees, refunds, and payout facts.
+- Matching order: exact eBay item ID, exact normalized URL, exact custom label/SKU or unique deterministic inventory match, then manual candidate review.
+- Gemini contract: Gemini may rank sanitized candidate SKUs only when deterministic matching is ambiguous. It cannot auto-link, auto-merge, or invent financial values.
+- UX: `Update Tracker` sends the current lifecycle page; `Sync All eBay` covers Active, Ended, Sold Orders, and Transactions.
+- Review contract: an ended row marked Sold without linked sold-order evidence remains `Manual Review`.
+- Automated evidence: userscript suite `124/124`; syntax check passed; command-center suite `275 passed`.
+- Authenticated evidence: the exact Seller Hub ended URL rendered 60 results and the first page exposed 50 unique 12-digit item IDs in a stable 15-column grid. The table included state, price snapshot, quantity, traffic, bids, end time, format, duration, and custom label with zero buyer PII.
+- End-to-end evidence: the loopback bridge stored the first ended envelope once and classified replay as duplicate; the importer emitted `Reconcile eBay Ended Listing`; isolated Excel verification proved exact update, ambiguous review, idempotence, asking-price preservation, and no Sales row from ended-state evidence.
+- Recursive release gate: all implementation and verification gates pass; push/review the branch before any explicit production merge.
+- Production rule: do not merge raw Tampermonkey `main` without explicit approval.
+
+## Release-Pending Foundation: eBay-to-Facebook Marketplace Draft Assistant
 
 - Tracking: GitHub issue `#3`; command-center epic `AshbyCollado/marketplace-command-center#62`.
 - Branch: `codex/facebook-crosslist`.
@@ -48,7 +65,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - `live`: HiBid `/livecatalog/...` pages.
   - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
 - `fliptracker`: eBay and Facebook active selling pages.
-  - Controls: Scan Listings, Copy HTML, Download, debug controls only when enabled.
+  - Controls: Scan Page/Listings, Copy JSON/HTML, Download, Update Tracker, Sync All eBay, token connection, cross-list actions where supported, and debug controls only when enabled.
 - `auctionninja`: AuctionNinja sale research and account export pages.
   - Sale catalog controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Auction search controls: Copy Auctions LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
@@ -246,6 +263,12 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 ## Issue Tracker
 
+- Done on branch for FT-023: resolve the exact Seller Hub `/sh/lst/ended` route and preserve its `status`, `timePeriod`, `source`, and `action` query contract.
+- Done on branch for FT-023: parse stable ended listing IDs, URLs, titles, custom labels, ended dates/times/reasons, price snapshots, format, duration, quantities, traffic, bids, and state without requiring a price.
+- Done on branch for FT-023: add `Update Tracker` and include Ended Listings in `Sync All eBay` completeness/guided-recovery behavior.
+- Safety invariant for FT-023: an ended-page `Sold` label is state evidence only and cannot create a Sale without `/mys/sold` order evidence.
+- Tracking: `AshbyCollado/hibid-userscripts#5` and `AshbyCollado/marketplace-command-center#68`.
+- Passed release gate for FT-023: `124/124` tests and syntax check; authenticated count `60`, first-page IDs `50/50` unique, zero buyer PII; bridge replay dedupe; command-center `275 passed`; isolated workbook verifier and release audit; review branch is ready to push and must not merge into raw `main` without explicit approval.
 - Done on branch for FT-014: resolve only `/mys/active`, `/mys/sold`, and `/mes/transactionlist?sh=true` as lifecycle routes instead of mounting on generic `/mys/*` pages.
 - Done on branch for FT-014: parse active listings, multi-line sold orders, signed transactions/refunds/fees, quantities, IDs, dates, URLs, and completeness metadata with stable replay identities.
 - Done on branch for FT-014: sanitize buyer names, usernames, email, phone, address, recipient, contact, and message fields recursively before export.
@@ -309,6 +332,8 @@ Debug UI and console/log capture are off unless debug mode is enabled.
   - `/mys/active`: parsed listing count matches the visible page count; custom label, price, quantity, traffic, URL, and listing ID are preserved.
   - `/mys/sold`: every order line is unique by order-line identity; multi-item orders stay separate; no buyer PII exists in the envelope.
   - `/mes/transactionlist?sh=true`: signed fees/refunds/net values and stable transaction IDs parse; incomplete identities are review-only.
+  - `/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS&source=filterbar&action=search`: parsed listing count matches visible rows; IDs are unique; ended state is non-financial; sold-without-order remains review-only.
+  - `Update Tracker`: current ended evidence reaches the loopback bridge or deterministic download fallback without buyer PII.
   - `Sync All eBay`: the local bridge accepts complete pages, rejected/background-blocked pages trigger guided follow-up/download, and the drawer always leaves busy state.
 - Waterfox manual checks:
   - Confirm only the current hosted FlipperAddon script is enabled.

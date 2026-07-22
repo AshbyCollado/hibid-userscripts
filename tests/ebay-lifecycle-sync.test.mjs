@@ -383,6 +383,99 @@ test('parses ended listings as state evidence without inventing a sale', () => {
   assert.equal(Object.hasOwn(rows[0], 'item_subtotal'), false);
 });
 
+test('parses the authenticated Seller Hub ended grid by column position', () => {
+  const core = loadCore();
+  const html = `
+    <main><h2>Results:1-2 of 2</h2><table><thead><tr>
+      <th></th><th>Actions</th><th>Photo</th><th>Format</th><th>Item number</th><th>Item</th>
+      <th>Duration</th><th>Custom label (SKU)</th><th>Current price</th><th>Available quantity</th>
+      <th>Views (30 days)</th><th>Watchers</th><th>Bids</th><th>End date</th><th>Sold status</th>
+    </tr></thead><tbody>
+      <tr><td></td><td>Relist</td><td>Photo</td><td>Buy It Now</td><td>336673311079</td>
+        <td><a href="https://www.ebay.com/itm/336673311079">HyperX Cloud III S Wireless Headset</a></td>
+        <td>Good 'Til Cancelled</td><td>HEADSET-1</td><td>$90.00 Buy It Now or Best Offer</td>
+        <td>0 Not Editable</td><td>10 Views</td><td>0</td><td>-</td>
+        <td>Jul 21, 2026 at 11:45am PDT</td><td>Sold</td></tr>
+      <tr><td></td><td>Sell similar</td><td>Photo</td><td>Auction</td><td>336677048307</td>
+        <td><a href="https://www.ebay.com/itm/336677048307">Rev-A-Shelf Door Mounting Kit</a></td>
+        <td>14 Days</td><td>Not Editable</td><td>$13.05 $25.00 Buy It Now</td>
+        <td>1 Not Editable</td><td>2 Views</td><td>0</td><td>0 Bids</td>
+        <td>Jul 21, 2026 at 11:45am PDT</td><td>Unsold</td></tr>
+    </tbody></table></main>`;
+
+  const rows = core.parseEbayEndedLifecycleHtml(html);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(plain(rows.map(row => ({
+    item_id: row.item_id,
+    title: row.title,
+    status: row.status,
+    price: row.price,
+    quantity_available: row.quantity_available,
+    views: row.views,
+    watchers: row.watchers,
+    bids: row.bids,
+    listing_format: row.listing_format,
+    listing_duration: row.listing_duration,
+    ended_date_text: row.ended_date_text,
+    ended_at_text: row.ended_at_text,
+  }))), [
+    {
+      item_id: '336673311079', title: 'HyperX Cloud III S Wireless Headset', status: 'Sold',
+      price: 90, quantity_available: 0, views: 10, watchers: 0, bids: null,
+      listing_format: 'Buy It Now', listing_duration: "Good 'Til Cancelled",
+      ended_date_text: 'Jul 21, 2026', ended_at_text: 'Jul 21, 2026 at 11:45am PDT',
+    },
+    {
+      item_id: '336677048307', title: 'Rev-A-Shelf Door Mounting Kit', status: 'Ended - Unsold',
+      price: 13.05, quantity_available: 1, views: 2, watchers: 0, bids: 0,
+      listing_format: 'Auction', listing_duration: '14 Days',
+      ended_date_text: 'Jul 21, 2026', ended_at_text: 'Jul 21, 2026 at 11:45am PDT',
+    },
+  ]);
+});
+
+test('collects every ended-listing page and understands the live Results range', async () => {
+  const core = loadCore();
+  const pageUrl = 'https://www.ebay.com/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS&source=filterbar&action=search';
+  const pageTwoUrl = 'https://www.ebay.com/sh/lst/ended?offset=50&limit=50&sort=-actualEndDate&status=ENDED';
+  const firstPage = `
+    <main><h2><span>Results:</span><span class="result-range">1-1 of 2</span></h2>
+      <table><tbody><tr><td><a href="/itm/777777777777">First ended fixture</a></td>
+      <td>Current price $150.00</td><td>Unsold</td><td>End date Jul 20, 2026</td></tr></tbody></table>
+      <a href="/sh/lst/ended?offset=50&amp;limit=50&amp;sort=-actualEndDate&amp;status=ENDED"
+        type="next" class="pagination__next icon-link" aria-label="Go to next page">Next</a>
+    </main>`;
+  const secondPage = `
+    <main><h2><span>Results:</span><span class="result-range">2-2 of 2</span></h2>
+      <table><tbody><tr><td><a href="/itm/888888888888">Second ended fixture</a></td>
+      <td>Current price $225.00</td><td>Sold</td><td>End date Jul 19, 2026</td></tr></tbody></table>
+      <button type="next" class="pagination__next" aria-label="Go to next page" disabled>Next</button>
+    </main>`;
+
+  assert.equal(core.expectedEbayLifecycleCount(firstPage, 'ended'), 2);
+  assert.equal(core.ebayLifecycleHasNextPage(firstPage), true);
+  assert.equal(core.ebayLifecycleNextPageUrl(firstPage, pageUrl), pageTwoUrl);
+
+  const fetched = [];
+  const envelope = await core.collectPaginatedEbayLifecycleEnvelope('ended', pageUrl, {
+    initialHtml: firstPage,
+    generatedAt: '2026-07-21T12:00:00.000Z',
+    fetchHtml: async (url) => {
+      fetched.push(url);
+      return { html: secondPage, pageUrl: url };
+    },
+  });
+
+  assert.deepEqual(fetched, [pageTwoUrl]);
+  assert.equal(envelope.records.length, 2);
+  assert.deepEqual(plain(envelope.records.map(row => row.item_id)), ['777777777777', '888888888888']);
+  assert.equal(envelope.completeness.expected_count, 2);
+  assert.equal(envelope.completeness.parsed_count, 2);
+  assert.equal(envelope.completeness.page_count, 2);
+  assert.equal(envelope.completeness.has_next_page, false);
+  assert.equal(envelope.completeness.complete, true);
+});
+
 test('represents unknown counts as incomplete and supports complete zero-result snapshots', () => {
   const core = loadCore();
   const unknown = core.buildEbayLifecycleEnvelope([

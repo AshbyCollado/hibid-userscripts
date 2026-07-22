@@ -111,6 +111,11 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
       quantityTotal: 4,
       quantityAvailable: 1,
       offersEnabled: false,
+      bids: null,
+      listingFormat: '',
+      listingDuration: '',
+      endedAtText: '',
+      soldStatus: '',
     },
   ]);
 });
