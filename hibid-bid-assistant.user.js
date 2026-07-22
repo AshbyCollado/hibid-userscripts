@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.65
+// @version      0.7.66
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.65';
+  const SCRIPT_VERSION = '0.7.66';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -646,10 +646,28 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function hasLikelyHibidLotTiles(root = document) {
     const selectors = 'app-lot-tile, app-lot-card, lot-card, .lot-card, [class*="lot-card"], [class*="lotTile"], [class*="lot-tile"]';
     return Array.from(root?.querySelectorAll?.(selectors) || []).some(tile => {
-      if (tile.id && /^lot-/i.test(tile.id)) return true;
+      if (tile.id && /^lot-\d+/i.test(tile.id)) return true;
       const label = `${textOf(tile)} ${tile.getAttribute?.('aria-label') || ''}`;
       return /\bLot\s+\S+/i.test(label) && Boolean(tile.querySelector?.('a, img, button'));
     });
+  }
+
+  function getVisibleHibidLotCount(root = document) {
+    const selectors = 'app-lot-tile, app-lot-card, lot-card, .lot-card, [class*="lot-card"], [class*="lotTile"], [class*="lot-tile"]';
+    const visible = Array.from(root?.querySelectorAll?.(selectors) || [])
+      .filter(tile => isVisible(tile));
+    if (!visible.length) return 0;
+
+    const identities = new Set();
+    visible.forEach(tile => {
+      const href = tile.querySelector?.('a[href*="/lot/"]')?.getAttribute?.('href') || '';
+      const lotLabel = textOf(tile.querySelector?.('.lot-number-lead, [class*="lot-number"]'))
+        || textOf(tile).match(/\bLot\s+\S+/i)?.[0]
+        || '';
+      const identity = href || lotLabel || tile.id || '';
+      if (identity) identities.add(identity);
+    });
+    return identities.size;
   }
 
   function getExpectedLotTotal(root = document) {
@@ -1231,19 +1249,29 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const parsedExpectedTotal = getExpectedLotTotal(root);
     let visibleLotCount = null;
     try {
-      const visibleTiles = root.querySelectorAll?.('app-lot-card, lot-card, .lot-card, [class*="lot-card"], [class*="lotTile"], [class*="lot-tile"]');
-      if (visibleTiles && typeof visibleTiles.length === 'number') visibleLotCount = visibleTiles.length;
+      visibleLotCount = getVisibleHibidLotCount(root);
     } catch {
       visibleLotCount = null;
     }
 
     // HiBid briefly renders an empty filter state while the Angular lot grid hydrates.
-    // A no-match phrase is authoritative only when the grid is actually empty and no
-    // positive result count is visible; transient template copy must not zero a real page.
+    // A filtered no-match phrase is authoritative after the hydration window when the
+    // grid is actually empty, even if a stale broad catalog total remains in the shell.
+    // Conversely, if the live filtered grid contains more cards than that stale total,
+    // use the deduped visible-card count as the page-bound total so a correct export is
+    // not rejected merely because the header updated before the cards did.
     const noMatches = noMatchPhrase
       && !hasLikelyHibidLotTiles(root)
-      && (!Number.isFinite(Number(parsedExpectedTotal)) || Number(parsedExpectedTotal) === 0);
-    const expectedTotal = noMatches ? 0 : parsedExpectedTotal;
+      && (filterState.hasActiveFilters
+        || !Number.isFinite(Number(parsedExpectedTotal))
+        || Number(parsedExpectedTotal) === 0);
+    const visibleCountExceedsHeader = filterState.hasActiveFilters
+      && Number.isFinite(Number(visibleLotCount))
+      && Number(visibleLotCount) > 0
+      && (!Number.isFinite(Number(parsedExpectedTotal)) || Number(visibleLotCount) > Number(parsedExpectedTotal));
+    const expectedTotal = noMatches
+      ? 0
+      : (visibleCountExceedsHeader ? Number(visibleLotCount) : parsedExpectedTotal);
 
     return {
       ...filterState,
@@ -1807,6 +1835,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function isCatalogScrapeComplete(result) {
     if (!result?.items?.length) return false;
     if (result.stopped) return true;
+    if (result.stopReason === 'exceeds-filtered-visible-total') return false;
     if (result.incomplete) return false;
     if (!Number.isFinite(result.expectedTotal) || result.expectedTotal <= 0) return true;
     return result.items.length >= result.expectedTotal;
@@ -2990,20 +3019,55 @@ ${cards}
       });
       if (stateResult?.stopReason === 'visible-no-matches') return stateResult;
       if (stateResult?.items?.length) {
+        // The page can update its result header after Apollo state has hydrated.
+        // Re-read the visible filtered state before accepting or rejecting the
+        // data source so a stale header cannot either widen or poison the export.
+        const settledVisibleState = stateResult.visibleState?.hasActiveFilters
+          ? await waitForHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null)
+          : visibleState;
+        if (settledVisibleState.noMatches) {
+          debug('catalog state contradicted by settled visible no-match state', {
+            sourceCount: stateResult.items.length,
+            visibleState: settledVisibleState
+          });
+          return {
+            source: 'visible-page-state',
+            items: [],
+            lots: [],
+            expectedTotal: 0,
+            stopped: false,
+            incomplete: false,
+            stopReason: 'visible-no-matches',
+            visibleState: settledVisibleState
+          };
+        }
+        const settledExpectedTotal = Number(settledVisibleState.expectedTotal);
+        const canAdoptSettledTotal = settledVisibleState.hasActiveFilters
+          && Number.isFinite(settledExpectedTotal)
+          && settledExpectedTotal > 0
+          && stateResult.items.length <= settledExpectedTotal;
+        const settledStateResult = {
+          ...stateResult,
+          visibleState: settledVisibleState,
+          expectedTotal: canAdoptSettledTotal
+            ? Math.max(Number(stateResult.expectedTotal) || 0, settledExpectedTotal)
+            : stateResult.expectedTotal
+        };
         debug('catalog scrape finished from hibid-state', {
-          count: stateResult.items.length,
-          expectedTotal: stateResult.expectedTotal,
-          stopped: stateResult.stopped,
-          incomplete: stateResult.incomplete,
-          stopReason: stateResult.stopReason
+          count: settledStateResult.items.length,
+          expectedTotal: settledStateResult.expectedTotal,
+          stopped: settledStateResult.stopped,
+          incomplete: settledStateResult.incomplete,
+          stopReason: settledStateResult.stopReason,
+          visibleState: settledVisibleState
         });
-        if (isCatalogScrapeComplete(stateResult)) return stateResult;
-        status(`HiBid page data incomplete (${stateResult.items.length}/${stateResult.expectedTotal || '?'}); trying visible-page fallback...`);
+        if (isCatalogScrapeComplete(settledStateResult)) return settledStateResult;
+        status(`HiBid page data incomplete (${settledStateResult.items.length}/${settledStateResult.expectedTotal || '?'}); trying visible-page fallback...`);
         debug('catalog hibid-state incomplete; falling back to DOM', {
-          count: stateResult.items.length,
-          expectedTotal: stateResult.expectedTotal,
-          failedPage: stateResult.failedPage,
-          stopReason: stateResult.stopReason
+          count: settledStateResult.items.length,
+          expectedTotal: settledStateResult.expectedTotal,
+          failedPage: settledStateResult.failedPage,
+          stopReason: settledStateResult.stopReason
         });
       }
     } else {

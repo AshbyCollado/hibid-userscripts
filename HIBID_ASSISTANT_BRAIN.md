@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.65`.
+- Current version: `0.7.66`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -286,10 +286,10 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 ## Verification Checklist
 
-### Cross-browser stale-install check (`v0.7.58`)
+### Cross-browser stale-install check (`v0.7.66`)
 
 - The screenshot-era comma message (`Blocked stale catalog export, current page did not match copied lots.`) belongs to an older installed script; it is not present in the current source. The current build uses the semicolon-free reason form and includes the exact guard reason.
-- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.58`, `#flipperaddon-panel[data-flipperaddon-version="0.7.58"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.58'` when page access exposes the canary.
+- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.7.66`, `#flipperaddon-panel[data-flipperaddon-version="0.7.66"]`, and `window.__FLIPPERADDON_VERSION__ === '0.7.66'` when page access exposes the canary.
 - A current build remounts when an existing panel has an older version or a different page URL, and invalidates in-flight export work when that panel is torn down.
 - The first current-script mount removes the old `#hibid-bid-assistant-panel` used by pre-FlipperAddon builds. Seeing two dialogs means stale scripts are still enabled or the current build has not mounted yet.
 - Chrome, Firefox, and Waterfox have separate extension/profile state. A raw GitHub push does not update an already-installed copy until that browser's Tampermonkey update check or raw-URL install is completed.
@@ -300,7 +300,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 - Catalog copy now maps guard reasons into a compact status message. `catalog-incomplete` means the scraper collected fewer rows than the page total; `catalog-source-mismatch` means another site/source was mixed into the result; filter-specific reasons identify stale Apollo/DOM data.
 - Debug remains opt-in. When enabled, the ring buffer records version, boot route, current route, source, count, expected total, and rejection reason. When disabled, the user still sees a compact reason toast without a verbose result console.
-- Cross-browser audit evidence: the current source passed Chrome and Firefox targeted checks for AAR item `8573/221770`, filtered HiBid guard behavior, and the live-catalog redirect. The real Waterfox profile now has one enabled `v0.7.56`; its exact AAR item copied a one-item JSON payload, and the contaminated `q=lebron` page copied `[]`. The Waterfox route smoke matrix mounted the page-appropriate module on HiBid, AJ Willner, AuctionNinja, AAR, GovDeals, Facebook, and account routes; eBay was gated by its security challenge. Auth/anti-bot-gated pages remain environment limitations, not silent export passes.
+- Audit evidence: the current source-level matrix passes all supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook route families. The real Waterfox/Tampermonkey profile was installed from the local source and its dashboard showed one enabled `FlipperAddon by ALOS v0.7.66`; the exact AAR item `8573/221770` copied one normalized item, the HiBid `q=lebron` page copied `0` with its no-match message, the gaming URL copied `0` because its live DOM had no matching lot cards, and the known non-empty HiBid page copied `8/8`. Chrome live browser checks require the ChatGPT Chrome Extension bridge in the selected Chrome profile; the current machine reported Chrome not running and no bridge installed, so that browser is recorded as environment-gated rather than claimed as a pass. Waterfox is the Firefox-engine live verification profile used here.
 - `v0.7.59` installs a document-level HiBid catalog copy-intent capture hook that survives panel teardown. This handles the early-click window where HiBid normalizes the URL and inserts the replacement panel before its local listeners bind.
 - `v0.7.60` keeps that intent pending through multiple HiBid URL-normalization remounts and only resumes after the current panel and route have remained stable.
 - `v0.7.61` mirrors the pending intent to the page window and tab `sessionStorage`, and listens through both document wrappers. This is the recovery path for Firefox/Waterfox sandbox boundaries where panel-local event state may not survive a redraw.
@@ -308,6 +308,14 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - `v0.7.63` adds a panel-aware resume queue. It waits for the handler registered by the current panel, dispatches once per panel, and retries after a HiBid redraw without duplicating the same panel action.
 - `v0.7.64` accepts same-path HiBid query normalization when checking panel readiness and export validity, preventing a stale URL marker from blocking a current filtered catalog copy.
 - `v0.7.65` waits for active filtered headers to settle before choosing a data source and skips broad document-text fallback when real filtered lot tiles are present. The audit fixture for the New Jersey page showed 8 unique lot URLs; the export must remain 8, not the 11-record contaminated merge.
+- `v0.7.66` treats filtered no-match copy as authoritative after hydration even when a stale broad total remains in the page shell, and uses a deduplicated visible-card count to reconcile stale low filtered headers without widening the export.
+
+### Full audit matrix (`v0.7.66`)
+
+- Route coverage verified in tests: HiBid catalog/search/live/account, AJ Willner catalog, AuctionNinja sale/category/account/search, AAR calendar/catalog/item, GovDeals seller/search/new-listings/asset, eBay active listings, and Facebook Marketplace selling.
+- Exact AAR target: `https://aarauctions.com/servlet/Search.do?auctionId=8573&itemId=221770` mounted `aar-item-detail` and copied `1` item with the HPE/Aruba switch title.
+- Exact HiBid filtered recovery target: normalized to the active New Jersey route and copied `8/8` visible lot records; broad text contamination was excluded.
+- Browser boundary: Waterfox/Tampermonkey is the installed live profile. Chrome requires the ChatGPT Chrome Extension bridge in its selected profile; Firefox requires an installed Firefox/Waterfox executable plus its own Tampermonkey profile. Never mark a browser pass from navigation alone; require the panel version and a completed page-appropriate copy action.
 
 - `node --check .\hibid-bid-assistant.user.js`
 - `node --check .\hibid-lot-catalog-scraper.user.js`

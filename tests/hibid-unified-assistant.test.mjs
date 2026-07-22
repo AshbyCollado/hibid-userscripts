@@ -860,8 +860,13 @@ test('assistant ignores a transient HiBid no-match phrase when lot tiles are alr
   const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics?q=gaming%20pc');
   const tile = {
     id: 'lot-123',
+    offsetParent: {},
     textContent: 'Lot 123 | Hydrating gaming item',
-    querySelector() { return { id: 'lot-link' }; },
+    getClientRects: () => [{ width: 1, height: 1 }],
+    querySelector(selector) {
+      if (selector.includes('/lot/')) return { getAttribute: () => '/lot/123', textContent: '' };
+      return { id: 'lot-link', textContent: '' };
+    },
     getAttribute() { return ''; }
   };
   const root = {
@@ -966,6 +971,8 @@ test('assistant rejects contradictory HiBid exports against visible no-match sta
     },
   }, new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron'));
 
+  assert.equal(visibleState.noMatches, true);
+  assert.equal(visibleState.expectedTotal, 0);
   assert.deepEqual(plain(core.validateCatalogExportAgainstVisibleState({
     source: 'hibid-state',
     items: [{ id: 'broad', title: 'Broad stale lot' }],
@@ -994,6 +1001,43 @@ test('assistant blocks DOM fallback exports when search-filtered lots do not mat
     ok: false,
     reason: 'filtered-search-results-do-not-match-query',
   });
+});
+
+test('assistant prefers the deduped visible filtered grid when the catalog header is stale', () => {
+  const core = loadCore();
+  const tiles = Array.from({ length: 8 }, (_, index) => ({
+    id: `lot-${index + 1}`,
+    offsetParent: {},
+    textContent: `Lot ${index + 1} Gaming PC`,
+    getClientRects: () => [{ width: 1, height: 1 }],
+    getAttribute() {
+      return '';
+    },
+    querySelector(selector) {
+      if (selector.includes('/lot/')) {
+        return { getAttribute: () => `/lot/${index + 1}`, textContent: '' };
+      }
+      if (selector.includes('lot-number')) {
+        return { textContent: `Lot ${index + 1}` };
+      }
+      return null;
+    },
+  }));
+  const root = {
+    body: { textContent: 'Total Lots: 6' },
+    documentElement: { textContent: 'Total Lots: 6' },
+    querySelectorAll(selector) {
+      return /lot-card|lotTile|lot-tile/.test(selector) ? tiles : [];
+    },
+  };
+  const visibleState = core.extractHibidVisiblePageState(
+    root,
+    new URL('https://hibid.com/lots/40198/computers/desktop---all-in-ones?q=gaming%20pc')
+  );
+
+  assert.equal(visibleState.noMatches, false);
+  assert.equal(visibleState.visibleLotCount, 8);
+  assert.equal(visibleState.expectedTotal, 8);
 });
 
 test('assistant rejects filtered exports that exceed the visible result total', () => {
