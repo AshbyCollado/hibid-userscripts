@@ -16,6 +16,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 
 - Tracking: GitHub issue `#5`; command-center epic `AshbyCollado/marketplace-command-center#68`.
 - Branch: `codex/ebay-ended-sync`.
+- Review PR: `AshbyCollado/hibid-userscripts#6`; command-center PR: `AshbyCollado/marketplace-command-center#69`.
 - Exact source: `https://www.ebay.com/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS&source=filterbar&action=search`.
 - Truth contract: the ended table is listing-state evidence only. It may update status, ended date, end reason, quantity, views, and watchers; it cannot create Sales, fees, refunds, or payouts.
 - Source ownership: `/mys/sold` owns sold order lines and quantities; `/mes/transactionlist?sh=true` owns fees, refunds, and payout facts.
@@ -26,7 +27,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Automated evidence: userscript suite `124/124`; syntax check passed; command-center suite `275 passed`.
 - Authenticated evidence: the exact Seller Hub ended URL rendered 60 results and the first page exposed 50 unique 12-digit item IDs in a stable 15-column grid. The table included state, price snapshot, quantity, traffic, bids, end time, format, duration, and custom label with zero buyer PII.
 - End-to-end evidence: the loopback bridge stored the first ended envelope once and classified replay as duplicate; the importer emitted `Reconcile eBay Ended Listing`; isolated Excel verification proved exact update, ambiguous review, idempotence, asking-price preservation, and no Sales row from ended-state evidence.
-- Recursive release gate: all implementation and verification gates pass; push/review the branch before any explicit production merge.
+- Recursive release gate: all implementation, verification, and publication gates pass; PR #6 is merge-pending and raw `main` remains unchanged.
 - Production rule: do not merge raw Tampermonkey `main` without explicit approval.
 
 ## Release-Pending Foundation: eBay-to-Facebook Marketplace Draft Assistant
@@ -268,7 +269,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Done on branch for FT-023: add `Update Tracker` and include Ended Listings in `Sync All eBay` completeness/guided-recovery behavior.
 - Safety invariant for FT-023: an ended-page `Sold` label is state evidence only and cannot create a Sale without `/mys/sold` order evidence.
 - Tracking: `AshbyCollado/hibid-userscripts#5` and `AshbyCollado/marketplace-command-center#68`.
-- Passed release gate for FT-023: `124/124` tests and syntax check; authenticated count `60`, first-page IDs `50/50` unique, zero buyer PII; bridge replay dedupe; command-center `275 passed`; isolated workbook verifier and release audit; review branch is ready to push and must not merge into raw `main` without explicit approval.
+- Passed release gate for FT-023: `124/124` tests and syntax check; authenticated count `60`, first-page IDs `50/50` unique, zero buyer PII; bridge replay dedupe; command-center `275 passed`; isolated workbook verifier and release audit; PR #6 is ready for review and must not merge into raw `main` without explicit approval.
 - Done on branch for FT-014: resolve only `/mys/active`, `/mys/sold`, and `/mes/transactionlist?sh=true` as lifecycle routes instead of mounting on generic `/mys/*` pages.
 - Done on branch for FT-014: parse active listings, multi-line sold orders, signed transactions/refunds/fees, quantities, IDs, dates, URLs, and completeness metadata with stable replay identities.
 - Done on branch for FT-014: sanitize buyer names, usernames, email, phone, address, recipient, contact, and message fields recursively before export.
