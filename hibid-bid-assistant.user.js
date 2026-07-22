@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.64
+// @version      0.7.65
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,7 +52,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.64';
+  const SCRIPT_VERSION = '0.7.65';
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -1255,13 +1255,23 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   async function waitForHibidVisiblePageState(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
     let state = extractHibidVisiblePageState(root, loc);
-    if (!state.noMatches) return state;
-
     const startedAt = Date.now();
+    let signature = `${state.noMatches}|${state.expectedTotal}|${state.visibleLotCount}`;
+    let stableSince = Date.now();
     while (Date.now() - startedAt < HIBID_STATE_HYDRATION_WAIT_MS) {
       await wait(HIBID_STATE_HYDRATION_POLL_MS);
       const next = extractHibidVisiblePageState(root, loc);
-      if (!next.noMatches) {
+      const nextSignature = `${next.noMatches}|${next.expectedTotal}|${next.visibleLotCount}`;
+      if (nextSignature !== signature) {
+        signature = nextSignature;
+        stableSince = Date.now();
+      }
+      state = next;
+      const positiveStateSettled = !next.noMatches
+        && next.hasActiveFilters
+        && (Number.isFinite(Number(next.expectedTotal)) || Number(next.visibleLotCount) > 0)
+        && Date.now() - stableSince >= 500;
+      if (positiveStateSettled) {
         debug('hibid no-match state cleared during hydration', {
           waitedMs: Date.now() - startedAt,
           visibleLotCount: next.visibleLotCount,
@@ -1269,13 +1279,15 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         });
         return next;
       }
-      state = next;
+      if (!next.noMatches && !next.hasActiveFilters) return next;
     }
 
-    debug('hibid no-match state settled after hydration wait', {
+    debug('hibid visible page state settled after hydration wait', {
       waitedMs: Date.now() - startedAt,
       visibleLotCount: state.visibleLotCount,
-      expectedTotal: state.expectedTotal
+      expectedTotal: state.expectedTotal,
+      noMatches: state.noMatches,
+      hasActiveFilters: state.hasActiveFilters
     });
     return state;
   }
@@ -3012,7 +3024,12 @@ ${cards}
         const key = accountExportRoute ? lot.lot : (lot.id || lot.url || lot.lot);
         if (key && lot.title) itemsMap.set(String(key), lot);
       });
-      if (!accountExportRoute || !itemsMap.size) mergeCatalogLots(itemsMap, extractTextLots());
+      // Text fallback can contain hidden, featured, or stale catalog records.
+      // On a filtered page, trust real lot tiles when present and never widen
+      // that result with a broad document-text scrape.
+      if (!accountExportRoute && (!visibleState.hasActiveFilters || !itemsMap.size)) {
+        mergeCatalogLots(itemsMap, extractTextLots());
+      }
       return itemsMap.size;
     };
 
