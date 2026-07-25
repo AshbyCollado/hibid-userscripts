@@ -817,3 +817,55 @@ test('posts cross-list bridge requests with the local token', async () => {
   assert.equal(request.headers['X-FlipTracker-Token'], 'token-1');
   assert.equal(request.data, '{"value":1}');
 });
+
+
+test('refreshes the full cross-list queue concurrently without accepting incomplete evidence', async () => {
+  const core = loadCore();
+  const queued = [];
+  const progress = [];
+  let active = 0;
+  let peak = 0;
+  const listings = [1, 2, 3, 4, 5].map(index => ({
+    item_id: `33670109724${index}`,
+    title: `Listing ${index}`,
+  }));
+
+  const result = await core.refreshCrosslistQueueRecords(listings, {
+    location: 'Carteret, NJ',
+    concurrency: 2,
+    onProgress: event => progress.push(event),
+    enrich: async listing => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active -= 1;
+      if (listing.itemId.endsWith('3')) {
+        return {
+          item_id: listing.itemId,
+          listing: { title: listing.title, price: 50, description: 'Description', condition: 'Used', category_path: ['Other'], item_url: `https://www.ebay.com/itm/${listing.itemId}`, image_urls: [] },
+          facebook_draft: { title: listing.title, price: 50, description: 'Description', category: 'Other', condition: 'Used - Good', image_urls: [] },
+        };
+      }
+      return {
+        item_id: listing.itemId,
+        listing: { title: listing.title, price: 50, description: 'Description', condition: 'Used', category_path: ['Other'], item_url: `https://www.ebay.com/itm/${listing.itemId}`, image_urls: ['https://i.ebayimg.com/test.jpg'] },
+        facebook_draft: { title: listing.title, price: 50, description: 'Description', category: 'Other', condition: 'Used - Good', image_urls: ['https://i.ebayimg.com/test.jpg'] },
+      };
+    },
+    queue: async envelope => {
+      queued.push(envelope.item_id);
+      return { ok: true, action: queued.length === 1 ? 'created' : 'updated' };
+    },
+  });
+
+  assert.equal(peak, 2);
+  assert.equal(result.total, 5);
+  assert.equal(result.completed, 5);
+  assert.equal(result.counts.created, 1);
+  assert.equal(result.counts.updated, 3);
+  assert.equal(result.counts.failed, 1);
+  assert.equal(queued.length, 4);
+  assert.equal(result.failures[0].itemId, '336701097243');
+  assert.match(result.failures[0].error, /incomplete eBay evidence/i);
+  assert.ok(progress.some(event => event.completed === 5));
+});

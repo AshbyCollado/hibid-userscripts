@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.86
+// @version      0.7.87
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.86';
+  const SCRIPT_VERSION = '0.7.87';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -4062,6 +4062,7 @@ ${cards}
     buildCrosslistEnvelope,
     crosslistEnvelopeMissingEvidence,
     enrichEbayListingForCrosslist,
+    refreshCrosslistQueueRecords,
     crosslistBridgeRequest,
     getCrosslistLocation,
     saveCrosslistLocation,
@@ -8734,6 +8735,54 @@ ${cards}
     });
   }
 
+  async function refreshCrosslistQueueRecords(listings, options = {}) {
+    const records = (Array.isArray(listings) ? listings : [])
+      .filter(row => String(row?.item_id || row?.itemId || '').match(/^\d{9,15}$/));
+    const concurrency = Math.max(1, Math.min(4, Number(options.concurrency) || 3));
+    const enrich = options.enrich || enrichEbayListingForCrosslist;
+    const queue = options.queue || (envelope => crosslistBridgeRequest('/crosslist/queue', envelope));
+    const counts = { created: 0, updated: 0, duplicate: 0, published: 0, failed: 0 };
+    const failures = [];
+    let cursor = 0;
+    let completed = 0;
+
+    const worker = async () => {
+      while (cursor < records.length) {
+        const index = cursor;
+        cursor += 1;
+        const listing = records[index];
+        const itemId = String(listing.item_id || listing.itemId);
+        options.onProgress?.({ index, completed, total: records.length, listing });
+        try {
+          const envelope = await enrich({
+            ...listing,
+            itemId,
+            customLabel: listing.custom_label || listing.customLabel,
+            quantityAvailable: listing.quantity_available ?? listing.quantityAvailable,
+          }, { location: options.location || '' });
+          const missing = crosslistEnvelopeMissingEvidence(envelope);
+          if (missing.length) throw new Error(`incomplete eBay evidence: ${missing.join(', ')}`);
+          const result = await queue(envelope);
+          if (!result?.ok) throw new Error(result?.reason || 'bridge rejected the draft');
+          if (result.action === 'published-blocked') counts.published += 1;
+          else if (Object.hasOwn(counts, result.action)) counts[result.action] += 1;
+          else counts.updated += 1;
+        } catch (error) {
+          counts.failed += 1;
+          const failure = { itemId, error: String(error?.message || error) };
+          failures.push(failure);
+          options.onError?.(failure);
+        } finally {
+          completed += 1;
+          options.onProgress?.({ index, completed, total: records.length, listing });
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, records.length) }, worker));
+    return { counts, failures, completed, total: records.length };
+  }
+
   function findFacebookLabeledControl(root, label) {
     const target = normalizedFacebookControlText(label);
     const candidates = Array.from(root?.querySelectorAll?.('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="button"]') || []);
@@ -11150,7 +11199,6 @@ ${cards}
         status('Set the Facebook listing location before refreshing the queue.');
         return;
       }
-      if (!window.confirm('Refresh the complete Facebook review queue from every active eBay listing?\n\nExisting published links remain protected. Nothing will be published.')) return;
       setScrapingBusy(true);
       crosslistQueueAllButton.disabled = true;
       const counts = { created: 0, updated: 0, duplicate: 0, published: 0, failed: 0 };
@@ -11169,26 +11217,15 @@ ${cards}
         if (!trackerSync.ok) {
           debug('active eBay tracker sync failed', { reason: trackerSync.reason || 'bridge rejected lifecycle envelope' });
         }
-        for (let index = 0; index < listings.length; index += 1) {
-          const listing = listings[index];
-          status(`Refreshing Facebook draft ${index + 1}/${listings.length}: ${listing.title || listing.item_id}`);
-          try {
-            const envelope = await enrichEbayListingForCrosslist({
-              ...listing,
-              itemId: listing.item_id,
-              customLabel: listing.custom_label,
-              quantityAvailable: listing.quantity_available,
-            }, { location: locationValue });
-            const result = await crosslistBridgeRequest('/crosslist/queue', envelope);
-            if (!result.ok) throw new Error(result.reason || 'bridge rejected the draft');
-            if (result.action === 'published-blocked') counts.published += 1;
-            else if (Object.hasOwn(counts, result.action)) counts[result.action] += 1;
-            else counts.updated += 1;
-          } catch (error) {
-            counts.failed += 1;
-            debug('cross-list queue refresh failed', { itemId: listing.item_id, error: String(error?.message || error) });
-          }
-        }
+        const refresh = await refreshCrosslistQueueRecords(listings, {
+          location: locationValue,
+          concurrency: 3,
+          onProgress: ({ completed, total, listing }) => {
+            status(`Refreshing Facebook drafts ${completed}/${total}: ${listing.title || listing.item_id}`);
+          },
+          onError: failure => debug('cross-list queue refresh failed', failure),
+        });
+        Object.assign(counts, refresh.counts);
         status(`Tracker ${trackerSync.ok ? 'saved the active-listing snapshot' : 'snapshot needs retry'}; Facebook queue: ${counts.created} new, ${counts.updated} corrected, ${counts.duplicate} unchanged, ${counts.published} published protected, ${counts.failed} failed.`);
       } catch (error) {
         status(`Queue refresh failed: ${error?.message || error}`);
