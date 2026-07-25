@@ -107,6 +107,59 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
   ]);
 });
 
+test('resolves and parses eBay bulk-sell revise rows with full listing fields', () => {
+  const core = loadCore();
+  const url = new URL('https://www.ebay.com/bulksell?workspaceId=4208669753366&ru=https%3A%2F%2Fwww.ebay.com%2Fsh%2Flst%2Factive');
+  const html = `
+    <table class="bg-grid">
+      <tr><th>Title</th><th>Price</th></tr>
+      <tr class="bg-grid row">
+        <td><input id="draft-checkbox-5334866976011" aria-label="Select item to bulk edit - ThermoWorks Saf-T-Log HACCP Temperature Logger 292-701 Probe Kit Case" type="checkbox"></td>
+        <td><img src="https://i.ebayimg.com/images/g/example/s-l1600.jpg"><textarea aria-labelledby="itemTitle">ThermoWorks Saf-T-Log HACCP Temperature Logger 292-701 Probe Kit Case</textarea></td>
+        <td><input aria-labelledby="customLabel" value="thermoworks"></td>
+        <td><input aria-labelledby="price" value="150.00"></td>
+        <td><input aria-labelledby="startPrice" value="150.00"></td>
+        <td><input aria-labelledby="availableQuantity" value="2"></td>
+        <td><button>Buy It Now</button><button>Good 'Til Canceled</button></td>
+        <td>Used Buyer pays calculated fee (USPS Ground Advantage) 2 business days Promoted: General (2.0%) 3 recommendations Edit description</td>
+      </tr>
+    </table>
+  `;
+
+  assert.equal(core.isEbayBulkSellPage(url), true);
+  assert.equal(core.shouldInitOnLocation(url), true);
+  assert.deepEqual(plain(core.resolveFlipTrackerPage(url)), {
+    supported: true,
+    kind: 'fliptracker-ebay-bulk',
+    source: 'ebay',
+    host: 'www.ebay.com',
+    reason: 'eBay bulk-sell listing export route',
+  });
+
+  const rows = core.parseEbayBulkSellListingsHtml(html);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].source, 'eBay');
+  assert.equal(rows[0].pageKind, 'ebay-bulk-sell');
+  assert.equal(rows[0].title, 'ThermoWorks Saf-T-Log HACCP Temperature Logger 292-701 Probe Kit Case');
+  assert.equal(rows[0].draftId, '5334866976011');
+  assert.equal(rows[0].price, 150);
+  assert.equal(rows[0].startPrice, 150);
+  assert.equal(rows[0].quantity, 2);
+  assert.equal(rows[0].customLabel, 'thermoworks');
+  assert.equal(rows[0].format, 'Buy It Now');
+  assert.equal(rows[0].duration, "Good 'Til Canceled");
+  assert.equal(rows[0].image, 'https://i.ebayimg.com/images/g/example/s-l1600.jpg');
+  assert.equal(rows[0].descriptionAvailable, true);
+  assert.equal(rows[0].recommendations, 3);
+  assert.equal(rows[0].fields.itemTitle, 'ThermoWorks Saf-T-Log HACCP Temperature Logger 292-701 Probe Kit Case');
+
+  const panel = core.buildPanelHtml({ mode: 'fliptracker', route: core.resolveFlipTrackerPage(url) });
+  assert.match(panel, /id="ebay-bulk-sell-export-mode"/);
+  assert.match(panel, /id="ebay-bulk-copy-json"/);
+  assert.match(panel, /id="ebay-bulk-copy-llm"/);
+  assert.match(core.buildEbayBulkSellLlmBrief(rows, core.getEbayBulkSellContext(url, { title: 'Revise listings' })), /ThermoWorks Saf-T-Log/);
+});
+
 test('assistant panel defaults to minimized before a stored preference exists', () => {
   const core = loadCore();
   assert.equal(core.getStoredMinimized(), true);

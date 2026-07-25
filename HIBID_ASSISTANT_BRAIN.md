@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.69`.
+- Current version: `0.7.70`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -20,6 +20,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
   - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
 - `fliptracker`: eBay and Facebook active selling pages.
   - Controls: Scan Listings, Copy HTML, Download, debug controls only when enabled.
+  - eBay `/bulksell`: Scan Listings, Copy JSON, Copy LLM Brief, Copy HTML, Download; the DOM row export preserves title, image, price, quantity, format, duration, shipping, handling, condition, category, recommendations, field values, and raw row text.
 - `auctionninja`: AuctionNinja sale research and account export pages.
   - Sale catalog controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
   - Auction search controls: Copy Auctions LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
@@ -61,6 +62,7 @@ Mount without waiting for lot tiles on:
 - `https://bid.ajwillnerauctions.com/ui/auctions/*`
 - `https://www.ebay.com/sh/lst*`
 - `https://www.ebay.com/mys/*`
+- `https://www.ebay.com/bulksell*`
 - `https://www.facebook.com/marketplace/you/*`
 - `https://www.facebook.com/marketplace/profile/*`
 - `https://www.auctionninja.com/auctions*`
@@ -310,6 +312,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - `v0.7.65` waits for active filtered headers to settle before choosing a data source and skips broad document-text fallback when real filtered lot tiles are present. The audit fixture for the New Jersey page showed 8 unique lot URLs; the export must remain 8, not the 11-record contaminated merge.
 - `v0.7.66` treats filtered no-match copy as authoritative after hydration even when a stale broad total remains in the page shell, and uses a deduplicated visible-card count to reconcile stale low filtered headers without widening the export.
 - `v0.7.68` adds a canonical HiBid lot-card pass before broad DOM discovery. On the reproduced New Jersey page, the canonical card set was 16 while broad lot-number seeds produced 17; only the canonical set is exported when it exists. Broad discovery remains the fallback for pages without canonical card containers.
+- `v0.7.70` adds the eBay `/bulksell` module. It reads the live `table.bg-grid` rows without selecting, editing, submitting, or deleting listings, and exposes JSON/LLM copy actions plus the existing HTML/Download export.
 
 ### Full audit matrix (`v0.7.69`)
 

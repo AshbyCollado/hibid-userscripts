@@ -2,7 +2,7 @@
 
 Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
 
-Current hosted build: `v0.7.69`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.7.69` keeps filtered no-match exports fail-closed, prefers canonical HiBid lot cards over stray broad lot-number seeds, recovers nested Apollo text fields, accepts a HiBid virtualized DOM export only after its bottom settle cycles prove the page is exhausted, and bounds unresolved browser clipboard promises so exports cannot remain busy forever. It also shares editable research settings across AAR and GovDeals.
+Current hosted build: `v0.7.70`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.7.70` keeps the filtered/no-match and virtualized HiBid safeguards, bounds unresolved browser clipboard promises, and adds a dedicated eBay `/bulksell` row export that preserves titles plus listing fields.
 
 ## Install
 
@@ -24,7 +24,8 @@ Tampermonkey updates use that same raw GitHub URL through the script metadata. I
 - AuctionNinja auction search / nearby sales pages: copy whole-auction JSON or an LLM brief that ranks sales before drilling into lots.
 - AAR Auctions calendar and catalog pages: copy auction cards or catalog lots as JSON, or copy an LLM brief with persisted origin/radius distance-verification instructions.
 - GovDeals seller, search/new-listings filter, and asset pages: copy visible listings/assets as JSON, or copy a resale LLM brief with shared origin/radius and URL zipcode/miles context.
-- eBay/Facebook selling pages: FlipTracker active listing copy/download export.
+- eBay Seller Hub/Facebook selling pages: FlipTracker active listing copy/download export.
+- eBay `/bulksell` revise-listings pages: copy normalized JSON or an LLM brief containing each visible title and full row-level listing fields; HTML/Download remain available for FlipTracker import.
 
 The older `hibid-lot-catalog-scraper.user.js` remains in the repo for legacy reference/tests, but normal use should install only `hibid-bid-assistant.user.js`.
 
@@ -51,6 +52,8 @@ Open an active selling page:
 - `https://www.ebay.com/sh/lst/active`
 - `https://www.facebook.com/marketplace/you/selling`
 
+For eBay's bulk revise page, open `https://www.ebay.com/bulksell?...` and use `Copy JSON` or `Copy LLM Brief` to capture the visible listing rows, including the title, image, price, quantity, format, duration, shipping, handling, condition, category, recommendations, and raw row fields.
+
 Workflow:
 
 1. Scroll/load the listings you want included.
@@ -74,4 +77,4 @@ npm test
 
 ## Browser Verification
 
-The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version is `0.7.69`, and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. The Chrome audit confirmed that site navigation works but the selected Chrome profile has no active FlipperAddon/Tampermonkey install, so Chrome is not counted as verified until the hosted script is installed there from `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
+The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version is `0.7.70`, and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. The Chrome audit confirmed that site navigation works but the selected Chrome profile has no active FlipperAddon/Tampermonkey install, so Chrome is not counted as verified until the hosted script is installed there from `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.69
+// @version      0.7.70
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -16,6 +16,7 @@
 // @match        https://bid.ajwillnerauctions.com/ui/auctions/*
 // @match        https://www.ebay.com/sh/lst*
 // @match        https://www.ebay.com/mys/*
+// @match        https://www.ebay.com/bulksell*
 // @match        https://www.facebook.com/marketplace/you/*
 // @match        https://www.facebook.com/marketplace/profile/*
 // @match        https://www.auctionninja.com/auctions*
@@ -52,7 +53,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.69';
+  const SCRIPT_VERSION = '0.7.70';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -2467,6 +2468,275 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return dedupeListings(parseEbayActiveListingsHtml(text).concat(parseFacebookMarketplaceListingsHtml(text)));
   }
 
+  function normalizeEbayBulkFieldLabel(value) {
+    return String(value || '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function firstEbayBulkFieldValue(fields, patterns) {
+    const entry = (Array.isArray(fields) ? fields : []).find(field => {
+      const label = String(field?.label || '');
+      return patterns.some(pattern => pattern.test(label));
+    });
+    return entry?.value || '';
+  }
+
+  function normalizeEbayBulkFieldEntries(fields) {
+    const entries = Array.isArray(fields) ? fields : [];
+    const values = {};
+    entries.forEach(field => {
+      const label = normalizeEbayBulkFieldLabel(field?.label);
+      const value = String(field?.value || '').trim();
+      if (label && value) values[label] = value;
+    });
+    return values;
+  }
+
+  function parseEbayBulkAmount(value) {
+    const parsed = moneyFromText(value);
+    if (Number.isFinite(parsed)) return parsed;
+    const match = String(value || '').trim().match(/^\$?\s*([\d,]+(?:\.\d{1,2})?)$/);
+    return match ? Number(match[1].replace(/,/g, '')) : null;
+  }
+
+  function buildEbayBulkListing(data = {}) {
+    const title = cleanListingTitle(data.title || '');
+    const rawText = String(data.rawText || '').replace(/\s+/g, ' ').trim();
+    const priceText = String(data.priceText || '').trim();
+    const quantityText = String(data.quantityText || '').trim();
+    const fields = normalizeEbayBulkFieldEntries(data.fields || []);
+    const price = Number.isFinite(data.price) ? data.price : (parseEbayBulkAmount(priceText) ?? null);
+    const quantity = Number.isFinite(data.quantity) ? data.quantity : (parsePlainInteger(quantityText) ?? null);
+    const url = normalizeListingUrl(data.url || '');
+    const itemId = String(data.itemId || firstMatch(url, [/\/itm\/(\d+)/i]) || '').trim();
+    const draftId = String(data.draftId || '').trim();
+
+    return {
+      source: 'eBay',
+      pageKind: 'ebay-bulk-sell',
+      itemId,
+      draftId,
+      title,
+      url,
+      image: String(data.image || '').trim(),
+      status: String(data.status || '').trim(),
+      price,
+      priceText: priceText || (Number.isFinite(price) ? `$${price.toFixed(2)}` : ''),
+      startPrice: Number.isFinite(data.startPrice) ? data.startPrice : (parseEbayBulkAmount(data.startPriceText || '') ?? null),
+      startPriceText: String(data.startPriceText || '').trim(),
+      quantity,
+      quantityText,
+      customLabel: String(data.customLabel || '').trim(),
+      format: String(data.format || '').trim(),
+      duration: String(data.duration || '').trim(),
+      listedDateText: String(data.listedDateText || '').trim(),
+      shippingText: String(data.shippingText || '').trim(),
+      handlingTime: String(data.handlingTime || '').trim(),
+      category: String(data.category || '').trim(),
+      condition: String(data.condition || '').trim(),
+      promotedText: String(data.promotedText || '').trim(),
+      recommendations: Number.isFinite(data.recommendations) ? data.recommendations : null,
+      description: String(data.description || '').trim(),
+      descriptionAvailable: Boolean(data.descriptionAvailable),
+      fields,
+      controls: Array.isArray(data.controls) ? uniqueNonEmpty(data.controls) : [],
+      rawText
+    };
+  }
+
+  function extractEbayBulkFieldEntriesFromElement(row) {
+    return Array.from(row?.querySelectorAll?.('input, textarea, select') || [])
+      .map(field => {
+        const label = normalizeEbayBulkFieldLabel(
+          field.getAttribute?.('aria-labelledby')
+          || field.getAttribute?.('aria-label')
+          || field.getAttribute?.('name')
+          || ''
+        );
+        let value = field.value || '';
+        if (!value && field.tagName === 'SELECT') value = textOf(field.selectedOptions?.[0] || field);
+        return { label, value: String(value || '').trim() };
+      })
+      .filter(field => field.label && field.value);
+  }
+
+  function extractEbayBulkListingFromElement(row) {
+    const checkbox = row?.querySelector?.('input[aria-label^="Select item to bulk edit"]');
+    const checkboxLabel = checkbox?.getAttribute?.('aria-label') || '';
+    const titleFromCheckbox = checkboxLabel.replace(/^Select item to bulk edit\s*-\s*/i, '').trim();
+    const fields = extractEbayBulkFieldEntriesFromElement(row);
+    const title = firstEbayBulkFieldValue(fields, [/^item\s*title$/i, /^title$/i]) || titleFromCheckbox;
+    const rawText = rawTextOf(row);
+    const controls = Array.from(row?.querySelectorAll?.('button') || []).map(textOf).filter(Boolean);
+    const fieldValue = (patterns) => firstEbayBulkFieldValue(fields, patterns);
+    const priceText = fieldValue([/^price$/i]);
+    const startPriceText = fieldValue([/^start\s*price$/i]);
+    const quantityText = fieldValue([/available\s*quantity/i, /^quantity$/i]);
+    const status = firstMatch(rawText, [
+      /\b(Draft|Active|Ended|Sold|Canceled|Cancelled|Inactive)\b/i
+    ]);
+    const image = Array.from(row?.querySelectorAll?.('img[src], img[srcset]') || [])
+      .map(img => img.currentSrc || img.src || firstMatch(img.getAttribute?.('srcset') || '', [/^(\S+)/]))
+      .find(Boolean) || '';
+    const url = normalizeListingUrl(Array.from(row?.querySelectorAll?.('a[href]') || [])
+      .map(anchor => anchor.href || anchor.getAttribute?.('href') || '')
+      .find(value => /\/itm\/\d+/i.test(value)) || '');
+    const recommendations = parsePlainInteger(firstMatch(rawText, [/\b(\d+)\s+recommendations?\b/i]));
+    const format = controls.find(value => /buy it now|auction|classified/i.test(value)) || firstMatch(rawText, [/(Buy It Now|Auction|Classified)/i]);
+    const duration = controls.find(value => /good ['’]?til canceled|days?|duration/i.test(value)) || firstMatch(rawText, [/(Good ['’]?Til Canceled|\d+\s+days?)/i]);
+    const shippingText = firstMatch(rawText, [/(Buyer pays[^\n]*shipping[^\n]*|Free shipping|calculated fee[^\n]*)/i]);
+    const handlingTime = firstMatch(rawText, [/(\d+\s+business days?)/i]);
+    const condition = firstMatch(rawText, [/\b(New|Used|Pre-owned|Refurbished|For parts or not working)\b/i]);
+    const promotedText = firstMatch(rawText, [/(Promoted:[^\n]+)/i]);
+    const category = firstMatch(rawText, [/(?:^|\s)([^\n]+\s+in\s+[^\n]+>[^\n]+)/i]);
+
+    return buildEbayBulkListing({
+      draftId: firstMatch(checkbox?.id || '', [/draft-checkbox-(\d+)/i]),
+      itemId: firstMatch(url, [/\/itm\/(\d+)/i]),
+      title,
+      url,
+      image,
+      status,
+      price: parseEbayBulkAmount(priceText),
+      priceText,
+      startPrice: parseEbayBulkAmount(startPriceText),
+      startPriceText,
+      quantity: parsePlainInteger(quantityText),
+      quantityText,
+      customLabel: fieldValue([/^custom\s*label$/i]),
+      format,
+      duration,
+      shippingText,
+      handlingTime,
+      category,
+      condition,
+      promotedText,
+      recommendations,
+      descriptionAvailable: /edit\s+description/i.test(rawText),
+      fields,
+      controls,
+      rawText: [rawText, title, Object.values(normalizeEbayBulkFieldEntries(fields)).join(' ')].filter(Boolean).join(' ').replace(/\s+/g, ' ')
+    });
+  }
+
+  function extractEbayBulkSellListings(root = document) {
+    const tables = Array.from(root?.querySelectorAll?.('table') || []);
+    const table = tables.find(candidate => candidate.querySelector?.('input[aria-label^="Select item to bulk edit"]'))
+      || root?.querySelector?.('table.bg-grid');
+    if (!table) return [];
+    const rows = Array.from(table.querySelectorAll('tr')).filter(row => row.querySelector('input[aria-label^="Select item to bulk edit"]'));
+    return dedupeListings(rows.map(extractEbayBulkListingFromElement).filter(row => row.title));
+  }
+
+  function parseEbayBulkFieldEntriesFromHtml(rowHtml) {
+    const entries = [];
+    const fieldPattern = /<(input|textarea|select)\b([^>]*?)(?:>([\s\S]*?)<\/\1\s*>|\s*\/?>)/gi;
+    let match;
+    while ((match = fieldPattern.exec(String(rowHtml || '')))) {
+      const attrs = match[2] || '';
+      const label = normalizeEbayBulkFieldLabel(firstMatch(attrs, [
+        /aria-labelledby\s*=\s*["']([^"']+)/i,
+        /aria-label\s*=\s*["']([^"']+)/i,
+        /name\s*=\s*["']([^"']+)/i
+      ]));
+      const value = firstMatch(attrs, [/value\s*=\s*["']([^"']*)/i]) || stripHtml(match[3] || '');
+      if (label && value) entries.push({ label, value });
+    }
+    return entries;
+  }
+
+  function parseEbayBulkSellListingsHtml(html) {
+    const text = String(html || '');
+    const rows = Array.from(text.matchAll(/<tr\b[\s\S]*?<\/tr\s*>/gi)).map(match => match[0]);
+    return dedupeListings(rows.map(rowHtml => {
+      const checkboxLabel = firstMatch(rowHtml, [/aria-label\s*=\s*["'](Select item to bulk edit[^"']*)/i]);
+      if (!checkboxLabel) return null;
+      const fields = parseEbayBulkFieldEntriesFromHtml(rowHtml);
+      const titleFromCheckbox = checkboxLabel.replace(/^Select item to bulk edit\s*-\s*/i, '').trim();
+      const fieldValue = (patterns) => firstEbayBulkFieldValue(fields, patterns);
+      const rawText = stripHtml(rowHtml);
+      const url = normalizeListingUrl(firstMatch(rowHtml, [
+        /href\s*=\s*["'](https?:\/\/www\.ebay\.com\/itm\/\d+[^"']*)/i,
+        /href\s*=\s*["'](\/itm\/\d+[^"']*)/i
+      ]));
+      const controls = Array.from(rowHtml.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button\s*>/gi)).map(match => stripHtml(match[1])).filter(Boolean);
+      const priceText = fieldValue([/^price$/i]);
+      const startPriceText = fieldValue([/^start\s*price$/i]);
+      const quantityText = fieldValue([/available\s*quantity/i, /^quantity$/i]);
+      return buildEbayBulkListing({
+        draftId: firstMatch(rowHtml, [/id\s*=\s*["']draft-checkbox-(\d+)/i]),
+        itemId: firstMatch(url, [/\/itm\/(\d+)/i]),
+        title: fieldValue([/^item\s*title$/i, /^title$/i]) || titleFromCheckbox,
+        url,
+        image: firstMatch(rowHtml, [/(?:src|data-src)\s*=\s*["']([^"']+)/i]),
+        status: firstMatch(rawText, [/\b(Draft|Active|Ended|Sold|Canceled|Cancelled|Inactive)\b/i]),
+        price: parseEbayBulkAmount(priceText),
+        priceText,
+        startPrice: parseEbayBulkAmount(startPriceText),
+        startPriceText,
+        quantity: parsePlainInteger(quantityText),
+        quantityText,
+        customLabel: fieldValue([/^custom\s*label$/i]),
+        format: controls.find(value => /buy it now|auction|classified/i.test(value)) || firstMatch(rawText, [/(Buy It Now|Auction|Classified)/i]),
+        duration: controls.find(value => /good ['’]?til canceled|days?|duration/i.test(value)) || firstMatch(rawText, [/(Good ['’]?Til Canceled|\d+\s+days?)/i]),
+        shippingText: firstMatch(rawText, [/(Buyer pays[^\n]*shipping[^\n]*|Free shipping|calculated fee[^\n]*)/i]),
+        handlingTime: firstMatch(rawText, [/(\d+\s+business days?)/i]),
+        category: firstMatch(rawText, [/(?:^|\s)([^\n]+\s+in\s+[^\n]+>[^\n]+)/i]),
+        condition: firstMatch(rawText, [/\b(New|Used|Pre-owned|Refurbished|For parts or not working)\b/i]),
+        promotedText: firstMatch(rawText, [/(Promoted:[^\n]+)/i]),
+        recommendations: parsePlainInteger(firstMatch(rawText, [/\b(\d+)\s+recommendations?\b/i])),
+        descriptionAvailable: /edit\s+description/i.test(rawText),
+        fields,
+        controls,
+        rawText: [rawText, titleFromCheckbox, Object.values(normalizeEbayBulkFieldEntries(fields)).join(' ')].filter(Boolean).join(' ').replace(/\s+/g, ' ')
+      });
+    }).filter(Boolean));
+  }
+
+  function extractEbayBulkExpectedTotal(root = document) {
+    const raw = textOf(root?.body || root?.documentElement || root || '');
+    return parsePlainInteger(firstMatch(raw, [/\bof\s+(\d+)\s+item(?:s|\(s\))?\s+selected/i, /\b(\d+)\s+item(?:s|\(s\))?\s+selected/i]));
+  }
+
+  function getEbayBulkSellContext(loc = location, root = document) {
+    let url = '';
+    try { url = new URL(String(loc?.href || loc || ''), 'https://www.ebay.com/').href; } catch { url = String(loc?.href || loc || ''); }
+    let parsed;
+    try { parsed = new URL(url); } catch { parsed = null; }
+    const params = parsed?.searchParams;
+    return {
+      source: 'eBay',
+      pageKind: 'ebay-bulk-sell',
+      title: String(root?.title || 'eBay Bulk Sell').trim(),
+      url,
+      workspaceId: params?.get('workspaceId') || '',
+      returnUrl: params?.get('ru') || '',
+      selectedCount: extractEbayBulkExpectedTotal(root),
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  function buildEbayBulkSellLlmBrief(listings, context = {}) {
+    const rows = Array.isArray(listings) ? listings : [];
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      'eBay bulk-sell listing review:',
+      'Review the complete listing data for each eBay row. Preserve the exact title, model/brand clues, price, quantity, condition, shipping, category, and raw field values when recommending edits or resale actions.',
+      'Do not submit, revise, delete, publish, or otherwise mutate eBay listings from this brief.',
+      '',
+      'eBay bulk-sell context:',
+      JSON.stringify(context, null, 2),
+      '',
+      `Listings exported: ${rows.length}`,
+      '',
+      'Full eBay bulk listing JSON:',
+      JSON.stringify({ context, listings: rows }, null, 2)
+    ].join('\n');
+  }
+
   function buildFlipTrackerListingsExportHtml(listings, meta = {}) {
     const rows = Array.isArray(listings) ? listings : [];
     const generatedAt = meta.generatedAt || new Date().toISOString();
@@ -2600,6 +2870,7 @@ ${cards}
     findConfirmSurface,
     getLoadTarget,
     isLiveCatalogPage,
+    isEbayBulkSellPage,
     isFlipTrackerListingPage,
     shouldInitOnLocation,
     getLotTiles,
@@ -2611,6 +2882,10 @@ ${cards}
     extractLivePageLots,
     expandLivePageLots,
     buildLlmAuctionBrief,
+    parseEbayBulkSellListingsHtml,
+    extractEbayBulkSellListings,
+    getEbayBulkSellContext,
+    buildEbayBulkSellLlmBrief,
     parseEbayActiveListingsHtml,
     parseFacebookMarketplaceListingsHtml,
     parseFlipTrackerActiveListingsHtml,
@@ -6169,9 +6444,16 @@ ${cards}
     return resolveHiBidPage(loc).kind === 'live';
   }
 
+  function isEbayBulkSellPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const pathname = String(loc.pathname || '');
+    return (host === 'www.ebay.com' || host === 'ebay.com') && /^\/bulksell\b/i.test(pathname);
+  }
+
   function isFlipTrackerListingPage(loc = location) {
     const host = String(loc.hostname || '').toLowerCase();
     const pathname = String(loc.pathname || '');
+    if (isEbayBulkSellPage(loc)) return true;
     if (host === 'www.ebay.com') {
       return /^\/sh\/lst\b/i.test(pathname) || /^\/mys\//i.test(pathname);
     }
@@ -6184,6 +6466,9 @@ ${cards}
   function resolveFlipTrackerPage(loc = location) {
     const host = String(loc.hostname || '').toLowerCase();
     const pathname = String(loc.pathname || '');
+    if ((host === 'www.ebay.com' || host === 'ebay.com') && /^\/bulksell\b/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-ebay-bulk', source: 'ebay', host, reason: 'eBay bulk-sell listing export route' };
+    }
     if (host === 'www.ebay.com' && (/^\/sh\/lst\b/i.test(pathname) || /^\/mys\//i.test(pathname))) {
       return { supported: true, kind: 'fliptracker-ebay', source: 'ebay', host, reason: 'eBay active listing export route' };
     }
@@ -7055,6 +7340,7 @@ ${cards}
   }
 
   function scanCurrentFlipTrackerListings() {
+    if (isEbayBulkSellPage()) return extractEbayBulkSellListings(document);
     return parseFlipTrackerActiveListingsHtml(document.documentElement?.outerHTML || '', {
       url: location.href
     });
@@ -7795,7 +8081,31 @@ ${cards}
     `;
   }
 
-  function renderFlipTrackerSection(debugEnabled) {
+  function renderEbayBulkSellSection(debugEnabled) {
+    return `
+      <section id="ebay-bulk-sell-export-mode" class="hiba-section" data-module="fliptracker" data-page-kind="fliptracker-ebay-bulk">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">eBay bulk sell</div>
+            <strong>Listing Export</strong>
+          </div>
+          <span class="hiba-chip neutral">JSON / LLM</span>
+        </div>
+        <div class="hiba-actions">
+          ${actionButton('fliptracker-listing-scan', 'scan', 'Scan Listings', 'primary', '', 'Read every visible eBay bulk-sell row, including title and listing fields.')}
+          ${actionButton('ebay-bulk-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy normalized eBay bulk-sell listing data, including titles and row fields.')}
+          ${actionButton('ebay-bulk-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Copy the full resale-analysis prompt and eBay listing data for a desktop LLM.')}
+          ${actionButton('fliptracker-listing-copy', 'copy', 'Copy HTML', 'secondary', '', 'Copy a FlipTracker-compatible HTML export of the eBay rows.')}
+          ${actionButton('fliptracker-listing-download', 'download', 'Download', 'success', '', 'Download the FlipTracker-compatible eBay listing export.')}
+        </div>
+        ${renderDebugActions(debugEnabled)}
+        <div id="fliptracker-listing-status" class="hiba-meta">Waiting to scan the eBay bulk-sell rows.</div>
+      </section>
+    `;
+  }
+
+  function renderFlipTrackerSection(debugEnabled, route = {}) {
+    if (route?.kind === 'fliptracker-ebay-bulk') return renderEbayBulkSellSection(debugEnabled);
     return `
       <section id="fliptracker-listing-export-mode" class="hiba-section" data-module="fliptracker">
         <div class="hiba-section-head">
@@ -7818,7 +8128,7 @@ ${cards}
 
   function renderActiveSection(mode, debugEnabled, route = {}) {
     if (mode === 'live') return renderLiveSection(debugEnabled);
-    if (mode === 'fliptracker') return renderFlipTrackerSection(debugEnabled);
+    if (mode === 'fliptracker') return renderFlipTrackerSection(debugEnabled, route);
     if (mode === 'auctionninja') return renderAuctionNinjaSection(debugEnabled, route);
     if (mode === 'aar') return renderAarSection(debugEnabled, route);
     if (mode === 'govdeals') return renderGovDealsSection(debugEnabled, route);
@@ -8000,6 +8310,7 @@ ${cards}
     const toastEl = panel.querySelector('#flipperaddon-toast');
     const liveMode = activeMode === 'live';
     const listingExportMode = activeMode === 'fliptracker';
+    const ebayBulkSellMode = listingExportMode && activeRoute?.kind === 'fliptracker-ebay-bulk';
     const auctionNinjaMode = activeMode === 'auctionninja';
     const aarMode = activeMode === 'aar';
     const govDealsMode = activeMode === 'govdeals';
@@ -8016,6 +8327,8 @@ ${cards}
     const listingExportScanButton = panel.querySelector('#fliptracker-listing-scan');
     const listingExportCopyButton = panel.querySelector('#fliptracker-listing-copy');
     const listingExportDownloadButton = panel.querySelector('#fliptracker-listing-download');
+    const ebayBulkCopyJsonButton = panel.querySelector('#ebay-bulk-copy-json');
+    const ebayBulkCopyLlmButton = panel.querySelector('#ebay-bulk-copy-llm');
     const liveCopyJsonButton = panel.querySelector('#hibid-live-copy-json');
     const liveCopyLlmButton = panel.querySelector('#hibid-live-copy-llm');
     const catalogCopyJsonButton = panel.querySelector('#hibid-catalog-copy-json');
@@ -8124,8 +8437,12 @@ ${cards}
     const renderListingExport = (rows) => {
       state.listingRows = rows;
       if (listingExportStatusEl) listingExportStatusEl.textContent = rows.length
-        ? `Found ${rows.length} active listing card(s). Download the export, then scan/import it in FlipTracker.`
-        : 'No active listing cards found. Scroll/load more listings, then scan again.';
+        ? (ebayBulkSellMode
+          ? `Found ${rows.length} eBay bulk listing row(s).`
+          : 'Found ' + rows.length + ' active listing card(s). Download the export, then scan/import it in FlipTracker.')
+        : (ebayBulkSellMode
+          ? 'No eBay bulk listing rows found. Wait for the grid to load, then scan again.'
+          : 'No active listing cards found. Scroll/load more listings, then scan again.');
     };
 
     const renderAuctionNinjaLots = (rows, context = {}) => {
@@ -8398,6 +8715,32 @@ ${cards}
       downloadTextFile(filename, currentListingExportHtml());
       status(`Downloaded ${filename}. Put it in ImportInbox, then use FlipTracker import.`);
     });
+
+    const copyEbayBulkSell = async (kind) => {
+      if (!ebayBulkSellMode || state.busy) return;
+      setScrapingBusy(true);
+      try {
+        scanListingsForExport();
+        if (!state.listingRows.length) {
+          status('No eBay bulk listing rows found.');
+          return;
+        }
+        if (!validateListingRowsForCurrentRoute(state.listingRows)) return;
+        const context = getEbayBulkSellContext(location, document);
+        const payload = kind === 'llm'
+          ? buildEbayBulkSellLlmBrief(state.listingRows, context)
+          : JSON.stringify({ context, listings: state.listingRows }, null, 2);
+        const copied = await writeClipboard(payload).catch(() => false);
+        status(copied
+          ? `Copied eBay ${kind === 'llm' ? 'LLM brief' : 'JSON'} for ${state.listingRows.length} listing(s).`
+          : 'eBay listing copy failed. Use Copy HTML or Download.');
+      } finally {
+        setScrapingBusy(false);
+      }
+    };
+
+    ebayBulkCopyJsonButton?.addEventListener('click', () => copyEbayBulkSell('json'));
+    ebayBulkCopyLlmButton?.addEventListener('click', () => copyEbayBulkSell('llm'));
 
     const scrapeAuctionNinjaForUi = async (mode) => {
       if (state.busy) return null;
