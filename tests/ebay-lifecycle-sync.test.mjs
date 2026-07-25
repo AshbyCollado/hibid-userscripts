@@ -21,8 +21,16 @@ test('resolves only dedicated eBay lifecycle routes', () => {
 
   assert.equal(core.resolveFlipTrackerPage(new URL('https://www.ebay.com/sh/lst/active')).kind, 'fliptracker-ebay-active');
   assert.equal(core.resolveFlipTrackerPage(new URL('https://www.ebay.com/mys/active')).kind, 'fliptracker-ebay-active');
+  assert.equal(
+    core.resolveFlipTrackerPage(new URL('https://www.ebay.com/mys/active/rf/container_sort=TIME_LEFT_NEWLY_LISTED&container_filter=ALL&container_limit=25&container_offset=25')).kind,
+    'fliptracker-ebay-active',
+  );
   assert.equal(core.resolveFlipTrackerPage(new URL('https://www.ebay.com/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS')).kind, 'fliptracker-ebay-ended');
   assert.equal(core.resolveFlipTrackerPage(new URL('https://www.ebay.com/mys/sold')).kind, 'fliptracker-ebay-sold');
+  assert.equal(
+    core.resolveFlipTrackerPage(new URL('https://www.ebay.com/mys/sold/rf/container_limit=25&container_offset=25')).kind,
+    'fliptracker-ebay-sold',
+  );
   assert.equal(core.resolveFlipTrackerPage(new URL('https://www.ebay.com/mes/transactionlist?sh=true')).kind, 'fliptracker-ebay-transactions');
 
   [

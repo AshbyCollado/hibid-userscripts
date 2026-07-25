@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.71
+// @version      0.7.72
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.71';
+  const SCRIPT_VERSION = '0.7.72';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -7477,6 +7477,11 @@ ${cards}
     return (host === 'www.ebay.com' || host === 'ebay.com') && /^\/bulksell\b/i.test(pathname);
   }
 
+  function isEbayMyLifecyclePath(pathname, leaf) {
+    const escapedLeaf = String(leaf || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^/mys/${escapedLeaf}(?:/rf(?:/.*)?)?/?$`, 'i').test(String(pathname || ''));
+  }
+
   function isFlipTrackerListingPage(loc = location) {
     const host = String(loc.hostname || '').toLowerCase();
     const pathname = String(loc.pathname || '');
@@ -7484,7 +7489,8 @@ ${cards}
     if (host === 'www.ebay.com') {
       return /^\/sh\/lst\/active\/?$/i.test(pathname)
         || /^\/sh\/lst\/ended\/?$/i.test(pathname)
-        || /^\/mys\/(?:active|sold)\/?$/i.test(pathname)
+        || isEbayMyLifecyclePath(pathname, 'active')
+        || isEbayMyLifecyclePath(pathname, 'sold')
         || /^\/mes\/transactionlist\/?$/i.test(pathname);
     }
     if (host === 'www.facebook.com' || host === 'facebook.com') {
@@ -7501,13 +7507,13 @@ ${cards}
     if ((host === 'www.ebay.com' || host === 'ebay.com') && /^\/bulksell\b/i.test(pathname)) {
       return { supported: true, kind: 'fliptracker-ebay-bulk', source: 'ebay', host, reason: 'eBay bulk-sell listing export route' };
     }
-    if (host === 'www.ebay.com' && (/^\/sh\/lst\/active\/?$/i.test(pathname) || /^\/mys\/active\/?$/i.test(pathname))) {
+    if (host === 'www.ebay.com' && (/^\/sh\/lst\/active\/?$/i.test(pathname) || isEbayMyLifecyclePath(pathname, 'active'))) {
       return { supported: true, kind: 'fliptracker-ebay-active', source: 'ebay', host, reason: 'eBay active listing export route' };
     }
     if (host === 'www.ebay.com' && /^\/sh\/lst\/ended\/?$/i.test(pathname)) {
       return { supported: true, kind: 'fliptracker-ebay-ended', source: 'ebay', host, reason: 'eBay ended listing reconciliation route' };
     }
-    if (host === 'www.ebay.com' && /^\/mys\/sold\/?$/i.test(pathname)) {
+    if (host === 'www.ebay.com' && isEbayMyLifecyclePath(pathname, 'sold')) {
       return { supported: true, kind: 'fliptracker-ebay-sold', source: 'ebay', host, reason: 'eBay sold order export route' };
     }
     if (host === 'www.ebay.com' && /^\/mes\/transactionlist\/?$/i.test(pathname)) {
