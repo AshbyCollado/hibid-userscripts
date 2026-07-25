@@ -157,6 +157,26 @@ test('recognizes current eBay description host and prefers the seller descriptio
 });
 
 
+test('cross-list envelope suppresses a seller description with a conflicting size variant', () => {
+  const core = loadCore();
+  const envelope = core.buildCrosslistEnvelope({
+    itemId: '336701097242',
+    title: 'TWIN BEDGEAR Dri-Tec Waterproof Performance Mattress Protector White',
+    price: 29.99,
+    description: 'eBay Bedgear Queen Dri-Tec Waterproof Mattress Protector',
+    condition: 'New',
+    categoryPath: ['Home & Garden', 'Bedding'],
+    itemSpecifics: {},
+    imageUrls: ['https://i.ebayimg.com/images/g/U2k/s-l1600.jpg'],
+    imageEvidence: 'open-graph',
+  }, {}, { location: 'Carteret, NJ' });
+
+  assert.doesNotMatch(envelope.listing.description, /Queen/i);
+  assert.match(envelope.listing.description, /TWIN BEDGEAR/);
+  assert.ok(envelope.warnings.some(warning => /description says queen/i.test(warning)));
+});
+
+
 test('uses only the item Product gallery and rejects recommendation-module images', () => {
   const core = loadCore();
   const detail = core.extractEbayItemDetailHtml(`

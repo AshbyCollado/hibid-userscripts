@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.82
+// @version      0.7.83
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.82';
+  const SCRIPT_VERSION = '0.7.83';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -2702,9 +2702,30 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const price = Number.isFinite(Number(activeListing?.price))
       ? Number(activeListing.price)
       : (Number.isFinite(Number(detail?.price)) ? Number(detail.price) : null);
-    const description = cleanEbayCrosslistDescription(detail?.description || title);
+    let description = cleanEbayCrosslistDescription(detail?.description || title);
     const imageUrls = uniqueNonEmpty((detail?.imageUrls || []).map(normalizeEbayCrosslistImageUrl)).slice(0, 20);
     const warnings = [];
+    const listingVariant = text => {
+      const value = ` ${String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+      const variants = [
+        ['split california king', 'split california king'],
+        ['california king', 'california king'],
+        ['split king', 'split king'],
+        ['twin xl', 'twin xl'],
+        ['full xl', 'full xl'],
+        ['queen', 'queen'],
+        ['king', 'king'],
+        ['twin', 'twin'],
+        ['full', 'full'],
+      ];
+      return variants.find(([needle]) => value.includes(` ${needle} `))?.[1] || '';
+    };
+    const titleVariant = listingVariant(title);
+    const descriptionVariant = listingVariant(description);
+    if (titleVariant && descriptionVariant && titleVariant !== descriptionVariant) {
+      warnings.push(`Seller description says ${descriptionVariant}, but the listing title says ${titleVariant}; description was replaced for review.`);
+      description = `${title}\n\nPlease review the photos for exact condition and included contents.`;
+    }
     if (!detail?.description) warnings.push('Seller description was not found; verify the generated draft text.');
     if (!imageUrls.length) warnings.push('No authoritative eBay listing-gallery photos were found.');
     if (imageUrls.length && detail?.imageEvidence === 'open-graph') warnings.push('Only the listing primary photo was available from eBay metadata.');
