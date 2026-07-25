@@ -120,6 +120,27 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
   ]);
 });
 
+test('rejects Seller Hub markup fragments as custom labels', () => {
+  const core = loadCore();
+  const html = `
+    <table>
+      <thead><tr><th>Item</th><th>Custom label (SKU)</th><th>Current price</th></tr></thead>
+      <tbody><tr data-testid="listing-row">
+        <td><a href="/itm/336701097241">Emporio Armani Sunglasses</a></td>
+        <td>shui-dt--left editable inline-editable&quot;&gt;</td>
+        <td>$65.00</td>
+      </tr></tbody>
+    </table>
+  `;
+
+  const rows = core.parseFlipTrackerActiveListingsHtml(html, {
+    url: 'https://www.ebay.com/sh/lst/active',
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].customLabel, '');
+});
+
 test('resolves and parses eBay bulk-sell revise rows with full listing fields', () => {
   const core = loadCore();
   const url = new URL('https://www.ebay.com/bulksell?workspaceId=4208669753366&ru=https%3A%2F%2Fwww.ebay.com%2Fsh%2Flst%2Factive');

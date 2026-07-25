@@ -280,7 +280,7 @@ test('removes eBay branding and formats compressed listing specifications for Fa
     'eBay \u200bAuthentic Emporio Armani Sunglasses (Model EA 9037/S) '
       + '\u200bSpecifications: \u200bModel Number: EA 9037/S \u200bColor Code: 000 '
       + '\u200bTemple Length: 125mm \u200bOrigin: Made in Italy '
-      + '\u200bDesign: Eagle logo on the center bridge. \u200bCondition: Excellent',
+      + '\u200bDesign: Eagle logo on the center bridge bridge. \u200bCondition: Excellent',
   );
 
   assert.doesNotMatch(description, /\beBay\b/i);

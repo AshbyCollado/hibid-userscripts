@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.85
+// @version      0.7.86
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.85';
+  const SCRIPT_VERSION = '0.7.86';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -2411,6 +2411,13 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return /^[-\u2013\u2014]$/.test(text) ? '' : text;
   }
 
+  function cleanEbayCustomLabelValue(value) {
+    const text = cleanEbaySellerHubCell(value);
+    if (!text || text.length > 100) return '';
+    if (/[<>="']/.test(text) || /\b(?:editable|inline-editable|shui-|aria-|data-)\b/i.test(text)) return '';
+    return text;
+  }
+
   function parseEbaySellerHubTableListingsHtml(html, options = {}) {
     const rowChunks = ebaySellerHubTableRowChunks(html);
     const columnMap = ebaySellerHubColumnMap(html);
@@ -2487,7 +2494,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         watchers: Number.isFinite(cellWatchers) ? cellWatchers : parsePlainInteger(firstMatch(rowText, [/\b([\d,]+)\s+Watchers?\b/i])),
         bids: Number.isFinite(cellBids) ? cellBids : null,
         clicks: null,
-        customLabel: cleanEbaySellerHubCell(customLabelCell) || activeFacts.customLabel,
+        customLabel: cleanEbayCustomLabelValue(customLabelCell) || cleanEbayCustomLabelValue(activeFacts.customLabel),
         quantityTotal: activeFacts.quantityTotal,
         quantityAvailable: Number.isFinite(cellQuantity) ? cellQuantity : activeFacts.quantityAvailable,
         offersEnabled: activeFacts.offersEnabled || /\b(?:or best offer|best offer)\b/i.test(cleanEbaySellerHubCell(priceCell)),
@@ -2666,6 +2673,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       .replace(/\b(?:Visit (?:my|our) eBay store|See (?:my|our) other items|Thanks for looking)\b[.!]?/gi, ' ')
       .replace(/[\u200B-\u200D\uFEFF]/g, ' ')
       .replace(/^\s*eBay\b[\s|:\-]*/i, '')
+      .replace(/\b([A-Za-z][A-Za-z'-]{3,})\s+\1\b/gi, '$1')
       .replace(/[ \t]+/g, ' ')
       .replace(/ *\n */g, '\n')
       .replace(/\n{3,}/g, '\n\n')

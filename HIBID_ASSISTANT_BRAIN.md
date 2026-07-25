@@ -460,3 +460,8 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - Current condition evidence may appear as `displayLabel=Condition` / `displayValue=...` JSON or an `aria-label` ending in `About this item condition`; both are accepted as source evidence.
 - A regression fixture covers the live Emporio Armani item shape and requires Product price, breadcrumb category, and `Pre-owned - Excellent` condition to survive extraction.
 - Verification evidence: focused Facebook cross-list tests pass `29/29`; the complete add-on suite passes `160/160`. A non-publishing Waterfox draft remains the final runtime release gate.
+
+## 2026-07-25 Cross-list Data Hygiene (v0.7.86)
+
+- Blank Seller Hub custom-label cells can expose partial table markup when eBay omits the editable value. Custom labels now pass a strict small-text sanitizer before entering lifecycle or cross-list records.
+- Accidental adjacent duplicate words in seller descriptions are collapsed during Facebook cleanup while preserving meaningful short repetitions.
