@@ -7,6 +7,15 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+test('userscript metadata version matches the runtime version', () => {
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  const metadataVersion = source.match(/^\/\/\s*@version\s+([^\s]+)$/m)?.[1];
+  const runtimeVersion = source.match(/const SCRIPT_VERSION = '([^']+)'/)?.[1];
+  assert.ok(metadataVersion, 'missing userscript metadata version');
+  assert.ok(runtimeVersion, 'missing runtime version');
+  assert.equal(runtimeVersion, metadataVersion);
+});
+
 function loadCore(options = {}) {
   const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
   const sandbox = {
