@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.88
+// @version      0.7.89
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.88';
+  const SCRIPT_VERSION = '0.7.89';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -2384,7 +2384,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function ebaySellerHubColumnMap(html) {
     const headerRow = ebaySellerHubTableRowChunks(html).find(row => {
       const text = stripHtml(row);
-      return /\bItem number\b/i.test(text) && /\bItem\b/i.test(text) && /\bCurrent price\b/i.test(text);
+      return /\bItem\b/i.test(text) && /\bCurrent price\b/i.test(text);
     }) || '';
     const cells = ebaySellerHubRowCells(headerRow, true);
     const map = new Map();
@@ -2392,6 +2392,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       const label = normalizeEbaySellerHubColumnName(cell);
       if (label) map.set(label, index);
     });
+    map.cellCount = cells.length;
     return map;
   }
 
@@ -2427,18 +2428,19 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     rowChunks.forEach(chunk => {
       if (!/(?:\/itm\/\d+|itemId=\d+|itemid=\d+)/i.test(chunk)) return;
       const cells = ebaySellerHubRowCells(chunk);
-      const itemNumberCell = ebaySellerHubCellByColumn(cells, columnMap, ['Item number']);
-      const itemCell = ebaySellerHubCellByColumn(cells, columnMap, ['Item']);
-      const priceCell = ebaySellerHubCellByColumn(cells, columnMap, ['Current price']);
-      const quantityCell = ebaySellerHubCellByColumn(cells, columnMap, ['Available quantity']);
-      const viewsCell = ebaySellerHubCellByColumn(cells, columnMap, ['Views (30 days)', 'Views']);
-      const watchersCell = ebaySellerHubCellByColumn(cells, columnMap, ['Watchers']);
-      const bidsCell = ebaySellerHubCellByColumn(cells, columnMap, ['Bids']);
-      const endDateCell = ebaySellerHubCellByColumn(cells, columnMap, ['End date']);
-      const soldStatusCell = ebaySellerHubCellByColumn(cells, columnMap, ['Sold status', 'Status']);
-      const formatCell = ebaySellerHubCellByColumn(cells, columnMap, ['Format']);
-      const durationCell = ebaySellerHubCellByColumn(cells, columnMap, ['Duration']);
-      const customLabelCell = ebaySellerHubCellByColumn(cells, columnMap, ['Custom label (SKU)', 'Custom label', 'SKU']);
+      const alignedColumnMap = cells.length === columnMap.cellCount ? columnMap : new Map();
+      const itemNumberCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Item number']);
+      const itemCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Item']);
+      const priceCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Current price']);
+      const quantityCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Available quantity']);
+      const viewsCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Views (30 days)', 'Views']);
+      const watchersCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Watchers']);
+      const bidsCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Bids']);
+      const endDateCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['End date']);
+      const soldStatusCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Sold status', 'Status']);
+      const formatCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Format']);
+      const durationCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Duration']);
+      const customLabelCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Custom label (SKU)', 'Custom label', 'SKU']);
       const anchors = Array.from(chunk.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)).map(match => {
         const attrs = match[1] || '';
         const href = decodeHtml(firstMatch(attrs, [/href="([^"]+)"/i, /data-href="([^"]+)"/i]));

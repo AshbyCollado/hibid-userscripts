@@ -120,6 +120,28 @@ test('parses active eBay Seller Hub table rows for FlipTracker export', () => {
   ]);
 });
 
+test('parses the first Seller Hub grid row when the header omits Item number and shows two prices', () => {
+  const core = loadCore();
+  const rows = core.parseEbayActiveListingsHtml(`
+    <main><h1>Manage active listings (1)</h1>
+      <table><thead><tr>
+        <th>Actions</th><th>Item</th><th>Custom label (SKU)</th><th>Current price</th><th>Available quantity</th>
+      </tr></thead><tbody><tr data-id="336701036874" class="grid-row">
+        <td><a href="/sl/list?mode=ReviseItem&amp;itemId=336701036874">Edit</a></td>
+        <td><a href="/itm/336701036874">Rev-A-Shelf Door Mounting Kit</a></td>
+        <td></td>
+        <td><span class="sh-neg">$13.05</span><span>$25.00</span><span>Buy It Now</span></td>
+        <td>1</td>
+      </tr></tbody></table>
+    </main>
+  `);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].itemId, '336701036874');
+  assert.equal(rows[0].price, 13.05);
+  assert.equal(rows[0].title, 'Rev-A-Shelf Door Mounting Kit');
+});
+
 test('rejects Seller Hub markup fragments as custom labels', () => {
   const core = loadCore();
   const html = `
