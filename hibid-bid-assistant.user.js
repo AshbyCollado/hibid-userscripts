@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.80
+// @version      0.7.81
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.80';
+  const SCRIPT_VERSION = '0.7.81';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -3962,6 +3962,7 @@ ${cards}
     getStoredPlanText,
     shouldRebuildPanelForMode,
     shouldTeardownPanelForRebuild,
+    shouldPreservePanelDuringManagedNavigation,
     scanPlan,
     lotSummary,
     getStoredMinimized,
@@ -10190,6 +10191,14 @@ ${cards}
     return /^(mode-change|unsupported|debug-toggle)\b/i.test(String(reason || ''));
   }
 
+  function shouldPreservePanelDuringManagedNavigation(navigationLock, existingMode, nextMode, allowed = true) {
+    return navigationLock === 'true'
+      && Boolean(existingMode)
+      && allowed
+      && nextMode !== 'unsupported'
+      && existingMode === nextMode;
+  }
+
   function buildPanelHtml(options = {}) {
     const mode = options.mode || (typeof location !== 'undefined' ? resolveAssistantMode(location).mode : 'catalog') || 'catalog';
     const debugEnabled = options.debugEnabled ?? getStoredDebugEnabled();
@@ -10982,6 +10991,7 @@ ${cards}
       setScrapingBusy(true);
       crosslistQueueAllButton.disabled = true;
       const counts = { created: 0, updated: 0, duplicate: 0, published: 0, failed: 0 };
+      panel.dataset.flipperaddonNavigationLock = 'true';
       try {
         status('Collecting every active eBay listing page...');
         const rewind = await rewindEbayLifecycleDomToFirstPage(document);
@@ -11020,6 +11030,8 @@ ${cards}
       } catch (error) {
         status(`Queue refresh failed: ${error?.message || error}`);
       } finally {
+        delete panel.dataset.flipperaddonNavigationLock;
+        panel.dataset.flipperaddonHref = location.href;
         crosslistQueueAllButton.disabled = false;
         setScrapingBusy(false);
       }
@@ -11983,16 +11995,25 @@ ${cards}
       const existingMode = existingPanel?.dataset?.flipperaddonMode || existingPanel?.querySelector?.('.hiba-drawer')?.dataset?.flipperaddonMode || '';
       const existingVersion = existingPanel?.dataset?.flipperaddonVersion || '';
       const existingHref = existingPanel?.dataset?.flipperaddonHref || '';
+      const preserveManagedNavigation = shouldPreservePanelDuringManagedNavigation(
+        existingPanel?.dataset?.flipperaddonNavigationLock || '',
+        existingMode,
+        modeInfo.mode,
+        allowed
+      );
       if (!allowed) {
         teardownPanel(`unsupported:${reason}`);
         return false;
       }
       if (existingPanel && existingVersion && existingVersion !== SCRIPT_VERSION) {
         teardownPanel(`version-change:${existingVersion}:${SCRIPT_VERSION}:${reason}`);
-      } else if (existingPanel && existingHref && existingHref !== location.href) {
+      } else if (existingPanel && existingHref && existingHref !== location.href && !preserveManagedNavigation) {
         teardownPanel(`route-change:${reason}`);
       } else if (shouldRebuildPanelForMode(existingMode, modeInfo.mode, allowed, Boolean(existingPanel))) {
         teardownPanel(`mode-change:${existingMode || 'none'}:${modeInfo.mode}:${reason}`);
+      }
+      if (existingPanel && preserveManagedNavigation) {
+        existingPanel.dataset.flipperaddonHref = location.href;
       }
       if (location.href !== lastMountedHref) {
         panelClosed = false;

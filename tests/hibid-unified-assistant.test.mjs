@@ -1969,6 +1969,15 @@ test('panel rebuild reasons that remove a panel require teardown cleanup', () =>
   assert.equal(core.shouldTeardownPanelForRebuild('noop'), false);
 });
 
+test('managed same-route pagination preserves the panel until collection finishes', () => {
+  const core = loadCore();
+
+  assert.equal(core.shouldPreservePanelDuringManagedNavigation('true', 'fliptracker', 'fliptracker', true), true);
+  assert.equal(core.shouldPreservePanelDuringManagedNavigation('', 'fliptracker', 'fliptracker', true), false);
+  assert.equal(core.shouldPreservePanelDuringManagedNavigation('true', 'fliptracker', 'catalog', true), false);
+  assert.equal(core.shouldPreservePanelDuringManagedNavigation('true', 'fliptracker', 'unsupported', false), false);
+});
+
 test('LLM auction brief includes the advanced resale coordinator prompt and full lot fields', () => {
   const core = loadCore();
   const brief = core.buildLlmAuctionBrief([
