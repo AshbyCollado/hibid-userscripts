@@ -699,6 +699,49 @@ test('downloads and assigns every authoritative eBay gallery photo in one Facebo
 });
 
 
+test('fails a permanently hanging eBay photo request instead of leaving the draft claimed forever', async () => {
+  const core = loadCore({ setTimeout, clearTimeout });
+  await assert.rejects(
+    core.downloadCrosslistImageFiles(
+      ['https://i.ebayimg.com/images/g/hangs/s-l1600.jpg'],
+      '336701036874',
+      {
+        imageTimeoutMs: 20,
+        requestBlob: () => new Promise(() => {}),
+      },
+    ),
+    /eBay photo 1\/1 timed out after 100ms/,
+  );
+});
+
+
+test('bounds the complete Facebook photo stage when the uploader never settles', async () => {
+  const core = loadCore({ setTimeout, clearTimeout });
+  await assert.rejects(
+    core.fillFacebookMarketplaceDraft({
+      item_id: '336701036874',
+      evidence_hash: 'evidence-hang',
+      facebook_draft: {
+        title: 'Rev-A-Shelf Door Mounting Kit',
+        price: 13,
+        description: 'New cabinet hardware kit.',
+        category: 'Household',
+        condition: 'New',
+        location: 'Carteret, NJ',
+        image_urls: ['https://i.ebayimg.com/images/g/hangs/s-l1600.jpg'],
+      },
+    }, {
+      photoTimeoutMs: 20,
+      setField: async () => ({ ok: true, reason: '' }),
+      selectField: async () => ({ ok: true, reason: '' }),
+      selectLocation: async () => ({ ok: true, reason: '' }),
+      uploadPhotos: () => new Promise(() => {}),
+    }),
+    /Facebook photo upload timed out after 100ms/,
+  );
+});
+
+
 test('reveals Facebook More details before locating the location control', async () => {
   const core = loadCore({
     Event: class Event { constructor(type) { this.type = type; } },

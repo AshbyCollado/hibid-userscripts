@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.90
+// @version      0.7.91
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.90';
+  const SCRIPT_VERSION = '0.7.91';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -8729,6 +8729,20 @@ ${cards}
       .toLowerCase();
   }
 
+  function crosslistStageTimeout(operation, timeoutMs, label) {
+    const run = typeof operation === 'function' ? operation : () => operation;
+    const schedule = globalThis?.setTimeout;
+    const cancel = globalThis?.clearTimeout;
+    if (typeof schedule !== 'function') return Promise.resolve().then(run);
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+      timeoutId = schedule(() => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)), timeoutMs);
+    });
+    return Promise.race([Promise.resolve().then(run), timeout]).finally(() => {
+      if (typeof cancel === 'function') cancel(timeoutId);
+    });
+  }
+
   function facebookNextDraftUrl(loc = location, itemId = '') {
     const origin = /^https:\/\/(?:www\.)?facebook\.com$/i.test(String(loc?.origin || ''))
       ? loc.origin
@@ -9102,18 +9116,22 @@ ${cards}
   }
 
   async function downloadCrosslistImageFiles(imageUrls, itemId, options = {}) {
-    const files = [];
     const limit = Math.min(Number(options.limit) || 10, imageUrls.length);
     const requestBlob = options.requestBlob || (url => gmCrosslistRequest(url, 'blob'));
-    for (let index = 0; index < limit; index += 1) {
-      const url = imageUrls[index];
-      const blob = await requestBlob(url);
+    const imageTimeoutMs = Math.max(100, Number(options.imageTimeoutMs) || 25000);
+    return Promise.all(imageUrls.slice(0, limit).map(async (url, index) => {
+      debug('Facebook draft photo download started', { item_id: itemId, index: index + 1, total: limit });
+      const blob = await crosslistStageTimeout(
+        () => requestBlob(url),
+        imageTimeoutMs,
+        `eBay photo ${index + 1}/${limit}`,
+      );
       const type = String(blob?.type || '').toLowerCase();
       const extension = type.includes('png') ? 'png' : (type.includes('webp') ? 'webp' : 'jpg');
       const filename = `ebay-${itemId}-${String(index + 1).padStart(2, '0')}.${extension}`;
-      files.push(new File([blob], filename, { type: blob?.type || `image/${extension === 'jpg' ? 'jpeg' : extension}` }));
-    }
-    return files;
+      debug('Facebook draft photo download finished', { item_id: itemId, index: index + 1, total: limit });
+      return new File([blob], filename, { type: blob?.type || `image/${extension === 'jpg' ? 'jpeg' : extension}` });
+    }));
   }
 
   async function uploadFacebookDraftPhotos(root, draft, itemId, options = {}) {
@@ -9152,6 +9170,9 @@ ${cards}
     const errors = [];
     const warnings = [...(Array.isArray(record?.warnings) ? record.warnings : [])];
     const fields = {};
+    const fieldTimeoutMs = Math.max(100, Number(options.fieldTimeoutMs) || 8000);
+    const dropdownTimeoutMs = Math.max(100, Number(options.dropdownTimeoutMs) || 15000);
+    const photoTimeoutMs = Math.max(100, Number(options.photoTimeoutMs) || 30000);
 
     for (const [label, value, required] of [
       ['Title', draft.title, true],
@@ -9162,32 +9183,56 @@ ${cards}
         errors.push(`${label} is missing from the queued draft.`);
         continue;
       }
-      const result = await setField(label, value);
+      debug('Facebook draft field started', { item_id: itemId, field: label });
+      const result = await crosslistStageTimeout(
+        () => setField(label, value),
+        fieldTimeoutMs,
+        `Facebook ${label} field`,
+      );
       fields[label] = result;
       if (!result?.ok) errors.push(result?.reason || `${label} could not be filled.`);
+      debug('Facebook draft field finished', { item_id: itemId, field: label, ok: Boolean(result?.ok) });
     }
 
-    const photoResult = await uploadPhotos();
+    debug('Facebook draft photo upload started', { item_id: itemId, count: draft.image_urls?.length || 0 });
+    const photoResult = await crosslistStageTimeout(
+      uploadPhotos,
+      photoTimeoutMs,
+      'Facebook photo upload',
+    );
     fields.Photos = photoResult;
     if (!photoResult?.ok) errors.push(photoResult?.reason || 'Photos could not be uploaded.');
+    debug('Facebook draft photo upload finished', { item_id: itemId, ok: Boolean(photoResult?.ok), count: photoResult?.count || 0 });
 
     for (const [label, value] of [['Category', draft.category], ['Condition', draft.condition]]) {
       if (!value) {
         warnings.push(`${label} needs manual selection.`);
         continue;
       }
-      const result = await selectField(label, value);
+      debug('Facebook draft dropdown started', { item_id: itemId, field: label, value });
+      const result = await crosslistStageTimeout(
+        () => selectField(label, value),
+        dropdownTimeoutMs,
+        `Facebook ${label} selection`,
+      );
       fields[label] = result;
       if (!result?.ok) warnings.push(result?.reason || `${label} needs manual selection.`);
+      debug('Facebook draft dropdown finished', { item_id: itemId, field: label, ok: Boolean(result?.ok) });
     }
     if (draft.location) {
-      const locationResult = await selectLocation(draft.location);
+      debug('Facebook draft location started', { item_id: itemId, value: draft.location });
+      const locationResult = await crosslistStageTimeout(
+        () => selectLocation(draft.location),
+        dropdownTimeoutMs,
+        'Facebook Location selection',
+      );
       fields.Location = locationResult;
       if (!locationResult?.ok) {
         const reason = locationResult?.reason || 'Location could not be selected.';
         if (locationResult?.warningOnly) warnings.push(reason);
         else errors.push(reason);
       }
+      debug('Facebook draft location finished', { item_id: itemId, ok: Boolean(locationResult?.ok) });
     } else {
       errors.push('Location is missing from the queued draft.');
     }
@@ -11287,6 +11332,14 @@ ${cards}
           status('No queued eBay draft is waiting. Queue one from eBay Active first.');
           return;
         }
+        savePendingCrosslist({
+          item_id: claimed.item_id,
+          evidence_hash: claimed.evidence_hash,
+          title: claimed.facebook_draft?.title || claimed.listing?.title || '',
+          started_at: new Date().toISOString(),
+          state: 'Drafting',
+          warnings: [],
+        });
         status(`Downloading ${claimed.facebook_draft?.image_urls?.length || 0} eBay photo(s) and filling Facebook...`);
         const result = await fillFacebookMarketplaceDraft(claimed);
         if (!result.ok) {
@@ -11320,6 +11373,17 @@ ${cards}
           ? `Draft filled with ${result.photo_count} photo(s). Review ${result.warnings.length} warning(s), then publish manually.`
           : `Draft filled with ${result.photo_count} photo(s). Review it, then publish manually.`);
       } catch (error) {
+        if (claimed?.item_id) {
+          savePendingCrosslist({
+            item_id: claimed.item_id,
+            evidence_hash: claimed.evidence_hash,
+            title: claimed.facebook_draft?.title || claimed.listing?.title || '',
+            failed_at: new Date().toISOString(),
+            state: 'Failed',
+            error: String(error?.message || error),
+            warnings: [],
+          });
+        }
         if (claimed?.item_id) {
           await crosslistBridgeRequest('/crosslist/result', {
             item_id: claimed.item_id,
