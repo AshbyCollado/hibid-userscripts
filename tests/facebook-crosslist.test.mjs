@@ -212,6 +212,12 @@ test('renders cross-list controls only on their matching workflow pages', () => 
 });
 
 
+test('clears the panel busy chip after asynchronous work settles', () => {
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  assert.match(source, /if \(!state\.busy\) \{\s*const chip = panel\.querySelector\('#hiba-session-chip'\);\s*if \(chip\?\.textContent === 'busy'\) chip\.textContent = 'idle';/);
+});
+
+
 test('fills required Facebook draft fields and leaves category warnings reviewable', async () => {
   const core = loadCore();
   const setCalls = [];
