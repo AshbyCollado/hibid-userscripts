@@ -442,6 +442,7 @@ test('reveals Facebook More details before locating the location control', async
   const moreDetails = {
     textContent: 'More details Attract more interest by including more',
     getAttribute() { return null; },
+    closest() { return null; },
     click() { revealed = true; },
   };
   const locationControl = {
@@ -470,7 +471,7 @@ test('reveals Facebook More details before locating the location control', async
   };
   const root = {
     querySelectorAll(selector) {
-      if (selector === 'button, [role="button"]') return [moreDetails];
+      if (selector === 'button, [role="button"], div, span') return [moreDetails];
       if (selector.includes('input, textarea')) return revealed ? [locationControl] : [];
       if (selector.includes('[role="option"]')) return revealed ? [locationOption] : [];
       return [];
