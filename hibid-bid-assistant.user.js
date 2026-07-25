@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.93
+// @version      0.7.94
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.93';
+  const SCRIPT_VERSION = '0.7.94';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -83,6 +83,10 @@
   const CROSSLIST_ITEM_PARAM = 'flipperaddon_item_id';
   const CROSSLIST_AUTOSAVE_PARAM = 'flipperaddon_autosave';
   const CROSSLIST_AUTOSAVE_STORAGE_KEY = 'flipperaddon_crosslist_autosave_active';
+  const CROSSLIST_AUTOSAVE_LEASE_KEY = 'flipperaddon_crosslist_autosave_lease';
+  const CROSSLIST_AUTOSAVE_PENDING_KEY = 'flipperaddon_crosslist_autosave_pending';
+  const CROSSLIST_AUTOSAVE_TAB_KEY = 'flipperaddon_crosslist_tab_id';
+  const CROSSLIST_AUTOSAVE_LEASE_MS = 120000;
   const DEBUG_LOG_LIMIT = 200;
   const OUTBID_WATCHLIST_URL = 'https://hibid.com/account/watchlist?status=OUTBID';
   const LEGACY_SCRAPER_IDS = [
@@ -4092,6 +4096,12 @@ ${cards}
     facebookAutoSaveRequested,
     facebookAutoSaveBatchActive,
     setFacebookAutoSaveBatchActive,
+    facebookAutoSaveTabId,
+    claimFacebookAutoSaveLease,
+    releaseFacebookAutoSaveLease,
+    setFacebookPendingDraft,
+    getFacebookPendingDraft,
+    facebookSavedDraftVisible,
     facebookDraftHasContent,
     findFacebookLabeledControl,
     setFacebookControlValue,
@@ -8805,6 +8815,77 @@ ${cards}
     }
   }
 
+  function facebookAutoSaveTabId(storage = globalThis.sessionStorage) {
+    try {
+      let tabId = String(storage?.getItem?.(CROSSLIST_AUTOSAVE_TAB_KEY) || '');
+      if (!tabId) {
+        tabId = `fb-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        storage?.setItem?.(CROSSLIST_AUTOSAVE_TAB_KEY, tabId);
+      }
+      return tabId;
+    } catch (_) {
+      return 'fb-single-tab';
+    }
+  }
+
+  function claimFacebookAutoSaveLease(
+    storage = globalThis.localStorage,
+    session = globalThis.sessionStorage,
+    now = Date.now(),
+  ) {
+    const owner = facebookAutoSaveTabId(session);
+    try {
+      const existing = JSON.parse(storage?.getItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY) || 'null');
+      if (existing?.owner && existing.owner !== owner && Number(existing.expires_at || 0) > now) {
+        return false;
+      }
+      storage?.setItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY, JSON.stringify({
+        owner,
+        expires_at: now + CROSSLIST_AUTOSAVE_LEASE_MS,
+      }));
+      return true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function releaseFacebookAutoSaveLease(
+    storage = globalThis.localStorage,
+    session = globalThis.sessionStorage,
+  ) {
+    try {
+      const owner = facebookAutoSaveTabId(session);
+      const existing = JSON.parse(storage?.getItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY) || 'null');
+      if (!existing?.owner || existing.owner === owner) storage?.removeItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY);
+    } catch (_) {
+      // A stale lease expires automatically.
+    }
+  }
+
+  function setFacebookPendingDraft(record, storage = globalThis.localStorage) {
+    try {
+      if (!record) storage?.removeItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY);
+      else storage?.setItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY, JSON.stringify(record));
+    } catch (_) {
+      // The bridge state remains Drafting if confirmation cannot be persisted.
+    }
+  }
+
+  function getFacebookPendingDraft(storage = globalThis.localStorage) {
+    try {
+      return JSON.parse(storage?.getItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY) || 'null');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function facebookSavedDraftVisible(root, pending) {
+    const text = normalizedFacebookControlText(root?.body?.innerText || root?.body?.textContent || '');
+    const title = normalizedFacebookControlText(pending?.title || '');
+    const titleNeedle = title.slice(0, Math.min(36, title.length));
+    return Boolean(titleNeedle && text.includes(titleNeedle) && /(^|\s)draft($|\s)/.test(text));
+  }
+
   async function saveFacebookMarketplaceDraft(root = document, options = {}) {
     const candidates = facebookPageNodes(root, 'button, a, [role="button"], span, div');
     let control = null;
@@ -11383,6 +11464,10 @@ ${cards}
 
     const fillNextCrosslistDraft = async (requestedItemId = '', options = {}) => {
       if (state.busy) return;
+      if (options.autoSave && !claimFacebookAutoSaveLease()) {
+        status('Another Facebook tab owns the draft batch. This tab will stay idle.');
+        return;
+      }
       setScrapingBusy(true);
       crosslistFillButton.disabled = true;
       let claimed = null;
@@ -11395,7 +11480,10 @@ ${cards}
         }
         claimed = claim.record;
         if (!claimed) {
-          if (options.autoSave) setFacebookAutoSaveBatchActive(false);
+          if (options.autoSave) {
+            setFacebookAutoSaveBatchActive(false);
+            releaseFacebookAutoSaveLease();
+          }
           status('No queued eBay draft is waiting. Queue one from eBay Active first.');
           return;
         }
@@ -11422,9 +11510,19 @@ ${cards}
         }
         if (options.autoSave) {
           status(`Saving ${claimed.facebook_draft?.title || claimed.item_id} as a Facebook draft...`);
+          setFacebookPendingDraft({
+            item_id: claimed.item_id,
+            evidence_hash: claimed.evidence_hash,
+            title: claimed.facebook_draft?.title || claimed.listing?.title || '',
+            photo_count: result.photo_count,
+            warnings: result.warnings,
+            saved_at: new Date().toISOString(),
+          });
           const saveResult = await saveFacebookMarketplaceDraft(document);
           if (!saveResult.ok) {
+            setFacebookPendingDraft(null);
             setFacebookAutoSaveBatchActive(false);
+            releaseFacebookAutoSaveLease();
             await crosslistBridgeRequest('/crosslist/result', {
               item_id: claimed.item_id,
               evidence_hash: claimed.evidence_hash,
@@ -11434,6 +11532,8 @@ ${cards}
             status(`Batch stopped: ${saveResult.reason}`);
             return;
           }
+          status('Facebook accepted Save draft. Waiting for the Selling page to confirm it.');
+          return;
         }
         const transition = await crosslistBridgeRequest('/crosslist/result', {
           item_id: claimed.item_id,
@@ -11455,13 +11555,12 @@ ${cards}
         status(result.warnings.length
           ? `Draft ${options.autoSave ? 'saved' : 'filled'} with ${result.photo_count} photo(s). Review ${result.warnings.length} warning(s), then publish manually.`
           : `Draft ${options.autoSave ? 'saved' : 'filled'} with ${result.photo_count} photo(s). Review it, then publish manually.`);
-        if (options.autoSave) {
-          globalThis.setTimeout(() => {
-            location.href = facebookNextDraftUrl(location, '', { autoSave: true });
-          }, 2500);
-        }
       } catch (error) {
-        if (options.autoSave) setFacebookAutoSaveBatchActive(false);
+        if (options.autoSave) {
+          setFacebookPendingDraft(null);
+          setFacebookAutoSaveBatchActive(false);
+          releaseFacebookAutoSaveLease();
+        }
         if (claimed?.item_id) {
           savePendingCrosslist({
             item_id: claimed.item_id,
@@ -11488,6 +11587,52 @@ ${cards}
       }
     };
 
+    const resumeFacebookAutoSaveAfterSave = async () => {
+      const pending = getFacebookPendingDraft();
+      if (!pending?.item_id || !pending?.evidence_hash) return false;
+      if (!claimFacebookAutoSaveLease()) return false;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (facebookSavedDraftVisible(document, pending)) break;
+        await new Promise(resolve => globalThis.setTimeout(resolve, 500));
+      }
+      if (!facebookSavedDraftVisible(document, pending)) {
+        setFacebookAutoSaveBatchActive(false);
+        releaseFacebookAutoSaveLease();
+        await crosslistBridgeRequest('/crosslist/result', {
+          item_id: pending.item_id,
+          evidence_hash: pending.evidence_hash,
+          state: 'Failed',
+          error: 'Facebook did not show the saved draft on the Selling page.',
+        }).catch(() => null);
+        setFacebookPendingDraft(null);
+        status('Batch stopped: Facebook did not confirm the saved draft on the Selling page.');
+        return true;
+      }
+      const transition = await crosslistBridgeRequest('/crosslist/result', {
+        item_id: pending.item_id,
+        evidence_hash: pending.evidence_hash,
+        state: 'Drafted',
+        reason: Array.isArray(pending.warnings) ? pending.warnings.join(' ') : '',
+      });
+      if (!transition.ok) {
+        setFacebookAutoSaveBatchActive(false);
+        releaseFacebookAutoSaveLease();
+        status(`Draft was saved, but its audit state failed: ${transition.reason}. Batch stopped.`);
+        return true;
+      }
+      savePendingCrosslist({
+        ...pending,
+        filled_at: new Date().toISOString(),
+        state: 'Drafted',
+      });
+      setFacebookPendingDraft(null);
+      status(`Saved ${pending.title || pending.item_id} with ${pending.photo_count || 0} photo(s). Opening the next queued item...`);
+      globalThis.setTimeout(() => {
+        location.href = facebookNextDraftUrl(location, '', { autoSave: true });
+      }, 1200);
+      return true;
+    };
+
     crosslistFillButton?.addEventListener('click', async () => {
       if (facebookDraftHasContent(document)) {
         const opened = window.open(facebookNextDraftUrl(location), '_blank');
@@ -11499,7 +11644,12 @@ ${cards}
       await fillNextCrosslistDraft();
     });
 
-    if (facebookCreateMode && facebookAutofillRequested(location)) {
+    const pendingFacebookAutoSave = getFacebookPendingDraft();
+    if (pendingFacebookAutoSave?.item_id) {
+      window.setTimeout(() => resumeFacebookAutoSaveAfterSave(), 700);
+    }
+
+    else if (facebookCreateMode && facebookAutofillRequested(location)) {
       const requestedItemId = facebookAutofillItemId(location);
       const autoSave = facebookAutoSaveRequested(location) || facebookAutoSaveBatchActive();
       if (autoSave) setFacebookAutoSaveBatchActive(true);

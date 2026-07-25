@@ -698,6 +698,40 @@ test('Facebook draft URL can explicitly enable the no-publish autosave batch', (
   assert.match(url, /flipperaddon_autosave=1/);
 });
 
+test('Facebook autosave lease permits one tab and blocks concurrent tabs', () => {
+  const core = loadCore();
+  const values = new Map();
+  const localStorage = {
+    getItem(key) { return values.get(key) || null; },
+    setItem(key, value) { values.set(key, value); },
+    removeItem(key) { values.delete(key); },
+  };
+  const sessionA = {
+    getItem() { return 'tab-a'; },
+    setItem() {},
+  };
+  const sessionB = {
+    getItem() { return 'tab-b'; },
+    setItem() {},
+  };
+
+  assert.equal(core.claimFacebookAutoSaveLease(localStorage, sessionA, 1000), true);
+  assert.equal(core.claimFacebookAutoSaveLease(localStorage, sessionB, 1001), false);
+  core.releaseFacebookAutoSaveLease(localStorage, sessionA);
+  assert.equal(core.claimFacebookAutoSaveLease(localStorage, sessionB, 1002), true);
+});
+
+test('Facebook autosave confirmation requires the saved title and Draft status', () => {
+  const core = loadCore();
+  const pending = { title: 'TWIN BEDGEAR Performance Flex & Fit Waterproof Mattress Protector' };
+  assert.equal(core.facebookSavedDraftVisible({
+    body: { innerText: 'Your listings\nTWIN BEDGEAR Performance Flex & Fit Waterproof Mattress Protector\n$30\nDraft' },
+  }, pending), true);
+  assert.equal(core.facebookSavedDraftVisible({
+    body: { innerText: 'Your listings\nDifferent item\n$30\nDraft' },
+  }, pending), false);
+});
+
 
 test('commits Facebook location through its autocomplete suggestion', async () => {
   const core = loadCore({
