@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.87
+// @version      0.7.88
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.87';
+  const SCRIPT_VERSION = '0.7.88';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -2697,7 +2697,21 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function extractEbayItemDetailHtml(html, context = {}) {
     const source = String(html || '');
     const objects = ebayJsonLdObjects(source);
-    const product = objects.find(value => ebayJsonLdType(value, 'Product')) || {};
+    const product = objects
+      .filter(value => ebayJsonLdType(value, 'Product'))
+      .sort((left, right) => {
+        const score = value => {
+          const offer = Array.isArray(value?.offers) ? value.offers[0] || {} : value?.offers || {};
+          const images = Array.isArray(value?.image) ? value.image.length : (value?.image ? 1 : 0);
+          return (value?.itemCondition ? 40 : 0)
+            + (value?.description ? 20 : 0)
+            + (Number.isFinite(Number(offer?.price)) ? 15 : 0)
+            + Math.min(images, 20)
+            + (Array.isArray(value?.additionalProperty) ? Math.min(value.additionalProperty.length, 10) : 0)
+            + (value?.name ? 5 : 0);
+        };
+        return score(right) - score(left);
+      })[0] || {};
     const breadcrumbs = objects.find(value => ebayJsonLdType(value, 'BreadcrumbList')) || {};
     const offers = Array.isArray(product.offers) ? product.offers[0] || {} : (product.offers || {});
     const activeItemId = String(context.itemId || '').match(/\b\d{9,15}\b/)?.[0] || '';
@@ -2732,6 +2746,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       /["']conditionDisplayName["']\s*:\s*["']([^"']+)/i,
       /["']conditionName["']\s*:\s*["']([^"']+)/i,
       /["']displayLabel["']\s*:\s*["']Condition["'][\s\S]{0,500}?["']displayValue["']\s*:\s*["']([^"']+)/i,
+      /["']displayValue["']\s*:\s*\{[\s\S]{0,1500}?["']textSpans["']\s*:\s*\[\s*\{[\s\S]{0,200}?["']text["']\s*:\s*["']([^"']+)/i,
       /aria-label=["']([^"']+?)\s*-\s*About this item condition["']/i,
       /itemprop=["']itemCondition["'][^>]*(?:content|title)=["']([^"']+)/i,
       /\bCondition\s*:\s*<[^>]*>([^<]+)/i,

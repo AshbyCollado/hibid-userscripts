@@ -274,6 +274,26 @@ test('extracts unquoted live eBay JSON-LD and elevated condition evidence', () =
 });
 
 
+test('prefers the richest eBay Product JSON and reads nested live condition evidence', () => {
+  const core = loadCore();
+  const detail = core.extractEbayItemDetailHtml(`
+    <script type="application/ld+json">
+      {"@type":"Product","name":"Torque Wrench","offers":{"price":"120.00"}}
+    </script>
+    <script type="application/ld+json">
+      {"@type":"Product","name":"Torque Wrench","description":"New old stock torque wrench.","itemCondition":"https://schema.org/NewCondition","image":["https://i.ebayimg.com/images/g/one/s-l500.jpg"],"offers":{"price":"120.00"}}
+    </script>
+    <script>
+      {"name":"CONDITION","displayLabel":{"textSpans":[{"text":"Condition:"}]},"displayValue":{"icon":{"accessibilityText":"More information - About this item condition"},"text":{"textSpans":[{"text":"New"}]}}}
+    </script>
+  `, { itemId: '336701097243' });
+
+  assert.equal(detail.condition, 'New');
+  assert.equal(detail.description, 'New old stock torque wrench.');
+  assert.equal(detail.imageUrls.length, 1);
+});
+
+
 test('removes eBay branding and formats compressed listing specifications for Facebook', () => {
   const core = loadCore();
   const description = core.cleanEbayCrosslistDescription(
