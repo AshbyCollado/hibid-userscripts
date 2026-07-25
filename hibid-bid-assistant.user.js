@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.89
+// @version      0.7.90
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.89';
+  const SCRIPT_VERSION = '0.7.90';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -80,6 +80,7 @@
   const CROSSLIST_LOCATION_KEY = 'flipperaddon-crosslist-location-v1';
   const CROSSLIST_PENDING_KEY = 'flipperaddon-crosslist-pending-v1';
   const CROSSLIST_AUTOFILL_PARAM = 'flipperaddon_autofill';
+  const CROSSLIST_ITEM_PARAM = 'flipperaddon_item_id';
   const DEBUG_LOG_LIMIT = 200;
   const OUTBID_WATCHLIST_URL = 'https://hibid.com/account/watchlist?status=OUTBID';
   const LEGACY_SCRAPER_IDS = [
@@ -4085,6 +4086,7 @@ ${cards}
     saveCrosslistLocation,
     facebookNextDraftUrl,
     facebookAutofillRequested,
+    facebookAutofillItemId,
     facebookDraftHasContent,
     findFacebookLabeledControl,
     setFacebookControlValue,
@@ -8727,12 +8729,14 @@ ${cards}
       .toLowerCase();
   }
 
-  function facebookNextDraftUrl(loc = location) {
+  function facebookNextDraftUrl(loc = location, itemId = '') {
     const origin = /^https:\/\/(?:www\.)?facebook\.com$/i.test(String(loc?.origin || ''))
       ? loc.origin
       : 'https://www.facebook.com';
     const next = new URL('/marketplace/create/item', origin);
     next.searchParams.set(CROSSLIST_AUTOFILL_PARAM, '1');
+    const normalizedItemId = String(itemId || '').match(/^\d{9,15}$/)?.[0] || '';
+    if (normalizedItemId) next.searchParams.set(CROSSLIST_ITEM_PARAM, normalizedItemId);
     return next.toString();
   }
 
@@ -8742,6 +8746,15 @@ ${cards}
         .searchParams.get(CROSSLIST_AUTOFILL_PARAM) === '1';
     } catch (_) {
       return false;
+    }
+  }
+
+  function facebookAutofillItemId(loc = location) {
+    try {
+      return new URL(String(loc?.href || loc || ''), 'https://www.facebook.com')
+        .searchParams.get(CROSSLIST_ITEM_PARAM)?.match(/^\d{9,15}$/)?.[0] || '';
+    } catch (_) {
+      return '';
     }
   }
 
@@ -11198,7 +11211,10 @@ ${cards}
           duplicate: 'Unchanged draft already exists; no duplicate created.',
           'published-blocked': 'This eBay item is already linked to a published Facebook listing.',
         }[result.action] || `Draft queue result: ${result.action}.`;
-        facebookWindow.location.href = facebookNextDraftUrl({ origin: 'https://www.facebook.com' });
+        facebookWindow.location.href = facebookNextDraftUrl(
+          { origin: 'https://www.facebook.com' },
+          result.record?.item_id || listing.item_id || listing.itemId
+        );
         status(`${actionText} Facebook opened and will begin filling automatically. Review before publishing.`);
       } catch (error) {
         facebookWindow.close?.();
@@ -11254,14 +11270,14 @@ ${cards}
       }
     });
 
-    const fillNextCrosslistDraft = async () => {
+    const fillNextCrosslistDraft = async (requestedItemId = '') => {
       if (state.busy) return;
       setScrapingBusy(true);
       crosslistFillButton.disabled = true;
       let claimed = null;
       try {
         status('Claiming the next queued eBay listing...');
-        const claim = await crosslistBridgeRequest('/crosslist/claim', {});
+        const claim = await crosslistBridgeRequest('/crosslist/claim', { item_id: requestedItemId });
         if (!claim.ok) {
           status(`Draft claim failed: ${claim.reason || 'unknown bridge error'}.`);
           return;
@@ -11331,15 +11347,17 @@ ${cards}
     });
 
     if (facebookCreateMode && facebookAutofillRequested(location)) {
+      const requestedItemId = facebookAutofillItemId(location);
       try {
         const cleanUrl = new URL(location.href);
         cleanUrl.searchParams.delete(CROSSLIST_AUTOFILL_PARAM);
+        cleanUrl.searchParams.delete(CROSSLIST_ITEM_PARAM);
         history.replaceState(history.state, '', cleanUrl.toString());
       } catch (_) {
         // A clean URL is cosmetic; the one-shot fill still proceeds.
       }
       window.setTimeout(() => {
-        if (!state.busy && !facebookDraftHasContent(document)) fillNextCrosslistDraft();
+        if (!state.busy && !facebookDraftHasContent(document)) fillNextCrosslistDraft(requestedItemId);
       }, 1200);
     }
 

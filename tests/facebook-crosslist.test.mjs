@@ -403,9 +403,14 @@ test('renders cross-list controls only on their matching workflow pages', () => 
 
 test('builds a one-shot Facebook auto-fill URL and detects existing draft content', () => {
   const core = loadCore({ URL });
-  const nextUrl = core.facebookNextDraftUrl({ origin: 'https://www.facebook.com' });
-  assert.equal(nextUrl, 'https://www.facebook.com/marketplace/create/item?flipperaddon_autofill=1');
+  const nextUrl = core.facebookNextDraftUrl(
+    { origin: 'https://www.facebook.com' },
+    '336701097241',
+  );
+  assert.equal(nextUrl, 'https://www.facebook.com/marketplace/create/item?flipperaddon_autofill=1&flipperaddon_item_id=336701097241');
   assert.equal(core.facebookAutofillRequested({ href: nextUrl }), true);
+  assert.equal(core.facebookAutofillItemId({ href: nextUrl }), '336701097241');
+  assert.equal(core.facebookAutofillItemId({ href: `${nextUrl}x` }), '');
   assert.equal(core.facebookAutofillRequested({ href: 'https://www.facebook.com/marketplace/create/item' }), false);
 
   const titleControl = {
@@ -417,6 +422,13 @@ test('builds a one-shot Facebook auto-fill URL and detects existing draft conten
     querySelectorAll(selector) { return selector === 'label' ? [] : [titleControl]; },
   };
   assert.equal(core.facebookDraftHasContent(root), true);
+});
+
+
+test('selected Facebook draft flow claims the selected eBay item id', () => {
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  assert.match(source, /crosslistBridgeRequest\('\/crosslist\/claim', \{ item_id: requestedItemId \}\)/);
+  assert.match(source, /fillNextCrosslistDraft\(requestedItemId\)/);
 });
 
 
