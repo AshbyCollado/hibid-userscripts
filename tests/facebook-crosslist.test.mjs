@@ -372,10 +372,13 @@ test('removes eBay executable page state from seller descriptions', async () => 
 test('resolves dedicated Facebook draft and published routes', () => {
   const core = loadCore();
   const create = new URL('https://www.facebook.com/marketplace/create/item');
+  const createHub = new URL('https://www.facebook.com/marketplace/create');
   const published = new URL('https://www.facebook.com/marketplace/item/123456789012345/');
   assert.equal(core.resolveFlipTrackerPage(create).kind, 'fliptracker-facebook-create');
+  assert.equal(core.resolveFlipTrackerPage(createHub).kind, 'fliptracker-facebook-create-hub');
   assert.equal(core.resolveFlipTrackerPage(published).kind, 'fliptracker-facebook-published');
   assert.equal(core.isFlipTrackerListingPage(create), true);
+  assert.equal(core.isFlipTrackerListingPage(createHub), true);
   assert.equal(core.isFlipTrackerListingPage(published), true);
 });
 
@@ -716,6 +719,7 @@ test('Facebook autosave lease permits one tab and blocks concurrent tabs', () =>
   };
 
   assert.equal(core.claimFacebookAutoSaveLease(localStorage, sessionA, 1000), true);
+  assert.equal(core.facebookAutoSaveLeaseOwned(localStorage, sessionA, 1001), true);
   assert.equal(core.claimFacebookAutoSaveLease(localStorage, sessionB, 1001), false);
   core.releaseFacebookAutoSaveLease(localStorage, sessionA);
   assert.equal(core.claimFacebookAutoSaveLease(localStorage, sessionB, 1002), true);

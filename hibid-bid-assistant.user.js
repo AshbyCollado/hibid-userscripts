@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.94
+// @version      0.7.95
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -20,7 +20,7 @@
 // @match        https://www.ebay.com/mes/*
 // @match        https://www.facebook.com/marketplace/you/*
 // @match        https://www.facebook.com/marketplace/profile/*
-// @match        https://www.facebook.com/marketplace/create/item*
+// @match        https://www.facebook.com/marketplace/create*
 // @match        https://www.facebook.com/marketplace/item/*
 // @match        https://www.auctionninja.com/auctions*
 // @match        https://www.auctionninja.com/bid-history*
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.94';
+  const SCRIPT_VERSION = '0.7.95';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -4098,6 +4098,7 @@ ${cards}
     setFacebookAutoSaveBatchActive,
     facebookAutoSaveTabId,
     claimFacebookAutoSaveLease,
+    facebookAutoSaveLeaseOwned,
     releaseFacebookAutoSaveLease,
     setFacebookPendingDraft,
     getFacebookPendingDraft,
@@ -7717,6 +7718,7 @@ ${cards}
     if (host === 'www.facebook.com' || host === 'facebook.com') {
       return /^\/marketplace\/(?:you|profile)\b/i.test(pathname)
         || /^\/marketplace\/create\/item\b/i.test(pathname)
+        || /^\/marketplace\/create\/?$/i.test(pathname)
         || /^\/marketplace\/item\/\d+\b/i.test(pathname);
     }
     return false;
@@ -7745,6 +7747,9 @@ ${cards}
     }
     if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/create\/item\b/i.test(pathname)) {
       return { supported: true, kind: 'fliptracker-facebook-create', source: 'facebook', host, reason: 'Facebook Marketplace item draft route' };
+    }
+    if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/create\/?$/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-facebook-create-hub', source: 'facebook', host, reason: 'Facebook Marketplace saved-draft confirmation route' };
     }
     if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/item\/\d+\b/i.test(pathname)) {
       return { supported: true, kind: 'fliptracker-facebook-published', source: 'facebook', host, reason: 'Facebook Marketplace published item route' };
@@ -8846,6 +8851,20 @@ ${cards}
       return true;
     } catch (_) {
       return true;
+    }
+  }
+
+  function facebookAutoSaveLeaseOwned(
+    storage = globalThis.localStorage,
+    session = globalThis.sessionStorage,
+    now = Date.now(),
+  ) {
+    try {
+      const owner = facebookAutoSaveTabId(session);
+      const existing = JSON.parse(storage?.getItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY) || 'null');
+      return existing?.owner === owner && Number(existing.expires_at || 0) > now;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -11467,6 +11486,13 @@ ${cards}
       if (options.autoSave && !claimFacebookAutoSaveLease()) {
         status('Another Facebook tab owns the draft batch. This tab will stay idle.');
         return;
+      }
+      if (options.autoSave) {
+        await new Promise(resolve => globalThis.setTimeout(resolve, 150));
+        if (!facebookAutoSaveLeaseOwned()) {
+          status('Another Facebook tab won the draft-batch lease. This tab will stay idle.');
+          return;
+        }
       }
       setScrapingBusy(true);
       crosslistFillButton.disabled = true;
