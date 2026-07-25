@@ -357,6 +357,15 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 
 ## Verification Checklist
 
+### eBay to Facebook active-listing refresh (`v0.7.79`)
+
+- eBay `/mys/active` uses JavaScript pagination buttons whose `data-url` returns page one when fetched directly. Full refresh must rewind the live DOM to page one, click the real Next control, and wait for the listing-ID signature to change.
+- Live evidence on 2026-07-25: `All (45)` rendered `25` records on page 1 and `20` on page 2; page 2 included item `336701097242`.
+- Current active snapshots remain keyed by eBay item ID. Repeating a sync updates `ebay-listing|<item_id>` instead of creating another listing record.
+- Cross-list photos must come only from Product JSON-LD, with OpenGraph as the single-image fallback. Page-wide recommendation and sponsored images are forbidden evidence.
+- `Refresh All FB Drafts` may refresh queued or stale drafted evidence, but it must preserve `Published` records and never publish a Facebook listing.
+- `Open + Fill Next` opens a fresh Marketplace create form when the current draft has content. The next queued record fills automatically and still requires manual review and publication.
+
 ### Cross-browser stale-install check (`v0.7.69`)
 
 - The screenshot-era comma message (`Blocked stale catalog export, current page did not match copied lots.`) belongs to an older installed script; it is not present in the current source. The current build uses the semicolon-free reason form and includes the exact guard reason.

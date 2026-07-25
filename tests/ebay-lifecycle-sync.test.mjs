@@ -152,6 +152,42 @@ test('parses the current My eBay sold card shape with yearless dates and All cou
   assert.doesNotMatch(JSON.stringify(rows), /Redacted Fixture Person/i);
 });
 
+test('collects My eBay Active JavaScript pagination without duplicating page one', async () => {
+  const core = loadCore();
+  const activeCard = (id, title) => `
+    <div qa-id="active-item-${id}" class="active-item">
+      <h3 class="item-title"><a href="/itm/${id}"><span>${title}</span></a></h3>
+      <div class="item__price"><span>$100.00</span><span> Buy It Now</span></div>
+      <div class="item__listing-status">Listed today</div>
+    </div>`;
+  const firstPage = `<main><button>All (45)</button>${Array.from({ length: 25 }, (_, index) => activeCard(String(111111111100 + index), `First ${index}`)).join('')}
+    <button data-url="container_limit=25&amp;container_offset=25" data-action="pagination" type="next" class="pagination__next" aria-label="Next page">Next</button></main>`;
+  const secondPage = `<main><button>All (45)</button>${Array.from({ length: 20 }, (_, index) => activeCard(String(222222222200 + index), `Second ${index}`)).join('')}
+    <button data-action="pagination" type="next" class="pagination__next" aria-label="Next page" aria-disabled="true">Next</button></main>`;
+  let advances = 0;
+
+  assert.equal(core.expectedEbayLifecycleCount(firstPage, 'active'), 45);
+  assert.equal(core.ebayLifecycleNextPageUrl(firstPage, 'https://www.ebay.com/mys/active'), '');
+  assert.equal(core.ebayLifecycleHasDomNextPage(firstPage), true);
+  const envelope = await core.collectPaginatedEbayLifecycleEnvelope('active', 'https://www.ebay.com/mys/active', {
+    initialHtml: firstPage,
+    generatedAt: '2026-07-25T12:00:00.000Z',
+    advancePage: async () => {
+      advances += 1;
+      return { html: secondPage };
+    },
+  });
+
+  assert.equal(advances, 1);
+  assert.equal(envelope.records.length, 45);
+  assert.equal(new Set(envelope.records.map(row => row.item_id)).size, 45);
+  assert.equal(envelope.completeness.expected_count, 45);
+  assert.equal(envelope.completeness.parsed_count, 45);
+  assert.equal(envelope.completeness.page_count, 2);
+  assert.equal(envelope.completeness.has_next_page, false);
+  assert.equal(envelope.completeness.complete, true);
+});
+
 test('recursively sanitizes and asserts every lifecycle export value before posting', async () => {
   let postedPayload = null;
   const core = loadCore({

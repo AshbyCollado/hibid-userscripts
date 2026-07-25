@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.78
+// @version      0.7.79
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -3356,8 +3356,19 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     }
   }
 
+  function ebayLifecycleHasDomNextPage(html) {
+    return Array.from(String(html || '').matchAll(/<(?:button|a)\b[^>]*>/gi))
+      .map(match => match[0])
+      .some(tag => {
+        const isNext = /(?:class=["'][^"']*\bpagination__next\b|aria-label=["'][^"']*\bnext\s+page\b|type=["']next["'])/i.test(tag);
+        const hasDomTarget = /\bdata-url=["'][^"']+["']/i.test(tag) || /\bdata-action=["']pagination["']/i.test(tag);
+        const disabled = /\bdisabled(?:\s|=|>)/i.test(tag) || /aria-disabled=["']true["']/i.test(tag);
+        return isNext && hasDomTarget && !disabled;
+      });
+  }
+
   function ebayLifecycleHasNextPage(html) {
-    return Boolean(ebayLifecycleNextPageUrl(html));
+    return Boolean(ebayLifecycleNextPageUrl(html) || ebayLifecycleHasDomNextPage(html));
   }
 
   function buildEbayLifecycleEnvelope(records, meta = {}) {
@@ -3928,9 +3939,11 @@ ${cards}
     ebayLifecyclePageKind,
     expectedEbayLifecycleCount,
     ebayLifecycleNextPageUrl,
+    ebayLifecycleHasDomNextPage,
     ebayLifecycleHasNextPage,
     buildEbayLifecycleEnvelope,
     collectPaginatedEbayLifecycleEnvelope,
+    ebayLifecycleDomCardSignature,
     canExportEbayLifecycleEnvelope,
     runEbayLifecycleSyncAll,
     postEbayLifecycleEnvelope,
@@ -9060,6 +9073,7 @@ ${cards}
     let expectedCount = null;
     let pageCount = 0;
     let pendingNextUrl = '';
+    let pendingDomNext = false;
     let collectionError = '';
 
     while (currentUrl && pageCount < maxPages) {
@@ -9098,12 +9112,36 @@ ${cards}
       });
 
       pendingNextUrl = ebayLifecycleNextPageUrl(currentHtml, currentUrl);
+      pendingDomNext = ebayLifecycleHasDomNextPage(currentHtml);
+      if (!pendingNextUrl && pendingDomNext && typeof options.advancePage === 'function') {
+        try {
+          const advanced = await options.advancePage({
+            pageKind,
+            pageIndex: pageCount,
+            expectedCount,
+            parsedCount: recordsByIdentity.size,
+            signal: options.signal,
+          });
+          if (advanced?.html) {
+            currentHtml = String(advanced.html);
+            const separator = String(pageUrl || '').includes('?') ? '&' : '?';
+            currentUrl = `${pageUrl}${separator}flipperaddon_dom_page=${pageCount + 1}`;
+            pendingDomNext = false;
+            continue;
+          }
+          if (advanced?.error) collectionError = sanitizeEbayLifecycleString(advanced.error);
+        } catch (error) {
+          collectionError = options.signal?.aborted
+            ? 'Fetch cancelled.'
+            : sanitizeEbayLifecycleString(`DOM pagination failed: ${error?.message || error}`);
+        }
+      }
       if (!pendingNextUrl) break;
       currentUrl = pendingNextUrl;
       currentHtml = null;
     }
 
-    const hasNextPage = Boolean(pendingNextUrl && (collectionError || pageCount >= maxPages));
+    const hasNextPage = Boolean((pendingNextUrl || pendingDomNext) && (collectionError || pageCount >= maxPages || pendingDomNext));
     const envelope = buildEbayLifecycleEnvelope(Array.from(recordsByIdentity.values()), {
       pageKind,
       pageUrl,
@@ -9120,6 +9158,51 @@ ${cards}
       envelope.completeness.reason = `Stopped after ${pageCount} page(s); more eBay result pages remain.`;
     }
     return prepareEbayLifecycleEnvelopeForExport(envelope);
+  }
+
+  function ebayLifecycleDomCardSignature(root = document) {
+    return Array.from(root?.querySelectorAll?.('[qa-id^="active-item-"], .sold-itemcard, [data-testid="order-card"]') || [])
+      .map(node => node.getAttribute?.('qa-id') || node.getAttribute?.('data-order-id') || normalizedFacebookControlText(node.textContent).slice(0, 120))
+      .filter(Boolean)
+      .join('|');
+  }
+
+  function enabledEbayLifecyclePager(selector, root = document) {
+    const control = root?.querySelector?.(selector);
+    if (!control || control.disabled || control.getAttribute?.('aria-disabled') === 'true') return null;
+    return control;
+  }
+
+  async function clickEbayLifecyclePagerAndWait(control, root = document, options = {}) {
+    if (!control) return { ok: false, error: 'Pagination control is unavailable.' };
+    const before = ebayLifecycleDomCardSignature(root);
+    control.click?.();
+    const deadline = Date.now() + Math.max(2000, Number(options.timeoutMs) || 12000);
+    while (Date.now() < deadline) {
+      if (options.signal?.aborted) return { ok: false, error: 'Fetch cancelled.' };
+      await wait(150);
+      const after = ebayLifecycleDomCardSignature(root);
+      if (after && after !== before) {
+        return { ok: true, html: root.documentElement?.outerHTML || '' };
+      }
+    }
+    return { ok: false, error: 'eBay did not render the next listing page before timeout.' };
+  }
+
+  async function rewindEbayLifecycleDomToFirstPage(root = document, options = {}) {
+    for (let step = 0; step < 100; step += 1) {
+      const previous = enabledEbayLifecyclePager('button.pagination__previous, a.pagination__previous', root);
+      if (!previous) return { ok: true, html: root.documentElement?.outerHTML || '' };
+      const moved = await clickEbayLifecyclePagerAndWait(previous, root, options);
+      if (!moved.ok) return moved;
+    }
+    return { ok: false, error: 'Could not return eBay pagination to the first page.' };
+  }
+
+  async function advanceEbayLifecycleDomPage(root = document, options = {}) {
+    const next = enabledEbayLifecyclePager('button.pagination__next, a.pagination__next', root);
+    if (!next) return null;
+    return clickEbayLifecyclePagerAndWait(next, root, options);
   }
 
   async function fetchEbayLifecycleEnvelope(pageKind, pageUrl, options = {}) {
@@ -10901,8 +10984,11 @@ ${cards}
       const counts = { created: 0, updated: 0, duplicate: 0, published: 0, failed: 0 };
       try {
         status('Collecting every active eBay listing page...');
+        const rewind = await rewindEbayLifecycleDomToFirstPage(document);
+        if (!rewind.ok) throw new Error(rewind.error);
         const lifecycle = await collectPaginatedEbayLifecycleEnvelope('active', location.href, {
-          initialHtml: document.documentElement?.outerHTML || '',
+          initialHtml: rewind.html || document.documentElement?.outerHTML || '',
+          advancePage: ({ signal }) => advanceEbayLifecycleDomPage(document, { signal }),
         });
         const listings = (lifecycle.records || []).filter(row => String(row?.item_id || '').match(/^\d{9,15}$/));
         if (!listings.length) throw new Error('No active eBay listing IDs were collected.');
