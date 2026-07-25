@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.96
+// @version      0.7.98
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.96';
+  const SCRIPT_VERSION = '0.7.98';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -8814,7 +8814,7 @@ ${cards}
     }
   }
 
-  function setFacebookAutoSaveBatchActive(active, storage = globalThis.localStorage) {
+  function setFacebookAutoSaveBatchActive(active, storage = globalThis.sessionStorage) {
     try {
       if (active) storage?.setItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY, '1');
       else storage?.removeItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY);
@@ -8823,7 +8823,7 @@ ${cards}
     }
   }
 
-  function facebookAutoSaveBatchActive(storage = globalThis.localStorage) {
+  function facebookAutoSaveBatchActive(storage = globalThis.sessionStorage) {
     try {
       return storage?.getItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY) === '1';
     } catch (_) {
@@ -8892,7 +8892,7 @@ ${cards}
     }
   }
 
-  function setFacebookPendingDraft(record, storage = globalThis.localStorage) {
+  function setFacebookPendingDraft(record, storage = globalThis.sessionStorage) {
     try {
       if (!record) storage?.removeItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY);
       else storage?.setItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY, JSON.stringify(record));
@@ -8901,7 +8901,7 @@ ${cards}
     }
   }
 
-  function getFacebookPendingDraft(storage = globalThis.localStorage) {
+  function getFacebookPendingDraft(storage = globalThis.sessionStorage) {
     try {
       return JSON.parse(storage?.getItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY) || 'null');
     } catch (_) {
@@ -8914,9 +8914,12 @@ ${cards}
     session = globalThis.sessionStorage,
   ) {
     try {
+      // Clear legacy profile-wide state left by v0.7.96 and earlier.
       storage?.removeItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY);
       storage?.removeItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY);
       storage?.removeItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY);
+      session?.removeItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY);
+      session?.removeItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY);
       session?.removeItem?.(CROSSLIST_AUTOSAVE_TAB_KEY);
     } catch (_) {
       // The reset route is best-effort; the bridge remains the audit source of truth.
@@ -11507,6 +11510,9 @@ ${cards}
     });
 
     const fillNextCrosslistDraft = async (requestedItemId = '', options = {}) => {
+      // Facebook's replaceState route cleanup remounts the panel. A timer from
+      // the retired panel must never survive long enough to claim a second row.
+      if (!panelIsCurrent()) return;
       if (state.busy) return;
       if (options.autoSave && !claimFacebookAutoSaveLease()) {
         status('Another Facebook tab owns the draft batch. This tab will stay idle.');
@@ -11639,6 +11645,7 @@ ${cards}
     };
 
     const resumeFacebookAutoSaveAfterSave = async () => {
+      if (!panelIsCurrent()) return false;
       const pending = getFacebookPendingDraft();
       if (!pending?.item_id || !pending?.evidence_hash) return false;
       if (!claimFacebookAutoSaveLease()) return false;
@@ -11726,13 +11733,17 @@ ${cards}
         // A clean URL is cosmetic; the one-shot fill still proceeds.
       }
       window.setTimeout(() => {
-        if (!state.busy && !facebookDraftHasContent(document)) fillNextCrosslistDraft(requestedItemId, { autoSave });
+        if (panelIsCurrent() && !state.busy && !facebookDraftHasContent(document)) {
+          fillNextCrosslistDraft(requestedItemId, { autoSave });
+        }
       }, 1200);
     }
 
     else if (facebookCreateMode && facebookAutoSaveBatchActive()) {
       window.setTimeout(() => {
-        if (!state.busy && !facebookDraftHasContent(document)) fillNextCrosslistDraft('', { autoSave: true });
+        if (panelIsCurrent() && !state.busy && !facebookDraftHasContent(document)) {
+          fillNextCrosslistDraft('', { autoSave: true });
+        }
       }, 1200);
     }
 

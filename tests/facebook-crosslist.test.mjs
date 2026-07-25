@@ -435,6 +435,14 @@ test('selected Facebook draft flow claims the selected eBay item id', () => {
 });
 
 
+test('retired Facebook panel timers cannot claim another draft after route cleanup', () => {
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  assert.match(source, /const fillNextCrosslistDraft = async[\s\S]*?if \(!panelIsCurrent\(\)\) return;/);
+  assert.match(source, /if \(panelIsCurrent\(\) && !state\.busy && !facebookDraftHasContent\(document\)\) \{\s*fillNextCrosslistDraft\(requestedItemId, \{ autoSave \}\);/);
+  assert.match(source, /if \(panelIsCurrent\(\) && !state\.busy && !facebookDraftHasContent\(document\)\) \{\s*fillNextCrosslistDraft\('', \{ autoSave: true \}\);/);
+});
+
+
 test('clears the panel busy chip after asynchronous work settles', () => {
   const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
   assert.match(source, /if \(!state\.busy\) \{\s*const chip = panel\.querySelector\('#hiba-session-chip'\);\s*if \(chip\?\.textContent === 'busy'\) chip\.textContent = 'idle';/);
@@ -725,6 +733,26 @@ test('Facebook autosave lease permits one tab and blocks concurrent tabs', () =>
   assert.equal(core.claimFacebookAutoSaveLease(localStorage, sessionB, 1002), true);
 });
 
+test('Facebook autosave batch marker is tab-scoped instead of profile-wide', () => {
+  const localValues = new Map();
+  const sessionValues = new Map();
+  const storage = values => ({
+    getItem(key) { return values.get(key) || null; },
+    setItem(key, value) { values.set(key, value); },
+    removeItem(key) { values.delete(key); },
+  });
+  const core = loadCore({
+    localStorage: storage(localValues),
+    sessionStorage: storage(sessionValues),
+  });
+
+  core.setFacebookAutoSaveBatchActive(true);
+
+  assert.equal(core.facebookAutoSaveBatchActive(), true);
+  assert.equal(sessionValues.get('flipperaddon_crosslist_autosave_active'), '1');
+  assert.equal(localValues.has('flipperaddon_crosslist_autosave_active'), false);
+});
+
 test('Facebook autosave reset clears shared batch and per-tab state', () => {
   const core = loadCore();
   const localValues = new Map([
@@ -732,7 +760,11 @@ test('Facebook autosave reset clears shared batch and per-tab state', () => {
     ['flipperaddon_crosslist_autosave_lease', '{"owner":"tab-a"}'],
     ['flipperaddon_crosslist_autosave_pending', '{"item_id":"336701097243"}'],
   ]);
-  const sessionValues = new Map([['flipperaddon_crosslist_tab_id', 'tab-a']]);
+  const sessionValues = new Map([
+    ['flipperaddon_crosslist_tab_id', 'tab-a'],
+    ['flipperaddon_crosslist_autosave_active', '1'],
+    ['flipperaddon_crosslist_autosave_pending', '{"item_id":"336701097243"}'],
+  ]);
   const storage = values => ({
     getItem(key) { return values.get(key) || null; },
     setItem(key, value) { values.set(key, value); },
