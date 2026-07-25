@@ -204,6 +204,102 @@ test('uses only the item Product gallery and rejects recommendation-module image
 });
 
 
+test('recovers the complete eBay item gallery when JSON-LD contains only the lead photo', () => {
+  const core = loadCore();
+  const detail = core.extractEbayItemDetailHtml(`
+    <meta property="og:image" content="https://i.ebayimg.com/images/g/armani-one/s-l500.jpg">
+    <script type="application/ld+json">{
+      "@type":"Product",
+      "name":"Emporio Armani EA 9037/S Sunglasses",
+      "image":"https://i.ebayimg.com/images/g/armani-one/s-l500.jpg",
+      "offers":{"price":"65.00"}
+    }</script>
+    <div aria-label="Picture 1 of 4"><img src="https://i.ebayimg.com/images/g/armani-one/s-l225.jpg"></div>
+    <div aria-label="Picture 2 of 4"><img data-zoom-src="https://i.ebayimg.com/images/g/armani-two/s-l1200.jpg"></div>
+    <div aria-label="Picture 3 of 4"><img src="https://i.ebayimg.com/images/g/armani-three/s-l500.jpg"></div>
+    <div aria-label="Picture 4 of 4"><img src="https://i.ebayimg.com/images/g/armani-four/s-l500.jpg"></div>
+    <section aria-label="Sponsored recommendations">
+      <div aria-label="Picture 1 of 12"><img src="https://i.ebayimg.com/images/g/not-this-listing/s-l500.jpg"></div>
+      <div aria-label="Picture 2 of 12"><img src="https://i.ebayimg.com/images/g/not-this-listing-two/s-l500.jpg"></div>
+    </section>
+  `, { itemId: '336701097241' });
+
+  assert.equal(detail.imageEvidence, 'item-gallery');
+  assert.equal(detail.imageExpectedCount, 4);
+  assert.deepEqual(plain(detail.imageUrls), [
+    'https://i.ebayimg.com/images/g/armani-one/s-l1600.jpg',
+    'https://i.ebayimg.com/images/g/armani-two/s-l1600.jpg',
+    'https://i.ebayimg.com/images/g/armani-three/s-l1600.jpg',
+    'https://i.ebayimg.com/images/g/armani-four/s-l1600.jpg',
+  ]);
+});
+
+
+test('extracts fallback eBay condition and breadcrumb category evidence', () => {
+  const core = loadCore();
+  const detail = core.extractEbayItemDetailHtml(`
+    <meta property="og:title" content="Emporio Armani EA 9037/S Sunglasses | eBay">
+    <script>window.__state={"conditionDisplayName":"Pre-Owned","categoryName":"Sunglasses"};</script>
+    <nav aria-label="Breadcrumb">
+      <a>Clothing, Shoes &amp; Accessories</a><a>Men</a><a>Men's Accessories</a><a>Sunglasses</a>
+    </nav>
+  `, { itemId: '336701097241', price: 65 });
+
+  assert.equal(detail.condition, 'Pre-Owned');
+  assert.deepEqual(plain(detail.categoryPath), [
+    'Clothing, Shoes & Accessories', 'Men', "Men's Accessories", 'Sunglasses',
+  ]);
+});
+
+
+test('removes eBay branding and formats compressed listing specifications for Facebook', () => {
+  const core = loadCore();
+  const description = core.cleanEbayCrosslistDescription(
+    'eBay \u200bAuthentic Emporio Armani Sunglasses (Model EA 9037/S) '
+      + '\u200bSpecifications: \u200bModel Number: EA 9037/S \u200bColor Code: 000 '
+      + '\u200bTemple Length: 125mm \u200bOrigin: Made in Italy '
+      + '\u200bDesign: Eagle logo on the center bridge. \u200bCondition: Excellent',
+  );
+
+  assert.doesNotMatch(description, /\beBay\b/i);
+  assert.equal(description, [
+    'Authentic Emporio Armani Sunglasses (Model EA 9037/S)',
+    '',
+    'Specifications',
+    '- Model Number: EA 9037/S',
+    '- Color Code: 000',
+    '- Temple Length: 125mm',
+    '- Origin: Made in Italy',
+    '- Design: Eagle logo on the center bridge.',
+    '- Condition: Excellent',
+  ].join('\n'));
+});
+
+
+test('blocks a cross-list draft when eBay gallery evidence is incomplete', () => {
+  const core = loadCore();
+  const envelope = {
+    listing: {
+      title: 'Emporio Armani EA 9037/S Sunglasses',
+      price: 65,
+      description: 'Clean listing description.',
+      condition: 'Pre-Owned',
+      category_path: ['Sunglasses'],
+      image_urls: ['https://i.ebayimg.com/images/g/one/s-l1600.jpg'],
+      image_expected_count: 4,
+    },
+  };
+
+  assert.deepEqual(plain(core.crosslistEnvelopeMissingEvidence(envelope)), ['photos (1/4)']);
+  envelope.listing.image_urls.push(
+    'https://i.ebayimg.com/images/g/two/s-l1600.jpg',
+    'https://i.ebayimg.com/images/g/three/s-l1600.jpg',
+    'https://i.ebayimg.com/images/g/four/s-l1600.jpg',
+  );
+  assert.deepEqual(plain(core.crosslistEnvelopeMissingEvidence(envelope)), []);
+});
+
+
 test('removes eBay executable page state from seller descriptions', async () => {
   const core = loadCore();
   const envelope = await core.enrichEbayListingForCrosslist({
@@ -252,9 +348,11 @@ test('renders cross-list controls only on their matching workflow pages', () => 
     mode: 'fliptracker',
     route: { kind: 'fliptracker-facebook-create', source: 'facebook' },
   });
-  assert.match(ebayHtml, /Queue Facebook Draft/);
-  assert.match(ebayHtml, /Refresh All FB Drafts/);
+  assert.match(ebayHtml, /Create Facebook Draft/);
+  assert.match(ebayHtml, /Advanced sync tools/);
   assert.match(ebayHtml, /Facebook draft source/);
+  assert.doesNotMatch(ebayHtml, />Scan Page</);
+  assert.doesNotMatch(ebayHtml, />Copy JSON</);
   assert.doesNotMatch(ebayHtml, /Open \+ Fill Next/);
   assert.match(facebookHtml, /Open \+ Fill Next/);
   assert.doesNotMatch(facebookHtml, /Sync All eBay/);
@@ -501,6 +599,49 @@ test('commits Facebook location through its autocomplete suggestion', async () =
   assert.equal(result.ok, true);
   assert.equal(storedValue, 'Carteret, NJ');
   assert.equal(expanded, 'false');
+});
+
+
+test('downloads and assigns every authoritative eBay gallery photo in one Facebook upload', async () => {
+  class TestFile {
+    constructor(parts, name, options = {}) {
+      this.parts = parts;
+      this.name = name;
+      this.type = options.type || '';
+    }
+  }
+  class TestDataTransfer {
+    constructor() {
+      this.files = [];
+      this.items = { add: file => this.files.push(file) };
+    }
+  }
+  const core = loadCore({ File: TestFile, Event: class Event {} });
+  let dispatched = 0;
+  const photoInput = {
+    files: [],
+    getAttribute(name) { return name === 'accept' ? 'image/jpeg,image/png,image/webp' : ''; },
+    dispatchEvent() { dispatched += 1; },
+  };
+  const root = {
+    querySelectorAll(selector) { return selector === 'input[type="file"]' ? [photoInput] : []; },
+  };
+  const imageUrls = [1, 2, 3, 4].map(index => `https://i.ebayimg.com/images/g/armani-${index}/s-l1600.jpg`);
+  const result = await core.uploadFacebookDraftPhotos(root, { image_urls: imageUrls }, '336701097241', {
+    DataTransferClass: TestDataTransfer,
+    requestBlob: async url => ({ type: 'image/jpeg', source: url }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.count, 4);
+  assert.equal(photoInput.files.length, 4);
+  assert.deepEqual(photoInput.files.map(file => file.name), [
+    'ebay-336701097241-01.jpg',
+    'ebay-336701097241-02.jpg',
+    'ebay-336701097241-03.jpg',
+    'ebay-336701097241-04.jpg',
+  ]);
+  assert.ok(dispatched >= 1);
 });
 
 

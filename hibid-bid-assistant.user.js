@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.83
+// @version      0.7.84
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.83';
+  const SCRIPT_VERSION = '0.7.84';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -2567,6 +2567,46 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       .flatMap(ebayStructuredProductImageUrls);
   }
 
+  function ebayListingGalleryEvidence(html, trustedLeadUrls = []) {
+    const source = String(html || '');
+    const trusted = new Set(uniqueNonEmpty(trustedLeadUrls.map(normalizeEbayCrosslistImageUrl)));
+    const groups = new Map();
+    const extractFrom = value => {
+      const decoded = decodeHtml(String(value || ''))
+        .replace(/\\u002[fF]/g, '/')
+        .replace(/\\\//g, '/');
+      const matches = decoded.match(/https:\/\/(?:i\.ebayimg\.com|thumbs\.ebaystatic\.com)\/images\/g\/[^"'<>\s\\]+/gi) || [];
+      return uniqueNonEmpty(matches.map(normalizeEbayCrosslistImageUrl));
+    };
+
+    for (const match of source.matchAll(/<img\b[^>]*>/gi)) {
+      const before = source.slice(Math.max(0, match.index - 900), match.index + match[0].length);
+      const countMatch = before.match(/\b(?:Picture|Image|Photo)\s+\d+\s+(?:of|\/)\s+(\d+)\b/i);
+      const expectedCount = Number(countMatch?.[1] || 0);
+      if (!Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount > 24) continue;
+      const group = groups.get(expectedCount) || [];
+      extractFrom(match[0]).forEach(url => {
+        if (!group.includes(url)) group.push(url);
+      });
+      groups.set(expectedCount, group);
+    }
+
+    const candidates = Array.from(groups.entries())
+      .filter(([, urls]) => urls.some(url => trusted.has(url)))
+      .sort((left, right) => right[1].length - left[1].length || left[0] - right[0]);
+    if (!candidates.length) return { urls: [], expectedCount: 0 };
+    const [expectedCount, urls] = candidates[0];
+    if (urls.length < expectedCount) {
+      for (const match of source.matchAll(/["'](?:originalImg|mainImgUrl|zoomUrl|imageUrl)["']\s*:\s*["']([^"']+)["']/gi)) {
+        extractFrom(match[1]).forEach(url => {
+          if (!urls.includes(url)) urls.push(url);
+        });
+        if (urls.length >= expectedCount) break;
+      }
+    }
+    return { urls: urls.slice(0, expectedCount), expectedCount };
+  }
+
   function ebayJsonLdObjects(html) {
     const objects = [];
     const scripts = String(html || '').matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
@@ -2615,15 +2655,35 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const removeExecutableMarkup = source => String(source || '')
       .replace(/<!--[\s\S]*?-->/g, ' ')
       .replace(/<(script|style|noscript|template|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ');
-    const source = removeExecutableMarkup(removeExecutableMarkup(decodeHtml(value)));
-    return stripHtml(source)
+    const source = removeExecutableMarkup(removeExecutableMarkup(decodeHtml(value)))
+      .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+      .replace(/<\s*li\b[^>]*>/gi, '\n- ')
+      .replace(/<\/(?:p|div|li|section|h[1-6])\s*>/gi, '\n');
+    let text = decodeHtml(source.replace(/<[^>]+>/g, ' '))
       .replace(/^.*?\$mbp_M_\d+\s*=\s*["']https?:\/\/ir\.ebaystatic\.com\/[^"']*["']\s*/is, '')
       .replace(/\/\*\s*ssgST:[\s\S]*$/i, '')
       .replace(/\$M_\d+_C\s*=\s*\(window\.[\s\S]*$/i, '')
       .replace(/\b(?:Visit (?:my|our) eBay store|See (?:my|our) other items|Thanks for looking)\b[.!]?/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 5000);
+      .replace(/[\u200B-\u200D\uFEFF]/g, ' ')
+      .replace(/^\s*eBay\b[\s|:\-]*/i, '')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/ *\n */g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    const specifications = text.match(/\bSpecifications\s*:\s*/i);
+    if (specifications) {
+      const start = specifications.index || 0;
+      const intro = text.slice(0, start).trim();
+      const facts = text.slice(start + specifications[0].length).trim()
+        .replace(/\s+(?=(?:Model Number|Color Code|Temple Length|Origin|Design|Condition|Brand|Size|Material|Included|Features?)\s*:)/gi, '\n')
+        .split(/\n+/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => line.startsWith('- ') ? line : `- ${line}`);
+      text = [intro, 'Specifications', ...facts].filter(Boolean).join('\n\n')
+        .replace(/\n\n- /g, '\n- ');
+    }
+    return text.slice(0, 5000);
   }
 
   function extractEbayItemDetailHtml(html, context = {}) {
@@ -2660,16 +2720,35 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       /<iframe\b[^>]*(?:id=["']desc_ifr["'][^>]*src|src)=["'](https:\/\/(?:vi\.vipr|itm)\.ebaydesc\.com\/[^"']+)/i,
       /["'](https:\/\/(?:vi\.vipr|itm)\.ebaydesc\.com\/(?:ws\/eBayISAPI\.dll|itmdesc\/)[^"']+)["']/i,
     ]));
-    const conditionSource = String(product.itemCondition || context.condition || '')
+    const fallbackCondition = firstMatch(source, [
+      /["']conditionDisplayName["']\s*:\s*["']([^"']+)/i,
+      /["']conditionName["']\s*:\s*["']([^"']+)/i,
+      /itemprop=["']itemCondition["'][^>]*(?:content|title)=["']([^"']+)/i,
+      /\bCondition\s*:\s*<[^>]*>([^<]+)/i,
+    ]);
+    const conditionSource = String(product.itemCondition || fallbackCondition || context.condition || '')
       .split(/[\/#]/)
       .filter(Boolean)
       .pop() || '';
     const condition = conditionSource.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/Condition$/i, '').trim();
-    const categoryPath = Array.isArray(breadcrumbs.itemListElement)
+    let categoryPath = Array.isArray(breadcrumbs.itemListElement)
       ? breadcrumbs.itemListElement
         .map(entry => stripHtml(entry?.item?.name || entry?.name || ''))
         .filter(Boolean)
       : [];
+    if (!categoryPath.length) {
+      const breadcrumbHtml = firstMatch(source, [
+        /<nav\b[^>]*(?:aria-label=["'][^"']*breadcrumb[^"']*["']|class=["'][^"']*breadcrumb[^"']*["'])[^>]*>([\s\S]*?)<\/nav>/i,
+        /<ol\b[^>]*class=["'][^"']*breadcrumb[^"']*["'][^>]*>([\s\S]*?)<\/ol>/i,
+      ]);
+      categoryPath = Array.from(String(breadcrumbHtml || '').matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi))
+        .map(match => stripHtml(match[1]))
+        .filter(Boolean);
+      if (!categoryPath.length) {
+        const categoryName = stripHtml(firstMatch(source, [/["']categoryName["']\s*:\s*["']([^"']+)/i]));
+        if (categoryName) categoryPath = [categoryName];
+      }
+    }
     const itemSpecifics = {};
     (Array.isArray(product.additionalProperty) ? product.additionalProperty : []).forEach(property => {
       const key = stripHtml(property?.name || '').slice(0, 120);
@@ -2677,9 +2756,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       if (key && value) itemSpecifics[key] = value;
     });
     const structuredProductImages = ebayStructuredProductImageUrls(product.image);
-    const imageCandidates = structuredProductImages.length
-      ? structuredProductImages
-      : [ebayMetaContent(source, 'property', 'og:image')];
+    const openGraphImage = ebayMetaContent(source, 'property', 'og:image');
+    const galleryEvidence = ebayListingGalleryEvidence(source, [...structuredProductImages, openGraphImage]);
+    const imageCandidates = galleryEvidence.expectedCount > structuredProductImages.length
+      ? [...structuredProductImages, ...galleryEvidence.urls]
+      : (structuredProductImages.length ? structuredProductImages : [openGraphImage]);
     const imageUrls = uniqueNonEmpty(imageCandidates.map(normalizeEbayCrosslistImageUrl)).slice(0, 20);
     return {
       itemId,
@@ -2692,7 +2773,10 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       categoryPath,
       itemSpecifics,
       imageUrls,
-      imageEvidence: structuredProductImages.length ? 'product-json-ld' : (imageUrls.length ? 'open-graph' : ''),
+      imageEvidence: galleryEvidence.expectedCount > structuredProductImages.length && imageUrls.length > 1
+        ? 'item-gallery'
+        : (structuredProductImages.length ? 'product-json-ld' : (imageUrls.length ? 'open-graph' : '')),
+      ...(galleryEvidence.expectedCount ? { imageExpectedCount: galleryEvidence.expectedCount } : {}),
     };
   }
 
@@ -2728,6 +2812,9 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     }
     if (!detail?.description) warnings.push('Seller description was not found; verify the generated draft text.');
     if (!imageUrls.length) warnings.push('No authoritative eBay listing-gallery photos were found.');
+    if (detail?.imageExpectedCount && imageUrls.length < detail.imageExpectedCount) {
+      warnings.push(`eBay shows ${detail.imageExpectedCount} photos, but only ${imageUrls.length} authoritative photo URLs were recovered.`);
+    }
     if (imageUrls.length && detail?.imageEvidence === 'open-graph') warnings.push('Only the listing primary photo was available from eBay metadata.');
     if (!detail?.condition) warnings.push('eBay condition evidence was not found.');
     if (!(detail?.categoryPath || []).length) warnings.push('eBay category evidence was not found.');
@@ -2748,12 +2835,34 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         custom_label: String(activeListing?.customLabel || ''),
         image_urls: imageUrls,
         image_evidence: String(detail?.imageEvidence || ''),
+        image_expected_count: Number(detail?.imageExpectedCount || imageUrls.length || 0),
       },
       facebook_draft: {
         location: String(options.location || '').trim(),
       },
       warnings,
     };
+  }
+
+  function crosslistEnvelopeMissingEvidence(envelope) {
+    const listing = envelope?.listing || {};
+    const imageUrls = Array.isArray(listing.image_urls) ? listing.image_urls : [];
+    const expectedPhotos = Math.max(0, Number(listing.image_expected_count || imageUrls.length || 0));
+    const requiredEvidence = {
+      title: listing.title,
+      price: listing.price,
+      description: listing.description,
+      condition: listing.condition,
+      category: listing.category_path?.length,
+      photos: imageUrls.length,
+    };
+    const missing = Object.entries(requiredEvidence)
+      .filter(([, value]) => value === '' || value === null || value === undefined || value === 0)
+      .map(([key]) => key);
+    if (expectedPhotos > imageUrls.length) {
+      missing.push(`photos (${imageUrls.length}/${expectedPhotos})`);
+    }
+    return uniqueNonEmpty(missing);
   }
 
   function parseEbayEndedLifecycleHtml(html) {
@@ -3941,6 +4050,7 @@ ${cards}
     normalizeEbayCrosslistImageUrl,
     cleanEbayCrosslistDescription,
     buildCrosslistEnvelope,
+    crosslistEnvelopeMissingEvidence,
     enrichEbayListingForCrosslist,
     crosslistBridgeRequest,
     getCrosslistLocation,
@@ -3956,6 +4066,7 @@ ${cards}
     chooseFacebookLocationValue,
     fillFacebookMarketplaceDraft,
     downloadCrosslistImageFiles,
+    uploadFacebookDraftPhotos,
     parseEbayEndedLifecycleHtml,
     parseEbaySoldOrdersHtml,
     parseEbayTransactionsHtml,
@@ -10180,20 +10291,30 @@ ${cards}
           </div>
           <span class="hiba-chip neutral">${ebayLifecycle ? 'JSON' : 'HTML'}</span>
         </div>
-        <div class="hiba-actions">
-          ${actionButton('fliptracker-listing-scan', 'scan', ebayLifecycle ? 'Scan Page' : 'Scan Listings', 'primary', '', 'Read the current selling page without changing the account.')}
-          ${actionButton('fliptracker-listing-copy', 'copy', ebayLifecycle ? 'Copy JSON' : 'Copy HTML', 'secondary', '', 'Copy the current FlipTracker export.')}
-          ${actionButton('fliptracker-listing-download', 'download', 'Download', 'success', '', 'Download the current FlipTracker export.')}
-          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-page', 'radio', 'Update Tracker', 'success', '', 'Send this page to Flip Tracker. Ended listings update listing state and never invent sales.') : ''}
-          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-all', 'scan', 'Sync All eBay', 'primary', '', 'Collect active, ended, sold-order, and transaction pages. Incomplete pages are named for guided follow-up.') : ''}
-          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-connect', 'shield', 'Connect', 'secondary', '', 'Save the local Flip Tracker bridge token in Tampermonkey storage.') : ''}
-          ${ebayActive ? actionButton('fliptracker-crosslist-queue', 'upload', 'Queue Facebook Draft', 'success', '', 'Enrich one selected active listing and add or update its Facebook draft queue record.') : ''}
-          ${ebayActive ? actionButton('fliptracker-crosslist-queue-all', 'scan', 'Refresh All FB Drafts', 'success', '', 'Collect every active listing page and refresh the full Facebook review queue from authoritative eBay item evidence.') : ''}
-        </div>
         ${ebayActive ? `<label class="hiba-field-label" for="fliptracker-crosslist-item">Facebook draft source</label>
           <select id="fliptracker-crosslist-item" class="hiba-select" aria-label="Facebook draft source"></select>
           <label class="hiba-field-label" for="fliptracker-crosslist-location">Facebook location</label>
-          <input id="fliptracker-crosslist-location" class="hiba-input" value="${escapeHtml(getCrosslistLocation())}" aria-label="Facebook location">` : ''}
+          <input id="fliptracker-crosslist-location" class="hiba-input" value="${escapeHtml(getCrosslistLocation())}" aria-label="Facebook location">
+          <div class="hiba-actions">
+            ${actionButton('fliptracker-crosslist-queue', 'upload', 'Create Facebook Draft', 'success', '', 'Read the selected eBay listing, queue it, open Facebook, and begin filling the draft. Publishing remains manual.')}
+            ${actionButton('fliptracker-lifecycle-sync-page', 'radio', 'Update Tracker', 'secondary', '', 'Send the current Seller Hub page to Flip Tracker.')}
+          </div>
+          <details class="hiba-details">
+            <summary>Advanced sync tools</summary>
+            <div class="hiba-actions">
+              ${actionButton('fliptracker-crosslist-queue-all', 'scan', 'Refresh Draft Queue', 'secondary', '', 'Refresh queued Facebook drafts from every active eBay listing.')}
+              ${actionButton('fliptracker-lifecycle-sync-all', 'scan', 'Sync All eBay', 'secondary', '', 'Collect active, ended, sold-order, and transaction pages.')}
+              ${actionButton('fliptracker-lifecycle-connect', 'shield', 'Connect', 'secondary', '', 'Save the local Flip Tracker bridge token in Tampermonkey storage.')}
+              ${actionButton('fliptracker-listing-download', 'download', 'Download JSON', 'secondary', '', 'Download the current eBay export.')}
+            </div>
+          </details>` : `<div class="hiba-actions">
+          ${actionButton('fliptracker-listing-scan', 'scan', ebayLifecycle ? 'Scan Page' : 'Scan Listings', 'primary', '', 'Read the current selling page without changing the account.')}
+          ${actionButton('fliptracker-listing-copy', 'copy', ebayLifecycle ? 'Copy JSON' : 'Copy HTML', 'secondary', '', 'Copy the current FlipTracker export.')}
+          ${actionButton('fliptracker-listing-download', 'download', 'Download', 'success', '', 'Download the current FlipTracker export.')}
+          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-page', 'radio', 'Update Tracker', 'success', '', 'Send this page to Flip Tracker.') : ''}
+          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-all', 'scan', 'Sync All eBay', 'primary', '', 'Collect all supported eBay lifecycle pages.') : ''}
+          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-connect', 'shield', 'Connect', 'secondary', '', 'Save the local Flip Tracker bridge token in Tampermonkey storage.') : ''}
+        </div>`}
         ${renderDebugActions(debugEnabled)}
         <div id="fliptracker-listing-status" class="hiba-meta">Waiting to scan.</div>
       </section>
@@ -10947,9 +11068,15 @@ ${cards}
 
     crosslistQueueButton?.addEventListener('click', async () => {
       if (state.busy) return;
+      const facebookWindow = window.open('about:blank', '_blank');
+      if (!facebookWindow) {
+        status('Facebook draft blocked: allow pop-ups for eBay, then click Create Facebook Draft again.');
+        return;
+      }
       try {
         scanListingsForExport();
       } catch (error) {
+        facebookWindow.close?.();
         status(`Queue blocked: ${error?.message || error}`);
         return;
       }
@@ -10958,11 +11085,13 @@ ${cards}
         || state.listingRows[Number(selectedValue)]
         || state.listingRows[0];
       if (!listing) {
+        facebookWindow.close?.();
         status('No active eBay listing is selected. Scan the page first.');
         return;
       }
       const locationValue = saveCrosslistLocation(crosslistLocationInput?.value || getCrosslistLocation());
       if (!locationValue) {
+        facebookWindow.close?.();
         status('Set the Facebook listing location before queuing.');
         return;
       }
@@ -10976,20 +11105,14 @@ ${cards}
           customLabel: listing.custom_label || listing.customLabel,
           quantityAvailable: listing.quantity_available ?? listing.quantityAvailable,
         }, { location: locationValue });
-        const summary = [
-          envelope.listing.title,
-          `$${Number(envelope.listing.price).toFixed(2)}`,
-          `${envelope.listing.image_urls.length} photo(s)`,
-          envelope.warnings.length ? `Warnings:\n- ${envelope.warnings.join('\n- ')}` : 'No extraction warnings.',
-          '',
-          'Queue this Facebook draft? Publishing will still require your click on Facebook.',
-        ].join('\n');
-        if (!window.confirm(summary)) {
-          status('Facebook draft queue cancelled.');
-          return;
+        const missing = crosslistEnvelopeMissingEvidence(envelope);
+        if (missing.length) {
+          facebookWindow.close?.();
+          throw new Error(`eBay evidence is incomplete (${missing.join(', ')}). Nothing was opened on Facebook.`);
         }
         const result = await crosslistBridgeRequest('/crosslist/queue', envelope);
         if (!result.ok) {
+          facebookWindow.close?.();
           status(`Draft queue failed: ${result.reason || 'unknown bridge error'}.`);
           return;
         }
@@ -10999,8 +11122,10 @@ ${cards}
           duplicate: 'Unchanged draft already exists; no duplicate created.',
           'published-blocked': 'This eBay item is already linked to a published Facebook listing.',
         }[result.action] || `Draft queue result: ${result.action}.`;
-        status(actionText);
+        facebookWindow.location.href = facebookNextDraftUrl({ origin: 'https://www.facebook.com' });
+        status(`${actionText} Facebook opened and will begin filling automatically. Review before publishing.`);
       } catch (error) {
+        facebookWindow.close?.();
         status(`Draft queue failed: ${error?.message || error}`);
       } finally {
         if (crosslistQueueButton) crosslistQueueButton.disabled = false;

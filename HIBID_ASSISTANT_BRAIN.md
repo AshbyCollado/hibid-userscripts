@@ -441,3 +441,14 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - AAR calendar cards are WordPress/Divi HTML, while catalogs are servlet-rendered tables/text; keep route-specific parsers instead of trying to reuse HiBid or AuctionNinja selectors.
 - GovDeals can block simple HTTP clients; verify from the real browser context and prefer in-page DOM/network observation over raw fetch tooling.
 - Do not treat "opened the page" as verification. Verification means observed UI plus route/debug/count evidence.
+
+## 2026-07-25 eBay to Facebook Draft Hardening (v0.7.84)
+
+- Canonical control surface: `https://www.ebay.com/sh/lst/active`. Seller Hub supplies one stable row per active listing; the exact `/itm/<id>` page supplies the authoritative gallery, condition, category breadcrumb, and seller description.
+- `Create Facebook Draft` is the primary action. It opens Facebook synchronously, reads the selected eBay row plus item detail, queues one idempotent record, and starts autofill without a second confirmation. It never publishes.
+- Full-gallery contract: eBay's visible `Picture X of N` count is preserved as `image_expected_count`. A draft is blocked if fewer than N authoritative eBay-hosted images were recovered. The loopback bridge enforces the same rule so stale or malformed payloads cannot bypass it.
+- Description contract: executable markup, zero-width characters, eBay boilerplate, and compressed specification labels are removed or reformatted before queueing.
+- Category/condition contract: source evidence is required before Facebook opens. The bridge maps conservative Facebook leaf values and leaves warnings reviewable.
+- UI contract: the active page exposes only `Create Facebook Draft` and `Update Tracker` as primary actions; diagnostics and bulk utilities live under `Advanced sync tools`.
+- Security contract: only known eBay image hosts are accepted, buyer PII fields are rejected recursively, duplicate item identities update instead of append, and no automation may click Publish.
+- Verification evidence: the full add-on suite passes `159/159`; bridge tests pass `23/23`; a live process probe confirms duplicate bridge instances cannot bind. A non-publishing Waterfox draft remains the final runtime release gate.
