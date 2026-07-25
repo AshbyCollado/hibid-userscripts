@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.72`.
+- Current version: `0.7.73`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -15,7 +15,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 ## Active Goal: Canonical eBay Lifecycle + Facebook Cross-List Release
 
 - Goal: ship one FlipperAddon build on `main`; do not maintain a second installed userscript.
-- Release version: `0.7.72`.
+- Release version: `0.7.73`.
 - Integration contract: retain the latest main-branch HiBid/AuctionNinja/AAR/GovDeals and eBay bulk-sell exports while adding active/ended/sold/transaction lifecycle sync, Best Offer policy evidence, and the reviewed eBay-to-Facebook draft queue.
 - Safety: queue and fill Facebook drafts for human review, but never click Publish.
 - Verification gate: syntax, the complete userscript suite, cross-list bridge tests, authenticated Waterfox route detection, all active eBay records captured, and queue duplicate protection.

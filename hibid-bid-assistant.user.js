@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.72
+// @version      0.7.73
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.72';
+  const SCRIPT_VERSION = '0.7.73';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -1172,7 +1172,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function cleanEbaySellerHubTitle(value) {
-    let title = cleanListingTitle(value);
+    let title = cleanListingTitle(value).replace(/\s+\|\s+eBay$/i, '').trim();
     const prefixes = [
       /^[^|]{1,40}\|\s*/i,
       /^eBay\s*\|\s*/i,
@@ -1194,7 +1194,10 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         }
       });
     }
-    title = title.replace(/^.{0,120}\bListing\.?\s+/i, '').trim();
+    title = title
+      .replace(/^.{0,120}\bListing\.?\s+/i, '')
+      .replace(/\s+\|\s+eBay$/i, '')
+      .trim();
     return title;
   }
 
@@ -2600,7 +2603,14 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function cleanEbayCrosslistDescription(value) {
-    return stripHtml(decodeHtml(value))
+    const removeExecutableMarkup = source => String(source || '')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<(script|style|noscript|template|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ');
+    const source = removeExecutableMarkup(removeExecutableMarkup(decodeHtml(value)));
+    return stripHtml(source)
+      .replace(/^.*?\$mbp_M_\d+\s*=\s*["']https?:\/\/ir\.ebaystatic\.com\/[^"']*["']\s*/is, '')
+      .replace(/\/\*\s*ssgST:[\s\S]*$/i, '')
+      .replace(/\$M_\d+_C\s*=\s*\(window\.[\s\S]*$/i, '')
       .replace(/\b(?:Visit (?:my|our) eBay store|See (?:my|our) other items|Thanks for looking)\b[.!]?/gi, ' ')
       .replace(/\s+/g, ' ')
       .trim()

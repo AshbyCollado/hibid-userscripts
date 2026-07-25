@@ -156,6 +156,33 @@ test('recognizes current eBay description host and prefers the seller descriptio
 });
 
 
+test('removes eBay executable page state from seller descriptions', async () => {
+  const core = loadCore();
+  const envelope = await core.enrichEbayListingForCrosslist({
+    itemId: '336701097243',
+    title: 'Armstrong Torque Wrench | eBay',
+    price: 120,
+  }, {
+    location: 'Carteret, NJ',
+    fetchText: async () => `
+      <meta property="og:title" content="Armstrong Torque Wrench | eBay">
+      <iframe id="desc_ifr" src="https://itm.ebaydesc.com/itmdesc/336701097243"></iframe>`,
+    fetchDescriptionText: async () => `
+      <script>$ssgST=new Date().getTime();</script>
+      <style>body { font-family: sans-serif; }</style>
+      <div>New old stock torque wrench. Includes certificate and original packaging.</div>
+      <script>$M_123_C=(window.$M_123_C||[]).concat({"meta":{"name":"SELLER_ITEM_DESC"}})</script>`,
+  });
+
+  assert.equal(envelope.listing.title, 'Armstrong Torque Wrench');
+  assert.equal(
+    envelope.listing.description,
+    'New old stock torque wrench. Includes certificate and original packaging.',
+  );
+  assert.doesNotMatch(envelope.listing.description, /SELLER_ITEM_DESC|\$ssgST|trackingList/);
+});
+
+
 test('resolves dedicated Facebook draft and published routes', () => {
   const core = loadCore();
   const create = new URL('https://www.facebook.com/marketplace/create/item');
