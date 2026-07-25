@@ -252,6 +252,28 @@ test('extracts fallback eBay condition and breadcrumb category evidence', () => 
 });
 
 
+test('extracts unquoted live eBay JSON-LD and elevated condition evidence', () => {
+  const core = loadCore();
+  const detail = core.extractEbayItemDetailHtml(`
+    <button aria-label="Pre-owned - Excellent - About this item condition">Pre-owned - Excellent</button>
+    <script type=application/ld+json data-module=SEOBREADCRUMBS>
+      {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[
+        {"@type":"ListItem","position":1,"name":"eBay","item":"https://www.ebay.com"},
+        {"@type":"ListItem","position":2,"name":"Clothing, Shoes & Accessories"},
+        {"@type":"ListItem","position":3,"name":"Sunglasses"}
+      ]}
+    </script>
+    <script type=application/ld+json>
+      {"@context":"https://schema.org","@type":"Product","name":"Emporio Armani EA 9037/S Sunglasses","offers":{"price":"65.00"}}
+    </script>
+  `, { itemId: '336701097241' });
+
+  assert.equal(detail.condition, 'Pre-owned - Excellent');
+  assert.equal(detail.price, 65);
+  assert.deepEqual(plain(detail.categoryPath), ['eBay', 'Clothing, Shoes & Accessories', 'Sunglasses']);
+});
+
+
 test('removes eBay branding and formats compressed listing specifications for Facebook', () => {
   const core = loadCore();
   const description = core.cleanEbayCrosslistDescription(

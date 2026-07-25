@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.84
+// @version      0.7.85
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.84';
+  const SCRIPT_VERSION = '0.7.85';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -2609,7 +2609,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function ebayJsonLdObjects(html) {
     const objects = [];
-    const scripts = String(html || '').matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+    const scripts = String(html || '').matchAll(/<script\b[^>]*type\s*=\s*(?:["']application\/ld\+json["']|application\/ld\+json)(?=[\s>])[^>]*>([\s\S]*?)<\/script>/gi);
     for (const match of scripts) {
       const source = String(match[1] || '').trim();
       if (!source) continue;
@@ -2723,6 +2723,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const fallbackCondition = firstMatch(source, [
       /["']conditionDisplayName["']\s*:\s*["']([^"']+)/i,
       /["']conditionName["']\s*:\s*["']([^"']+)/i,
+      /["']displayLabel["']\s*:\s*["']Condition["'][\s\S]{0,500}?["']displayValue["']\s*:\s*["']([^"']+)/i,
+      /aria-label=["']([^"']+?)\s*-\s*About this item condition["']/i,
       /itemprop=["']itemCondition["'][^>]*(?:content|title)=["']([^"']+)/i,
       /\bCondition\s*:\s*<[^>]*>([^<]+)/i,
     ]);

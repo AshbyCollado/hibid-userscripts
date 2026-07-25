@@ -452,3 +452,11 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - UI contract: the active page exposes only `Create Facebook Draft` and `Update Tracker` as primary actions; diagnostics and bulk utilities live under `Advanced sync tools`.
 - Security contract: only known eBay image hosts are accepted, buyer PII fields are rejected recursively, duplicate item identities update instead of append, and no automation may click Publish.
 - Verification evidence: the full add-on suite passes `159/159`; bridge tests pass `23/23`; a live process probe confirms duplicate bridge instances cannot bind. A non-publishing Waterfox draft remains the final runtime release gate.
+
+## 2026-07-25 Live eBay Item Evidence Drift (v0.7.85)
+
+- Authenticated Waterfox verification confirmed `https://www.ebay.com/sh/lst/active` as the canonical listing selector and exact `/itm/<id>` pages as the enrichment source.
+- Current eBay item HTML may emit unquoted `type=application/ld+json`, including bare Product script tags where `>` immediately follows the MIME type. The JSON-LD scanner now uses a non-consuming delimiter check so both attributed and bare scripts parse.
+- Current condition evidence may appear as `displayLabel=Condition` / `displayValue=...` JSON or an `aria-label` ending in `About this item condition`; both are accepted as source evidence.
+- A regression fixture covers the live Emporio Armani item shape and requires Product price, breadcrumb category, and `Pre-owned - Excellent` condition to survive extraction.
+- Verification evidence: focused Facebook cross-list tests pass `29/29`; the complete add-on suite passes `160/160`. A non-publishing Waterfox draft remains the final runtime release gate.
