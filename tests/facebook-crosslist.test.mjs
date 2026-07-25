@@ -430,6 +430,60 @@ test('commits Facebook location through its autocomplete suggestion', async () =
 });
 
 
+test('reveals Facebook More details before locating the location control', async () => {
+  const core = loadCore({
+    Event: class Event { constructor(type) { this.type = type; } },
+    KeyboardEvent: class KeyboardEvent { constructor(type) { this.type = type; } },
+    setTimeout,
+  });
+  let revealed = false;
+  let storedValue = '';
+  let expanded = 'false';
+  const moreDetails = {
+    textContent: 'More details Attract more interest by including more',
+    getAttribute() { return null; },
+    click() { revealed = true; },
+  };
+  const locationControl = {
+    tagName: 'INPUT',
+    focus() {},
+    click() { expanded = 'true'; },
+    dispatchEvent() {},
+    getAttribute(name) {
+      if (name === 'aria-label') return 'Location';
+      if (name === 'role') return 'combobox';
+      if (name === 'aria-expanded') return expanded;
+      return null;
+    },
+  };
+  Object.defineProperty(locationControl, 'value', {
+    get: () => storedValue,
+    set: value => { storedValue = String(value); },
+  });
+  const locationOption = {
+    textContent: 'Carteret, New Jersey',
+    getAttribute() { return null; },
+    click() {
+      storedValue = 'Carteret, NJ';
+      expanded = 'false';
+    },
+  };
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === 'button, [role="button"]') return [moreDetails];
+      if (selector.includes('input, textarea')) return revealed ? [locationControl] : [];
+      if (selector.includes('[role="option"]')) return revealed ? [locationOption] : [];
+      return [];
+    },
+  };
+
+  const result = await core.chooseFacebookLocationValue(root, 'Carteret, NJ', { timeoutMs: 500 });
+  assert.equal(result.ok, true);
+  assert.equal(revealed, true);
+  assert.equal(storedValue, 'Carteret, NJ');
+});
+
+
 test('preserves a matching Facebook-owned default location', async () => {
   const core = loadCore();
   const locationSummary = {
