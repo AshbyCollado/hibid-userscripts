@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.92
+// @version      0.7.93
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.92';
+  const SCRIPT_VERSION = '0.7.93';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -81,6 +81,8 @@
   const CROSSLIST_PENDING_KEY = 'flipperaddon-crosslist-pending-v1';
   const CROSSLIST_AUTOFILL_PARAM = 'flipperaddon_autofill';
   const CROSSLIST_ITEM_PARAM = 'flipperaddon_item_id';
+  const CROSSLIST_AUTOSAVE_PARAM = 'flipperaddon_autosave';
+  const CROSSLIST_AUTOSAVE_STORAGE_KEY = 'flipperaddon_crosslist_autosave_active';
   const DEBUG_LOG_LIMIT = 200;
   const OUTBID_WATCHLIST_URL = 'https://hibid.com/account/watchlist?status=OUTBID';
   const LEGACY_SCRAPER_IDS = [
@@ -4087,6 +4089,9 @@ ${cards}
     facebookNextDraftUrl,
     facebookAutofillRequested,
     facebookAutofillItemId,
+    facebookAutoSaveRequested,
+    facebookAutoSaveBatchActive,
+    setFacebookAutoSaveBatchActive,
     facebookDraftHasContent,
     findFacebookLabeledControl,
     setFacebookControlValue,
@@ -4095,6 +4100,7 @@ ${cards}
     chooseFacebookDropdownValue,
     chooseFacebookLocationValue,
     fillFacebookMarketplaceDraft,
+    saveFacebookMarketplaceDraft,
     downloadCrosslistImageFiles,
     uploadFacebookDraftPhotos,
     parseEbayEndedLifecycleHtml,
@@ -8743,7 +8749,7 @@ ${cards}
     });
   }
 
-  function facebookNextDraftUrl(loc = location, itemId = '') {
+  function facebookNextDraftUrl(loc = location, itemId = '', options = {}) {
     const origin = /^https:\/\/(?:www\.)?facebook\.com$/i.test(String(loc?.origin || ''))
       ? loc.origin
       : 'https://www.facebook.com';
@@ -8751,6 +8757,7 @@ ${cards}
     next.searchParams.set(CROSSLIST_AUTOFILL_PARAM, '1');
     const normalizedItemId = String(itemId || '').match(/^\d{9,15}$/)?.[0] || '';
     if (normalizedItemId) next.searchParams.set(CROSSLIST_ITEM_PARAM, normalizedItemId);
+    if (options.autoSave) next.searchParams.set(CROSSLIST_AUTOSAVE_PARAM, '1');
     return next.toString();
   }
 
@@ -8770,6 +8777,52 @@ ${cards}
     } catch (_) {
       return '';
     }
+  }
+
+  function facebookAutoSaveRequested(loc = location) {
+    try {
+      return new URL(String(loc?.href || loc || ''), 'https://www.facebook.com')
+        .searchParams.get(CROSSLIST_AUTOSAVE_PARAM) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setFacebookAutoSaveBatchActive(active, storage = globalThis.localStorage) {
+    try {
+      if (active) storage?.setItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY, '1');
+      else storage?.removeItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY);
+    } catch (_) {
+      // Storage is a convenience for continuing after Facebook's save navigation.
+    }
+  }
+
+  function facebookAutoSaveBatchActive(storage = globalThis.localStorage) {
+    try {
+      return storage?.getItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function saveFacebookMarketplaceDraft(root = document, options = {}) {
+    const candidates = facebookPageNodes(root, 'button, a, [role="button"], span, div');
+    let control = null;
+    for (const candidate of candidates) {
+      if (normalizedFacebookControlText(candidate?.textContent) !== 'save draft') continue;
+      const clickable = candidate.matches?.('button, a, [role="button"]')
+        ? candidate
+        : candidate.closest?.('button, a, [role="button"]');
+      if (clickable && !isFlipperAddonNode(clickable)) {
+        control = clickable;
+        break;
+      }
+    }
+    if (!control) return { ok: false, reason: 'Facebook Save draft control was not found.' };
+    control.click();
+    const waitMs = Math.max(0, Number(options.waitMs ?? 1200));
+    if (waitMs) await new Promise(resolve => globalThis.setTimeout(resolve, waitMs));
+    return { ok: true, reason: '' };
   }
 
   function facebookDraftHasContent(root = document) {
@@ -11328,7 +11381,7 @@ ${cards}
       }
     });
 
-    const fillNextCrosslistDraft = async (requestedItemId = '') => {
+    const fillNextCrosslistDraft = async (requestedItemId = '', options = {}) => {
       if (state.busy) return;
       setScrapingBusy(true);
       crosslistFillButton.disabled = true;
@@ -11342,6 +11395,7 @@ ${cards}
         }
         claimed = claim.record;
         if (!claimed) {
+          if (options.autoSave) setFacebookAutoSaveBatchActive(false);
           status('No queued eBay draft is waiting. Queue one from eBay Active first.');
           return;
         }
@@ -11356,6 +11410,7 @@ ${cards}
         status(`Downloading ${claimed.facebook_draft?.image_urls?.length || 0} eBay photo(s) and filling Facebook...`);
         const result = await fillFacebookMarketplaceDraft(claimed);
         if (!result.ok) {
+          if (options.autoSave) setFacebookAutoSaveBatchActive(false);
           await crosslistBridgeRequest('/crosslist/result', {
             item_id: claimed.item_id,
             evidence_hash: claimed.evidence_hash,
@@ -11364,6 +11419,21 @@ ${cards}
           });
           status(`Draft fill stopped: ${result.errors[0] || 'required Facebook fields were not filled'}`);
           return;
+        }
+        if (options.autoSave) {
+          status(`Saving ${claimed.facebook_draft?.title || claimed.item_id} as a Facebook draft...`);
+          const saveResult = await saveFacebookMarketplaceDraft(document);
+          if (!saveResult.ok) {
+            setFacebookAutoSaveBatchActive(false);
+            await crosslistBridgeRequest('/crosslist/result', {
+              item_id: claimed.item_id,
+              evidence_hash: claimed.evidence_hash,
+              state: 'Failed',
+              error: saveResult.reason,
+            });
+            status(`Batch stopped: ${saveResult.reason}`);
+            return;
+          }
         }
         const transition = await crosslistBridgeRequest('/crosslist/result', {
           item_id: claimed.item_id,
@@ -11383,9 +11453,15 @@ ${cards}
           warnings: result.warnings,
         });
         status(result.warnings.length
-          ? `Draft filled with ${result.photo_count} photo(s). Review ${result.warnings.length} warning(s), then publish manually.`
-          : `Draft filled with ${result.photo_count} photo(s). Review it, then publish manually.`);
+          ? `Draft ${options.autoSave ? 'saved' : 'filled'} with ${result.photo_count} photo(s). Review ${result.warnings.length} warning(s), then publish manually.`
+          : `Draft ${options.autoSave ? 'saved' : 'filled'} with ${result.photo_count} photo(s). Review it, then publish manually.`);
+        if (options.autoSave) {
+          globalThis.setTimeout(() => {
+            location.href = facebookNextDraftUrl(location, '', { autoSave: true });
+          }, 2500);
+        }
       } catch (error) {
+        if (options.autoSave) setFacebookAutoSaveBatchActive(false);
         if (claimed?.item_id) {
           savePendingCrosslist({
             item_id: claimed.item_id,
@@ -11425,16 +11501,25 @@ ${cards}
 
     if (facebookCreateMode && facebookAutofillRequested(location)) {
       const requestedItemId = facebookAutofillItemId(location);
+      const autoSave = facebookAutoSaveRequested(location) || facebookAutoSaveBatchActive();
+      if (autoSave) setFacebookAutoSaveBatchActive(true);
       try {
         const cleanUrl = new URL(location.href);
         cleanUrl.searchParams.delete(CROSSLIST_AUTOFILL_PARAM);
         cleanUrl.searchParams.delete(CROSSLIST_ITEM_PARAM);
+        cleanUrl.searchParams.delete(CROSSLIST_AUTOSAVE_PARAM);
         history.replaceState(history.state, '', cleanUrl.toString());
       } catch (_) {
         // A clean URL is cosmetic; the one-shot fill still proceeds.
       }
       window.setTimeout(() => {
-        if (!state.busy && !facebookDraftHasContent(document)) fillNextCrosslistDraft(requestedItemId);
+        if (!state.busy && !facebookDraftHasContent(document)) fillNextCrosslistDraft(requestedItemId, { autoSave });
+      }, 1200);
+    }
+
+    else if (facebookCreateMode && facebookAutoSaveBatchActive()) {
+      window.setTimeout(() => {
+        if (!state.busy && !facebookDraftHasContent(document)) fillNextCrosslistDraft('', { autoSave: true });
       }, 1200);
     }
 

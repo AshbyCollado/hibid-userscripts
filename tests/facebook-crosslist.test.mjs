@@ -428,7 +428,7 @@ test('builds a one-shot Facebook auto-fill URL and detects existing draft conten
 test('selected Facebook draft flow claims the selected eBay item id', () => {
   const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
   assert.match(source, /crosslistBridgeRequest\('\/crosslist\/claim', \{ item_id: requestedItemId \}\)/);
-  assert.match(source, /fillNextCrosslistDraft\(requestedItemId\)/);
+  assert.match(source, /fillNextCrosslistDraft\(requestedItemId, \{ autoSave \}\)/);
 });
 
 
@@ -657,6 +657,45 @@ test('Facebook dropdown selection cannot click FlipperAddon shortcut menus', asy
   assert.equal(result.ok, true);
   assert.equal(conditionSelected, true);
   assert.equal(shortcutClicked, false);
+});
+
+test('Facebook batch save clicks only the page Save draft control', async () => {
+  const core = loadCore({ setTimeout });
+  let addonClicked = false;
+  let saveClicked = false;
+  const addonSave = {
+    textContent: 'Save draft',
+    matches() { return true; },
+    closest(selector) { return selector === '#flipperaddon-panel' ? {} : null; },
+    click() { addonClicked = true; },
+  };
+  const pageSave = {
+    textContent: 'Save draft',
+    matches() { return true; },
+    closest() { return null; },
+    click() { saveClicked = true; },
+  };
+  const root = {
+    querySelectorAll() { return [addonSave, pageSave]; },
+  };
+
+  const result = await core.saveFacebookMarketplaceDraft(root, { waitMs: 0 });
+
+  assert.equal(result.ok, true);
+  assert.equal(saveClicked, true);
+  assert.equal(addonClicked, false);
+});
+
+test('Facebook draft URL can explicitly enable the no-publish autosave batch', () => {
+  const core = loadCore({ URL });
+  const url = core.facebookNextDraftUrl(
+    { origin: 'https://www.facebook.com' },
+    '336701097241',
+    { autoSave: true },
+  );
+  assert.match(url, /flipperaddon_autofill=1/);
+  assert.match(url, /flipperaddon_item_id=336701097241/);
+  assert.match(url, /flipperaddon_autosave=1/);
 });
 
 
