@@ -725,6 +725,26 @@ test('Facebook autosave lease permits one tab and blocks concurrent tabs', () =>
   assert.equal(core.claimFacebookAutoSaveLease(localStorage, sessionB, 1002), true);
 });
 
+test('Facebook autosave reset clears shared batch and per-tab state', () => {
+  const core = loadCore();
+  const localValues = new Map([
+    ['flipperaddon_crosslist_autosave_active', '1'],
+    ['flipperaddon_crosslist_autosave_lease', '{"owner":"tab-a"}'],
+    ['flipperaddon_crosslist_autosave_pending', '{"item_id":"336701097243"}'],
+  ]);
+  const sessionValues = new Map([['flipperaddon_crosslist_tab_id', 'tab-a']]);
+  const storage = values => ({
+    getItem(key) { return values.get(key) || null; },
+    setItem(key, value) { values.set(key, value); },
+    removeItem(key) { values.delete(key); },
+  });
+
+  core.resetFacebookAutoSaveBatch(storage(localValues), storage(sessionValues));
+
+  assert.equal(localValues.size, 0);
+  assert.equal(sessionValues.size, 0);
+});
+
 test('Facebook autosave confirmation requires the saved title and Draft status', () => {
   const core = loadCore();
   const pending = { title: 'TWIN BEDGEAR Performance Flex & Fit Waterproof Mattress Protector' };

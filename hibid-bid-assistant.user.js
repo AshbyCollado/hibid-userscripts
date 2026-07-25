@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.95
+// @version      0.7.96
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.95';
+  const SCRIPT_VERSION = '0.7.96';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -82,6 +82,7 @@
   const CROSSLIST_AUTOFILL_PARAM = 'flipperaddon_autofill';
   const CROSSLIST_ITEM_PARAM = 'flipperaddon_item_id';
   const CROSSLIST_AUTOSAVE_PARAM = 'flipperaddon_autosave';
+  const CROSSLIST_AUTOSAVE_RESET_PARAM = 'flipperaddon_autosave_reset';
   const CROSSLIST_AUTOSAVE_STORAGE_KEY = 'flipperaddon_crosslist_autosave_active';
   const CROSSLIST_AUTOSAVE_LEASE_KEY = 'flipperaddon_crosslist_autosave_lease';
   const CROSSLIST_AUTOSAVE_PENDING_KEY = 'flipperaddon_crosslist_autosave_pending';
@@ -4103,6 +4104,7 @@ ${cards}
     setFacebookPendingDraft,
     getFacebookPendingDraft,
     facebookSavedDraftVisible,
+    resetFacebookAutoSaveBatch,
     facebookDraftHasContent,
     findFacebookLabeledControl,
     setFacebookControlValue,
@@ -8803,6 +8805,15 @@ ${cards}
     }
   }
 
+  function facebookAutoSaveResetRequested(loc = location) {
+    try {
+      return new URL(String(loc?.href || loc || ''), 'https://www.facebook.com')
+        .searchParams.get(CROSSLIST_AUTOSAVE_RESET_PARAM) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
   function setFacebookAutoSaveBatchActive(active, storage = globalThis.localStorage) {
     try {
       if (active) storage?.setItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY, '1');
@@ -8895,6 +8906,20 @@ ${cards}
       return JSON.parse(storage?.getItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY) || 'null');
     } catch (_) {
       return null;
+    }
+  }
+
+  function resetFacebookAutoSaveBatch(
+    storage = globalThis.localStorage,
+    session = globalThis.sessionStorage,
+  ) {
+    try {
+      storage?.removeItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY);
+      storage?.removeItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY);
+      storage?.removeItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY);
+      session?.removeItem?.(CROSSLIST_AUTOSAVE_TAB_KEY);
+    } catch (_) {
+      // The reset route is best-effort; the bridge remains the audit source of truth.
     }
   }
 
@@ -11669,6 +11694,18 @@ ${cards}
       }
       await fillNextCrosslistDraft();
     });
+
+    if (facebookAutoSaveResetRequested(location)) {
+      resetFacebookAutoSaveBatch();
+      try {
+        const cleanUrl = new URL(location.href);
+        cleanUrl.searchParams.delete(CROSSLIST_AUTOSAVE_RESET_PARAM);
+        history.replaceState(history.state, '', cleanUrl.toString());
+      } catch (_) {
+        // A clean URL is cosmetic; the reset has already completed.
+      }
+      status('Facebook draft batch state cleared. No listing was published or deleted.');
+    }
 
     const pendingFacebookAutoSave = getFacebookPendingDraft();
     if (pendingFacebookAutoSave?.item_id) {
