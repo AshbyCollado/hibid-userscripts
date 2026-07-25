@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.7.77`.
+- Current version: `0.7.78`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -15,10 +15,13 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 ## Active Goal: Canonical eBay Lifecycle + Facebook Cross-List Release
 
 - Goal: ship one FlipperAddon build on `main`; do not maintain a second installed userscript.
-- Release version: `0.7.77`.
+- Release version: `0.7.78`.
 - Integration contract: retain the latest main-branch HiBid/AuctionNinja/AAR/GovDeals and eBay bulk-sell exports while adding active/ended/sold/transaction lifecycle sync, Best Offer policy evidence, and the reviewed eBay-to-Facebook draft queue.
 - Safety: queue and fill Facebook drafts for human review, but never click Publish.
 - Verification gate: syntax, the complete userscript suite, cross-list bridge tests, authenticated Waterfox route detection, all active eBay records captured, and queue duplicate protection.
+- 2026-07-25 release repair: cross-list photos now come only from the eBay item's Product JSON-LD gallery, with OpenGraph limited to a primary-photo fallback. Page-wide `i.ebayimg.com` scraping was removed because it admitted sponsored/recommendation images that were not part of the seller's listing.
+- 2026-07-25 workflow repair: Facebook `Open + Fill Next` keeps the current unsaved draft open, opens a fresh Marketplace create tab, and fills the next queued listing automatically. eBay Active now exposes `Refresh All FB Drafts`, which posts the complete active lifecycle snapshot to Flip Tracker and refreshes the durable cross-list queue without reopening Published records.
+- 2026-07-25 automated evidence: the complete userscript suite passes `150/150`; a contamination fixture proves unrelated recommendation images are rejected; one-shot next-draft behavior and full-queue controls are covered.
 
 ## Foundation: eBay Ended Listings State Sync
 
@@ -45,11 +48,12 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Delivery: use the existing token-authenticated loopback service at `127.0.0.1:8468`; no Facebook credentials or cookies leave the browser.
 - Draft contract: title, price, clean description, condition, category evidence, item specifics, quantity, and full-resolution image URLs/files. Missing required facts remain visible review warnings.
 - Duplicate contract: one durable cross-list record per eBay item ID. Unchanged evidence is a no-op; changed evidence updates the existing queued draft; Published cannot return to Queued without an explicit reset.
+- Photo provenance contract: only Product JSON-LD gallery images belong to the listing. OpenGraph may supply one primary-image fallback; generic page image URLs, sponsored modules, related products, and recommendation carousels are never draft evidence.
 - Facebook contract: on `/marketplace/create/item`, fetch one queued draft, upload photos, fill semantic form controls, commit location through Facebook's autocomplete when Facebook exposes that control, otherwise keep the draft reviewable with an explicit preview-location warning, and stop before Publish. FlipperAddon does not click Publish in v1.
 - Safety: no cookie export, stealth-driver modification, buyer PII, unattended bulk posting, or hidden retries. Every browser mismatch is shown to the user and recorded as Failed/Review.
 - Recursive release gate: item-detail fixtures, cross-list schema and transition tests, Facebook form fixture tests, live eBay enrichment, one authenticated Facebook draft, duplicate replay proof, green `npm test`, brain evidence, and pushed branch.
 - 2026-07-18 live evidence: eBay item `336694211286` produced one stable queue record; replay returned duplicate/no-op; rebased `v0.7.49` filled Facebook with the exact title, whole-dollar price, description, five source photos, `Electronics & computers`, and `Used - Good`; it preserved Facebook's already-selected Carteret location, enabled the `Next` review step, reported zero adapter errors, and did not click Publish. Screenshot: `C:\tmp\ft022-crosslist-live-20260718\facebook-draft-review-enabled-not-published.png`.
-- Verification: `npm test` passed `120/120`; the command-center artifact suite passed `273/273`; `node --check hibid-bid-assistant.user.js` passed. The strict live verifier now treats a disabled `Next` button as a failure and captures invalid-control diagnostics.
+- Verification: the current `0.7.78` suite passes `150/150`; the command-center artifact suite previously passed `273/273`; `node --check hibid-bid-assistant.user.js` passed. The strict live verifier treats a disabled `Next` button as a failure and captures invalid-control diagnostics.
 - Operator documentation: `README.md` now covers one-time bridge/token setup, the eBay Active to Facebook draft workflow, duplicate rules, confirmation, and recovery. The command-center runbook is `docs/ft022-ebay-facebook-crosslist-runbook.md`.
 - Release status: integrated into canonical `main` for `0.7.71` with explicit owner approval; no separate installed add-on is supported.
 

@@ -65,6 +65,7 @@ test('extracts deterministic cross-list evidence from an eBay item page', () => 
       'https://i.ebayimg.com/images/g/aaa/s-l1600.jpg',
       'https://i.ebayimg.com/images/g/bbb/s-l1600.webp',
     ],
+    imageEvidence: 'product-json-ld',
   });
 });
 
@@ -156,6 +157,33 @@ test('recognizes current eBay description host and prefers the seller descriptio
 });
 
 
+test('uses only the item Product gallery and rejects recommendation-module images', () => {
+  const core = loadCore();
+  const detail = core.extractEbayItemDetailHtml(`
+    <meta property="og:image" content="https://i.ebayimg.com/images/g/primary/s-l500.jpg">
+    <script type="application/ld+json">{
+      "@type":"Product",
+      "name":"Bedgear Dri-Tec Mattress Protector",
+      "image":[
+        {"@type":"ImageObject","url":"https://i.ebayimg.com/images/g/actual-one/s-l500.jpg"},
+        {"@type":"ImageObject","contentUrl":"https://i.ebayimg.com/images/g/actual-two/s-l1200.jpg"}
+      ],
+      "offers":{"price":"29.99"}
+    }</script>
+    <section aria-label="Sponsored recommendations">
+      <img src="https://i.ebayimg.com/images/g/cat-photo/s-l500.jpg">
+      <img src="https://i.ebayimg.com/images/g/other-mattress/s-l500.jpg">
+    </section>
+  `, { itemId: '336701097242' });
+
+  assert.equal(detail.imageEvidence, 'product-json-ld');
+  assert.deepEqual(plain(detail.imageUrls), [
+    'https://i.ebayimg.com/images/g/actual-one/s-l1600.jpg',
+    'https://i.ebayimg.com/images/g/actual-two/s-l1600.jpg',
+  ]);
+});
+
+
 test('removes eBay executable page state from seller descriptions', async () => {
   const core = loadCore();
   const envelope = await core.enrichEbayListingForCrosslist({
@@ -205,10 +233,30 @@ test('renders cross-list controls only on their matching workflow pages', () => 
     route: { kind: 'fliptracker-facebook-create', source: 'facebook' },
   });
   assert.match(ebayHtml, /Queue Facebook Draft/);
+  assert.match(ebayHtml, /Refresh All FB Drafts/);
   assert.match(ebayHtml, /Facebook draft source/);
-  assert.doesNotMatch(ebayHtml, /Fill Next eBay Draft/);
-  assert.match(facebookHtml, /Fill Next eBay Draft/);
+  assert.doesNotMatch(ebayHtml, /Open \+ Fill Next/);
+  assert.match(facebookHtml, /Open \+ Fill Next/);
   assert.doesNotMatch(facebookHtml, /Sync All eBay/);
+});
+
+
+test('builds a one-shot Facebook auto-fill URL and detects existing draft content', () => {
+  const core = loadCore({ URL });
+  const nextUrl = core.facebookNextDraftUrl({ origin: 'https://www.facebook.com' });
+  assert.equal(nextUrl, 'https://www.facebook.com/marketplace/create/item?flipperaddon_autofill=1');
+  assert.equal(core.facebookAutofillRequested({ href: nextUrl }), true);
+  assert.equal(core.facebookAutofillRequested({ href: 'https://www.facebook.com/marketplace/create/item' }), false);
+
+  const titleControl = {
+    value: 'Prepared listing',
+    getAttribute(name) { return name === 'aria-label' ? 'Title' : ''; },
+    closest() { return null; },
+  };
+  const root = {
+    querySelectorAll(selector) { return selector === 'label' ? [] : [titleControl]; },
+  };
+  assert.equal(core.facebookDraftHasContent(root), true);
 });
 
 
