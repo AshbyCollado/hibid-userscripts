@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.81
+// @version      0.7.82
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.81';
+  const SCRIPT_VERSION = '0.7.82';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -3315,14 +3315,21 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       : (pageKind === 'sold'
         ? ['Sold', 'Orders', 'Results', 'All']
         : (pageKind === 'ended' ? ['Ended', 'Results', 'All'] : ['Manage active listings', 'Active', 'Results', 'All']));
+    const labeledCounts = [];
     for (const label of labels) {
       const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const count = parsePlainInteger(firstMatch(text, [
-        new RegExp(`${escaped}\\s*\\(([\\d,]+)\\)`, 'i'),
-        new RegExp(`${escaped}\\s*:\\s*([\\d,]+)\\b`, 'i'),
-      ]));
-      if (Number.isFinite(count)) return count;
+      const patterns = [
+        new RegExp(`${escaped}\\s*\\(([\\d,]+)\\)`, 'gi'),
+        new RegExp(`${escaped}\\s*:\\s*([\\d,]+)\\b`, 'gi'),
+      ];
+      patterns.forEach(pattern => {
+        Array.from(text.matchAll(pattern)).forEach(match => {
+          const count = parsePlainInteger(match[1]);
+          if (Number.isFinite(count)) labeledCounts.push(count);
+        });
+      });
     }
+    if (labeledCounts.length) return Math.max(...labeledCounts);
 
     if (cardCount) return cardCount;
 

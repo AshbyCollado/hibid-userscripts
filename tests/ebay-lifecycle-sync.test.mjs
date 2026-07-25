@@ -167,6 +167,7 @@ test('collects My eBay Active JavaScript pagination without duplicating page one
   let advances = 0;
 
   assert.equal(core.expectedEbayLifecycleCount(firstPage, 'active'), 45);
+  assert.equal(core.expectedEbayLifecycleCount(`<span hidden>Active (0)</span>${firstPage}`, 'active'), 45);
   assert.equal(core.ebayLifecycleNextPageUrl(firstPage, 'https://www.ebay.com/mys/active'), '');
   assert.equal(core.ebayLifecycleHasDomNextPage(firstPage), true);
   const envelope = await core.collectPaginatedEbayLifecycleEnvelope('active', 'https://www.ebay.com/mys/active', {
