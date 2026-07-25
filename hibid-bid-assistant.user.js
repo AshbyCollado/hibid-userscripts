@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.91
+// @version      0.7.92
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.91';
+  const SCRIPT_VERSION = '0.7.92';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -8827,9 +8827,22 @@ ${cards}
     return { counts, failures, completed, total: records.length };
   }
 
+  function isFlipperAddonNode(node) {
+    try {
+      return Boolean(node?.closest?.(`#${PANEL_ID}`));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function facebookPageNodes(root, selector) {
+    return Array.from(root?.querySelectorAll?.(selector) || [])
+      .filter(node => !isFlipperAddonNode(node));
+  }
+
   function findFacebookLabeledControl(root, label) {
     const target = normalizedFacebookControlText(label);
-    const candidates = Array.from(root?.querySelectorAll?.('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="button"]') || []);
+    const candidates = facebookPageNodes(root, 'input, textarea, select, [contenteditable="true"], [role="combobox"], [role="button"]');
     const scored = candidates.map(control => {
       const values = [
         control.getAttribute?.('aria-label'),
@@ -8846,7 +8859,7 @@ ${cards}
     }).filter(value => value.score > 0).sort((left, right) => right.score - left.score);
     if (scored.length) return scored[0].control;
 
-    const labels = Array.from(root?.querySelectorAll?.('label') || []);
+    const labels = facebookPageNodes(root, 'label');
     for (const labelElement of labels) {
       const text = normalizedFacebookControlText(labelElement.textContent || '');
       if (text !== target && !text.startsWith(target)) continue;
@@ -8975,9 +8988,9 @@ ${cards}
     let parentOpened = false;
     while (Date.now() < deadline) {
       const dropdownSelector = '[role="dialog"][aria-label*="Dropdown" i], [role="listbox"], [role="menu"]';
-      const dropdowns = Array.from(root?.querySelectorAll?.(dropdownSelector) || []);
+      const dropdowns = facebookPageNodes(root, dropdownSelector);
       const fallbackDropdown = root?.querySelector?.(dropdownSelector);
-      if (!dropdowns.length && fallbackDropdown) dropdowns.push(fallbackDropdown);
+      if (!dropdowns.length && fallbackDropdown && !isFlipperAddonNode(fallbackDropdown)) dropdowns.push(fallbackDropdown);
       const semanticLeafElements = dropdowns.flatMap(dropdown => (
         Array.from(dropdown?.querySelectorAll?.('div, span') || []).filter(option => {
           const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
@@ -8985,7 +8998,7 @@ ${cards}
         })
       ));
       const optionElements = Array.from(new Set([
-        ...Array.from(root?.querySelectorAll?.('[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"]') || []),
+        ...facebookPageNodes(root, '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"]'),
         ...dropdowns.flatMap(dropdown => Array.from(dropdown?.querySelectorAll?.('[aria-disabled="false"]') || [])),
         ...semanticLeafElements,
       ]));
@@ -9022,9 +9035,9 @@ ${cards}
     if (!target) return { ok: false, reason: 'Location is missing from the queued draft.' };
     const searchText = target.split(',')[0].trim() || target;
     const city = normalizedFacebookControlText(searchText);
-    const existingLocation = Array.from(root?.querySelectorAll?.(
+    const existingLocation = facebookPageNodes(root,
       '[role="button"][aria-disabled="true"], input[aria-label="Location"][role="combobox"]'
-    ) || []).find(node => {
+    ).find(node => {
       const text = normalizedFacebookControlText(node.value ?? node.textContent);
       const selectedInput = String(node.tagName || '').toLowerCase() === 'input'
         && node.getAttribute?.('aria-expanded') !== 'true';
@@ -9036,7 +9049,7 @@ ${cards}
 
     let control = findFacebookLabeledControl(root, 'Location');
     if (!control) {
-      const moreDetailsLabel = Array.from(root?.querySelectorAll?.('button, [role="button"], div, span') || [])
+      const moreDetailsLabel = facebookPageNodes(root, 'button, [role="button"], div, span')
         .filter(candidate => {
           const text = normalizedFacebookControlText(candidate.textContent || candidate.getAttribute?.('aria-label'));
           return text === 'more details' || (text.startsWith('more details ') && text.length < 140);
@@ -9053,7 +9066,7 @@ ${cards}
       }
     }
     if (!control) {
-      const previewLocation = Array.from(root?.querySelectorAll?.('div, span') || [])
+      const previewLocation = facebookPageNodes(root, 'div, span')
         .map(node => String(node.textContent || '').trim())
         .filter(text => /^listed\s+(?:a few seconds|just now)\s+ago\s+in\s+[^\n]+$/i.test(text) && text.length < 140)
         .sort((left, right) => left.length - right.length)[0] || '';
@@ -9091,8 +9104,8 @@ ${cards}
     const deadline = Date.now() + (options.timeoutMs || 6000);
     while (Date.now() < deadline) {
       const optionElements = Array.from(new Set([
-        ...Array.from(root?.querySelectorAll?.('[role="option"], [role="listbox"] [role="button"], [role="menuitem"]') || []),
-        ...Array.from(root?.querySelectorAll?.('[aria-selected]') || []),
+        ...facebookPageNodes(root, '[role="option"], [role="listbox"] [role="button"], [role="menuitem"]'),
+        ...facebookPageNodes(root, '[aria-selected]'),
       ])).filter(option => {
         const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
         return text && (text === normalizedTarget || text.startsWith(normalizedTarget) || (city && text.startsWith(city)));
@@ -9137,7 +9150,7 @@ ${cards}
   async function uploadFacebookDraftPhotos(root, draft, itemId, options = {}) {
     const imageUrls = Array.isArray(draft?.image_urls) ? draft.image_urls : [];
     if (!imageUrls.length) return { ok: false, reason: 'The queued draft has no eBay photos.', count: 0 };
-    const input = Array.from(root?.querySelectorAll?.('input[type="file"]') || [])
+    const input = facebookPageNodes(root, 'input[type="file"]')
       .find(candidate => /image|jpeg|jpg|png|webp/i.test(candidate.getAttribute?.('accept') || 'image'));
     if (!input) return { ok: false, reason: 'Facebook photo upload control was not found.', count: 0 };
     const files = await downloadCrosslistImageFiles(imageUrls, itemId, options);

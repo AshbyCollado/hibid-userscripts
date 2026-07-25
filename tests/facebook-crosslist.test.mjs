@@ -609,6 +609,57 @@ test('selects Facebook leaf text even when only group rows expose aria-disabled'
 });
 
 
+test('Facebook dropdown selection cannot click FlipperAddon shortcut menus', async () => {
+  const core = loadCore({ setTimeout });
+  let shortcutClicked = false;
+  let conditionSelected = false;
+  const conditionControl = {
+    tagName: 'LABEL',
+    textContent: '',
+    getAttribute(name) {
+      if (name === 'aria-label') return 'Condition';
+      if (name === 'role') return 'combobox';
+      return null;
+    },
+    closest() { return null; },
+    click() {},
+  };
+  const shortcutText = {
+    textContent: 'new-listings',
+    getAttribute() { return null; },
+    closest(selector) { return selector === '#flipperaddon-panel' ? {} : null; },
+    click() { shortcutClicked = true; },
+  };
+  const conditionText = {
+    textContent: 'New Shipping available',
+    getAttribute() { return null; },
+    closest() { return null; },
+    click() { conditionSelected = true; },
+  };
+  const addonMenu = {
+    closest(selector) { return selector === '#flipperaddon-panel' ? {} : null; },
+    querySelectorAll(selector) { return selector === 'div, span' ? [shortcutText] : []; },
+  };
+  const facebookDropdown = {
+    closest() { return null; },
+    querySelectorAll(selector) { return selector === 'div, span' ? [conditionText] : []; },
+  };
+  const root = {
+    querySelector() { return addonMenu; },
+    querySelectorAll(selector) {
+      if (selector.includes('input, textarea')) return [conditionControl];
+      if (selector.includes('[role="dialog"]')) return [addonMenu, facebookDropdown];
+      return [];
+    },
+  };
+
+  const result = await core.chooseFacebookDropdownValue(root, 'Condition', 'New', { timeoutMs: 500 });
+  assert.equal(result.ok, true);
+  assert.equal(conditionSelected, true);
+  assert.equal(shortcutClicked, false);
+});
+
+
 test('commits Facebook location through its autocomplete suggestion', async () => {
   const core = loadCore({
     Event: class Event { constructor(type) { this.type = type; } },
