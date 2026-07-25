@@ -509,6 +509,46 @@ test('preserves a matching Facebook-owned default location', async () => {
 });
 
 
+test('keeps a Facebook draft reviewable when the live form omits its location control', async () => {
+  const core = loadCore();
+  const preview = {
+    textContent: 'Listed a few seconds ago in Bridgewater',
+    getAttribute() { return null; },
+  };
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === 'div, span') return [preview];
+      if (selector === 'button, [role="button"], div, span') return [preview];
+      return [];
+    },
+  };
+
+  const location = await core.chooseFacebookLocationValue(root, 'Carteret, NJ', { timeoutMs: 100 });
+  assert.equal(location.ok, false);
+  assert.equal(location.warningOnly, true);
+  assert.match(location.reason, /preview currently shows Bridgewater/);
+
+  const result = await core.fillFacebookMarketplaceDraft({
+    item_id: '336701097243',
+    evidence_hash: 'evidence-1',
+    facebook_draft: {
+      title: 'Armstrong torque wrench',
+      price: 120,
+      description: 'Clean seller description.',
+      location: 'Carteret, NJ',
+      image_urls: ['https://i.ebayimg.com/images/g/test/s-l1600.jpg'],
+    },
+  }, {
+    setField: async () => ({ ok: true, reason: '' }),
+    selectLocation: async () => location,
+    uploadPhotos: async () => ({ ok: true, count: 1, reason: '' }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.errors.length, 0);
+  assert.match(result.warnings.join(' '), /preview currently shows Bridgewater/);
+});
+
+
 test('fails a Facebook draft when a required value or photo upload is missing', async () => {
   const core = loadCore();
   const result = await core.fillFacebookMarketplaceDraft({

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.75
+// @version      0.7.76
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.75';
+  const SCRIPT_VERSION = '0.7.76';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -8759,7 +8759,24 @@ ${cards}
         }
       }
     }
-    if (!control) return { ok: false, reason: 'Location control was not found.' };
+    if (!control) {
+      const previewLocation = Array.from(root?.querySelectorAll?.('div, span') || [])
+        .map(node => String(node.textContent || '').trim())
+        .filter(text => /^listed\s+(?:a few seconds|just now)\s+ago\s+in\s+[^\n]+$/i.test(text) && text.length < 140)
+        .sort((left, right) => left.length - right.length)[0] || '';
+      const previewCity = previewLocation.replace(/^.*?\s+in\s+/i, '').trim();
+      if (previewCity && normalizedFacebookControlText(previewCity).startsWith(city)) {
+        return { ok: true, reason: '', preserved: true, previewLocation };
+      }
+      return {
+        ok: false,
+        warningOnly: true,
+        previewLocation,
+        reason: previewCity
+          ? `Facebook did not expose a per-listing Location field; its preview currently shows ${previewCity}. Review location before publishing.`
+          : `Facebook did not expose a per-listing Location field. Review location before publishing.`,
+      };
+    }
     control.focus?.();
     control.click?.();
     setFacebookAutocompleteValue(control, '');
@@ -8887,7 +8904,11 @@ ${cards}
     if (draft.location) {
       const locationResult = await selectLocation(draft.location);
       fields.Location = locationResult;
-      if (!locationResult?.ok) errors.push(locationResult?.reason || 'Location could not be selected.');
+      if (!locationResult?.ok) {
+        const reason = locationResult?.reason || 'Location could not be selected.';
+        if (locationResult?.warningOnly) warnings.push(reason);
+        else errors.push(reason);
+      }
     } else {
       errors.push('Location is missing from the queued draft.');
     }
