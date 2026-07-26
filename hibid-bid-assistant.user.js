@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.99
+// @version      0.8.00
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.99';
+  const SCRIPT_VERSION = '0.8.00';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -8979,7 +8979,15 @@ ${cards}
       const clickable = candidate.matches?.('button, a, [role="button"]')
         ? candidate
         : candidate.closest?.('button, a, [role="button"]');
-      if (clickable && !isFlipperAddonNode(clickable)) {
+      const rect = clickable?.getBoundingClientRect?.();
+      const style = clickable ? globalThis.getComputedStyle?.(clickable) : null;
+      const visible = Boolean(
+        clickable
+        && (!rect || (rect.width > 0 && rect.height > 0))
+        && style?.display !== 'none'
+        && style?.visibility !== 'hidden'
+      );
+      if (visible && !isFlipperAddonNode(clickable)) {
         control = clickable;
         break;
       }
@@ -11807,6 +11815,11 @@ ${cards}
       const pending = getFacebookPendingDraft();
       if (!pending?.item_id || !pending?.evidence_hash) return false;
       if (!claimFacebookAutoSaveLease()) return false;
+      if (!String(location.pathname || '').startsWith('/marketplace/you/selling')) {
+        status('Facebook accepted Save draft. Opening Selling to verify the server-side draft...');
+        location.href = new URL('/marketplace/you/selling', location.origin).toString();
+        return true;
+      }
       for (let attempt = 0; attempt < 20; attempt += 1) {
         if (facebookSavedDraftVisible(document, pending)) break;
         await new Promise(resolve => globalThis.setTimeout(resolve, 500));
