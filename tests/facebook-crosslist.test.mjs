@@ -19,6 +19,44 @@ function loadCore(overrides = {}) {
 }
 
 
+function photoManifest(itemId, count, expectedCount = count) {
+  const hex = index => String(index).padStart(2, '0').repeat(32);
+  return {
+    schema_version: 'fliptracker.crosslist.photos.v1',
+    item_id: itemId,
+    expected_count: expectedCount,
+    archived_count: count,
+    facebook_upload_count: Math.min(expectedCount, 10),
+    photos: Array.from({ length: count }, (_, offset) => {
+      const sequence = offset + 1;
+      const sourceName = `${String(sequence).padStart(2, '0')}-source-${hex(sequence).slice(0, 12)}.jpg`;
+      const optimizedName = `${String(sequence).padStart(2, '0')}-facebook-2048-${hex(sequence + 20).slice(0, 12)}.jpg`;
+      return {
+        sequence,
+        filename: sourceName,
+        relative_path: `photos/${itemId}/${sourceName}`,
+        sha256: hex(sequence),
+        width: 1600,
+        height: 1200,
+        bytes: 100000 + sequence,
+        mime_type: 'image/jpeg',
+        variants: {
+          2048: {
+            filename: optimizedName,
+            relative_path: `photos/${itemId}/${optimizedName}`,
+            sha256: hex(sequence + 20),
+            width: 2048,
+            height: 1536,
+            bytes: 200000 + sequence,
+            mime_type: 'image/jpeg',
+          },
+        },
+      };
+    }),
+  };
+}
+
+
 test('extracts deterministic cross-list evidence from an eBay item page', () => {
   const core = loadCore();
   const html = `
@@ -94,6 +132,9 @@ test('cross-list envelope keeps Seller Hub price and surfaces missing evidence',
 
   assert.equal(envelope.schema_version, 'fliptracker.crosslist.draft.v1');
   assert.equal(envelope.listing.price, 60);
+  assert.equal(envelope.image_mode, 'verified-original');
+  assert.equal(envelope.listing.image_mode, 'verified-original');
+  assert.equal(envelope.facebook_draft.image_mode, 'verified-original');
   assert.equal(envelope.listing.custom_label, 'BIN-A1');
   assert.equal(envelope.facebook_draft.location, 'Carteret, NJ');
   assert.equal(envelope.warnings.length, 4);
@@ -396,6 +437,9 @@ test('renders cross-list controls only on their matching workflow pages', () => 
   assert.match(ebayHtml, /Create Facebook Draft/);
   assert.match(ebayHtml, /Advanced sync tools/);
   assert.match(ebayHtml, /Facebook draft source/);
+  assert.match(ebayHtml, /Verified archive \(default\)/);
+  assert.match(ebayHtml, /2048px optimized \(experimental\)/);
+  assert.match(ebayHtml, /Facebook uploads at most 10 photos/);
   assert.doesNotMatch(ebayHtml, />Scan Page</);
   assert.doesNotMatch(ebayHtml, />Copy JSON</);
   assert.doesNotMatch(ebayHtml, /Open \+ Fill Next/);
@@ -836,7 +880,7 @@ test('commits Facebook location through its autocomplete suggestion', async () =
 });
 
 
-test('downloads and assigns every authoritative eBay gallery photo in one Facebook upload', async () => {
+test('downloads authenticated bridge manifest photos and assigns the full required gallery', async () => {
   class TestFile {
     constructor(parts, name, options = {}) {
       this.parts = parts;
@@ -860,22 +904,134 @@ test('downloads and assigns every authoritative eBay gallery photo in one Facebo
   const root = {
     querySelectorAll(selector) { return selector === 'input[type="file"]' ? [photoInput] : []; },
   };
-  const imageUrls = [1, 2, 3, 4].map(index => `https://i.ebayimg.com/images/g/armani-${index}/s-l1600.jpg`);
-  const result = await core.uploadFacebookDraftPhotos(root, { image_urls: imageUrls }, '336701097241', {
+  const itemId = '336701097241';
+  const record = { item_id: itemId, image_mode: 'verified-original', photo_manifest: photoManifest(itemId, 4) };
+  const requested = [];
+  const result = await core.uploadFacebookDraftPhotos(root, record, itemId, {
     DataTransferClass: TestDataTransfer,
-    requestBlob: async url => ({ type: 'image/jpeg', source: url }),
+    requestBlob: async url => {
+      requested.push(url);
+      const sequence = Number(decodeURIComponent(url).match(/\/(\d{2})-source-/)?.[1] || 0);
+      return { type: 'image/jpeg', size: 100000 + sequence, source: url };
+    },
   });
 
   assert.equal(result.ok, true);
   assert.equal(result.count, 4);
   assert.equal(photoInput.files.length, 4);
   assert.deepEqual(photoInput.files.map(file => file.name), [
-    'ebay-336701097241-01.jpg',
-    'ebay-336701097241-02.jpg',
-    'ebay-336701097241-03.jpg',
-    'ebay-336701097241-04.jpg',
+    '01-source-010101010101.jpg',
+    '02-source-020202020202.jpg',
+    '03-source-030303030303.jpg',
+    '04-source-040404040404.jpg',
   ]);
+  assert.ok(requested.every(url => url.startsWith(`http://127.0.0.1:8468/crosslist/photo/${itemId}/`)));
   assert.ok(dispatched >= 1);
+});
+
+test('rejects a bridge photo whose downloaded bytes do not match the manifest', async () => {
+  const core = loadCore();
+  const itemId = '336701097246';
+  await assert.rejects(
+    core.downloadCrosslistImageFiles(
+      { item_id: itemId, photo_manifest: photoManifest(itemId, 1) },
+      itemId,
+      { requestBlob: async () => ({ type: 'image/jpeg', size: 99999 }) },
+    ),
+    /failed byte-count verification \(99999\/100001\)/,
+  );
+});
+
+
+test('uses verified source by default and persists the experimental image mode', () => {
+  const values = new Map();
+  const core = loadCore({
+    GM_getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
+    GM_setValue: (key, value) => values.set(key, value),
+  });
+  assert.equal(core.getCrosslistImageMode(), 'verified-original');
+  assert.equal(core.saveCrosslistImageMode('facebook-optimized'), 'facebook-optimized');
+  assert.equal(core.getCrosslistImageMode(), 'facebook-optimized');
+  assert.equal(core.saveCrosslistImageMode('unsafe-mode'), 'verified-original');
+});
+
+
+test('selects 2048 optimized manifest files only in experimental mode', () => {
+  const core = loadCore();
+  const itemId = '336701097242';
+  const manifest = photoManifest(itemId, 2);
+  const verified = core.selectCrosslistManifestPhotos({ item_id: itemId, photo_manifest: manifest });
+  const optimized = core.selectCrosslistManifestPhotos({
+    item_id: itemId,
+    image_mode: 'facebook-optimized',
+    photo_manifest: manifest,
+  });
+  assert.equal(verified.mode, 'verified-original');
+  assert.match(verified.photos[0].filename, /-source-/);
+  assert.equal(optimized.mode, 'facebook-optimized');
+  assert.match(optimized.photos[0].filename, /-facebook-2048-/);
+  assert.equal(optimized.photos[0].width, 2048);
+});
+
+
+test('caps Facebook upload at ten while preserving the source gallery count', () => {
+  const core = loadCore();
+  const itemId = '336701097243';
+  const selected = core.selectCrosslistManifestPhotos({
+    item_id: itemId,
+    photo_manifest: photoManifest(itemId, 14, 14),
+  });
+  assert.equal(selected.photos.length, 10);
+  assert.equal(selected.upload_count, 10);
+  assert.equal(selected.expected_count, 14);
+  assert.equal(selected.capped, true);
+});
+
+
+test('rejects incomplete, duplicate, and invalid photo manifests before Facebook upload', () => {
+  const core = loadCore();
+  const itemId = '336701097244';
+  const incomplete = photoManifest(itemId, 3, 4);
+  assert.throws(
+    () => core.selectCrosslistManifestPhotos({ item_id: itemId, photo_manifest: incomplete }),
+    /archive is incomplete/,
+  );
+
+  const duplicate = photoManifest(itemId, 2);
+  duplicate.photos[1].sha256 = duplicate.photos[0].sha256;
+  assert.throws(
+    () => core.selectCrosslistManifestPhotos({ item_id: itemId, photo_manifest: duplicate }),
+    /duplicates an earlier archived image/,
+  );
+
+  const invalid = photoManifest(itemId, 1);
+  invalid.photos[0].relative_path = '../../outside.jpg';
+  assert.throws(
+    () => core.selectCrosslistManifestPhotos({ item_id: itemId, photo_manifest: invalid }),
+    /invalid archived path/,
+  );
+
+  const invalidBeyondFacebookLimit = photoManifest(itemId, 11, 11);
+  invalidBeyondFacebookLimit.photos[10].sha256 = invalidBeyondFacebookLimit.photos[0].sha256;
+  assert.throws(
+    () => core.selectCrosslistManifestPhotos({ item_id: itemId, photo_manifest: invalidBeyondFacebookLimit }),
+    /duplicates an earlier archived image/,
+  );
+});
+
+
+test('authenticates loopback photo GET requests with the FlipTracker token', async () => {
+  let request = null;
+  const core = loadCore({
+    GM_getValue: () => 'private-token',
+    GM_xmlhttpRequest(options) {
+      request = options;
+      options.onload({ status: 200, response: { type: 'image/jpeg', size: 5000 } });
+    },
+  });
+  await core.gmCrosslistRequest('http://127.0.0.1:8468/crosslist/photo/336701097245/01.jpg', 'blob');
+  assert.equal(request.method, 'GET');
+  assert.equal(request.headers['X-FlipTracker-Token'], 'private-token');
 });
 
 
@@ -883,14 +1039,14 @@ test('fails a permanently hanging eBay photo request instead of leaving the draf
   const core = loadCore({ setTimeout, clearTimeout });
   await assert.rejects(
     core.downloadCrosslistImageFiles(
-      ['https://i.ebayimg.com/images/g/hangs/s-l1600.jpg'],
+      { item_id: '336701036874', photo_manifest: photoManifest('336701036874', 1) },
       '336701036874',
       {
         imageTimeoutMs: 20,
         requestBlob: () => new Promise(() => {}),
       },
     ),
-    /eBay photo 1\/1 timed out after 100ms/,
+    /archived photo 1\/1 timed out after 100ms/,
   );
 });
 

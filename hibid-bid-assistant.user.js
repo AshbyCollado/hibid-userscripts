@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.7.98
+// @version      0.7.99
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.7.98';
+  const SCRIPT_VERSION = '0.7.99';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -78,6 +78,11 @@
   const EBAY_LIFECYCLE_SCHEMA = 'fliptracker.ebay.lifecycle.v1';
   const CROSSLIST_SCHEMA = 'fliptracker.crosslist.draft.v1';
   const CROSSLIST_LOCATION_KEY = 'flipperaddon-crosslist-location-v1';
+  const CROSSLIST_IMAGE_MODE_KEY = 'flipperaddon-crosslist-image-mode-v1';
+  const CROSSLIST_IMAGE_MODE_VERIFIED = 'verified-original';
+  const CROSSLIST_IMAGE_MODE_OPTIMIZED = 'facebook-optimized';
+  const FACEBOOK_PHOTO_LIMIT = 10;
+  const CROSSLIST_SOURCE_PHOTO_LIMIT = 24;
   const CROSSLIST_PENDING_KEY = 'flipperaddon-crosslist-pending-v1';
   const CROSSLIST_AUTOFILL_PARAM = 'flipperaddon_autofill';
   const CROSSLIST_ITEM_PARAM = 'flipperaddon_item_id';
@@ -2796,7 +2801,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const imageCandidates = galleryEvidence.expectedCount > structuredProductImages.length
       ? [...structuredProductImages, ...galleryEvidence.urls]
       : (structuredProductImages.length ? structuredProductImages : [openGraphImage]);
-    const imageUrls = uniqueNonEmpty(imageCandidates.map(normalizeEbayCrosslistImageUrl)).slice(0, 20);
+    const imageUrls = uniqueNonEmpty(imageCandidates.map(normalizeEbayCrosslistImageUrl)).slice(0, CROSSLIST_SOURCE_PHOTO_LIMIT);
     return {
       itemId,
       itemUrl: itemId ? `https://www.ebay.com/itm/${itemId}` : normalizeListingUrl(context.itemUrl || ''),
@@ -2822,7 +2827,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       ? Number(activeListing.price)
       : (Number.isFinite(Number(detail?.price)) ? Number(detail.price) : null);
     let description = cleanEbayCrosslistDescription(detail?.description || title);
-    const imageUrls = uniqueNonEmpty((detail?.imageUrls || []).map(normalizeEbayCrosslistImageUrl)).slice(0, 20);
+    const imageUrls = uniqueNonEmpty((detail?.imageUrls || []).map(normalizeEbayCrosslistImageUrl)).slice(0, CROSSLIST_SOURCE_PHOTO_LIMIT);
     const warnings = [];
     const listingVariant = text => {
       const value = ` ${String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
@@ -2853,10 +2858,12 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (imageUrls.length && detail?.imageEvidence === 'open-graph') warnings.push('Only the listing primary photo was available from eBay metadata.');
     if (!detail?.condition) warnings.push('eBay condition evidence was not found.');
     if (!(detail?.categoryPath || []).length) warnings.push('eBay category evidence was not found.');
+    const imageMode = normalizeCrosslistImageMode(options.imageMode || getCrosslistImageMode());
     return {
       schema_version: CROSSLIST_SCHEMA,
       source: 'ebay',
       generated_at: options.generatedAt || new Date().toISOString(),
+      image_mode: imageMode,
       listing: {
         item_id: itemId,
         item_url: itemId ? `https://www.ebay.com/itm/${itemId}` : normalizeListingUrl(detail?.itemUrl || activeListing?.url || ''),
@@ -2871,9 +2878,11 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         image_urls: imageUrls,
         image_evidence: String(detail?.imageEvidence || ''),
         image_expected_count: Number(detail?.imageExpectedCount || imageUrls.length || 0),
+        image_mode: imageMode,
       },
       facebook_draft: {
         location: String(options.location || '').trim(),
+        image_mode: imageMode,
       },
       warnings,
     };
@@ -4091,6 +4100,11 @@ ${cards}
     crosslistBridgeRequest,
     getCrosslistLocation,
     saveCrosslistLocation,
+    normalizeCrosslistImageMode,
+    getCrosslistImageMode,
+    saveCrosslistImageMode,
+    selectCrosslistManifestPhotos,
+    gmCrosslistRequest,
     facebookNextDraftUrl,
     facebookAutofillRequested,
     facebookAutofillItemId,
@@ -8686,15 +8700,22 @@ ${cards}
     });
   }
 
-  function gmCrosslistRequest(url, responseType = 'text') {
+  function gmCrosslistRequest(url, responseType = 'text', options = {}) {
     return new Promise((resolve, reject) => {
       if (typeof GM_xmlhttpRequest !== 'function') {
         reject(new Error('Tampermonkey cross-origin request is unavailable.'));
         return;
       }
+      const loopback = String(url || '').startsWith(`${FLIPTRACKER_BRIDGE_URL}/`);
+      const token = options.token ?? (loopback ? getFlipTrackerSyncToken() : '');
+      if (loopback && !token) {
+        reject(new Error('FlipTracker sync token is required for archived photo access.'));
+        return;
+      }
       GM_xmlhttpRequest({
         method: 'GET',
         url,
+        headers: loopback ? { 'X-FlipTracker-Token': token } : {},
         responseType,
         timeout: 20000,
         onload: response => {
@@ -8750,6 +8771,23 @@ ${cards}
       .replace(/\s+/g, ' ')
       .trim()
       .toLowerCase();
+  }
+
+  function normalizeCrosslistImageMode(value) {
+    return value === CROSSLIST_IMAGE_MODE_OPTIMIZED
+      ? CROSSLIST_IMAGE_MODE_OPTIMIZED
+      : CROSSLIST_IMAGE_MODE_VERIFIED;
+  }
+
+  function getCrosslistImageMode() {
+    if (typeof GM_getValue !== 'function') return CROSSLIST_IMAGE_MODE_VERIFIED;
+    return normalizeCrosslistImageMode(GM_getValue(CROSSLIST_IMAGE_MODE_KEY, CROSSLIST_IMAGE_MODE_VERIFIED));
+  }
+
+  function saveCrosslistImageMode(value) {
+    const mode = normalizeCrosslistImageMode(value);
+    if (typeof GM_setValue === 'function') GM_setValue(CROSSLIST_IMAGE_MODE_KEY, mode);
+    return mode;
   }
 
   function crosslistStageTimeout(operation, timeoutMs, label) {
@@ -8984,7 +9022,7 @@ ${cards}
             itemId,
             customLabel: listing.custom_label || listing.customLabel,
             quantityAvailable: listing.quantity_available ?? listing.quantityAvailable,
-          }, { location: options.location || '' });
+          }, { location: options.location || '', imageMode: options.imageMode || getCrosslistImageMode() });
           const missing = crosslistEnvelopeMissingEvidence(envelope);
           if (missing.length) throw new Error(`incomplete eBay evidence: ${missing.join(', ')}`);
           const result = await queue(envelope);
@@ -9309,32 +9347,115 @@ ${cards}
     return { ok: false, reason: `Location suggestion '${value}' was not selected.` };
   }
 
-  async function downloadCrosslistImageFiles(imageUrls, itemId, options = {}) {
-    const limit = Math.min(Number(options.limit) || 10, imageUrls.length);
-    const requestBlob = options.requestBlob || (url => gmCrosslistRequest(url, 'blob'));
-    const imageTimeoutMs = Math.max(100, Number(options.imageTimeoutMs) || 25000);
-    return Promise.all(imageUrls.slice(0, limit).map(async (url, index) => {
-      debug('Facebook draft photo download started', { item_id: itemId, index: index + 1, total: limit });
-      const blob = await crosslistStageTimeout(
-        () => requestBlob(url),
-        imageTimeoutMs,
-        `eBay photo ${index + 1}/${limit}`,
-      );
-      const type = String(blob?.type || '').toLowerCase();
-      const extension = type.includes('png') ? 'png' : (type.includes('webp') ? 'webp' : 'jpg');
-      const filename = `ebay-${itemId}-${String(index + 1).padStart(2, '0')}.${extension}`;
-      debug('Facebook draft photo download finished', { item_id: itemId, index: index + 1, total: limit });
-      return new File([blob], filename, { type: blob?.type || `image/${extension === 'jpg' ? 'jpeg' : extension}` });
-    }));
+  function selectCrosslistManifestPhotos(record, requestedMode = '') {
+    const manifest = record?.photo_manifest;
+    const itemId = String(record?.item_id || record?.listing?.item_id || manifest?.item_id || '').trim();
+    if (!manifest || typeof manifest !== 'object') throw new Error('The queued draft has no verified photo manifest.');
+    if (!/^\d{9,15}$/.test(itemId) || String(manifest.item_id || '') !== itemId) {
+      throw new Error('The photo manifest does not match the queued eBay item.');
+    }
+    const expectedCount = Math.max(0, Number(manifest.expected_count || 0));
+    const requiredCount = Math.min(expectedCount, FACEBOOK_PHOTO_LIMIT);
+    const archivedCount = Math.max(0, Number(manifest.archived_count || 0));
+    const declaredUploadCount = Math.max(0, Number(manifest.facebook_upload_count || 0));
+    const photos = Array.isArray(manifest.photos) ? [...manifest.photos] : [];
+    if (!expectedCount || !requiredCount) throw new Error('The photo manifest has no expected source photos.');
+    if (archivedCount !== photos.length || archivedCount < requiredCount || declaredUploadCount !== requiredCount) {
+      throw new Error(`The photo archive is incomplete (${Math.min(archivedCount, photos.length)}/${requiredCount} required for Facebook; ${expectedCount} source photo(s)).`);
+    }
+    photos.sort((a, b) => Number(a?.sequence || 0) - Number(b?.sequence || 0));
+    const mode = normalizeCrosslistImageMode(requestedMode || record?.image_mode || record?.facebook_draft?.image_mode || record?.listing?.image_mode);
+    const seenSequences = new Set();
+    const seenHashes = new Set();
+    const seenPaths = new Set();
+    const validated = photos.map((photo, index) => {
+      const sequence = Number(photo?.sequence || 0);
+      if (sequence !== index + 1 || seenSequences.has(sequence)) {
+        throw new Error(`Photo manifest sequence ${index + 1} is missing or duplicated.`);
+      }
+      seenSequences.add(sequence);
+      const candidate = mode === CROSSLIST_IMAGE_MODE_OPTIMIZED ? photo?.variants?.['2048'] : photo;
+      if (!candidate || typeof candidate !== 'object') {
+        throw new Error(`Photo ${sequence} has no ${mode === CROSSLIST_IMAGE_MODE_OPTIMIZED ? '2048px optimized' : 'verified source'} file.`);
+      }
+      const filename = String(candidate.filename || '').trim();
+      const relativePath = String(candidate.relative_path || '').replace(/\\/g, '/').trim();
+      const sha256 = String(candidate.sha256 || '').toLowerCase();
+      const width = Number(candidate.width || 0);
+      const height = Number(candidate.height || 0);
+      const bytes = Number(candidate.bytes || 0);
+      const expectedPrefix = `photos/${itemId}/`;
+      if (!filename || filename.includes('/') || filename.includes('\\') || !relativePath.startsWith(expectedPrefix) || !relativePath.endsWith(`/${filename}`)) {
+        throw new Error(`Photo ${sequence} has an invalid archived path.`);
+      }
+      if (!/^[a-f0-9]{64}$/.test(sha256) || width < 160 || height < 160 || bytes < 3072) {
+        throw new Error(`Photo ${sequence} failed manifest integrity checks.`);
+      }
+      if (seenHashes.has(sha256) || seenPaths.has(relativePath)) {
+        throw new Error(`Photo ${sequence} duplicates an earlier archived image.`);
+      }
+      seenHashes.add(sha256);
+      seenPaths.add(relativePath);
+      const encodedItem = encodeURIComponent(itemId);
+      const encodedFilename = encodeURIComponent(filename);
+      return {
+        sequence,
+        filename,
+        relative_path: relativePath,
+        sha256,
+        width,
+        height,
+        bytes,
+        mime_type: String(candidate.mime_type || candidate.mime || 'image/jpeg'),
+        url: `${FLIPTRACKER_BRIDGE_URL}/crosslist/photo/${encodedItem}/${encodedFilename}`,
+      };
+    });
+    return {
+      item_id: itemId,
+      mode,
+      expected_count: expectedCount,
+      archived_count: archivedCount,
+      upload_count: requiredCount,
+      capped: expectedCount > FACEBOOK_PHOTO_LIMIT,
+      photos: validated.slice(0, requiredCount),
+    };
   }
 
-  async function uploadFacebookDraftPhotos(root, draft, itemId, options = {}) {
-    const imageUrls = Array.isArray(draft?.image_urls) ? draft.image_urls : [];
-    if (!imageUrls.length) return { ok: false, reason: 'The queued draft has no eBay photos.', count: 0 };
+  async function downloadCrosslistImageFiles(record, itemId, options = {}) {
+    const selection = options.selection || selectCrosslistManifestPhotos(record, options.imageMode);
+    if (itemId && selection.item_id !== String(itemId)) throw new Error('Photo selection item ID does not match the draft.');
+    const requestBlob = options.requestBlob || (url => gmCrosslistRequest(url, 'blob'));
+    const imageTimeoutMs = Math.max(100, Number(options.imageTimeoutMs) || 25000);
+    const files = await Promise.all(selection.photos.map(async (photo, index) => {
+      debug('Facebook draft photo download started', { item_id: selection.item_id, index: index + 1, total: selection.upload_count, mode: selection.mode });
+      const blob = await crosslistStageTimeout(
+        () => requestBlob(photo.url),
+        imageTimeoutMs,
+        `archived photo ${index + 1}/${selection.upload_count}`,
+      );
+      if (!blob || (typeof blob.size === 'number' && blob.size <= 0)) throw new Error(`Archived photo ${index + 1} was empty.`);
+      if (typeof blob.size === 'number' && blob.size !== photo.bytes) {
+        throw new Error(`Archived photo ${index + 1} failed byte-count verification (${blob.size}/${photo.bytes}).`);
+      }
+      const type = String(blob?.type || '').toLowerCase();
+      if (type && !type.startsWith('image/')) throw new Error(`Archived photo ${index + 1} returned ${type} instead of an image.`);
+      debug('Facebook draft photo download finished', { item_id: selection.item_id, index: index + 1, total: selection.upload_count, mode: selection.mode });
+      return new File([blob], photo.filename, { type: blob?.type || photo.mime_type || 'image/jpeg' });
+    }));
+    return { ...selection, files };
+  }
+
+  async function uploadFacebookDraftPhotos(root, record, itemId, options = {}) {
+    let downloaded;
+    try {
+      downloaded = await downloadCrosslistImageFiles(record, itemId, options);
+    } catch (error) {
+      return { ok: false, reason: String(error?.message || error), count: 0 };
+    }
     const input = facebookPageNodes(root, 'input[type="file"]')
       .find(candidate => /image|jpeg|jpg|png|webp/i.test(candidate.getAttribute?.('accept') || 'image'));
     if (!input) return { ok: false, reason: 'Facebook photo upload control was not found.', count: 0 };
-    const files = await downloadCrosslistImageFiles(imageUrls, itemId, options);
+    const files = downloaded.files;
     if (!files.length) return { ok: false, reason: 'No eBay photos could be downloaded.', count: 0 };
     const Transfer = options.DataTransferClass || globalThis.DataTransfer;
     if (!Transfer) return { ok: false, reason: 'This browser cannot assign selected photo files.', count: 0 };
@@ -9347,7 +9468,17 @@ ${cards}
     }
     dispatchFacebookInput(input);
     const count = Number(input.files?.length || 0);
-    return { ok: count === files.length, reason: count === files.length ? '' : `Facebook accepted ${count}/${files.length} photos.`, count };
+    const complete = count === downloaded.upload_count;
+    return {
+      ok: complete,
+      reason: complete ? '' : `Facebook accepted ${count}/${downloaded.upload_count} required photos.`,
+      count,
+      expected_count: downloaded.expected_count,
+      archived_count: downloaded.archived_count,
+      upload_count: downloaded.upload_count,
+      image_mode: downloaded.mode,
+      capped: downloaded.capped,
+    };
   }
 
   async function fillFacebookMarketplaceDraft(record, options = {}) {
@@ -9360,7 +9491,7 @@ ${cards}
       || (options.setField
         ? (value => setField('Location', value))
         : (value => chooseFacebookLocationValue(root, value, options)));
-    const uploadPhotos = options.uploadPhotos || (() => uploadFacebookDraftPhotos(root, draft, itemId, options));
+    const uploadPhotos = options.uploadPhotos || (() => uploadFacebookDraftPhotos(root, record, itemId, options));
     const errors = [];
     const warnings = [...(Array.isArray(record?.warnings) ? record.warnings : [])];
     const fields = {};
@@ -9388,7 +9519,7 @@ ${cards}
       debug('Facebook draft field finished', { item_id: itemId, field: label, ok: Boolean(result?.ok) });
     }
 
-    debug('Facebook draft photo upload started', { item_id: itemId, count: draft.image_urls?.length || 0 });
+    debug('Facebook draft photo upload started', { item_id: itemId, count: record?.photo_manifest?.facebook_upload_count || 0, image_mode: record?.image_mode || draft.image_mode || '' });
     const photoResult = await crosslistStageTimeout(
       uploadPhotos,
       photoTimeoutMs,
@@ -9396,6 +9527,9 @@ ${cards}
     );
     fields.Photos = photoResult;
     if (!photoResult?.ok) errors.push(photoResult?.reason || 'Photos could not be uploaded.');
+    if (photoResult?.ok && photoResult?.capped) {
+      warnings.push(`Facebook accepts ${photoResult.upload_count} photos; eBay reported ${photoResult.expected_count} source photos and FlipTracker archived ${photoResult.archived_count}.`);
+    }
     debug('Facebook draft photo upload finished', { item_id: itemId, ok: Boolean(photoResult?.ok), count: photoResult?.count || 0 });
 
     for (const [label, value] of [['Category', draft.category], ['Condition', draft.condition]]) {
@@ -10621,6 +10755,12 @@ ${cards}
         </div>
         ${ebayActive ? `<label class="hiba-field-label" for="fliptracker-crosslist-item">Facebook draft source</label>
           <select id="fliptracker-crosslist-item" class="hiba-select" aria-label="Facebook draft source"></select>
+          <label class="hiba-field-label" for="fliptracker-crosslist-image-mode">Photo source</label>
+          <select id="fliptracker-crosslist-image-mode" class="hiba-select" aria-label="Facebook photo source">
+            <option value="verified-original"${getCrosslistImageMode() === CROSSLIST_IMAGE_MODE_VERIFIED ? ' selected' : ''}>Verified archive (default)</option>
+            <option value="facebook-optimized"${getCrosslistImageMode() === CROSSLIST_IMAGE_MODE_OPTIMIZED ? ' selected' : ''}>2048px optimized (experimental)</option>
+          </select>
+          <div id="fliptracker-crosslist-photo-status" class="hiba-meta">Bridge verifies the full gallery; Facebook uploads at most 10 photos.</div>
           <label class="hiba-field-label" for="fliptracker-crosslist-location">Facebook location</label>
           <input id="fliptracker-crosslist-location" class="hiba-input" value="${escapeHtml(getCrosslistLocation())}" aria-label="Facebook location">
           <div class="hiba-actions">
@@ -10871,6 +11011,8 @@ ${cards}
     const crosslistQueueButton = panel.querySelector('#fliptracker-crosslist-queue');
     const crosslistQueueAllButton = panel.querySelector('#fliptracker-crosslist-queue-all');
     const crosslistItemSelect = panel.querySelector('#fliptracker-crosslist-item');
+    const crosslistImageModeSelect = panel.querySelector('#fliptracker-crosslist-image-mode');
+    const crosslistPhotoStatus = panel.querySelector('#fliptracker-crosslist-photo-status');
     const crosslistLocationInput = panel.querySelector('#fliptracker-crosslist-location');
     const crosslistFillButton = panel.querySelector('#fliptracker-crosslist-fill');
     const crosslistConfirmPublishedButton = panel.querySelector('#fliptracker-crosslist-confirm-published');
@@ -11394,6 +11536,18 @@ ${cards}
       status(saved ? `Facebook location saved: ${saved}.` : 'Facebook location cleared; set it before queuing a draft.');
     });
 
+    crosslistImageModeSelect?.addEventListener('change', () => {
+      const mode = saveCrosslistImageMode(crosslistImageModeSelect.value);
+      if (crosslistPhotoStatus) {
+        crosslistPhotoStatus.textContent = mode === CROSSLIST_IMAGE_MODE_OPTIMIZED
+          ? 'Experimental: bridge-served 2048px sRGB JPEGs. Review Facebook quality before publishing.'
+          : 'Default: exact verified archive files. Facebook uploads at most 10 photos.';
+      }
+      status(mode === CROSSLIST_IMAGE_MODE_OPTIMIZED
+        ? 'Experimental 2048px Facebook-optimized photos selected.'
+        : 'Verified archived source photos selected.');
+    });
+
     crosslistQueueButton?.addEventListener('click', async () => {
       if (state.busy) return;
       const facebookWindow = window.open('about:blank', '_blank');
@@ -11432,7 +11586,7 @@ ${cards}
           itemId: listing.item_id || listing.itemId,
           customLabel: listing.custom_label || listing.customLabel,
           quantityAvailable: listing.quantity_available ?? listing.quantityAvailable,
-        }, { location: locationValue });
+        }, { location: locationValue, imageMode: getCrosslistImageMode() });
         const missing = crosslistEnvelopeMissingEvidence(envelope);
         if (missing.length) {
           facebookWindow.close?.();
@@ -11491,6 +11645,7 @@ ${cards}
         }
         const refresh = await refreshCrosslistQueueRecords(listings, {
           location: locationValue,
+          imageMode: getCrosslistImageMode(),
           concurrency: 3,
           onProgress: ({ completed, total, listing }) => {
             status(`Refreshing Facebook drafts ${completed}/${total}: ${listing.title || listing.item_id}`);
@@ -11552,7 +11707,10 @@ ${cards}
           state: 'Drafting',
           warnings: [],
         });
-        status(`Downloading ${claimed.facebook_draft?.image_urls?.length || 0} eBay photo(s) and filling Facebook...`);
+        const expectedPhotos = Number(claimed.photo_manifest?.expected_count || 0);
+        const uploadPhotos = Number(claimed.photo_manifest?.facebook_upload_count || 0);
+        const claimedMode = normalizeCrosslistImageMode(claimed.image_mode || claimed.facebook_draft?.image_mode);
+        status(`Loading ${uploadPhotos}/${expectedPhotos} verified photo(s) from FlipTracker (${claimedMode === CROSSLIST_IMAGE_MODE_OPTIMIZED ? '2048px experimental' : 'archived source'}) and filling Facebook...`);
         const result = await fillFacebookMarketplaceDraft(claimed);
         if (!result.ok) {
           if (options.autoSave) setFacebookAutoSaveBatchActive(false);
