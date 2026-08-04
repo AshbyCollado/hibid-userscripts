@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.00
+// @version      0.8.01
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -61,7 +61,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.00';
+  const SCRIPT_VERSION = '0.8.01';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -12461,13 +12461,26 @@ ${cards}
       if (state.busy) return;
       if (!await waitForCatalogRouteToSettle(mode)) return;
       if (state.busy) return;
+      const scrapePathname = typeof location !== 'undefined' ? location.pathname : '';
       setScrapingBusy(true);
+      // HiBid may normalize the query string or redraw its catalog while the
+      // state/DOM scrape is running. Keep this panel instance alive for that
+      // same-page work so the completed export is not discarded as stale.
+      panel.dataset.flipperaddonNavigationLock = 'true';
+      debug('catalog scrape navigation lock enabled', { mode, scrapePathname });
       if (catalogCopyJsonButton) catalogCopyJsonButton.disabled = true;
       if (catalogCopyLlmButton) catalogCopyLlmButton.disabled = true;
       state.stop = false;
       try {
         status(mode === 'llm' ? 'Scraping catalog for LLM brief...' : 'Scraping catalog for JSON...');
         const result = await scrapeCatalogLots(status, () => state.stop);
+        if (typeof location !== 'undefined' && location.pathname !== scrapePathname) {
+          debug('catalog export discarded after catalog path changed', {
+            from: scrapePathname,
+            to: location.pathname
+          });
+          return;
+        }
         if (!panelIsCurrent()) {
           debug('catalog export discarded after panel or route changed');
           return;
@@ -12567,6 +12580,10 @@ ${cards}
           stopped: result.stopped
         });
       } finally {
+        if (panel.dataset.flipperaddonNavigationLock === 'true') {
+          delete panel.dataset.flipperaddonNavigationLock;
+          debug('catalog scrape navigation lock released', { mode });
+        }
         setScrapingBusy(false);
         if (catalogCopyJsonButton) catalogCopyJsonButton.disabled = false;
         if (catalogCopyLlmButton) catalogCopyLlmButton.disabled = false;
