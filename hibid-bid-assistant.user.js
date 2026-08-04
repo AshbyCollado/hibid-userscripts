@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.01
+// @version      0.8.02
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -12,6 +12,7 @@
 // @match        https://hibid.com/account/watchlist*
 // @match        https://hibid.com/account/currentbids*
 // @match        https://hibid.com/*
+// @match        https://www.hibid.com/*
 // @match        https://*.hibid.com/*
 // @match        https://bid.ajwillnerauctions.com/ui/auctions/*
 // @match        https://www.ebay.com/sh/lst*
@@ -61,7 +62,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.01';
+  const SCRIPT_VERSION = '0.8.02';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -699,27 +700,56 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function hasLikelyHibidLotTiles(root = document) {
-    const selectors = 'app-lot-tile, app-lot-card, lot-card, .lot-card, [class*="lot-card"], [class*="lotTile"], [class*="lot-tile"]';
-    return Array.from(root?.querySelectorAll?.(selectors) || []).some(tile => {
-      if (tile.id && /^lot-\d+/i.test(tile.id)) return true;
-      const label = `${textOf(tile)} ${tile.getAttribute?.('aria-label') || ''}`;
-      return /\bLot\s+\S+/i.test(label) && Boolean(tile.querySelector?.('a, img, button'));
-    });
+    const selectors = [
+      'app-lot-tile',
+      'app-lot-card',
+      'lot-card',
+      '.lot-card',
+      '[class*="lot-card"]',
+      '[class*="lotTile"]',
+      '[class*="lot-tile"]',
+      '.bid-status-border',
+      '[class*="current-bids-card"]',
+      '[class*="watchlist-card"]',
+      '[data-testid*="watchlist"]',
+      '[data-testid*="current-bid"]'
+    ].join(',');
+    return Array.from(root?.querySelectorAll?.(selectors) || [])
+      .filter(isVisible)
+      .some(tile => {
+        if (tile.id && /^lot-\d+/i.test(tile.id)) return true;
+        const label = `${textOf(tile)} ${tile.getAttribute?.('aria-label') || ''}`;
+        return /\bLot\s+\S+/i.test(label) && Boolean(tile.querySelector?.('a, img, button'));
+      });
   }
 
   function getVisibleHibidLotCount(root = document) {
-    const selectors = 'app-lot-tile, app-lot-card, lot-card, .lot-card, [class*="lot-card"], [class*="lotTile"], [class*="lot-tile"]';
+    const selectors = [
+      'app-lot-tile',
+      'app-lot-card',
+      'lot-card',
+      '.lot-card',
+      '[class*="lot-card"]',
+      '[class*="lotTile"]',
+      '[class*="lot-tile"]',
+      '.bid-status-border',
+      '[class*="current-bids-card"]',
+      '[class*="watchlist-card"]',
+      '[data-testid*="watchlist"]',
+      '[data-testid*="current-bid"]'
+    ].join(',');
     const visible = Array.from(root?.querySelectorAll?.(selectors) || [])
       .filter(tile => isVisible(tile));
     if (!visible.length) return 0;
 
     const identities = new Set();
     visible.forEach(tile => {
-      const href = tile.querySelector?.('a[href*="/lot/"]')?.getAttribute?.('href') || '';
+      const href = tile.querySelector?.('a[href*="/lot/"], a[href*="/ui/lot/"]')?.getAttribute?.('href') || '';
       const lotLabel = textOf(tile.querySelector?.('.lot-number-lead, [class*="lot-number"]'))
         || textOf(tile).match(/\bLot\s+\S+/i)?.[0]
         || '';
-      const identity = href || lotLabel || tile.id || '';
+      const eventItemId = tile.querySelector?.('[data-event-item-id]')?.getAttribute?.('data-event-item-id') || '';
+      const identity = href || lotLabel || eventItemId || tile.id || '';
       if (identity) identities.add(identity);
     });
     return identities.size;
@@ -928,7 +958,20 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (canonicalTiles.length) return canonicalTiles;
 
     const roots = getLotSearchRoots(root);
-    const candidates = roots.flatMap(searchRoot => Array.from(searchRoot.querySelectorAll([
+    const accountRoute = typeof location !== 'undefined'
+      && isHibidAccountExportRoute(resolveHiBidPage(location));
+    const accountCandidates = accountRoute
+      ? roots.flatMap(searchRoot => Array.from(searchRoot.querySelectorAll([
+        '.bid-status-border',
+        '[class*="current-bids-card"]',
+        '[class*="watchlist-card"]',
+        '[data-testid*="watchlist"]',
+        '[data-testid*="current-bid"]',
+        'app-watchlist-item',
+        'app-current-bid'
+      ].join(','))))
+      : [];
+    const candidates = accountCandidates.concat(roots.flatMap(searchRoot => Array.from(searchRoot.querySelectorAll([
         'app-lot-tile[id^="lot-"]',
         '.bid-status-border',
         '.lot-tile',
@@ -936,7 +979,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         '.lot-number-lead',
         'a[href*="/lot/"]',
         '[class*="lot-number"]'
-      ].join(','))));
+      ].join(',')))));
 
     const fromText = roots.flatMap(searchRoot => Array.from(searchRoot.querySelectorAll('a, span, div, h2'))
       .filter(el => /^Lot\s+\d+[A-Za-z-]*/i.test(textOf(el))));
@@ -1076,7 +1119,13 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const raw = textOf(tile);
     const firstLine = structuredText.match(/(?:^|\n)\s*Lot\s*#?\s*:?\s*(\d+[A-Za-z-]*)\s*(?:\||[-:])?\s*([\s\S]*?)(?=\n\s*(?:Unwatch|Watch|Notes|READ DESCRIPTION|Current Bid|High Bid|Price Realized|Bidding Closed|Sold For|Lot Won|Starting Bid|Opening Bid|\d+\s+Bids?\b|Bid\s+[\d,.]+\s*USD)|$)/i);
     const lot = firstLine?.[1] || base.lot || '';
-    const title = (firstLine?.[2] || base.title || '')
+    // Account cards may expose their text as one flattened line when the
+    // framework has not preserved element newlines. Prefer the dedicated
+    // title node in that case so status controls cannot become part of the
+    // exported title.
+    const title = (base.title && !/^Lot\s+#?\s*\d+[A-Za-z-]*$/i.test(base.title)
+      ? base.title
+      : (firstLine?.[2] || base.title || ''))
       .replace(/\s+/g, ' ')
       .trim();
     const priceText = raw.match(/(?:High Bid|Current Bid|Price Realized|Lot Won|Sold For):?\s*\$?\s*([\d,.]+\s*(?:USD)?(?:\s*\/\s*(?:Lot|ea))?)/i)?.[1] || '';
@@ -1392,6 +1441,10 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function extractHibidVisiblePageState(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
     const filterState = extractHibidUrlFilters(loc);
+    const resolvedRoute = isHiBidHost(urlFromLocationLike(loc).hostname)
+      ? resolveHiBidPage(urlFromLocationLike(loc))
+      : null;
+    const isAccountExportRoute = isHibidAccountExportRoute(resolvedRoute);
     const text = getRootText(root);
     const noMatchPhrase = /\bNo matches found\b/i.test(text) || /\bTry adjusting your filters\b/i.test(text);
     const parsedExpectedTotal = getExpectedLotTotal(root);
@@ -1408,7 +1461,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     // Conversely, if the live filtered grid contains more cards than that stale total,
     // use the deduped visible-card count as the page-bound total so a correct export is
     // not rejected merely because the header updated before the cards did.
-    const noMatches = noMatchPhrase
+    const noMatches = !isAccountExportRoute
+      && noMatchPhrase
       && !hasLikelyHibidLotTiles(root)
       && (filterState.hasActiveFilters
         || !Number.isFinite(Number(parsedExpectedTotal))
@@ -1417,12 +1471,16 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       && Number.isFinite(Number(visibleLotCount))
       && Number(visibleLotCount) > 0
       && (!Number.isFinite(Number(parsedExpectedTotal)) || Number(visibleLotCount) > Number(parsedExpectedTotal));
-    const expectedTotal = noMatches
-      ? 0
-      : (visibleCountExceedsHeader ? Number(visibleLotCount) : parsedExpectedTotal);
+    const expectedTotal = isAccountExportRoute
+      ? null
+      : (noMatches
+        ? 0
+        : (visibleCountExceedsHeader ? Number(visibleLotCount) : parsedExpectedTotal));
 
     return {
       ...filterState,
+      routeKind: resolvedRoute?.kind || '',
+      isAccountExportRoute,
       noMatches,
       expectedTotal,
       visibleLotCount: noMatches ? 0 : visibleLotCount
@@ -7640,21 +7698,27 @@ ${cards}
     const host = String(loc.hostname || '').toLowerCase();
     const search = String(loc.search || '');
     const parts = pathSegments(loc);
+    const lowerParts = parts.map(part => part.toLowerCase());
 
     if (!isHiBidHost(host)) {
       return { supported: false, kind: 'unsupported', host, reason: 'unsupported host' };
     }
 
-    const accountIndex = parts[0] === 'account' ? 0 : (parts[1] === 'account' ? 1 : -1);
+    const accountIndex = lowerParts[0] === 'account' ? 0 : (lowerParts[1] === 'account' ? 1 : -1);
     const statePrefix = accountIndex === 1 ? parts[0] : '';
 
-    if (accountIndex >= 0 && parts[accountIndex + 1] === 'watchlist') {
-      return /status=OUTBID/i.test(search)
+    if (accountIndex >= 0 && lowerParts[accountIndex + 1] === 'watchlist') {
+      const status = String(
+        loc.searchParams?.get?.('status')
+        || search.match(/[?&]status=([^&]+)/i)?.[1]
+        || ''
+      ).trim().toUpperCase();
+      return status === 'OUTBID'
         ? { supported: true, kind: 'watchlist-outbid', host, statePrefix, reason: 'outbid watchlist route' }
         : { supported: true, kind: 'watchlist', host, statePrefix, reason: 'watchlist route' };
     }
 
-    if (accountIndex >= 0 && parts[accountIndex + 1] === 'currentbids') {
+    if (accountIndex >= 0 && lowerParts[accountIndex + 1] === 'currentbids') {
       const status = String(
         loc.searchParams?.get?.('status')
         || search.match(/[?&]status=([^&]+)/i)?.[1]
@@ -7669,32 +7733,32 @@ ${cards}
       return { supported: false, kind: 'currentbids', host, statePrefix, status, reason: 'current bids status is not WINNING or OUTBID' };
     }
 
-    if (parts[0] === 'livecatalog') {
+    if (lowerParts[0] === 'livecatalog') {
       return { supported: true, kind: 'live', host, auctionId: parts[1] || '', reason: 'livecatalog route' };
     }
 
-    if (parts[0] === 'catalog') {
+    if (lowerParts[0] === 'catalog') {
       return { supported: true, kind: 'catalog', host, auctionId: parts[1] || '', reason: 'catalog route' };
     }
 
-    if (parts[0] === 'lots' || parts[0] === 'lot') {
+    if (lowerParts[0] === 'lots' || lowerParts[0] === 'lot') {
       return {
         supported: true,
-        kind: parts[0] === 'lot' ? 'lot' : 'catalog',
+        kind: lowerParts[0] === 'lot' ? 'lot' : 'catalog',
         host,
         auctionId: parts[1] || '',
-        reason: `${parts[0]} route`
+        reason: `${lowerParts[0]} route`
       };
     }
 
-    if (parts[1] === 'lots' || parts[1] === 'lot') {
+    if (lowerParts[1] === 'lots' || lowerParts[1] === 'lot') {
       return {
         supported: true,
-        kind: parts[1] === 'lot' ? 'lot' : 'catalog',
+        kind: lowerParts[1] === 'lot' ? 'lot' : 'catalog',
         host,
         statePrefix: parts[0] || '',
         auctionId: parts[2] || '',
-        reason: `state-prefixed ${parts[1]} route`
+        reason: `state-prefixed ${lowerParts[1]} route`
       };
     }
 

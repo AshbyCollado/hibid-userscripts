@@ -37,6 +37,9 @@ function loadCore(options = {}) {
   if (options.fetch) {
     sandbox.fetch = options.fetch;
   }
+  if (options.location) {
+    sandbox.location = options.location;
+  }
   sandbox.globalThis = sandbox;
   sandbox.__HIBID_BID_ASSISTANT_TEST__ = true;
   vm.runInNewContext(source, sandbox, { filename: 'hibid-bid-assistant.user.js' });
@@ -171,16 +174,24 @@ test('assistant shared route resolver covers HiBid route families', () => {
   const core = loadCore();
   const cases = [
     ['https://hibid.com/lots', 'catalog'],
+    ['https://www.hibid.com/lots', 'catalog'],
     ['https://hibid.com/catalog/752334/the-luxe-edit', 'catalog'],
+    ['https://www.hibid.com/catalog/752334/the-luxe-edit', 'catalog'],
     ['https://hibid.com/livecatalog/752334/the-luxe-edit', 'live'],
+    ['https://www.hibid.com/livecatalog/752334/the-luxe-edit', 'live'],
     ['https://hibid.com/lot/123/example-lot', 'lot'],
+    ['https://hibid.com/newjersey/lot/123/example-lot', 'lot'],
     ['https://hibid.com/newjersey/lots/40196/computers-and-electronics', 'catalog'],
+    ['https://hibid.com/NEWJERSEY/LOTS/40196/computers-and-electronics', 'catalog'],
     ['https://seuyco.hibid.com/catalog/752334/the-luxe-edit', 'catalog'],
     ['https://hibid.com/account/watchlist?status=OUTBID', 'watchlist-outbid'],
+    ['https://www.hibid.com/account/watchlist?status=OUTBID', 'watchlist-outbid'],
     ['https://hibid.com/newjersey/account/watchlist', 'watchlist'],
+    ['https://hibid.com/NEWJERSEY/ACCOUNT/WATCHLIST', 'watchlist'],
     ['https://hibid.com/account/currentbids?status=WINNING', 'currentbids-winning'],
     ['https://hibid.com/newjersey/account/currentbids?status=WINNING', 'currentbids-winning'],
     ['https://hibid.com/account/currentbids?status=OUTBID', 'currentbids-outbid'],
+    ['https://www.hibid.com/account/currentbids?status=OUTBID', 'currentbids-outbid'],
   ];
 
   cases.forEach(([href, kind]) => {
@@ -1211,6 +1222,7 @@ test('assistant blocks AuctionNinja exports from the wrong active page kind', ()
 
 test('assistant supports HiBid winning and outbid current-bids exports only', () => {
   const core = loadCore();
+  const bareWatchlist = core.resolveAssistantMode(new URL('https://hibid.com/account/watchlist'));
   const winning = core.resolveAssistantMode(new URL('https://hibid.com/account/currentbids?status=WINNING'));
   const outbid = core.resolveAssistantMode(new URL('https://hibid.com/account/currentbids?status=OUTBID'));
   const stateWatchlist = core.resolveAssistantMode(new URL('https://hibid.com/newjersey/account/watchlist'));
@@ -1221,6 +1233,9 @@ test('assistant supports HiBid winning and outbid current-bids exports only', ()
   assert.equal(outbid.mode, 'catalog');
   assert.equal(outbid.source, 'hibid');
   assert.equal(outbid.route.kind, 'currentbids-outbid');
+  assert.equal(bareWatchlist.mode, 'catalog');
+  assert.equal(bareWatchlist.source, 'hibid');
+  assert.equal(bareWatchlist.route.kind, 'watchlist');
   assert.equal(stateWatchlist.mode, 'catalog');
   assert.equal(stateWatchlist.source, 'hibid');
   assert.equal(stateWatchlist.route.kind, 'watchlist');
@@ -1244,7 +1259,7 @@ test('assistant supports HiBid winning and outbid current-bids exports only', ()
 
   const winningHtml = core.buildPanelHtml({ mode: 'catalog', route: winning.route, debugEnabled: false });
   const outbidHtml = core.buildPanelHtml({ mode: 'catalog', route: outbid.route, debugEnabled: false });
-  const watchlistHtml = core.buildPanelHtml({ mode: 'catalog', route: stateWatchlist.route, debugEnabled: false });
+  const watchlistHtml = core.buildPanelHtml({ mode: 'catalog', route: bareWatchlist.route, debugEnabled: false });
   assert.match(winningHtml, /Winning Bids Export/);
   assert.match(winningHtml, /class="hiba-chip neutral">winning</);
   assert.match(outbidHtml, /Outbid Bids Export/);
@@ -1252,6 +1267,45 @@ test('assistant supports HiBid winning and outbid current-bids exports only', ()
   assert.match(watchlistHtml, /Watchlist Export/);
   assert.match(watchlistHtml, /class="hiba-chip neutral">watchlist</);
   assert.doesNotMatch(`${winningHtml}${outbidHtml}${watchlistHtml}`, /Prepare Bid|Snipe Now|Auto-confirm|Max plan/i);
+});
+
+test('assistant keeps HiBid watchlist cards out of the no-match early exit', () => {
+  const core = loadCore({ location: new URL('https://hibid.com/account/watchlist') });
+  const lotLink = makeFakeNode({
+    text: 'Lot 26 | LEVOIT Core300-P Air Purifier',
+    attrs: { href: '/lot/311743157/levoit-core300-p-air-purifier' },
+  });
+  const card = makeFakeNode({
+    text: 'Lot 26 | LEVOIT Core300-P Air Purifier Unwatch Notes Current Bid: 14.00 USD 9 Bids Outbid',
+    attrs: { class: 'bid-status-border bid-status-border-default current-bids-card' },
+    selectors: {
+      'a[href*="/lot/"]': lotLink,
+      '.lot-title, h2': makeFakeNode({ text: 'LEVOIT Core300-P Air Purifier' }),
+      '.lot-number-lead .text-primary': makeFakeNode({ text: 'Lot 26' }),
+    },
+  });
+  card.offsetParent = {};
+  card.getClientRects = () => [{ width: 1, height: 1 }];
+
+  const root = {
+    body: { textContent: 'No matches found Lot 26 | LEVOIT Core300-P Air Purifier' },
+    querySelectorAll(selector) {
+      return selector.includes('bid-status-border') ? [card] : [];
+    },
+  };
+
+  const visibleState = core.extractHibidVisiblePageState(root, new URL('https://hibid.com/account/watchlist'));
+  assert.equal(visibleState.routeKind, 'watchlist');
+  assert.equal(visibleState.isAccountExportRoute, true);
+  assert.equal(visibleState.noMatches, false);
+  assert.equal(visibleState.visibleLotCount, 1);
+
+  const tiles = core.getLotTiles(root);
+  assert.equal(tiles.length, 1);
+  const lot = core.extractCurrentBidsLot(tiles[0]);
+  assert.equal(lot.lot, '26');
+  assert.equal(lot.title, 'LEVOIT Core300-P Air Purifier');
+  assert.equal(lot.userBidStatus, 'Outbid');
 });
 
 test('assistant parses HiBid current-bids account card text fallback', () => {
@@ -1792,6 +1846,9 @@ test('assistant mode resolver activates only the current page module', () => {
   const cases = [
     ['https://hibid.com/newjersey/lots/40196/computers-and-electronics', 'catalog'],
     ['https://hibid.com/account/watchlist?status=OUTBID', 'catalog'],
+    ['https://hibid.com/account/watchlist', 'catalog'],
+    ['https://www.hibid.com/account/watchlist', 'catalog'],
+    ['https://hibid.com/NEWJERSEY/LOTS/40196/computers-and-electronics', 'catalog'],
     ['https://hibid.com/account/currentbids?status=WINNING', 'catalog'],
     ['https://hibid.com/account/currentbids?status=OUTBID', 'catalog'],
     ['https://hibid.com/livecatalog/752334/the-luxe-edit', 'live'],
