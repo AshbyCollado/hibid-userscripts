@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.02
+// @version      0.8.03
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -62,7 +62,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.02';
+  const SCRIPT_VERSION = '0.8.03';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -239,7 +239,7 @@ Profit math:
 Assume auction buyer premium is 15%.
 Assume sales tax applies to hammer price plus buyer premium unless stated otherwise.
 Use the configured sales tax rate from the Research Settings block below. If it is missing, state the assumption instead of hiding it.
-Rough quick math: auction all-in = bid x 1.25 for buyer premium/tax estimate; eBay net = sold price x 0.87 before shipping complications.
+Rough screening only: auction all-in can be approximated as bid x 1.25 for a quick triage estimate, and eBay net as sold price x 0.87 before shipping complications. The final workbook must use the explicit buyer_premium_rate and sales_tax_rate formulas below.
 Assume eBay resale has seller fees and promoted listing friction:
 - eBay final value fee default: 13.25%
 - Promoted listing ad rate default: 2%
@@ -253,17 +253,37 @@ For local flips:
 - Apply extra caution for pickup, storage, meetup time, and sedan fit.
 
 Calculations:
-auction_all_in_cost = hammer_price * 1.15 * (1 + sales_tax_rate)
+Show two separate profit calculations. Do not confuse them:
 
-ebay_net = estimated_resale * (1 - 0.1525)
+1. \`profit_if_won_now\`
+   Profit based on the current auction bid.
 
-estimated_net_profit = ebay_net - auction_all_in_cost
+2. \`profit_at_recommended_max_bid\`
+   Profit remaining if I bid the full recommended maximum.
 
-recommended_max_bid = ((estimated_resale * (1 - 0.1525)) - target_profit) / (1.15 * (1 + sales_tax_rate))
+For eBay resale:
 
-For local flips:
-local_net_profit = estimated_local_resale - auction_all_in_cost
-recommended_max_bid = (estimated_local_resale - target_profit) / (1.15 * (1 + sales_tax_rate))
+auction_all_in_cost =
+bid * (1 + buyer_premium_rate) * (1 + sales_tax_rate)
+
+profit_if_won_now =
+ebay_net - current_bid * (1 + buyer_premium_rate) * (1 + sales_tax_rate)
+
+recommended_max_bid =
+MAX(0, (ebay_net - target_profit) /
+((1 + buyer_premium_rate) * (1 + sales_tax_rate)))
+
+profit_at_recommended_max_bid =
+ebay_net - recommended_max_bid *
+(1 + buyer_premium_rate) * (1 + sales_tax_rate)
+
+For Local Flip Leads, replace \`ebay_net\` with \`estimated_local_resale\`.
+
+Never calculate or label \`profit_at_recommended_max_bid\` using the current bid. It must use the recommended maximum bid.
+
+Normally, \`profit_at_recommended_max_bid\` should equal the target profit. If the recommended maximum is $0 and the target still cannot be achieved, highlight the profit-at-max cell in red.
+
+Also show the supporting values \`ebay_net\`, \`estimated_net_profit\`, \`local_net_profit\`, \`auction_all_in_cost\`, and \`breakeven_bid\` when they are applicable. Use the configured buyer premium and sales tax rates in every formula and label assumptions explicitly.
 
 Default target profit:
 - Small easy ship item: minimum $30 profit
@@ -280,6 +300,39 @@ Comping rules:
 - If proof is only an eBay search/shop/category page, mark Research Lead unless there is very strong market context.
 - For local-only bulky items, use local market intuition only if potential profit justifies pickup.
 - Every lead needs proof URL or must be explicitly marked local/speculative.
+
+## VERIFIED EBAY SOLD DATA - MANDATORY
+
+Use the internal in-app browser to research eBay Sold and Completed listings. Use the existing signed-in eBay session when available.
+
+Every populated eBay resale estimate must be supported by legitimate, visible eBay sold evidence. Never invent or estimate a sold price, sale date, listing title, model, condition, or URL.
+
+For each item, record:
+
+- sold-comp title
+- sold price
+- sold date when visible
+- condition
+- direct sold-listing URL
+- number of sold comps used
+- sold-comp low, median, and high
+- whether the comp is exact or close
+
+Use exact model matches whenever possible. Close matches are allowed only when clearly labeled \`close_ebay_sold\` and adjusted conservatively.
+
+Do not treat active listings, asking prices, retail prices, search-result snippets, or unsold listings as completed sales.
+
+If no legitimate exact or close sold evidence can be found:
+
+- Do not fabricate a resale value.
+- Leave the eBay estimate blank or label it \`UNVERIFIED\`.
+- Set \`proof_type\` to \`no_proof\`, \`active_only\`, or \`sold_search_page\`, as appropriate.
+- Classify the item as Research Lead or Garbage - not Confirmed Lead.
+- Explain exactly why a legitimate resale number could not be established.
+
+A Confirmed Lead must have visible exact or close eBay sold evidence.
+
+This sold-proof restriction governs eBay resale estimates. A Local Flip Lead may use \`estimated_local_resale\` only with explicit local proof; leave \`estimated_resale\` blank or \`UNVERIFIED\` and never call it a Confirmed Lead based on local intuition alone.
 
 Proof levels:
 - exact_ebay_sold
@@ -300,18 +353,32 @@ Create an Excel workbook with these tabs:
 - Bundle/Parts Leads
 - All Lots
 - Garbage
+- Mixed Lot / Component Review
 - Audit
 
-Required columns:
+## COLUMN ORDER
+
+Decision-making columns must be near the front in this exact order:
 row_id
 lot
 title
+item_url
 current_bid
 next_bid
-quantity
-category
 status
 estimated_resale
+profit_if_won_now
+recommended_max_bid
+profit_at_recommended_max_bid
+proof_type
+reason
+risk_notes
+sedan_fit
+shipping_assumption
+
+Supporting calculation, evidence, and audit columns come after those decision columns:
+quantity
+category
 estimated_local_resale
 buyer_premium_rate
 sales_tax_rate
@@ -320,17 +387,40 @@ ebay_fee_rate
 promo_fee_rate
 ebay_net
 target_profit
+profit_if_won_now_basis
 estimated_net_profit
+local_net_profit
 breakeven_bid
-recommended_max_bid
-proof_type
+sold_comp_title
+sold_comp_price
+sold_comp_date
+sold_comp_condition
+sold_comp_url
+sold_comp_count
+sold_comp_low
+sold_comp_median
+sold_comp_high
+sold_comp_match_type
 proof_urls
-reason
-risk_notes
-sedan_fit
-shipping_assumption
 assigned_agent
+component_reviewed
 audit_flag
+
+The \`item_url\` and every direct \`sold_comp_url\` must be clickable hyperlinks. Keep \`profit_if_won_now\` immediately before \`recommended_max_bid\`, and keep \`profit_at_recommended_max_bid\` immediately beside \`recommended_max_bid\` as shown above.
+
+## SORTING
+
+Automatically sort every decision sheet by \`profit_if_won_now\`, highest profit first. This applies to Best Bids, Research Leads, Local Flip Leads, Bundle/Parts Leads, All Lots, and Garbage when practical. Do not sort by current bid or estimated resale alone.
+
+## SPREADSHEET VISIBILITY AND FORMATTING
+
+- Freeze only the top header row so category names remain visible while scrolling.
+- Do not freeze any columns and do not create a left/right split-screen view.
+- Do not hide any rows or columns.
+- Make the entire populated portion of each important column bold, not only its header: \`lot\`, \`title\`, \`item_url\`, \`current_bid\`, \`status\`, \`estimated_resale\`, \`profit_if_won_now\`, \`recommended_max_bid\`, \`profit_at_recommended_max_bid\`, and \`proof_type\`.
+- Use distinct, easy-to-see colors for current bid, estimated resale, profit if won now, recommended maximum bid, profit at recommended maximum bid, and proof type.
+- Highlight \`current_bid\` in red whenever it exceeds \`recommended_max_bid\`.
+- Highlight the profit-at-max cell in red when \`recommended_max_bid\` is $0 and the target profit cannot be achieved.
 
 Classification instructions:
 1. Parse every lot into normalized rows.
@@ -380,6 +470,13 @@ After creating the spreadsheet, summarize:
 - max bid for each
 - what needs inspection
 - whether pickup is worth the drive
+- number of mixed/group lots reviewed
+- number of mixed/group lots with extracted named components
+- number of mixed/group lots elevated to a lead
+- number of mixed/group lots passed with an explicit component-level reason
+- number of populated eBay resale estimates with visible exact or close sold evidence
+- number of eBay estimates left blank or marked UNVERIFIED
+- number of Confirmed Leads with valid sold proof
 
 Tone:
 Be skeptical, but do not be lazy. The mission is to avoid missing profitable deals while not fooling me with fake profit before fees.`;
