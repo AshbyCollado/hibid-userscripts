@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.03
+// @version      0.8.04
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -62,7 +62,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.03';
+  const SCRIPT_VERSION = '0.8.04';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -70,6 +70,7 @@
   const AUTO_REFRESH_KEY = 'flipperaddon-auto-refresh-v1';
   const MINIMIZED_KEY = 'flipperaddon-minimized-v1';
   const DEBUG_ENABLED_KEY = 'flipperaddon-debug-enabled-v1';
+  const DEBUG_BOOTSTRAP_HASH = 'flipperdebug';
   const DEBUG_LOG_KEY = 'flipperaddon-debug-log-v1';
   const RESEARCH_SETTINGS_KEY = 'flipperaddon-research-settings-v2';
   const AAR_RESEARCH_SETTINGS_KEY = 'flipperaddon-aar-research-settings-v1';
@@ -525,13 +526,19 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     }).join('\n');
   }
 
+  function isDebugBootstrapRequested(loc = (typeof location !== 'undefined' ? location : null)) {
+    const hash = String(loc?.hash || '').replace(/^#/, '');
+    return hash.split(/[&;]/).some(token => new RegExp(`^${DEBUG_BOOTSTRAP_HASH}(?:=1)?$`, 'i').test(token.trim()));
+  }
+
   function getStoredDebugEnabled() {
-    let enabled = false;
+    const bootstrapEnabled = isDebugBootstrapRequested();
+    let enabled = bootstrapEnabled;
     try {
       const stored = GM_getValue(DEBUG_ENABLED_KEY, false);
-      enabled = stored === true || stored === 1 || String(stored).toLowerCase() === 'true';
+      enabled = enabled || stored === true || stored === 1 || String(stored).toLowerCase() === 'true';
     } catch {
-      enabled = false;
+      enabled = bootstrapEnabled;
     }
     try {
       globalThis.__FLIPPERADDON_DEBUG_MODE__ = enabled;
@@ -4323,6 +4330,7 @@ ${cards}
     scanPlan,
     lotSummary,
     getStoredMinimized,
+    isDebugBootstrapRequested,
     getStoredDebugEnabled,
     getDebugMenuLabel
   };
@@ -13008,12 +13016,25 @@ ${cards}
     };
 
     const registerMenuCommands = () => {
-      if (typeof GM_registerMenuCommand !== 'function') {
+      const register = typeof GM_registerMenuCommand === 'function'
+        ? GM_registerMenuCommand
+        : (typeof GM !== 'undefined' && typeof GM.registerMenuCommand === 'function'
+          ? GM.registerMenuCommand.bind(GM)
+          : null);
+      if (typeof register !== 'function') {
         debug('menu commands unavailable');
         return;
       }
-      GM_registerMenuCommand(MENU_COMMANDS[0], () => ensureMounted('menu remount'));
-      GM_registerMenuCommand(getDebugMenuLabel(), async () => {
+      const registerCommand = (name, callback) => {
+        try {
+          return register(name, callback);
+        } catch (error) {
+          debug('menu command registration failed', { name, error: error?.message || String(error) });
+          return null;
+        }
+      };
+      registerCommand(MENU_COMMANDS[0], () => ensureMounted('menu remount'));
+      registerCommand(getDebugMenuLabel(), async () => {
         const enabled = !getStoredDebugEnabled();
         saveDebugEnabled(enabled);
         const panel = document.getElementById(PANEL_ID);
@@ -13029,20 +13050,20 @@ ${cards}
           // Console logging is best-effort.
         }
       });
-      GM_registerMenuCommand(MENU_COMMANDS[2], async () => {
+      registerCommand(MENU_COMMANDS[2], async () => {
         ensureMounted('menu copy debug');
         const copied = await copyDebugLog();
         debug('menu copy debug result', { copied, entries: getDebugLog().length });
       });
-      GM_registerMenuCommand(MENU_COMMANDS[3], () => {
+      registerCommand(MENU_COMMANDS[3], () => {
         clearDebugLog();
         debug('debug log cleared from menu');
       });
-      GM_registerMenuCommand(MENU_COMMANDS[4], () => {
+      registerCommand(MENU_COMMANDS[4], () => {
         ensureMounted('menu copy lots');
         document.getElementById('hibid-catalog-copy-json')?.click();
       });
-      GM_registerMenuCommand(MENU_COMMANDS[5], () => {
+      registerCommand(MENU_COMMANDS[5], () => {
         const entered = window.prompt('Paste the Flip Tracker local sync token. It stays in Tampermonkey storage.', getFlipTrackerSyncToken());
         if (entered !== null) saveFlipTrackerSyncToken(entered);
       });

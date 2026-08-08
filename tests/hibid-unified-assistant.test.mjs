@@ -1554,6 +1554,17 @@ test('assistant exposes explicit debug menu state without leaking debug controls
   assert.match(debugHtml, /Clear Debug/);
 });
 
+test('assistant can bootstrap debug mode from the page hash when Tampermonkey commands are hidden', () => {
+  const core = loadCore({ location: new URL('https://hibid.com/catalog/761703/example#flipperdebug') });
+  assert.equal(core.isDebugBootstrapRequested(new URL('https://hibid.com/catalog/761703/example#flipperdebug')), true);
+  assert.equal(core.isDebugBootstrapRequested(new URL('https://hibid.com/catalog/761703/example#other')), false);
+  assert.equal(core.getStoredDebugEnabled(), true);
+  assert.match(core.getDebugMenuLabel(), /ON\]$/);
+  const html = core.buildPanelHtml({ mode: 'catalog', debugEnabled: true, route: { kind: 'catalog' } });
+  assert.match(html, /Copy Debug/);
+  assert.match(html, /Clear Debug/);
+});
+
 test('assistant blocks AAR exports from the wrong route or auction id', () => {
   const core = loadCore();
 
