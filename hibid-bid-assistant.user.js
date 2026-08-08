@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.09
+// @version      0.8.10
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -63,7 +63,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.09';
+  const SCRIPT_VERSION = '0.8.10';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -122,6 +122,11 @@
     'Copy HiBid Lots Now',
     'Set FlipTracker Sync Token'
   ];
+  const DEBUG_CONTROL_IDS = Object.freeze([
+    'hibid-debug-copy',
+    'hibid-debug-download',
+    'hibid-debug-clear'
+  ]);
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   const HIBID_STATE_FETCH_TIMEOUT_MS = 6500;
   const HIBID_STATE_HYDRATION_WAIT_MS = 5000;
@@ -823,6 +828,123 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       heartbeatMs: DEBUG_HEARTBEAT_INTERVAL_MS,
       scrollThrottleMs: DEBUG_SCROLL_THROTTLE_MS,
     });
+    return true;
+  }
+
+  function debugNow() {
+    return typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  }
+
+  function getDebugControlBindingState(root = (typeof document !== 'undefined' ? document : null)) {
+    const presentIds = DEBUG_CONTROL_IDS.filter(id => Boolean(root?.querySelector?.(`#${id}`)));
+    const missingIds = DEBUG_CONTROL_IDS.filter(id => !presentIds.includes(id));
+    return {
+      requiredIds: Array.from(DEBUG_CONTROL_IDS),
+      presentIds,
+      missingIds,
+      allPresent: missingIds.length === 0,
+      delegated: root?.dataset?.flipperaddonDebugBinding === 'delegated'
+    };
+  }
+
+  const debugControlBindingState = getDebugControlBindingState;
+
+  function showDebugPanelMessage(panel, message, tone = 'neutral') {
+    if (!panel) return false;
+    const chip = panel.querySelector?.('#hiba-session-chip');
+    const toast = panel.querySelector?.('#flipperaddon-toast');
+    const normalizedTone = tone === 'danger' ? 'danger' : (tone === 'success' ? 'success' : 'neutral');
+    if (chip) {
+      chip.className = `hiba-chip ${normalizedTone}`;
+      chip.textContent = normalizedTone === 'danger' ? 'error' : (normalizedTone === 'success' ? 'ready' : 'idle');
+    }
+    if (toast) {
+      const previousTimer = panel.__FLIPPERADDON_DEBUG_TOAST_TIMER__;
+      if (previousTimer && typeof clearTimeout === 'function') clearTimeout(previousTimer);
+      toast.textContent = String(message || '').replace(/\s+/g, ' ').slice(0, 180);
+      toast.className = `hiba-toast show ${normalizedTone === 'danger' ? 'danger' : ''}`.trim();
+      const timer = typeof setTimeout === 'function' ? setTimeout : globalThis.setTimeout;
+      if (typeof timer === 'function') {
+        panel.__FLIPPERADDON_DEBUG_TOAST_TIMER__ = timer(() => {
+          toast.classList.remove('show');
+        }, normalizedTone === 'danger' ? 3600 : 2200);
+      }
+    }
+    return Boolean(chip || toast);
+  }
+
+  function installDebugControlDelegation(panel) {
+    if (!getStoredDebugEnabled() || !panel?.addEventListener) return false;
+    if (panel.__FLIPPERADDON_DEBUG_CONTROL_DELEGATION__) {
+      debugEvent('debug.control.binding.reused', getDebugControlBindingState(panel));
+      return true;
+    }
+
+    const handler = async event => {
+      const target = event.target?.closest?.(`#${DEBUG_CONTROL_IDS.join(', #')}`);
+      if (!target || !panel.contains?.(target)) return;
+      const id = target.id;
+      if (!DEBUG_CONTROL_IDS.includes(id)) return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+
+      const startedAt = debugNow();
+      const binding = getDebugControlBindingState(panel);
+      debugEvent('debug.control.handler.enter', {
+        id,
+        binding,
+        target: debugTargetMetadata(target)
+      });
+
+      let copied = false;
+      let downloaded = false;
+      let revealed = false;
+      let errorText = '';
+      try {
+        if (id === 'hibid-debug-copy') {
+          debugEvent('debug.control.copy.start', { binding });
+          downloaded = downloadDebugLog();
+          copied = await copyDebugLog();
+          if (!copied && !downloaded) downloaded = downloadDebugLog();
+          revealed = revealDebugExportField(panel);
+        } else if (id === 'hibid-debug-download') {
+          debugEvent('debug.control.download.start', { binding });
+          downloaded = downloadDebugLog();
+          revealed = revealDebugExportField(panel);
+        } else if (id === 'hibid-debug-clear') {
+          debugEvent('debug.control.clear', { binding });
+          clearDebugLog();
+          debug('debug log cleared from delegated handler');
+          revealed = revealDebugExportField(panel);
+        }
+      } catch (error) {
+        errorText = debugText(error?.message || error, 280);
+        debugEvent('debug.control.error', { id, error: errorText });
+      }
+
+      const durationMs = Math.round((debugNow() - startedAt) * 100) / 100;
+      const result = { id, copied, downloaded, revealed, durationMs, error: errorText };
+      debugEvent('debug.control.result', result);
+      showDebugPanelMessage(
+        panel,
+        id === 'hibid-debug-clear'
+          ? (revealed ? 'Debug log cleared.' : 'Debug log cleared; text field unavailable.')
+          : (copied
+            ? `Debug copied; ${getDebugLog().length} entries shown below.`
+            : (downloaded
+              ? 'Debug download requested; log shown below.'
+              : (revealed ? 'Clipboard/download failed; select the log below.' : 'Debug export failed.'))),
+        errorText ? 'danger' : (copied || downloaded ? 'success' : 'neutral')
+      );
+      debugEvent('debug.control.handler.exit', result);
+    };
+
+    panel.addEventListener('click', handler);
+    panel.dataset.flipperaddonDebugBinding = 'delegated';
+    panel.__FLIPPERADDON_DEBUG_CONTROL_DELEGATION__ = handler;
+    debugEvent('debug.control.binding', getDebugControlBindingState(panel));
     return true;
   }
 
@@ -4597,6 +4719,9 @@ ${cards}
     getStoredDebugEnabled,
     getDebugMenuLabel,
     getDebugLogPayload,
+    getDebugControlBindingState,
+    debugControlBindingState,
+    installDebugControlDelegation,
     debugTargetMetadata,
     debugPageSnapshot,
     debugEvent,
@@ -11575,6 +11700,7 @@ ${cards}
     const panelHtml = buildPanelHtml({ mode, debugEnabled, route });
     const styleMatch = panelHtml.match(/<style>([\s\S]*?)<\/style>/i);
     panel.innerHTML = styleMatch ? panelHtml.replace(styleMatch[0], '') : panelHtml;
+    installDebugControlDelegation(panel);
     if (styleMatch) {
       if (typeof GM_addStyle === 'function') {
         GM_addStyle(styleMatch[1]);
@@ -11587,6 +11713,10 @@ ${cards}
     }
 
     document.body.appendChild(panel);
+    debugEvent('debug.control.binding', {
+      phase: 'after-append',
+      ...getDebugControlBindingState(panel)
+    });
     setPanelMinimized(panel, true);
     debugEvent('panel.create.complete', {
       mode,
@@ -11679,9 +11809,6 @@ ${cards}
     const govDealsAssetCopyJsonButton = panel.querySelector('#govdeals-asset-copy-json');
     const govDealsAssetCopyLlmButton = panel.querySelector('#govdeals-asset-copy-llm');
     const scraperStopButton = panel.querySelector('#hibid-scraper-stop');
-    const debugCopyButton = panel.querySelector('#hibid-debug-copy');
-    const debugDownloadButton = panel.querySelector('#hibid-debug-download');
-    const debugClearButton = panel.querySelector('#hibid-debug-clear');
     const siteSwitcherToggle = panel.querySelector('#flipperaddon-site-switcher-toggle');
     const siteSwitcherMenu = panel.querySelector('#flipperaddon-site-switcher-menu');
     const state = {
@@ -13223,36 +13350,6 @@ ${cards}
       run: (copyMode) => copyCatalogLots(copyMode)
     };
     if (activeMode === 'catalog') scheduleCatalogCopyResume();
-    debugCopyButton?.addEventListener('click', async () => {
-      status('Preparing debug export...');
-      const downloadRequested = downloadDebugLog();
-      const copied = await copyDebugLog();
-      const downloaded = downloadRequested || (!copied && downloadDebugLog());
-      const revealed = revealDebugExportField(panel);
-      status(copied
-        ? `Copied ${getDebugLog().length} debug log entries. Download requested too.`
-        : (downloaded ? 'Clipboard failed; debug log download requested. Text is also selected below.' : (revealed ? 'Clipboard failed; debug text is selected below.' : 'Debug log copy and download failed.')));
-      debug('drawer debug export result', {
-        copied,
-        downloadRequested,
-        downloaded,
-        revealed,
-        entries: getDebugLog().length
-      });
-    });
-    debugDownloadButton?.addEventListener('click', () => {
-      const downloaded = downloadDebugLog();
-      const revealed = !downloaded && revealDebugExportField(panel);
-      status(downloaded
-        ? 'Downloaded the debug log.'
-        : (revealed ? 'Download failed; debug text is selected below.' : 'Debug log download failed.'));
-      debug('drawer debug download result', { downloaded, revealed, entries: getDebugLog().length });
-    });
-    debugClearButton?.addEventListener('click', () => {
-      clearDebugLog();
-      status('Debug log cleared.');
-      debug('debug log cleared from drawer');
-    });
 
     if (liveMode) {
       saveAutoRefresh(false);
@@ -13511,9 +13608,37 @@ ${cards}
         debugEvent('mount.already-present', { reason });
         return true;
       }
-      init();
-      debugEvent('mount.completed', { reason, mode: modeInfo.mode });
-      return true;
+      return initializePanelSafely(reason, modeInfo);
+    };
+
+    const initializePanelSafely = (reason, modeInfo = resolveAssistantMode()) => {
+      const initStartedAt = debugNow();
+      try {
+        init();
+        debugEvent('mount.completed', {
+          reason,
+          mode: modeInfo.mode,
+          durationMs: Math.round((debugNow() - initStartedAt) * 100) / 100
+        });
+        return true;
+      } catch (error) {
+        const errorText = debugText(error?.message || error, 280);
+        debugEvent('panel.init.error', {
+          phase: 'initializePanelSafely:init',
+          reason,
+          mode: modeInfo.mode,
+          routeKind: modeInfo.route?.kind || '',
+          durationMs: Math.round((debugNow() - initStartedAt) * 100) / 100,
+          error: errorText,
+          stack: debugText(error?.stack || '', 500)
+        });
+        const failedPanel = document.getElementById(PANEL_ID);
+        if (failedPanel) {
+          failedPanel.dataset.flipperaddonInitError = 'true';
+          showDebugPanelMessage(failedPanel, `Panel initialization failed: ${errorText}`, 'danger');
+        }
+        return false;
+      }
     };
 
     const mountWhenReady = (reason) => {
@@ -13553,7 +13678,7 @@ ${cards}
         const panel = document.getElementById(PANEL_ID);
         if (panel) {
           teardownPanel('debug-toggle');
-          init();
+          initializePanelSafely('debug-toggle');
         } else {
           ensureMounted('menu toggle debug');
         }

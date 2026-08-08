@@ -1602,6 +1602,71 @@ test('assistant debug instrumentation is verbose, safe, and gated by debug mode'
   assert.match(enabledCore.getDebugLogPayload(), /"bytes":42/);
 });
 
+test('assistant binds debug controls through one delegated panel handler', async () => {
+  const storage = new Map([['flipperaddon-debug-enabled-v1', true]]);
+  const core = loadCore({ storage });
+  const buttons = new Map();
+  ['hibid-debug-copy', 'hibid-debug-download', 'hibid-debug-clear'].forEach(id => {
+    const button = {
+      id,
+      disabled: false,
+      closest: () => button,
+      getAttribute: () => '',
+      textContent: id,
+    };
+    buttons.set(id, button);
+  });
+  const field = {
+    hidden: true,
+    value: '',
+    focusCalled: false,
+    selectCalled: false,
+    focus() { this.focusCalled = true; },
+    select() { this.selectCalled = true; },
+    removeAttribute() {},
+  };
+  let delegatedClick;
+  const panel = {
+    dataset: {},
+    querySelector(selector) {
+      if (selector === '#hibid-debug-export') return field;
+      const id = selector.replace(/^#/, '');
+      return buttons.get(id) || null;
+    },
+    addEventListener(type, handler) {
+      if (type === 'click') delegatedClick = handler;
+    },
+    contains(target) { return buttons.get(target?.id) === target; },
+  };
+
+  assert.equal(core.installDebugControlDelegation(panel), true);
+  assert.equal(panel.dataset.flipperaddonDebugBinding, 'delegated');
+  assert.deepEqual(plain(core.getDebugControlBindingState(panel)), {
+    requiredIds: ['hibid-debug-copy', 'hibid-debug-download', 'hibid-debug-clear'],
+    presentIds: ['hibid-debug-copy', 'hibid-debug-download', 'hibid-debug-clear'],
+    missingIds: [],
+    allPresent: true,
+    delegated: true,
+  });
+
+  const clearButton = buttons.get('hibid-debug-clear');
+  await delegatedClick({
+    target: clearButton,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  assert.equal(field.hidden, false);
+  assert.equal(field.focusCalled, true);
+  assert.equal(field.selectCalled, true);
+  const payload = core.getDebugLogPayload();
+  assert.doesNotMatch(payload, /event:debug\.control\.handler\.enter/);
+  assert.match(payload, /debug log cleared from delegated handler/);
+  assert.match(payload, /event:debug\.control\.result/);
+  assert.match(payload, /event:debug\.control\.handler\.exit/);
+  assert.match(payload, /"id":"hibid-debug-clear"/);
+});
+
 test('assistant blocks AAR exports from the wrong route or auction id', () => {
   const core = loadCore();
 
