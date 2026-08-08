@@ -1568,6 +1568,40 @@ test('assistant can bootstrap debug mode from the page hash when Tampermonkey co
   assert.match(html, /Clear Debug/);
 });
 
+test('assistant debug instrumentation is verbose, safe, and gated by debug mode', () => {
+  const core = loadCore();
+  assert.equal(core.DEBUG_LOG_LIMIT, 2000);
+  assert.equal(core.DEBUG_HEARTBEAT_INTERVAL_MS, 60000);
+
+  const secretInput = {
+    tagName: 'INPUT',
+    id: 'research-notes',
+    className: 'hiba-input',
+    value: 'private notes that must not be logged',
+    getAttribute(name) {
+      return {
+        type: 'text',
+        'aria-label': 'Research notes',
+      }[name] || '';
+    },
+  };
+  const metadata = core.debugTargetMetadata(secretInput);
+  assert.equal(metadata.tag, 'input');
+  assert.equal(metadata.valueLength, secretInput.value.length);
+  assert.equal(metadata.text, undefined);
+  assert.doesNotMatch(JSON.stringify(metadata), /private notes/);
+
+  const storage = new Map([['flipperaddon-debug-enabled-v1', false]]);
+  const disabledCore = loadCore({ storage });
+  assert.equal(disabledCore.installDebugInstrumentation(), false);
+
+  const enabledStorage = new Map([['flipperaddon-debug-enabled-v1', true]]);
+  const enabledCore = loadCore({ storage: enabledStorage });
+  enabledCore.debugEvent('unit.test.checkpoint', { control: 'copy-debug', bytes: 42 });
+  assert.match(enabledCore.getDebugLogPayload(), /event:unit\.test\.checkpoint/);
+  assert.match(enabledCore.getDebugLogPayload(), /"bytes":42/);
+});
+
 test('assistant blocks AAR exports from the wrong route or auction id', () => {
   const core = loadCore();
 

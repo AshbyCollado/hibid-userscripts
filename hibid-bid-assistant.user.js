@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.08
+// @version      0.8.09
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -63,7 +63,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.08';
+  const SCRIPT_VERSION = '0.8.09';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -97,7 +97,11 @@
   const CROSSLIST_AUTOSAVE_PENDING_KEY = 'flipperaddon_crosslist_autosave_pending';
   const CROSSLIST_AUTOSAVE_TAB_KEY = 'flipperaddon_crosslist_tab_id';
   const CROSSLIST_AUTOSAVE_LEASE_MS = 120000;
-  const DEBUG_LOG_LIMIT = 200;
+  const DEBUG_LOG_LIMIT = 2000;
+  const DEBUG_HEARTBEAT_INTERVAL_MS = 60000;
+  const DEBUG_SCROLL_THROTTLE_MS = 500;
+  const DEBUG_EVENT_TEXT_LIMIT = 160;
+  const DEBUG_EVENT_URL_LIMIT = 320;
   const OUTBID_WATCHLIST_URL = 'https://hibid.com/account/watchlist?status=OUTBID';
   const LEGACY_SCRAPER_IDS = [
     'hibid-lot-catalog-scraper-copy-button',
@@ -132,6 +136,7 @@
   const HIBID_DOM_BOTTOM_SETTLE_MS = 900;
   const HIBID_DOM_BOTTOM_SETTLE_RETRIES = 4;
   const DEBUG_PREFIX = '[FlipperAddon]';
+  let DEBUG_EVENT_SEQUENCE = 0;
 
   function readSharedCatalogCopyIntent() {
     const candidates = [
@@ -591,6 +596,236 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     setDebugLog(log);
   }
 
+  function debugText(value, limit = DEBUG_EVENT_TEXT_LIMIT) {
+    return String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, limit);
+  }
+
+  function debugHref(value, limit = DEBUG_EVENT_URL_LIMIT) {
+    if (!value) return '';
+    try {
+      const parsed = new URL(String(value), typeof location !== 'undefined' ? location.href : undefined);
+      const currentOrigin = typeof location !== 'undefined' ? location.origin : parsed.origin;
+      const visible = parsed.origin === currentOrigin
+        ? `${parsed.pathname}${parsed.search}${parsed.hash}`
+        : `${parsed.origin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+      return visible.slice(0, limit);
+    } catch {
+      return debugText(value, limit);
+    }
+  }
+
+  function debugTargetMetadata(target) {
+    const element = target?.nodeType === 3 ? target.parentElement : target;
+    if (!element) return { tag: 'unknown' };
+    const tag = String(element.tagName || element.nodeName || 'unknown').toLowerCase();
+    const isField = /^(input|textarea|select)$/.test(tag);
+    const metadata = {
+      tag,
+      id: debugText(element.id || '', 100),
+      className: debugText(typeof element.className === 'string' ? element.className : '', 160),
+      role: debugText(element.getAttribute?.('role') || '', 80),
+      ariaLabel: debugText(element.getAttribute?.('aria-label') || '', DEBUG_EVENT_TEXT_LIMIT),
+      title: debugText(element.getAttribute?.('title') || '', DEBUG_EVENT_TEXT_LIMIT),
+      name: debugText(element.getAttribute?.('name') || '', 100),
+      type: debugText(element.getAttribute?.('type') || '', 60),
+      text: isField ? '' : debugText(element.textContent || ''),
+      valueLength: isField && typeof element.value === 'string' ? element.value.length : undefined,
+      checked: typeof element.checked === 'boolean' ? element.checked : undefined,
+      disabled: typeof element.disabled === 'boolean' ? element.disabled : undefined,
+      href: debugHref(element.getAttribute?.('href') || element.href || ''),
+      testId: debugText(element.getAttribute?.('data-testid') || '', 100),
+    };
+    return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== ''));
+  }
+
+  function debugPageSnapshot() {
+    const snapshot = {
+      href: typeof location !== 'undefined' ? debugHref(location.href) : '',
+      readyState: typeof document !== 'undefined' ? document.readyState : '',
+      visibility: typeof document !== 'undefined' ? document.visibilityState : '',
+      bodyReady: Boolean(typeof document !== 'undefined' && document.body),
+      panelPresent: Boolean(typeof document !== 'undefined' && document.getElementById?.(PANEL_ID)),
+    };
+    try {
+      const modeInfo = resolveAssistantMode();
+      snapshot.mode = modeInfo.mode;
+      snapshot.routeKind = modeInfo.route?.kind || '';
+    } catch (error) {
+      snapshot.routeResolveError = debugText(error?.message || error, 180);
+    }
+    try {
+      const panel = typeof document !== 'undefined' ? document.getElementById(PANEL_ID) : null;
+      if (panel) {
+        snapshot.panelMode = panel.dataset?.flipperaddonMode || '';
+        snapshot.panelVersion = panel.dataset?.flipperaddonVersion || '';
+        snapshot.panelMinimized = panel.classList?.contains('hiba-minimized') || false;
+        snapshot.panelBusy = panel.querySelector?.('#hiba-session-chip')?.textContent === 'busy';
+      }
+    } catch (error) {
+      snapshot.panelSnapshotError = debugText(error?.message || error, 180);
+    }
+    return snapshot;
+  }
+
+  function debugEvent(name, data = {}) {
+    if (!getStoredDebugEnabled()) return;
+    const detail = safeClone(data);
+    debug(`event:${name}`, {
+      sequence: ++DEBUG_EVENT_SEQUENCE,
+      ...debugPageSnapshot(),
+      ...(detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : { detail }),
+    });
+  }
+
+  function installDebugInstrumentation() {
+    if (!getStoredDebugEnabled()) return false;
+    if (globalThis.__FLIPPERADDON_DEBUG_INSTRUMENTATION__) {
+      debugEvent('debug.instrumentation.reused', {
+        installedAt: globalThis.__FLIPPERADDON_DEBUG_INSTRUMENTATION__.installedAt,
+        listenerCount: globalThis.__FLIPPERADDON_DEBUG_INSTRUMENTATION__.listenerCount,
+      });
+      return true;
+    }
+    if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return false;
+
+    const runtime = typeof window !== 'undefined' ? window : globalThis;
+    const installedAt = Date.now();
+    let listenerCount = 0;
+    let lastScrollAt = 0;
+    let mutationCount = 0;
+    let mutationTimer = null;
+    const listeners = [];
+    const listen = (target, type, handler, options) => {
+      if (!target?.addEventListener) return;
+      target.addEventListener(type, handler, options);
+      listeners.push({ target, type, handler, options });
+      listenerCount += 1;
+    };
+    const eventBase = event => ({
+      trusted: event?.isTrusted !== false,
+      defaultPrevented: Boolean(event?.defaultPrevented),
+      target: debugTargetMetadata(event?.target),
+    });
+
+    listen(document, 'click', event => debugEvent('ui.click', {
+      ...eventBase(event),
+      button: event.button,
+      detail: event.detail,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    }), true);
+    listen(document, 'dblclick', event => debugEvent('ui.dblclick', eventBase(event)), true);
+    listen(document, 'pointerdown', event => debugEvent('ui.pointerdown', {
+      ...eventBase(event),
+      pointerType: event.pointerType,
+      button: event.button,
+    }), true);
+    listen(document, 'keydown', event => debugEvent('ui.keydown', {
+      ...eventBase(event),
+      key: debugText(event.key, 40),
+      code: debugText(event.code, 60),
+      repeat: Boolean(event.repeat),
+      altKey: Boolean(event.altKey),
+      ctrlKey: Boolean(event.ctrlKey),
+      metaKey: Boolean(event.metaKey),
+      shiftKey: Boolean(event.shiftKey),
+    }), true);
+    listen(document, 'keyup', event => debugEvent('ui.keyup', {
+      ...eventBase(event),
+      key: debugText(event.key, 40),
+      code: debugText(event.code, 60),
+    }), true);
+    listen(document, 'input', event => debugEvent('ui.input', {
+      ...eventBase(event),
+      valueLength: typeof event.target?.value === 'string' ? event.target.value.length : undefined,
+      checked: typeof event.target?.checked === 'boolean' ? event.target.checked : undefined,
+    }), true);
+    listen(document, 'change', event => debugEvent('ui.change', {
+      ...eventBase(event),
+      valueLength: typeof event.target?.value === 'string' ? event.target.value.length : undefined,
+      checked: typeof event.target?.checked === 'boolean' ? event.target.checked : undefined,
+    }), true);
+    listen(document, 'focusin', event => debugEvent('ui.focusin', eventBase(event)), true);
+    listen(document, 'focusout', event => debugEvent('ui.focusout', eventBase(event)), true);
+    listen(document, 'scroll', event => {
+      const now = Date.now();
+      if (now - lastScrollAt < DEBUG_SCROLL_THROTTLE_MS) return;
+      lastScrollAt = now;
+      const scrollingElement = document.scrollingElement || document.documentElement;
+      debugEvent('ui.scroll', {
+        ...eventBase(event),
+        scrollX: Number(runtime.scrollX || 0),
+        scrollY: Number(runtime.scrollY || scrollingElement?.scrollTop || 0),
+        scrollHeight: Number(scrollingElement?.scrollHeight || 0),
+        viewportHeight: Number(runtime.innerHeight || 0),
+      });
+    }, true);
+    listen(document, 'visibilitychange', () => debugEvent('lifecycle.visibilitychange', {
+      visibility: document.visibilityState,
+    }), true);
+    listen(document, 'DOMContentLoaded', () => debugEvent('lifecycle.domcontentloaded'), true);
+    listen(runtime, 'load', () => debugEvent('lifecycle.load'), true);
+    listen(runtime, 'pageshow', event => debugEvent('lifecycle.pageshow', { persisted: Boolean(event.persisted) }), true);
+    listen(runtime, 'pagehide', event => debugEvent('lifecycle.pagehide', { persisted: Boolean(event.persisted) }), true);
+    listen(runtime, 'beforeunload', () => debugEvent('lifecycle.beforeunload'), true);
+    listen(runtime, 'hashchange', event => debugEvent('route.hashchange', {
+      oldUrl: debugHref(event.oldURL),
+      newUrl: debugHref(event.newURL),
+    }), true);
+    listen(runtime, 'popstate', event => debugEvent('route.popstate', {
+      stateType: typeof event.state,
+      stateKeys: event.state && typeof event.state === 'object' ? Object.keys(event.state).slice(0, 20) : [],
+    }), true);
+    listen(runtime, 'online', () => debugEvent('runtime.online'), true);
+    listen(runtime, 'offline', () => debugEvent('runtime.offline'), true);
+    listen(runtime, 'error', event => debugEvent('runtime.error', {
+      message: debugText(event.message, 240),
+      source: debugHref(event.filename),
+      line: Number(event.lineno || 0),
+      column: Number(event.colno || 0),
+    }), true);
+    listen(runtime, 'unhandledrejection', event => debugEvent('runtime.unhandledrejection', {
+      reason: debugText(event.reason?.message || event.reason, 280),
+    }), true);
+
+    if (typeof MutationObserver === 'function' && document.documentElement) {
+      const observer = new MutationObserver(records => {
+        mutationCount += records.length;
+        if (mutationTimer) return;
+        mutationTimer = runtime.setTimeout(() => {
+          mutationTimer = null;
+          debugEvent('dom.mutation', { records: mutationCount });
+          mutationCount = 0;
+        }, 350);
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+      listeners.push({ observer });
+    }
+
+    const heartbeatTimer = runtime.setInterval(() => {
+      debugEvent('lifecycle.heartbeat', {
+        uptimeMs: Date.now() - installedAt,
+        listenerCount,
+        storedEntries: getDebugLog().length,
+      });
+    }, DEBUG_HEARTBEAT_INTERVAL_MS);
+    globalThis.__FLIPPERADDON_DEBUG_INSTRUMENTATION__ = {
+      installedAt,
+      listenerCount,
+      listeners,
+      heartbeatTimer,
+    };
+    debugEvent('debug.instrumentation.installed', {
+      listenerCount,
+      heartbeatMs: DEBUG_HEARTBEAT_INTERVAL_MS,
+      scrollThrottleMs: DEBUG_SCROLL_THROTTLE_MS,
+    });
+    return true;
+  }
+
   function getDebugLogPayload() {
     const payload = formatDebugLog();
     if (payload) return payload;
@@ -603,7 +838,9 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   async function copyDebugLog() {
+    debugEvent('debug-export.requested', { storedEntries: getDebugLog().length });
     const payload = getDebugLogPayload();
+    debugEvent('debug-export.payload-ready', { payloadLength: payload.length, storedEntries: getDebugLog().length });
     debug('debug export started', {
       payloadLength: payload.length,
       storedEntries: getDebugLog().length,
@@ -617,6 +854,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       return false;
     });
     debug('debug export finished', { copied, payloadLength: payload.length, storedEntries: getDebugLog().length });
+    debugEvent('debug-export.finished', { copied, payloadLength: payload.length, storedEntries: getDebugLog().length });
     return copied;
   }
 
@@ -4358,7 +4596,13 @@ ${cards}
     isDebugBootstrapRequested,
     getStoredDebugEnabled,
     getDebugMenuLabel,
-    getDebugLogPayload
+    getDebugLogPayload,
+    debugTargetMetadata,
+    debugPageSnapshot,
+    debugEvent,
+    installDebugInstrumentation,
+    DEBUG_LOG_LIMIT,
+    DEBUG_HEARTBEAT_INTERVAL_MS
   };
   globalThis.HiBidBidAssistantCore = Core;
 
@@ -8775,6 +9019,8 @@ ${cards}
   }
 
   async function writeClipboard(payload) {
+    const bytes = String(payload ?? '').length;
+    debugEvent('clipboard.write.begin', { bytes });
     const waitForClipboard = (operation, method) => {
       let timeoutId;
       const timeout = new Promise((_, reject) => {
@@ -8789,33 +9035,48 @@ ${cards}
 
     try {
       if (typeof GM_setClipboard === 'function') {
+        debugEvent('clipboard.write.attempt', { method: 'GM_setClipboard', bytes });
         GM_setClipboard(payload, 'text');
+        debugEvent('clipboard.write.success', { method: 'GM_setClipboard', bytes });
         return true;
       }
       if (globalThis.GM?.setClipboard) {
+        debugEvent('clipboard.write.attempt', { method: 'GM.setClipboard', bytes });
         await waitForClipboard(globalThis.GM.setClipboard(payload, 'text'), 'GM.setClipboard');
+        debugEvent('clipboard.write.success', { method: 'GM.setClipboard', bytes });
         return true;
       }
       if (navigator.clipboard?.writeText) {
+        debugEvent('clipboard.write.attempt', { method: 'navigator.clipboard.writeText', bytes });
         await waitForClipboard(navigator.clipboard.writeText(payload), 'navigator.clipboard.writeText');
+        debugEvent('clipboard.write.success', { method: 'navigator.clipboard.writeText', bytes });
         return true;
       }
+      debugEvent('clipboard.write.unavailable', { bytes });
     } catch (error) {
       debug('clipboard write failed', {
         method: error?.message?.includes('GM.setClipboard') ? 'GM.setClipboard' : 'browser clipboard',
         error: String(error?.message || error)
       });
+      debugEvent('clipboard.write.failure', {
+        bytes,
+        error: debugText(error?.message || error, 260),
+      });
     }
+    debugEvent('clipboard.write.result', { copied: false, bytes });
     return false;
   }
 
   async function copyTextForDebug(payload) {
+    const bytes = String(payload ?? '').length;
+    debugEvent('debug-clipboard.begin', { bytes });
     // A click-triggered page clipboard write is more reliable in Waterfox than
     // the legacy userscript clipboard bridge. Keep both paths, then use the
     // old textarea command as a final browser-native fallback.
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
         debug('debug export trying navigator.clipboard.writeText');
+        debugEvent('debug-clipboard.attempt', { method: 'navigator.clipboard.writeText', bytes });
         let timeoutId;
         const timeout = new Promise((_, reject) => {
           timeoutId = setTimeout(() => reject(new Error('browser clipboard timed out')), DEBUG_CLIPBOARD_TIMEOUT_MS);
@@ -8826,10 +9087,12 @@ ${cards}
           clearTimeout(timeoutId);
         }
         debug('debug export navigator clipboard resolved');
+        debugEvent('debug-clipboard.success', { method: 'navigator.clipboard.writeText', bytes });
         return true;
       }
     } catch (error) {
       debug('debug clipboard browser write failed', { error: String(error?.message || error) });
+      debugEvent('debug-clipboard.failure', { method: 'navigator.clipboard.writeText', bytes, error: debugText(error?.message || error, 260) });
     }
 
     try {
@@ -8848,50 +9111,76 @@ ${cards}
           const copied = typeof document.execCommand === 'function' && document.execCommand('copy');
           textarea.remove();
           debug('debug export textarea command resolved', { copied: Boolean(copied) });
+          debugEvent(copied ? 'debug-clipboard.success' : 'debug-clipboard.failure', {
+            method: 'document.execCommand',
+            bytes,
+            copied: Boolean(copied),
+          });
           if (copied) return true;
         }
       }
     } catch (error) {
       debug('debug clipboard textarea fallback failed', { error: String(error?.message || error) });
+      debugEvent('debug-clipboard.failure', { method: 'document.execCommand', bytes, error: debugText(error?.message || error, 260) });
     }
 
     debug('debug export trying userscript clipboard bridge');
+    debugEvent('debug-clipboard.attempt', { method: 'userscript-clipboard-bridge', bytes });
     const copied = await writeClipboard(payload).catch((error) => {
       debug('debug export userscript clipboard rejected', { error: String(error?.message || error) });
       return false;
     });
     debug('debug export userscript clipboard resolved', { copied });
+    debugEvent(copied ? 'debug-clipboard.success' : 'debug-clipboard.failure', {
+      method: 'userscript-clipboard-bridge',
+      bytes,
+      copied,
+    });
+    debugEvent('debug-clipboard.result', { copied, payloadLength: payload.length, storedEntries: getDebugLog().length });
     return copied;
   }
 
   function downloadDebugLog() {
-    const payload = getDebugLogPayload();
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `flipperaddon-debug-${stamp}.txt`;
+    debugEvent('debug-download.requested', { filename, storedEntries: getDebugLog().length });
+    const payload = getDebugLogPayload();
+    debugEvent('debug-download.begin', { filename, bytes: payload.length, storedEntries: getDebugLog().length });
 
     try {
       const objectUrl = URL.createObjectURL(new Blob([payload], { type: 'text/plain;charset=utf-8' }));
       if (typeof GM_download === 'function') {
+        debugEvent('debug-download.attempt', { method: 'GM_download', filename, bytes: payload.length });
         GM_download({
           url: objectUrl,
           name: filename,
           saveAs: false,
           onload: () => {
             debug('debug download completed', { method: 'GM_download', filename, bytes: payload.length });
+            debugEvent('debug-download.success', { method: 'GM_download', filename, bytes: payload.length });
             window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
           },
           onerror: (error) => {
             debug('debug GM_download failed', { filename, error: safeClone(error) });
+            debugEvent('debug-download.failure', { method: 'GM_download', filename, error: debugText(error?.error || error?.message || error, 240) });
             window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
           }
         });
         debug('debug download requested', { method: 'GM_download', filename, bytes: payload.length });
+        debugEvent('debug-download.requested', { method: 'GM_download', filename, bytes: payload.length });
         return true;
       }
       if (globalThis.GM?.download) {
+        debugEvent('debug-download.attempt', { method: 'GM.download', filename, bytes: payload.length });
         Promise.resolve(globalThis.GM.download({ url: objectUrl, name: filename, saveAs: false }))
-          .then(() => debug('debug download completed', { method: 'GM.download', filename, bytes: payload.length }))
-          .catch(error => debug('debug GM.download failed', { filename, error: String(error?.message || error) }))
+          .then(() => {
+            debug('debug download completed', { method: 'GM.download', filename, bytes: payload.length });
+            debugEvent('debug-download.success', { method: 'GM.download', filename, bytes: payload.length });
+          })
+          .catch(error => {
+            debug('debug GM.download failed', { filename, error: String(error?.message || error) });
+            debugEvent('debug-download.failure', { method: 'GM.download', filename, error: debugText(error?.message || error, 240) });
+          })
           .finally(() => window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000));
         debug('debug download requested', { method: 'GM.download', filename, bytes: payload.length });
         return true;
@@ -8905,17 +9194,21 @@ ${cards}
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
       debug('debug download requested', { method: 'anchor-blob', filename, bytes: payload.length });
+      debugEvent('debug-download.requested', { method: 'anchor-blob', filename, bytes: payload.length });
       return true;
     } catch (error) {
       debug('debug blob download setup failed', { filename, error: String(error?.message || error) });
+      debugEvent('debug-download.failure', { method: 'blob-or-userscript', filename, error: debugText(error?.message || error, 240) });
     }
 
     try {
       downloadTextFile(filename, payload, 'text/plain;charset=utf-8');
       debug('debug download requested', { method: 'legacy-anchor', filename, bytes: payload.length });
+      debugEvent('debug-download.requested', { method: 'legacy-anchor', filename, bytes: payload.length });
       return true;
     } catch (error) {
       debug('debug log download fallback failed', { error: String(error?.message || error) });
+      debugEvent('debug-download.failure', { method: 'legacy-anchor', filename, error: debugText(error?.message || error, 240) });
       return false;
     }
   }
@@ -11256,6 +11549,7 @@ ${cards}
       const chevron = button.querySelector('.hiba-icon');
       if (chevron) chevron.classList.toggle('hiba-chevron-rotated', Boolean(minimized));
     }
+    debugEvent('panel.minimized', { minimized: Boolean(minimized) });
   }
 
   function setActiveModeTab(panel, mode) {
@@ -11265,6 +11559,7 @@ ${cards}
   }
 
   function createPanel(mode = resolveAssistantMode().mode, debugEnabled = getStoredDebugEnabled(), route = resolveAssistantMode().route) {
+    debugEvent('panel.create.begin', { mode, debugEnabled, routeKind: route?.kind || '' });
     removeLegacyScraperArtifacts('createPanel');
     const old = document.getElementById(PANEL_ID);
     if (old) {
@@ -11293,6 +11588,12 @@ ${cards}
 
     document.body.appendChild(panel);
     setPanelMinimized(panel, true);
+    debugEvent('panel.create.complete', {
+      mode,
+      debugEnabled,
+      panelId: panel.id,
+      panelVersion: panel.dataset.flipperaddonVersion,
+    });
     return panel;
   }
 
@@ -11306,6 +11607,7 @@ ${cards}
     const assistantMode = resolveAssistantMode();
     const activeMode = assistantMode.mode === 'unsupported' ? 'catalog' : assistantMode.mode;
     const activeRoute = assistantMode.route || {};
+    debugEvent('panel.init.begin', { activeMode, routeKind: activeRoute.kind || '' });
     const panel = createPanel(activeMode, getStoredDebugEnabled(), activeRoute);
     const toastEl = panel.querySelector('#flipperaddon-toast');
     const liveMode = activeMode === 'live';
@@ -11413,6 +11715,7 @@ ${cards}
       state.abortController?.abort?.();
       clearTimeout(state.toastTimer);
       debug('panel work invalidated on teardown', { href: panel.dataset.flipperaddonHref || '' });
+      debugEvent('panel.teardown.received', { href: panel.dataset.flipperaddonHref || '' });
     }, { once: true });
     const setSiteSwitcherOpen = (open) => {
       if (!siteSwitcherMenu || !siteSwitcherToggle) return;
@@ -11420,6 +11723,7 @@ ${cards}
       siteSwitcherMenu.hidden = !nextOpen;
       siteSwitcherToggle.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
       debug('site switcher toggled', { open: nextOpen });
+      debugEvent('ui.site-switcher', { open: nextOpen });
     };
     setActiveModeTab(panel, activeMode);
     const setScrapingBusy = (busy) => {
@@ -11434,6 +11738,7 @@ ${cards}
         const chip = panel.querySelector('#hiba-session-chip');
         if (chip?.textContent === 'busy') chip.textContent = 'idle';
       }
+      debugEvent('scrape.busy', { busy: state.busy });
     };
     setScrapingBusy(false);
 
@@ -11456,8 +11761,10 @@ ${cards}
         }, tone === 'danger' ? 3600 : 2200);
       }
       debug('status', message);
+      debugEvent('ui.status', { message: debugText(message, 240), tone, busy: state.busy });
     };
     debug('unified drawer mounted', routeDebug());
+    debugEvent('panel.mounted', { mode: activeMode, routeKind: activeRoute.kind || '' });
 
     const render = (rows) => {
       state.rows = rows;
@@ -13145,12 +13452,14 @@ ${cards}
     const teardownPanel = (reason = 'remount') => {
       const existing = document.getElementById(PANEL_ID);
       if (!existing) return false;
+      debugEvent('panel.teardown.begin', { reason, existingMode: existing.dataset?.flipperaddonMode || '' });
       existing.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason } }));
       if (shouldTeardownPanelForRebuild(reason)) {
         document.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason } }));
       }
       existing.remove();
       debug('panel removed for remount', { reason });
+      debugEvent('panel.teardown.complete', { reason });
       return true;
     };
 
@@ -13158,6 +13467,7 @@ ${cards}
       const modeInfo = resolveAssistantMode();
       const allowed = shouldInitOnLocation();
       debug('ensureMounted', { reason, allowed, mode: modeInfo.mode, ...routeDebug() });
+      debugEvent('mount.ensure', { reason, allowed, mode: modeInfo.mode, routeKind: modeInfo.route?.kind || '' });
       if (!document.body) return false;
       const existingPanel = document.getElementById(PANEL_ID);
       const existingMode = existingPanel?.dataset?.flipperaddonMode || existingPanel?.querySelector?.('.hiba-drawer')?.dataset?.flipperaddonMode || '';
@@ -13171,6 +13481,7 @@ ${cards}
       );
       if (!allowed) {
         teardownPanel(`unsupported:${reason}`);
+        debugEvent('mount.blocked', { reason, mode: modeInfo.mode, routeKind: modeInfo.route?.kind || '' });
         return false;
       }
       if (existingPanel && existingVersion && existingVersion !== SCRIPT_VERSION) {
@@ -13192,11 +13503,16 @@ ${cards}
       if (panelClosed) {
         removeLegacyScraperArtifacts(reason);
         debug('ensureMounted skipped: panel closed for current page', { reason });
+        debugEvent('mount.skipped.closed', { reason });
         return false;
       }
       removeLegacyScraperArtifacts(reason);
-      if (document.getElementById(PANEL_ID)) return true;
+      if (document.getElementById(PANEL_ID)) {
+        debugEvent('mount.already-present', { reason });
+        return true;
+      }
       init();
+      debugEvent('mount.completed', { reason, mode: modeInfo.mode });
       return true;
     };
 
@@ -13223,10 +13539,17 @@ ${cards}
           return null;
         }
       };
-      registerCommand(MENU_COMMANDS[0], () => ensureMounted('menu remount'));
+      registerCommand(MENU_COMMANDS[0], () => {
+        debugEvent('menu.command', { command: MENU_COMMANDS[0] });
+        ensureMounted('menu remount');
+      });
       registerCommand(getDebugMenuLabel(), async () => {
         const enabled = !getStoredDebugEnabled();
         saveDebugEnabled(enabled);
+        if (enabled) {
+          installDebugInstrumentation();
+          debugEvent('debug.mode.changed', { enabled, source: 'menu' });
+        }
         const panel = document.getElementById(PANEL_ID);
         if (panel) {
           teardownPanel('debug-toggle');
@@ -13241,6 +13564,7 @@ ${cards}
         }
       });
       registerCommand(MENU_COMMANDS[2], async () => {
+        debugEvent('menu.command', { command: MENU_COMMANDS[2] });
         ensureMounted('menu copy debug');
         const downloadRequested = downloadDebugLog();
         const copied = await copyDebugLog();
@@ -13249,43 +13573,63 @@ ${cards}
         debug('menu copy debug result', { copied, downloadRequested, downloaded, revealed, entries: getDebugLog().length });
       });
       registerCommand(MENU_COMMANDS[3], () => {
+        debugEvent('menu.command', { command: MENU_COMMANDS[3] });
         clearDebugLog();
         debug('debug log cleared from menu');
       });
       registerCommand(MENU_COMMANDS[4], () => {
+        debugEvent('menu.command', { command: MENU_COMMANDS[4] });
         ensureMounted('menu copy lots');
         document.getElementById('hibid-catalog-copy-json')?.click();
       });
       registerCommand(MENU_COMMANDS[5], () => {
+        debugEvent('menu.command', { command: MENU_COMMANDS[5] });
         const entered = window.prompt('Paste the Flip Tracker local sync token. It stays in Tampermonkey storage.', getFlipTrackerSyncToken());
         if (entered !== null) saveFlipTrackerSyncToken(entered);
       });
       debug('menu commands registered', MENU_COMMANDS);
     };
 
+    debugEvent('lifecycle.boot', { version: SCRIPT_VERSION });
+    installDebugInstrumentation();
     mountWhenReady('boot');
     registerMenuCommands();
     document.addEventListener('hibid-bid-assistant-close', () => {
       panelClosed = true;
       debug('panel closed for current page');
+      debugEvent('panel.closed', { source: 'panel-event' });
     });
     setTimeout(() => ensureMounted('timeout 1s'), 1000);
     setTimeout(() => ensureMounted('timeout 3s'), 3000);
     if ('onurlchange' in window) {
-      window.addEventListener('urlchange', () => ensureMounted('urlchange'));
+      window.addEventListener('urlchange', () => {
+        debugEvent('route.urlchange');
+        ensureMounted('urlchange');
+      });
     }
     ['pushState', 'replaceState'].forEach(method => {
       const original = window.history?.[method];
       if (typeof original !== 'function') return;
       window.history[method] = function (...args) {
+        debugEvent('route.history.begin', { method, argumentCount: args.length });
         const result = original.apply(this, args);
+        debugEvent('route.history.complete', { method, href: debugHref(location.href) });
         window.setTimeout(() => ensureMounted(`history:${method}`), 0);
         return result;
       };
     });
-    window.addEventListener('load', () => ensureMounted('window load'));
-    window.addEventListener('popstate', () => ensureMounted('popstate'));
-    window.addEventListener('hashchange', () => ensureMounted('hashchange'));
+    window.addEventListener('load', () => {
+      debugEvent('lifecycle.ensure-on-load');
+      ensureMounted('window load');
+    });
+    window.addEventListener('popstate', () => {
+      debugEvent('route.ensure-on-popstate');
+      ensureMounted('popstate');
+    });
+    window.addEventListener('hashchange', () => {
+      debugEvent('route.ensure-on-hashchange');
+      ensureMounted('hashchange');
+    });
     if (document.documentElement) {
       new MutationObserver(() => ensureMounted('mutation')).observe(document.documentElement, {
         childList: true,

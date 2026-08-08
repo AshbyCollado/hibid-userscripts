@@ -2,7 +2,7 @@
 
 Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
 
-Current hosted build: `v0.8.08`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.8.08` keeps the filtered/no-match, virtualized-grid, eBay `/bulksell`, watchlist, and sold-proof safeguards, records event-level debug checkpoints, and requests the debug file download synchronously through `GM_download` before attempting clipboard work.
+Current hosted build: `v0.8.09`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.8.09` adds opt-in structured interaction tracing: clicks, pointer/key/focus/input/change events, throttled scrolls, DOM mutation batches, route/lifecycle events, runtime errors, clipboard/download attempts and results, plus a 60-second heartbeat. The ring buffer holds the latest 2,000 events; sensitive field values are represented by metadata and length only.
 
 ## Install
 
@@ -42,6 +42,8 @@ Debug UI and console/log capture are hidden until enabled from the Tampermonkey 
 `Toggle FlipperAddon Debug Mode [OFF]` (the label changes to `[ON]` after enabling it)
 
 When enabled, the drawer exposes copy/clear debug controls. Logs use the `[FlipperAddon]` prefix.
+
+`#flipperdebug` enables the same diagnostic layer when Tampermonkey menu commands are unavailable. After reproducing a failure, click `Copy Debug` once and wait for the toast, or use `Download Debug`. The exported log should contain `event:ui.click` for the initiating control, `event:panel.*`/`event:mount.*` for lifecycle, `event:clipboard.*` or `event:debug-clipboard.*` for each copy method, `event:debug-download.*` for file handling, and `event:lifecycle.heartbeat` if the page remained open for a minute. It does not record raw typed field values.
 
 When an export is rejected, the current build reports the specific guard reason (for example, incomplete scrape, active-filter mismatch, or wrong route) instead of the generic legacy stale-export message. If another computer still shows the old comma-form error wording, update/reinstall the raw GitHub script there before diagnosing page data.
 
@@ -110,4 +112,4 @@ npm test
 
 ## Browser Verification
 
-The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version is `0.8.03`, and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. The Chrome audit confirmed that site navigation works but the selected Chrome profile has no active FlipperAddon/Tampermonkey install, so Chrome is not counted as verified until the hosted script is installed there from `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
+The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version matches the hosted build (`0.8.09` at this release), and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. The Chrome audit confirmed that site navigation works but the selected Chrome profile has no active FlipperAddon/Tampermonkey install, so Chrome is not counted as verified until the hosted script is installed there from `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
