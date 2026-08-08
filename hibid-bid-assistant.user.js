@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.07
+// @version      0.8.08
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -43,6 +43,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_setClipboard
+// @grant        GM_download
 // @grant        GM.setClipboard
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
@@ -62,7 +63,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.07';
+  const SCRIPT_VERSION = '0.8.08';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -8864,9 +8865,54 @@ ${cards}
   }
 
   function downloadDebugLog() {
+    const payload = getDebugLogPayload();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `flipperaddon-debug-${stamp}.txt`;
+
     try {
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      downloadTextFile(`flipperaddon-debug-${stamp}.txt`, getDebugLogPayload(), 'text/plain;charset=utf-8');
+      const objectUrl = URL.createObjectURL(new Blob([payload], { type: 'text/plain;charset=utf-8' }));
+      if (typeof GM_download === 'function') {
+        GM_download({
+          url: objectUrl,
+          name: filename,
+          saveAs: false,
+          onload: () => {
+            debug('debug download completed', { method: 'GM_download', filename, bytes: payload.length });
+            window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+          },
+          onerror: (error) => {
+            debug('debug GM_download failed', { filename, error: safeClone(error) });
+            window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+          }
+        });
+        debug('debug download requested', { method: 'GM_download', filename, bytes: payload.length });
+        return true;
+      }
+      if (globalThis.GM?.download) {
+        Promise.resolve(globalThis.GM.download({ url: objectUrl, name: filename, saveAs: false }))
+          .then(() => debug('debug download completed', { method: 'GM.download', filename, bytes: payload.length }))
+          .catch(error => debug('debug GM.download failed', { filename, error: String(error?.message || error) }))
+          .finally(() => window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000));
+        debug('debug download requested', { method: 'GM.download', filename, bytes: payload.length });
+        return true;
+      }
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+      debug('debug download requested', { method: 'anchor-blob', filename, bytes: payload.length });
+      return true;
+    } catch (error) {
+      debug('debug blob download setup failed', { filename, error: String(error?.message || error) });
+    }
+
+    try {
+      downloadTextFile(filename, payload, 'text/plain;charset=utf-8');
+      debug('debug download requested', { method: 'legacy-anchor', filename, bytes: payload.length });
       return true;
     } catch (error) {
       debug('debug log download fallback failed', { error: String(error?.message || error) });
@@ -12872,14 +12918,16 @@ ${cards}
     if (activeMode === 'catalog') scheduleCatalogCopyResume();
     debugCopyButton?.addEventListener('click', async () => {
       status('Preparing debug export...');
+      const downloadRequested = downloadDebugLog();
       const copied = await copyDebugLog();
-      const downloaded = !copied && downloadDebugLog();
+      const downloaded = downloadRequested || (!copied && downloadDebugLog());
       const revealed = revealDebugExportField(panel);
       status(copied
-        ? `Copied ${getDebugLog().length} debug log entries. A manual copy field is open below.`
-        : (downloaded ? 'Clipboard failed; downloaded the debug log. Text is also selected below.' : (revealed ? 'Clipboard failed; debug text is selected below.' : 'Debug log copy and download failed.')));
+        ? `Copied ${getDebugLog().length} debug log entries. Download requested too.`
+        : (downloaded ? 'Clipboard failed; debug log download requested. Text is also selected below.' : (revealed ? 'Clipboard failed; debug text is selected below.' : 'Debug log copy and download failed.')));
       debug('drawer debug export result', {
         copied,
+        downloadRequested,
         downloaded,
         revealed,
         entries: getDebugLog().length
@@ -13194,10 +13242,11 @@ ${cards}
       });
       registerCommand(MENU_COMMANDS[2], async () => {
         ensureMounted('menu copy debug');
+        const downloadRequested = downloadDebugLog();
         const copied = await copyDebugLog();
-        const downloaded = !copied && downloadDebugLog();
+        const downloaded = downloadRequested || (!copied && downloadDebugLog());
         const revealed = !copied && revealDebugExportField(document.getElementById(PANEL_ID));
-        debug('menu copy debug result', { copied, downloaded, revealed, entries: getDebugLog().length });
+        debug('menu copy debug result', { copied, downloadRequested, downloaded, revealed, entries: getDebugLog().length });
       });
       registerCommand(MENU_COMMANDS[3], () => {
         clearDebugLog();
