@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.06
+// @version      0.8.07
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -62,7 +62,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.06';
+  const SCRIPT_VERSION = '0.8.07';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -603,7 +603,20 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   async function copyDebugLog() {
     const payload = getDebugLogPayload();
-    return copyTextForDebug(payload).catch(() => false);
+    debug('debug export started', {
+      payloadLength: payload.length,
+      storedEntries: getDebugLog().length,
+      hasNavigatorClipboard: Boolean(typeof navigator !== 'undefined' && navigator.clipboard?.writeText),
+      hasLegacyUserscriptClipboard: typeof GM_setClipboard === 'function',
+      hasModernUserscriptClipboard: Boolean(globalThis.GM?.setClipboard),
+      hasExecCommand: Boolean(typeof document !== 'undefined' && typeof document.execCommand === 'function')
+    });
+    const copied = await copyTextForDebug(payload).catch((error) => {
+      debug('debug export rejected', { error: String(error?.message || error) });
+      return false;
+    });
+    debug('debug export finished', { copied, payloadLength: payload.length, storedEntries: getDebugLog().length });
+    return copied;
   }
 
   function routeDebug(loc = (typeof location !== 'undefined' ? location : null)) {
@@ -8801,6 +8814,7 @@ ${cards}
     // old textarea command as a final browser-native fallback.
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        debug('debug export trying navigator.clipboard.writeText');
         let timeoutId;
         const timeout = new Promise((_, reject) => {
           timeoutId = setTimeout(() => reject(new Error('browser clipboard timed out')), DEBUG_CLIPBOARD_TIMEOUT_MS);
@@ -8810,6 +8824,7 @@ ${cards}
         } finally {
           clearTimeout(timeoutId);
         }
+        debug('debug export navigator clipboard resolved');
         return true;
       }
     } catch (error) {
@@ -8831,6 +8846,7 @@ ${cards}
           textarea.select();
           const copied = typeof document.execCommand === 'function' && document.execCommand('copy');
           textarea.remove();
+          debug('debug export textarea command resolved', { copied: Boolean(copied) });
           if (copied) return true;
         }
       }
@@ -8838,7 +8854,13 @@ ${cards}
       debug('debug clipboard textarea fallback failed', { error: String(error?.message || error) });
     }
 
-    return writeClipboard(payload).catch(() => false);
+    debug('debug export trying userscript clipboard bridge');
+    const copied = await writeClipboard(payload).catch((error) => {
+      debug('debug export userscript clipboard rejected', { error: String(error?.message || error) });
+      return false;
+    });
+    debug('debug export userscript clipboard resolved', { copied });
+    return copied;
   }
 
   function downloadDebugLog() {
@@ -13053,7 +13075,24 @@ ${cards}
       globalThis.__FLIPPERADDON_CATALOG_COPY_CAPTURE_INSTALLED__ = true;
       debug('document catalog copy capture installed', { documents: eventDocuments.size });
     };
+
+    const installDebugExportCapture = () => {
+      if (globalThis.__FLIPPERADDON_DEBUG_EXPORT_CAPTURE_INSTALLED__ || !document?.addEventListener) return;
+      document.addEventListener('click', (event) => {
+        const target = event.target?.closest?.('#hibid-debug-copy, #hibid-debug-download');
+        if (!target) return;
+        debug('document capture saw debug export click', {
+          id: target.id,
+          version: target.closest?.(`#${PANEL_ID}`)?.dataset?.flipperaddonVersion || '',
+          defaultPrevented: event.defaultPrevented
+        });
+      }, true);
+      globalThis.__FLIPPERADDON_DEBUG_EXPORT_CAPTURE_INSTALLED__ = true;
+      debug('document debug export capture installed');
+    };
+
     installGlobalCatalogCopyCapture();
+    installDebugExportCapture();
 
     const teardownPanel = (reason = 'remount') => {
       const existing = document.getElementById(PANEL_ID);
