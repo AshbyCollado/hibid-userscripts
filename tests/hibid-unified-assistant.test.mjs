@@ -1560,6 +1560,7 @@ test('assistant can bootstrap debug mode from the page hash when Tampermonkey co
   assert.equal(core.isDebugBootstrapRequested(new URL('https://hibid.com/catalog/761703/example#other')), false);
   assert.equal(core.getStoredDebugEnabled(), true);
   assert.match(core.getDebugMenuLabel(), /ON\]$/);
+  assert.match(core.getDebugLogPayload(), /FlipperAddon.*debug export/);
   const html = core.buildPanelHtml({ mode: 'catalog', debugEnabled: true, route: { kind: 'catalog' } });
   assert.match(html, /Copy Debug/);
   assert.match(html, /Clear Debug/);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.04
+// @version      0.8.05
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -62,7 +62,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.04';
+  const SCRIPT_VERSION = '0.8.05';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
@@ -589,10 +589,20 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     setDebugLog(log);
   }
 
-  async function copyDebugLog() {
+  function getDebugLogPayload() {
     const payload = formatDebugLog();
-    if (!payload) return false;
-    return writeClipboard(payload).catch(() => false);
+    if (payload) return payload;
+    return [
+      `${DEBUG_PREFIX} debug export`,
+      `version=${SCRIPT_VERSION}`,
+      `url=${typeof location !== 'undefined' ? location.href : ''}`,
+      'No stored debug entries were available.'
+    ].join('\n');
+  }
+
+  async function copyDebugLog() {
+    const payload = getDebugLogPayload();
+    return copyTextForDebug(payload).catch(() => false);
   }
 
   function routeDebug(loc = (typeof location !== 'undefined' ? location : null)) {
@@ -4332,7 +4342,8 @@ ${cards}
     getStoredMinimized,
     isDebugBootstrapRequested,
     getStoredDebugEnabled,
-    getDebugMenuLabel
+    getDebugMenuLabel,
+    getDebugLogPayload
   };
   globalThis.HiBidBidAssistantCore = Core;
 
@@ -8783,6 +8794,55 @@ ${cards}
     return false;
   }
 
+  async function copyTextForDebug(payload) {
+    // A click-triggered page clipboard write is more reliable in Waterfox than
+    // the legacy userscript clipboard bridge. Keep both paths, then use the
+    // old textarea command as a final browser-native fallback.
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(payload);
+        return true;
+      }
+    } catch (error) {
+      debug('debug clipboard browser write failed', { error: String(error?.message || error) });
+    }
+
+    try {
+      if (typeof document !== 'undefined' && document.createElement) {
+        const host = document.body || document.documentElement;
+        if (host) {
+          const textarea = document.createElement('textarea');
+          textarea.value = payload;
+          textarea.setAttribute('readonly', '');
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          textarea.style.pointerEvents = 'none';
+          host.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          const copied = typeof document.execCommand === 'function' && document.execCommand('copy');
+          textarea.remove();
+          if (copied) return true;
+        }
+      }
+    } catch (error) {
+      debug('debug clipboard textarea fallback failed', { error: String(error?.message || error) });
+    }
+
+    return writeClipboard(payload).catch(() => false);
+  }
+
+  function downloadDebugLog() {
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      downloadTextFile(`flipperaddon-debug-${stamp}.txt`, getDebugLogPayload(), 'text/plain;charset=utf-8');
+      return true;
+    } catch (error) {
+      debug('debug log download fallback failed', { error: String(error?.message || error) });
+      return false;
+    }
+  }
+
   function safeTimestamp(value = new Date()) {
     const date = value instanceof Date ? value : new Date(value);
     return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
@@ -12766,7 +12826,15 @@ ${cards}
     if (activeMode === 'catalog') scheduleCatalogCopyResume();
     debugCopyButton?.addEventListener('click', async () => {
       const copied = await copyDebugLog();
-      status(copied ? `Copied ${getDebugLog().length} debug log entries.` : 'Debug log empty or clipboard failed.');
+      const downloaded = !copied && downloadDebugLog();
+      status(copied
+        ? `Copied ${getDebugLog().length} debug log entries.`
+        : (downloaded ? 'Clipboard failed; downloaded the debug log.' : 'Debug log copy and download failed.'));
+      debug('drawer debug export result', {
+        copied,
+        downloaded,
+        entries: getDebugLog().length
+      });
     });
     debugClearButton?.addEventListener('click', () => {
       clearDebugLog();
@@ -13053,7 +13121,8 @@ ${cards}
       registerCommand(MENU_COMMANDS[2], async () => {
         ensureMounted('menu copy debug');
         const copied = await copyDebugLog();
-        debug('menu copy debug result', { copied, entries: getDebugLog().length });
+        const downloaded = !copied && downloadDebugLog();
+        debug('menu copy debug result', { copied, downloaded, entries: getDebugLog().length });
       });
       registerCommand(MENU_COMMANDS[3], () => {
         clearDebugLog();
