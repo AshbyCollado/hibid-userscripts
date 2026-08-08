@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.8.05`.
+- Current version: `0.8.06`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -15,7 +15,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 ## Active Goal: Keep Catalog Exports Attached to the Live Page
 
 - Goal: ship one FlipperAddon build on `main`; do not maintain a second installed userscript.
-- Release version: `0.8.05`.
+- Release version: `0.8.06`.
 - Integration contract: retain the latest main-branch HiBid/AuctionNinja/AAR/GovDeals and eBay bulk-sell exports while adding active/ended/sold/transaction lifecycle sync, Best Offer policy evidence, and the reviewed eBay-to-Facebook draft queue.
 - Safety: queue and fill Facebook drafts for human review, but never click Publish.
 - Verification gate: syntax, the complete userscript suite, cross-list bridge tests, authenticated Waterfox route detection, all active eBay records captured, and queue duplicate protection.
@@ -396,6 +396,7 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - `v0.8.03` extends the shared resale brief with mandatory visible eBay Sold/Completed proof, exact/close comp fields, fail-closed UNVERIFIED handling, separate current-bid versus recommended-max profit definitions, decision-column ordering, profit sorting, and workbook visibility/formatting rules. The rough x1.25 math is explicitly screening-only; final workbook calculations use the configured premium and tax rates.
 - `v0.8.04` adds a `#flipperdebug` URL-hash bootstrap for profiles where Tampermonkey does not display `GM_registerMenuCommand` entries. With that hash active, the compact drawer shows `Copy Debug` and `Clear Debug`; removing the hash and reloading returns to the normal debug-off UI. Menu registration also supports the modern `GM.registerMenuCommand` API when available.
 - `v0.8.05` makes `Copy Debug` use browser clipboard and textarea fallbacks before the userscript bridge, always creates a diagnostic payload, and downloads a `.txt` log automatically when clipboard writes fail.
+- `v0.8.06` bounds browser clipboard waits, adds an explicit `Download Debug` action, and reveals a selected in-panel textarea when copy/download cannot complete.
 
 ### Full audit matrix (`v0.7.69`)
 

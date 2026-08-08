@@ -2,7 +2,7 @@
 
 Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
 
-Current hosted build: `v0.8.05`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.8.05` keeps the filtered/no-match, virtualized-grid, eBay `/bulksell`, watchlist, and sold-proof safeguards, and adds a `#flipperdebug` bootstrap fallback plus a layered debug-copy fallback that downloads a `.txt` log when clipboard APIs fail.
+Current hosted build: `v0.8.06`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.8.06` keeps the filtered/no-match, virtualized-grid, eBay `/bulksell`, watchlist, and sold-proof safeguards, and adds a `#flipperdebug` bootstrap fallback plus a timeout-bounded debug copy path, explicit `Download Debug`, and a selected-text fallback field.
 
 ## Install
 
@@ -45,7 +45,7 @@ When enabled, the drawer exposes copy/clear debug controls. Logs use the `[Flipp
 
 When an export is rejected, the current build reports the specific guard reason (for example, incomplete scrape, active-filter mismatch, or wrong route) instead of the generic legacy stale-export message. If another computer still shows the old comma-form error wording, update/reinstall the raw GitHub script there before diagnosing page data.
 
-If Tampermonkey hides the script commands, append `#flipperdebug` to the active page URL and reload. The drawer will expose `Copy Debug`; copy that text after reproducing the problem. If clipboard access fails, the button downloads `flipperaddon-debug-*.txt` automatically. Remove the hash and reload to turn the bootstrap mode off.
+If Tampermonkey hides the script commands, append `#flipperdebug` to the active page URL and reload. The drawer will expose `Copy Debug` and `Download Debug`; use `Download Debug` or copy the selected text field after reproducing the problem. If clipboard access fails, `Copy Debug` downloads `flipperaddon-debug-*.txt` automatically. Remove the hash and reload to turn the bootstrap mode off.
 
 ## FlipTracker Active Listing Export
 

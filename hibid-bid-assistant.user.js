@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.05
+// @version      0.8.06
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -62,8 +62,9 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.05';
+  const SCRIPT_VERSION = '0.8.06';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
+  const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
   const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
   const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
@@ -8800,7 +8801,15 @@ ${cards}
     // old textarea command as a final browser-native fallback.
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(payload);
+        let timeoutId;
+        const timeout = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('browser clipboard timed out')), DEBUG_CLIPBOARD_TIMEOUT_MS);
+        });
+        try {
+          await Promise.race([Promise.resolve(navigator.clipboard.writeText(payload)), timeout]);
+        } finally {
+          clearTimeout(timeoutId);
+        }
         return true;
       }
     } catch (error) {
@@ -8841,6 +8850,17 @@ ${cards}
       debug('debug log download fallback failed', { error: String(error?.message || error) });
       return false;
     }
+  }
+
+  function revealDebugExportField(panel) {
+    const field = panel?.querySelector?.('#hibid-debug-export');
+    if (!field) return false;
+    field.value = getDebugLogPayload();
+    field.hidden = false;
+    field.removeAttribute('hidden');
+    field.focus();
+    field.select();
+    return true;
   }
 
   function safeTimestamp(value = new Date()) {
@@ -10686,8 +10706,10 @@ ${cards}
     return `
       <div class="hiba-actions hiba-debug-actions">
         ${actionButton('hibid-debug-copy', 'copy', 'Copy Debug', 'secondary', '', 'Copy the in-memory FlipperAddon debug log for troubleshooting.')}
+        ${actionButton('hibid-debug-download', 'download', 'Download Debug', 'secondary', '', 'Download the FlipperAddon debug log as a text file.')}
         ${actionButton('hibid-debug-clear', 'stop', 'Clear Debug', 'danger', '', 'Clear saved FlipperAddon debug log entries.')}
       </div>
+      <textarea id="hibid-debug-export" class="hiba-input hiba-debug-export" rows="6" readonly hidden aria-label="FlipperAddon debug log"></textarea>
     `;
   }
 
@@ -11120,6 +11142,7 @@ ${cards}
         #${PANEL_ID} .hiba-details summary { cursor:pointer; font-weight:900; color:#e0f2fe; }
         #${PANEL_ID} .hiba-field { display:grid; gap:4px; margin-top:8px; color:#cbd5e1; font-size:12px; font-weight:800; }
         #${PANEL_ID} .hiba-input, #${PANEL_ID} .hiba-select { width:100%; min-height:32px; color:#f8fafc; background:#020617; border:1px solid rgba(148,163,184,.26); border-radius:7px; padding:6px 8px; font:12px/1.25 ui-sans-serif, system-ui, sans-serif; }
+        #${PANEL_ID} .hiba-debug-export { min-height:110px; max-height:260px; margin-top:8px; resize:vertical; color:#dbeafe; font:10px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; }
         #${PANEL_ID} .hiba-field-label { display:block; margin:9px 0 4px; color:#cbd5e1; font-size:11px; font-weight:800; }
         #${PANEL_ID} .hiba-actions { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:9px; }
         #${PANEL_ID} .hiba-actions.compact { margin-top:0; justify-content:flex-end; }
@@ -11287,6 +11310,7 @@ ${cards}
     const govDealsAssetCopyLlmButton = panel.querySelector('#govdeals-asset-copy-llm');
     const scraperStopButton = panel.querySelector('#hibid-scraper-stop');
     const debugCopyButton = panel.querySelector('#hibid-debug-copy');
+    const debugDownloadButton = panel.querySelector('#hibid-debug-download');
     const debugClearButton = panel.querySelector('#hibid-debug-clear');
     const siteSwitcherToggle = panel.querySelector('#flipperaddon-site-switcher-toggle');
     const siteSwitcherMenu = panel.querySelector('#flipperaddon-site-switcher-menu');
@@ -12825,16 +12849,27 @@ ${cards}
     };
     if (activeMode === 'catalog') scheduleCatalogCopyResume();
     debugCopyButton?.addEventListener('click', async () => {
+      status('Preparing debug export...');
       const copied = await copyDebugLog();
       const downloaded = !copied && downloadDebugLog();
+      const revealed = revealDebugExportField(panel);
       status(copied
-        ? `Copied ${getDebugLog().length} debug log entries.`
-        : (downloaded ? 'Clipboard failed; downloaded the debug log.' : 'Debug log copy and download failed.'));
+        ? `Copied ${getDebugLog().length} debug log entries. A manual copy field is open below.`
+        : (downloaded ? 'Clipboard failed; downloaded the debug log. Text is also selected below.' : (revealed ? 'Clipboard failed; debug text is selected below.' : 'Debug log copy and download failed.')));
       debug('drawer debug export result', {
         copied,
         downloaded,
+        revealed,
         entries: getDebugLog().length
       });
+    });
+    debugDownloadButton?.addEventListener('click', () => {
+      const downloaded = downloadDebugLog();
+      const revealed = !downloaded && revealDebugExportField(panel);
+      status(downloaded
+        ? 'Downloaded the debug log.'
+        : (revealed ? 'Download failed; debug text is selected below.' : 'Debug log download failed.'));
+      debug('drawer debug download result', { downloaded, revealed, entries: getDebugLog().length });
     });
     debugClearButton?.addEventListener('click', () => {
       clearDebugLog();
@@ -13122,7 +13157,8 @@ ${cards}
         ensureMounted('menu copy debug');
         const copied = await copyDebugLog();
         const downloaded = !copied && downloadDebugLog();
-        debug('menu copy debug result', { copied, downloaded, entries: getDebugLog().length });
+        const revealed = !copied && revealDebugExportField(document.getElementById(PANEL_ID));
+        debug('menu copy debug result', { copied, downloaded, revealed, entries: getDebugLog().length });
       });
       registerCommand(MENU_COMMANDS[3], () => {
         clearDebugLog();

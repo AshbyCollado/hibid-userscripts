@@ -1551,7 +1551,9 @@ test('assistant exposes explicit debug menu state without leaking debug controls
   assert.match(core.getDebugMenuLabel(), /ON\]$/);
   const debugHtml = core.buildPanelHtml({ mode: 'govdeals', debugEnabled: true, route: { kind: 'govdeals-seller' } });
   assert.match(debugHtml, /Copy Debug/);
+  assert.match(debugHtml, /Download Debug/);
   assert.match(debugHtml, /Clear Debug/);
+  assert.match(debugHtml, /id="hibid-debug-export"/);
 });
 
 test('assistant can bootstrap debug mode from the page hash when Tampermonkey commands are hidden', () => {
@@ -1761,7 +1763,9 @@ test('assistant panel exposes scraper-first catalog controls and gates debug con
   assert.match(html, /id="hibid-catalog-copy-llm"/);
   assert.match(html, /id="hibid-scraper-stop"/);
   assert.match(html, /id="hibid-debug-copy"/);
+  assert.match(html, /id="hibid-debug-download"/);
   assert.match(html, /id="hibid-debug-clear"/);
+  assert.match(html, /id="hibid-debug-export"/);
   assert.doesNotMatch(html, /Prepare Bid|Prepare Next|Snipe Now|Auto-confirm|Max plan|hibid-max-plan-details|hibid-bid-plan-json/);
   assert.doesNotMatch(html, /id="hibid-bid-results"/);
   assert.match(html, /id="flipperaddon-toast"/);
