@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.12
+// @version      0.8.13
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -11,6 +11,8 @@
 // @match        https://hibid.com/livecatalog/*
 // @match        https://hibid.com/account/watchlist*
 // @match        https://hibid.com/account/currentbids*
+// @match        https://hibid.com/account/pastbidsm*
+// @match        https://hibid.com/account/pastwatchlist*
 // @match        https://hibid.com/*
 // @match        https://www.hibid.com/*
 // @match        https://*.hibid.com/*
@@ -63,7 +65,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.12';
+  const SCRIPT_VERSION = '0.8.13';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
