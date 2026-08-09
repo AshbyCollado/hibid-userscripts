@@ -7,7 +7,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 - Name: `FlipperAddon by ALOS`.
 - Active hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.8.11`.
+- Current version: `0.8.12`.
 - UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
 - Principle: only the module for the current page exposes controls.
 - Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
@@ -15,7 +15,7 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 ## Active Goal: Keep Catalog Exports Attached to the Live Page
 
 - Goal: ship one FlipperAddon build on `main`; do not maintain a second installed userscript.
-- Release version: `0.8.11`.
+- Release version: `0.8.12`.
 - Integration contract: retain the latest main-branch HiBid/AuctionNinja/AAR/GovDeals and eBay bulk-sell exports while adding active/ended/sold/transaction lifecycle sync, Best Offer policy evidence, and the reviewed eBay-to-Facebook draft queue.
 - Safety: queue and fill Facebook drafts for human review, but never click Publish.
 - Verification gate: syntax, the complete userscript suite, cross-list bridge tests, authenticated Waterfox route detection, all active eBay records captured, and queue duplicate protection.
@@ -74,6 +74,8 @@ Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
 
 - `catalog`: HiBid catalog/category/lot/OUTBID watchlist and AJ Willner auction pages.
   - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
+  - Past account routes `/account/pastbidsm` and `/account/pastwatchlist` add one inline `Copy Auction` button beside each `View Catalog` row. The action is scoped to the selected auction's saved account lots on the current page only; it enriches those lot URLs in the browser context with lead, Group - Category, full description fields, and all available image URLs. It never crawls unrelated account rows or clicks bid/watch/account controls.
+  - Past-auction exports use a non-blocking dialog with Copy JSON, Copy LLM Brief, Stop, and Close. Partial detail failures remain in the payload audit rather than being treated as no-value evidence.
 - `live`: HiBid `/livecatalog/...` pages.
   - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
 - `fliptracker`: eBay and Facebook active selling pages.
@@ -114,6 +116,9 @@ Mount without waiting for lot tiles on:
 - `https://hibid.com/account/watchlist*`, including state-prefixed `/newjersey/account/watchlist`
 - `https://hibid.com/account/currentbids?status=WINNING`, including state-prefixed routes
 - `https://hibid.com/account/currentbids?status=OUTBID`, including state-prefixed routes
+- `https://hibid.com/account/pastbidsm`
+- `https://hibid.com/account/pastwatchlist`
+- State-prefixed variants such as `https://hibid.com/newjersey/account/pastwatchlist`
 - `https://*.hibid.com/catalog/*`
 - `https://*.hibid.com/lot/*`
 - `https://*.hibid.com/account/watchlist?status=OUTBID`
@@ -160,6 +165,15 @@ Do not mount on GovDeals login, register, account, cart, checkout, payment, invo
 3. Fallback:
    - If embedded state is missing or state pagination is incomplete, scan visible DOM tiles/text, scroll, and use safe next/open-more controls.
    - Avoid `_ngcontent-*` attributes; they are Angular build artifacts.
+
+Past-account auction export:
+
+- Resolve only `/account/pastbidsm` and `/account/pastwatchlist` (including state-prefixed variants) as past-auction modules; generic account routes remain blocked.
+- Parse `.listing-box-title` blocks and their `/catalog/<auctionId>/...` links, title, map link, location, and date range.
+- Inject one `Copy Auction` button beside each `View Catalog` control. The selected button owns the scope; do not use page-wide `getLotTiles()` as a fallback.
+- Collect only lot cards inside the selected auction group on the current account page. Detail URLs are fetched same-origin with four concurrent workers, an abort signal, and a partial-failure audit.
+- Preserve `lead`, `groupCategory`, structured description fields, full description/raw text, all image URLs, bid/status evidence, source URLs, and account page kind in JSON and LLM payloads.
+- The LLM brief includes the existing mixed/group rule and sold-comps/profit rules plus an explicit no-bidding boundary. Missing descriptions or failed detail pages are evidence gaps, not garbage classifications.
 
 ### AJ Willner
 

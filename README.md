@@ -2,7 +2,7 @@
 
 Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
 
-Current hosted build: `v0.8.11`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.8.11` also rejects any embedded HiBid connection that exceeds the visible page total and uses same-origin paginated DOM pages before the slower virtual-grid fallback.
+Current hosted build: `v0.8.12`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.8.12` rejects any embedded HiBid connection that exceeds the visible page total, uses same-origin paginated DOM pages before the slower virtual-grid fallback, and adds selected-auction exports on HiBid past-bids and past-watchlist account pages.
 
 ## Install
 
@@ -17,6 +17,7 @@ Tampermonkey updates use that same raw GitHub URL through the script metadata. I
 `FlipperAddon by ALOS` is the single active hosted script. It starts minimized in the bottom-right corner and shows only the module for the page you are actually on:
 
 - HiBid catalog/category/watchlist/current-bids pages: copy JSON and resale LLM brief, including OUTBID watchlist and WINNING/OUTBID current bids.
+- HiBid `/account/pastbidsm` and `/account/pastwatchlist`: use the inline `Copy Auction` button beside a selected `View Catalog` row. It copies only that auction group's saved account lots, enriches their lead/category/full descriptions/photos, and never sweeps unrelated account rows.
 - HiBid livecatalog pages: expand/copy live lot JSON and resale LLM brief.
 - AuctionNinja sale catalog pages: copy sale terms plus lot JSON or resale LLM brief.
 - AuctionNinja category pages such as `/category/electronics?miles=30&zip=07008`: copy the visible product-card JSON or a location-filtered resale LLM brief; safe `View All Items` pages are fetched in the background when available.
@@ -112,4 +113,4 @@ npm test
 
 ## Browser Verification
 
-The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version matches the hosted build (`0.8.11` at this release), and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. The Chrome audit confirmed that site navigation works but the selected Chrome profile has no active FlipperAddon/Tampermonkey install, so Chrome is not counted as verified until the hosted script is installed there from `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
+The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version matches the hosted build (`0.8.12` at this release), and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. The Chrome audit confirmed that site navigation works but the selected Chrome profile has no active FlipperAddon/Tampermonkey install, so Chrome is not counted as verified until the hosted script is installed there from `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.

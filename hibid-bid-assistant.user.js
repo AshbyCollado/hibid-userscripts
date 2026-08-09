@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.11
+// @version      0.8.12
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -63,7 +63,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.11';
+  const SCRIPT_VERSION = '0.8.12';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -1645,6 +1645,503 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     };
   }
 
+  function hibidAccountAuctionPageKind(routeOrKind = {}) {
+    const kind = typeof routeOrKind === 'string' ? routeOrKind : routeOrKind?.kind;
+    return kind === 'pastbids' || kind === 'pastwatchlist' ? kind : '';
+  }
+
+  function hibidEscapeRegex(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function hibidAccountLotCandidateSelector() {
+    return [
+      '.bid-status-border',
+      '[class*="current-bids-card"]',
+      '[class*="watchlist-card"]',
+      'app-lot-tile',
+      'app-lot-card',
+      '.lot-tile',
+      '[class*="lot-tile"]',
+      '.lot-number-lead',
+      'a[href*="/lot/"]'
+    ].join(',');
+  }
+
+  function hibidAccountAuctionContainer(block) {
+    let current = block?.parentElement || null;
+    for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
+      const headings = Array.from(current.querySelectorAll?.('.listing-box-title') || []);
+      const candidates = Array.from(current.querySelectorAll?.(hibidAccountLotCandidateSelector()) || []);
+      if (candidates.length && headings.length <= 1) return current;
+    }
+    return null;
+  }
+
+  function hibidAccountAuctionLotTiles(container) {
+    if (!container?.querySelectorAll) return [];
+    const tiles = new Set();
+    const cardSeeds = Array.from(container.querySelectorAll([
+      '.bid-status-border',
+      '[class*="current-bids-card"]',
+      '[class*="watchlist-card"]',
+      'app-lot-tile',
+      'app-lot-card',
+      '.lot-tile',
+      '[class*="lot-tile"]'
+    ].join(',')));
+    const candidates = cardSeeds.length
+      ? cardSeeds
+      : Array.from(container.querySelectorAll(hibidAccountLotCandidateSelector()));
+    candidates.forEach(candidate => {
+      let tile = findLotTileFromSeed(candidate);
+      if (tile?.matches?.('.lot-number-lead, [class*="lot-number"]')) {
+        let parent = tile.parentElement;
+        while (parent && parent !== container) {
+          if (parent.matches?.('.bid-status-border, [class*="current-bids-card"], [class*="watchlist-card"], app-lot-tile, app-lot-card, .lot-tile, [class*="lot-tile"]')) {
+            tile = parent;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+      }
+      if (!tile) return;
+      if (typeof container.contains === 'function' && !container.contains(tile)) return;
+      tiles.add(tile);
+    });
+    return Array.from(tiles);
+  }
+
+  function hibidFieldValueFromText(raw, labels = []) {
+    const text = String(raw || '').replace(/\r/g, '').trim();
+    if (!text) return '';
+    const labelList = labels.map(label => String(label || '').trim()).filter(Boolean);
+    const escapedLabels = labelList.map(hibidEscapeRegex);
+    const lines = text.split(/\n+/).map(line => line.trim()).filter(Boolean);
+    for (const label of labelList) {
+      const escaped = hibidEscapeRegex(label);
+      const inline = new RegExp(`^${escaped}\\s*:?\\s*(.+)$`, 'i');
+      const lineIndex = lines.findIndex(line => new RegExp(`^${escaped}\\s*:?\\s*$`, 'i').test(line));
+      if (lineIndex >= 0 && lines[lineIndex + 1]) return lines[lineIndex + 1].trim();
+      const matched = lines.find(line => inline.test(line));
+      if (matched) {
+        const value = matched.match(inline)?.[1]?.trim() || '';
+        if (value) return value;
+      }
+    }
+    if (!escapedLabels.length) return '';
+    const boundary = labelList
+      .map(label => hibidEscapeRegex(label))
+      .join('|');
+    const flattened = new RegExp(`(?:^|\\s)(?:${escapedLabels.join('|')})\\s*:?\\s+([\\s\\S]*?)(?=\\s+(?:${boundary})\\s*:?|$)`, 'i');
+    return flattened.exec(text)?.[1]?.trim() || '';
+  }
+
+  function hibidDescriptionFieldsFromText(raw) {
+    const definitions = [
+      ['shelfLocation', ['Shelf Location']],
+      ['condition', ['Condition']],
+      ['inPackaging', ['In Packaging?']],
+      ['assemblyRequired', ['Assembly Required?']],
+      ['damaged', ['Damaged?']],
+      ['functional', ['Functional?']],
+      ['missingParts', ['Missing Parts?']],
+      ['groupCategory', ['Group - Category', 'Group Category']],
+      ['lead', ['Lead']]
+    ];
+    const fields = {};
+    definitions.forEach(([key, labels]) => {
+      const value = hibidFieldValueFromText(raw, labels);
+      if (value) fields[key] = value;
+    });
+    return fields;
+  }
+
+  function hibidDescriptionSectionFromText(raw) {
+    const text = String(raw || '').replace(/\r/g, '').trim();
+    if (!text) return '';
+    const match = text.match(/(?:^|\n)\s*Description\s*:?\s*\n?([\s\S]*)$/i);
+    return match?.[1]?.trim() || '';
+  }
+
+  function hibidDescriptionFieldsFromRoot(root) {
+    const fields = {};
+    const add = (label, value) => {
+      const cleanLabel = String(label || '').replace(/\s+/g, ' ').trim();
+      const cleanValue = String(value || '').replace(/\s+/g, ' ').trim();
+      if (!cleanLabel || !cleanValue) return;
+      const normalized = cleanLabel.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const key = normalized === 'shelf location' ? 'shelfLocation'
+        : normalized === 'condition' ? 'condition'
+          : normalized === 'in packaging' ? 'inPackaging'
+            : normalized === 'assembly required' ? 'assemblyRequired'
+              : normalized === 'damaged' ? 'damaged'
+                : normalized === 'functional' ? 'functional'
+                  : normalized === 'missing parts' ? 'missingParts'
+                    : normalized === 'group category' ? 'groupCategory'
+                      : normalized === 'lead' ? 'lead'
+                        : '';
+      if (key && !fields[key]) fields[key] = cleanValue;
+    };
+
+    Array.from(root?.querySelectorAll?.('tr') || []).forEach(row => {
+      const cells = Array.from(row.querySelectorAll?.('th,td') || []).map(textOf).filter(Boolean);
+      if (cells.length >= 2) add(cells[0], cells.slice(1).join(' '));
+    });
+    Array.from(root?.querySelectorAll?.('dt') || []).forEach(dt => {
+      const dd = dt.nextElementSibling;
+      if (dd) add(textOf(dt), textOf(dd));
+    });
+    Array.from(root?.querySelectorAll?.('[data-label]') || []).forEach(node => {
+      add(node.getAttribute('data-label'), textOf(node));
+    });
+    return fields;
+  }
+
+  function hibidImageUrls(root, base = (typeof location !== 'undefined' ? location.href : 'https://hibid.com/')) {
+    const urls = [];
+    Array.from(root?.querySelectorAll?.('img, source') || []).forEach(image => {
+      const values = [
+        image.getAttribute?.('data-src'),
+        image.getAttribute?.('data-original'),
+        image.getAttribute?.('src'),
+        image.getAttribute?.('srcset')
+      ].filter(Boolean);
+      values.forEach(value => {
+        String(value).split(',').forEach(part => {
+          const candidate = part.trim().split(/\s+/)[0];
+          if (!candidate || /spacer|blank|pixel/i.test(candidate)) return;
+          const absolute = absoluteUrl(candidate, base);
+          if (absolute && !urls.includes(absolute)) urls.push(absolute);
+        });
+      });
+    });
+    return urls;
+  }
+
+  function extractHibidPastAuctionRows(root = document, loc = (typeof location !== 'undefined' ? location : null), pageKind = '') {
+    const effectiveLoc = loc || (typeof location !== 'undefined' ? location : {});
+    const resolvedPageKind = hibidAccountAuctionPageKind(pageKind || resolveHiBidPage(effectiveLoc));
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://hibid.com/');
+    const blocks = Array.from(root?.querySelectorAll?.('.listing-box-title') || []);
+    return blocks.map((block, index) => {
+      const catalogLink = block.querySelector?.('a[href*="/catalog/"]');
+      const mapLink = block.querySelector?.('a.alert-link[href], a[href*="maps.google"]');
+      const catalogUrl = absoluteUrl(controlHref(catalogLink), base);
+      if (!catalogUrl) return null;
+      const title = textOf(block.querySelector?.('strong')) || textOf(catalogLink);
+      const locationText = textOf(mapLink);
+      const rawText = rawTextOf(block);
+      const dateText = rawText
+        .replace(title, '')
+        .replace(locationText, '')
+        .replace(/^\s*\|\s*/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const auctionId = catalogUrl.match(/\/catalog\/(\d+)/i)?.[1] || '';
+      const container = hibidAccountAuctionContainer(block);
+      return {
+        source: 'HiBid',
+        pageKind: resolvedPageKind,
+        accountPageUrl: base,
+        auctionId,
+        auctionTitle: title,
+        catalogUrl,
+        location: locationText,
+        locationUrl: absoluteUrl(controlHref(mapLink), base),
+        dateText,
+        rawText,
+        scopeKey: `${resolvedPageKind}:${auctionId || catalogUrl}:${index}`,
+        selectedGroupFound: Boolean(container),
+        __element: block,
+        __container: container
+      };
+    }).filter(Boolean);
+  }
+
+  function extractHibidAccountAuctionLot(tile, auctionContext, loc, pageKind) {
+    const base = extractCurrentBidsLot(tile);
+    const rawText = rawTextOf(tile);
+    const fields = {
+      ...hibidDescriptionFieldsFromText(rawText),
+      ...hibidDescriptionFieldsFromRoot(tile)
+    };
+    const itemBase = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://hibid.com/');
+    const images = hibidImageUrls(tile, itemBase);
+    const description = pickFirstDescription(tile)
+      || hibidDescriptionSectionFromText(rawText)
+      || hibidFieldValueFromText(rawText, ['Features and Notes', "Auctioneer's Note"])
+      || '';
+    const priceText = rawText.match(/(?:Price Realized|Current Bid|High Bid|Lot Won|Sold For):?\s*\$?\s*([\d,.]+\s*(?:USD)?(?:\s*\/\s*(?:Lot|ea))?)/i)?.[1] || '';
+    const status = extractCurrentBidsStatus(rawText);
+    const explicitLead = textOf(tile.querySelector?.('.lead, [data-lead], .lot-title'));
+    const parsedLead = fields.lead && !/(Group\s*-\s*Category|Description|Current\s+Bid|High\s+Bid)/i.test(fields.lead)
+      ? fields.lead
+      : '';
+    const lead = explicitLead || parsedLead || base.title || '';
+    const groupCategory = fields.groupCategory || '';
+    return {
+      source: 'HiBid',
+      pageKind: pageKind || auctionContext.pageKind || '',
+      accountPageUrl: auctionContext.accountPageUrl || '',
+      auctionId: auctionContext.auctionId || '',
+      auctionTitle: auctionContext.auctionTitle || '',
+      catalogUrl: auctionContext.catalogUrl || '',
+      location: auctionContext.location || '',
+      dateText: auctionContext.dateText || '',
+      id: base.id || base.lot || base.url,
+      lot: base.lot || '',
+      title: base.title || lead,
+      lead,
+      groupCategory,
+      description,
+      descriptionFields: fields,
+      url: base.url || '',
+      detailUrl: base.url || '',
+      image: images[0] || base.image || '',
+      images: images.length ? images : (base.image ? [base.image] : []),
+      highBid: base.highBid || (priceText ? `High Bid: ${priceText}` : ''),
+      highBidAmount: base.highBidAmount ?? moneyFromText(priceText),
+      currentBid: base.highBidAmount ?? moneyFromText(priceText),
+      priceRealized: /(?:Price Realized|Sold For|Lot Won)/i.test(rawText) ? moneyFromText(priceText) : null,
+      bidCount: base.bidCount || '',
+      bidCountNumber: base.bidCountNumber ?? null,
+      timeLeft: base.timeLeft || '',
+      status,
+      accountStatus: status,
+      rawText,
+      sourceUrls: [base.url || auctionContext.catalogUrl || auctionContext.accountPageUrl].filter(Boolean),
+      detailFetched: false,
+      detailError: ''
+    };
+  }
+
+  function extractHibidAccountAuctionLots(root = document, auctionContext = {}, loc = (typeof location !== 'undefined' ? location : null), pageKind = '') {
+    const context = auctionContext || {};
+    const effectiveLoc = loc || (typeof location !== 'undefined' ? location : null);
+    const container = context.__container;
+    if (!container) return [];
+    const headings = Array.from(container.querySelectorAll?.('.listing-box-title') || []);
+    if (headings.length > 1) return [];
+    return hibidAccountAuctionLotTiles(container)
+      .map(tile => extractHibidAccountAuctionLot(tile, context, effectiveLoc, pageKind || context.pageKind))
+      .filter(item => item.lot || item.url);
+  }
+
+  function extractHibidLotDetail(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://hibid.com/');
+    const rawText = rawTextOf(root?.body || root?.documentElement || root);
+    const rootFields = hibidDescriptionFieldsFromRoot(root);
+    const textFields = hibidDescriptionFieldsFromText(rawText);
+    const fields = { ...textFields, ...rootFields };
+    const lot = hibidFieldValueFromText(rawText, ['Lot #', 'Lot'])
+      || rawText.match(/\bLot\s*#?\s*:?\s*(\d+[A-Za-z-]*)/i)?.[1]
+      || '';
+    const lead = fields.lead
+      || textOf(root?.querySelector?.('.lot-title, .lot-detail-title, h1, h2, [class*="title"]'))
+      || '';
+    const description = hibidDescriptionSectionFromText(rawText)
+      || hibidFieldValueFromText(rawText, ['Features and Notes', "Auctioneer's Note"])
+      || pickFirstDescription(root)
+      || '';
+    const images = hibidImageUrls(root, base);
+    const priceText = rawText.match(/(?:Price Realized|Current Bid|High Bid|Lot Won|Sold For):?\s*\$?\s*([\d,.]+\s*(?:USD)?(?:\s*\/\s*(?:Lot|ea))?)/i)?.[1] || '';
+    return {
+      source: 'HiBid',
+      pageKind: 'hibid-lot-detail',
+      lot,
+      title: lead,
+      lead,
+      groupCategory: fields.groupCategory || '',
+      description,
+      descriptionFields: fields,
+      url: base,
+      detailUrl: base,
+      image: images[0] || '',
+      images,
+      currentBid: moneyFromText(priceText),
+      highBid: priceText ? `High Bid: ${priceText}` : '',
+      highBidAmount: moneyFromText(priceText),
+      bidCount: rawText.match(/\b\d+\s+Bids?\b/i)?.[0] || '',
+      status: extractCurrentBidsStatus(rawText),
+      rawText
+    };
+  }
+
+  function normalizeHibidAccountAuctionItem(item = {}) {
+    return {
+      source: item.source || 'HiBid',
+      pageKind: item.pageKind || '',
+      auctionId: item.auctionId || '',
+      auctionTitle: item.auctionTitle || '',
+      lot: item.lot || '',
+      id: item.id || '',
+      title: item.title || '',
+      lead: item.lead || '',
+      groupCategory: item.groupCategory || '',
+      description: item.description || '',
+      descriptionFields: item.descriptionFields || {},
+      url: item.url || '',
+      detailUrl: item.detailUrl || item.url || '',
+      image: item.image || '',
+      images: Array.isArray(item.images) ? item.images : (item.image ? [item.image] : []),
+      highBid: item.highBid || '',
+      highBidAmount: item.highBidAmount ?? null,
+      currentBid: item.currentBid ?? item.highBidAmount ?? null,
+      priceRealized: item.priceRealized ?? null,
+      bidCount: item.bidCount || '',
+      bidCountNumber: item.bidCountNumber ?? null,
+      timeLeft: item.timeLeft || '',
+      status: item.status || item.accountStatus || '',
+      accountStatus: item.accountStatus || item.status || '',
+      rawText: item.rawText || '',
+      sourceUrls: Array.isArray(item.sourceUrls) ? item.sourceUrls : [],
+      detailFetched: Boolean(item.detailFetched),
+      detailError: item.detailError || ''
+    };
+  }
+
+  function normalizeHibidAccountAuctionContext(context = {}) {
+    return {
+      source: context.source || 'HiBid',
+      pageKind: context.pageKind || '',
+      scope: context.scope || 'selected-account-auction-group',
+      accountPageUrl: context.accountPageUrl || '',
+      auctionId: context.auctionId || '',
+      auctionTitle: context.auctionTitle || '',
+      catalogUrl: context.catalogUrl || '',
+      location: context.location || '',
+      locationUrl: context.locationUrl || '',
+      dateText: context.dateText || ''
+    };
+  }
+
+  function mergeHibidAccountAuctionDetail(item, detail) {
+    if (!detail) return item;
+    const merged = { ...item };
+    ['title', 'lead', 'groupCategory', 'description', 'detailUrl', 'highBid', 'status'].forEach(key => {
+      if (detail[key]) merged[key] = detail[key];
+    });
+    if (detail.descriptionFields && Object.keys(detail.descriptionFields).length) {
+      merged.descriptionFields = { ...item.descriptionFields, ...detail.descriptionFields };
+    }
+    if (detail.images?.length) {
+      merged.images = Array.from(new Set([...(item.images || []), ...detail.images]));
+      merged.image = merged.images[0] || item.image || '';
+    }
+    if (detail.currentBid !== null && detail.currentBid !== undefined) merged.currentBid = detail.currentBid;
+    if (detail.highBidAmount !== null && detail.highBidAmount !== undefined) merged.highBidAmount = detail.highBidAmount;
+    if (detail.bidCount) merged.bidCount = detail.bidCount;
+    if (detail.rawText) merged.rawText = `${item.rawText || ''}\n[DETAIL PAGE]\n${detail.rawText}`.trim();
+    merged.sourceUrls = Array.from(new Set([...(item.sourceUrls || []), detail.url].filter(Boolean)));
+    merged.detailFetched = true;
+    return merged;
+  }
+
+  async function scrapeHibidAccountAuction(auctionContext = {}, onProgress = () => {}, shouldStop = () => false, root = document, options = {}) {
+    const pageKind = hibidAccountAuctionPageKind(auctionContext.pageKind) || 'pastwatchlist';
+    const items = extractHibidAccountAuctionLots(root, auctionContext, typeof location !== 'undefined' ? location : null, pageKind);
+    const audit = {
+      selectedGroupFound: Boolean(auctionContext.__container),
+      lotsCollected: items.length,
+      detailsRequested: 0,
+      detailsSucceeded: 0,
+      detailsFailed: 0,
+      failures: [],
+      stopReason: ''
+    };
+    if (!audit.selectedGroupFound) {
+      audit.stopReason = 'selected-group-not-found';
+      return { context: { ...auctionContext, __element: undefined, __container: undefined }, items: [], audit, stopped: false };
+    }
+    const queue = items.map((item, index) => ({ item, index }));
+    const controller = options.signal ? null : (typeof AbortController === 'function' ? new AbortController() : null);
+    const signal = options.signal || controller?.signal;
+    const worker = async () => {
+      while (queue.length) {
+        if (shouldStop() || signal?.aborted) return;
+        const next = queue.shift();
+        if (!next) return;
+        const item = next.item;
+        if (!item.url || typeof fetch !== 'function' || typeof DOMParser !== 'function') {
+          audit.detailsFailed += 1;
+          const reason = !item.url ? 'missing-detail-url' : 'browser-fetch-unavailable';
+          audit.failures.push({ lot: item.lot || '', url: item.url || '', reason });
+          items[next.index] = { ...item, detailError: reason, detailFetched: false };
+          continue;
+        }
+        audit.detailsRequested += 1;
+        onProgress(`Reading lot ${item.lot || next.index + 1} detail...`);
+        try {
+          const response = await fetch(item.url, {
+            credentials: 'same-origin',
+            cache: 'no-cache',
+            ...(signal ? { signal } : {})
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const html = await response.text();
+          const detailDoc = new DOMParser().parseFromString(html, 'text/html');
+          items[next.index] = mergeHibidAccountAuctionDetail(item, extractHibidLotDetail(detailDoc, new URL(item.url)));
+          audit.detailsSucceeded += 1;
+        } catch (error) {
+          audit.detailsFailed += 1;
+          audit.failures.push({ lot: item.lot || '', url: item.url, reason: String(error?.message || error) });
+          items[next.index] = { ...item, detailError: String(error?.message || error), detailFetched: false };
+          debug('HiBid account lot detail enrichment failed', { lot: item.lot, url: debugHref(item.url), error: error?.message || String(error) });
+        }
+      }
+    };
+    const workerCount = Math.min(4, Math.max(1, queue.length));
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    audit.stopReason = shouldStop() || signal?.aborted
+      ? 'user-stop'
+      : (audit.detailsFailed ? 'partial-detail-failures' : 'complete');
+    return {
+      context: {
+        source: 'HiBid',
+        pageKind,
+        scope: 'selected-account-auction-group',
+        accountPageUrl: auctionContext.accountPageUrl || '',
+        auctionId: auctionContext.auctionId || '',
+        auctionTitle: auctionContext.auctionTitle || '',
+        catalogUrl: auctionContext.catalogUrl || '',
+        location: auctionContext.location || '',
+        locationUrl: auctionContext.locationUrl || '',
+        dateText: auctionContext.dateText || ''
+      },
+      items: items.map(normalizeHibidAccountAuctionItem),
+      audit,
+      stopped: audit.stopReason === 'user-stop'
+    };
+  }
+
+  function buildHibidAccountAuctionJsonPayload(exportData = {}) {
+    return JSON.stringify({
+      context: normalizeHibidAccountAuctionContext(exportData.context || {}),
+      items: Array.isArray(exportData.items) ? exportData.items.map(normalizeHibidAccountAuctionItem) : [],
+      audit: exportData.audit || {}
+    }, null, 2);
+  }
+
+  function buildHibidAccountAuctionLlmBrief(exportData = {}, context = {}) {
+    const payload = {
+      context: normalizeHibidAccountAuctionContext({ ...(exportData.context || {}), ...context }),
+      items: Array.isArray(exportData.items) ? exportData.items.map(normalizeHibidAccountAuctionItem) : [],
+      audit: exportData.audit || {}
+    };
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      'HiBid past-account auction research:',
+      'Review only the selected account auction group in this export. Do not bid, watch, unwatch, checkout, or change account state from this brief.',
+      'Use every supplied lead, Group - Category value, description field, raw description, and image URL. Missing evidence is not proof that a lot has no resale value.',
+      'The account page indicates saved bid/watch context; preserve that status separately from resale conclusions.',
+      '',
+      'Selected auction export:',
+      JSON.stringify(payload, null, 2)
+    ].join('\n');
+  }
+
   function uniqueLots(lots) {
     const unique = new Map();
     lots.forEach(lot => {
@@ -2792,9 +3289,17 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return kind === 'currentbids-winning' || kind === 'currentbids-outbid';
   }
 
+  function isHibidPastAuctionRoute(route = {}) {
+    const kind = String(route?.kind || '').trim();
+    return kind === 'pastbids' || kind === 'pastwatchlist';
+  }
+
   function isHibidAccountExportRoute(route = {}) {
     const kind = String(route?.kind || '').trim();
-    return isHibidCurrentBidsRoute(route) || kind === 'watchlist' || kind === 'watchlist-outbid';
+    return isHibidCurrentBidsRoute(route)
+      || kind === 'watchlist'
+      || kind === 'watchlist-outbid'
+      || isHibidPastAuctionRoute(route);
   }
 
   function scraperResultRows(result) {
@@ -4811,6 +5316,15 @@ ${cards}
     getHibidScrapeLimits,
     getHibidStateScrapeMaxMs,
     scrapeCatalogLots,
+    isHibidPastAuctionRoute,
+    extractHibidPastAuctionRows,
+    extractHibidAccountAuctionLots,
+    extractHibidLotDetail,
+    scrapeHibidAccountAuction,
+    buildHibidAccountAuctionJsonPayload,
+    buildHibidAccountAuctionLlmBrief,
+    buildHibidPastAuctionDialogHtml,
+    mountHibidAccountAuctionActions,
     findDialog,
     findBidButton,
     findLiveBidButton,
@@ -8438,6 +8952,26 @@ ${cards}
         : { supported: true, kind: 'watchlist', host, statePrefix, reason: 'watchlist route' };
     }
 
+    if (accountIndex >= 0 && lowerParts[accountIndex + 1] === 'pastbidsm') {
+      return {
+        supported: true,
+        kind: 'pastbids',
+        host,
+        statePrefix,
+        reason: 'past bids auction route'
+      };
+    }
+
+    if (accountIndex >= 0 && lowerParts[accountIndex + 1] === 'pastwatchlist') {
+      return {
+        supported: true,
+        kind: 'pastwatchlist',
+        host,
+        statePrefix,
+        reason: 'past watchlist auction route'
+      };
+    }
+
     if (accountIndex >= 0 && lowerParts[accountIndex + 1] === 'currentbids') {
       const status = String(
         loc.searchParams?.get?.('status')
@@ -11250,6 +11784,271 @@ ${cards}
     return ` title="${safe}" aria-label="${safe}" data-help="${safe}"`;
   }
 
+  function hibidPastAuctionDialogStyle() {
+    return `
+      #flipperaddon-hibid-auction-copy-dialog {
+        position: fixed;
+        right: 14px;
+        bottom: 14px;
+        z-index: 2147483646;
+        width: min(370px, calc(100vw - 28px));
+        color: #f8fafc;
+        background: #0b1020;
+        border: 1px solid rgba(148,163,184,.3);
+        border-radius: 12px;
+        box-shadow: 0 16px 45px rgba(0,0,0,.38);
+        font: 13px/1.35 Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+      #flipperaddon-hibid-auction-copy-dialog * { box-sizing: border-box; }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(148,163,184,.18);
+        background: rgba(15,23,42,.92);
+      }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-body { padding: 12px; }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-title { font-weight: 850; }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-meta,
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-status {
+        color: #cbd5e1;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-status { margin-top: 8px; color: #93c5fd; }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+      #flipperaddon-hibid-auction-copy-dialog button {
+        min-height: 32px;
+        padding: 6px 9px;
+        border: 1px solid rgba(147,197,253,.28);
+        border-radius: 8px;
+        color: #eff6ff;
+        background: #1d4ed8;
+        font: 800 12px/1.2 ui-sans-serif, system-ui, sans-serif;
+        cursor: pointer;
+      }
+      #flipperaddon-hibid-auction-copy-dialog button.secondary { color: #e5e7eb; background: #1f2937; border-color: rgba(148,163,184,.3); }
+      #flipperaddon-hibid-auction-copy-dialog button.danger { background: #991b1b; border-color: rgba(248,113,113,.3); }
+      #flipperaddon-hibid-auction-copy-dialog button.icon { width: 30px; padding: 0; background: rgba(30,41,59,.88); }
+      #flipperaddon-hibid-auction-copy-dialog button[disabled] { opacity: .5; cursor: not-allowed; }
+      .flipperaddon-hibid-account-auction-copy {
+        display: block;
+        width: 100%;
+        min-height: 34px;
+        margin-top: 6px;
+        padding: 7px 10px;
+        border: 1px solid rgba(147,197,253,.35);
+        border-radius: 7px;
+        color: #eff6ff;
+        background: #1d4ed8;
+        font: 800 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+        cursor: pointer;
+      }
+      .flipperaddon-hibid-account-auction-copy:hover { background: #2563eb; }
+      .flipperaddon-hibid-account-auction-copy[disabled] { opacity: .55; cursor: wait; }
+    `;
+  }
+
+  function hibidPastAuctionContextForButton(button) {
+    const key = button?.dataset?.hibidAuctionKey || '';
+    const store = globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_CONTEXTS__;
+    return key && store instanceof Map ? store.get(key) : null;
+  }
+
+  function buildHibidPastAuctionDialogHtml() {
+    return `
+      <div class="flipperaddon-hibid-dialog-head">
+        <strong>Copy HiBid Auction</strong>
+        <button id="flipperaddon-hibid-auction-copy-close" class="icon secondary" type="button" title="Close copy dialog" aria-label="Close copy dialog">X</button>
+      </div>
+      <div class="flipperaddon-hibid-dialog-body">
+        <div id="flipperaddon-hibid-auction-copy-title" class="flipperaddon-hibid-dialog-title"></div>
+        <div id="flipperaddon-hibid-auction-copy-meta" class="flipperaddon-hibid-dialog-meta"></div>
+        <div id="flipperaddon-hibid-auction-copy-status" class="flipperaddon-hibid-dialog-status" role="status" aria-live="polite">Preparing...</div>
+        <div class="flipperaddon-hibid-dialog-actions">
+          <button id="flipperaddon-hibid-auction-copy-json" type="button" disabled>Copy JSON</button>
+          <button id="flipperaddon-hibid-auction-copy-llm" type="button" disabled>Copy LLM Brief</button>
+          <button id="flipperaddon-hibid-auction-copy-stop" class="danger" type="button">Stop</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function ensureHibidPastAuctionDialog() {
+    if (typeof document === 'undefined' || !document.body) return null;
+    let dialog = document.getElementById('flipperaddon-hibid-auction-copy-dialog');
+    if (dialog) return dialog;
+    dialog = document.createElement('div');
+    dialog.id = 'flipperaddon-hibid-auction-copy-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-label', 'Copy selected HiBid auction');
+    dialog.innerHTML = buildHibidPastAuctionDialogHtml();
+    document.body.appendChild(dialog);
+    return dialog;
+  }
+
+  function setHibidPastAuctionDialogStatus(message, tone = 'info') {
+    const status = document.getElementById('flipperaddon-hibid-auction-copy-status');
+    if (!status) return;
+    status.textContent = String(message || '');
+    status.style.color = tone === 'danger' ? '#fecaca' : (tone === 'success' ? '#bbf7d0' : '#93c5fd');
+  }
+
+  async function runHibidPastAuctionCopy(context) {
+    const dialog = ensureHibidPastAuctionDialog();
+    if (!dialog || !context) return;
+    const title = dialog.querySelector('#flipperaddon-hibid-auction-copy-title');
+    const meta = dialog.querySelector('#flipperaddon-hibid-auction-copy-meta');
+    const jsonButton = dialog.querySelector('#flipperaddon-hibid-auction-copy-json');
+    const llmButton = dialog.querySelector('#flipperaddon-hibid-auction-copy-llm');
+    const stopButton = dialog.querySelector('#flipperaddon-hibid-auction-copy-stop');
+    if (title) title.textContent = context.auctionTitle || 'Selected HiBid auction';
+    if (meta) meta.textContent = [context.location, context.dateText].filter(Boolean).join(' | ');
+    if (jsonButton) jsonButton.disabled = true;
+    if (llmButton) llmButton.disabled = true;
+    if (stopButton) stopButton.disabled = false;
+    const previous = globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_RUN__;
+    previous?.controller?.abort?.();
+    if (previous) previous.stop = true;
+    const run = {
+      context,
+      stop: false,
+      controller: typeof AbortController === 'function' ? new AbortController() : null,
+      exportData: null
+    };
+    globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_RUN__ = run;
+    debugEvent('hibid.account-auction.scrape.begin', {
+      pageKind: context.pageKind,
+      auctionId: context.auctionId,
+      auctionTitle: context.auctionTitle,
+      scopeKey: context.scopeKey
+    });
+    setHibidPastAuctionDialogStatus('Collecting selected saved lots...');
+    try {
+      const result = await scrapeHibidAccountAuction(
+        context,
+        message => setHibidPastAuctionDialogStatus(message),
+        () => run.stop,
+        document,
+        { signal: run.controller?.signal }
+      );
+      if (globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_RUN__ !== run) return;
+      run.exportData = result;
+      const audit = result.audit || {};
+      if (!audit.selectedGroupFound) {
+        setHibidPastAuctionDialogStatus('Selected auction lots could not be isolated; nothing was copied.', 'danger');
+      } else if (run.stop || result.stopped) {
+        setHibidPastAuctionDialogStatus(`Stopped after ${result.items.length} selected lot(s).`, 'danger');
+      } else {
+        setHibidPastAuctionDialogStatus(`Ready: ${result.items.length} selected lot(s); ${audit.detailsSucceeded || 0} detail page(s) enriched${audit.detailsFailed ? `, ${audit.detailsFailed} issue(s)` : ''}.`, audit.detailsFailed ? 'info' : 'success');
+      }
+      if (jsonButton) jsonButton.disabled = !audit.selectedGroupFound;
+      if (llmButton) llmButton.disabled = !audit.selectedGroupFound;
+      if (stopButton) stopButton.disabled = true;
+      debugEvent('hibid.account-auction.scrape.complete', {
+        count: result.items?.length || 0,
+        audit
+      });
+    } catch (error) {
+      setHibidPastAuctionDialogStatus(`HiBid auction export failed: ${error?.message || error}`, 'danger');
+      if (stopButton) stopButton.disabled = true;
+      debugEvent('hibid.account-auction.scrape.error', { error: error?.message || String(error) });
+    }
+  }
+
+  async function handleHibidPastAuctionDialogAction(target) {
+    const run = globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_RUN__;
+    if (!run) return;
+    if (target.id === 'flipperaddon-hibid-auction-copy-stop') {
+      run.stop = true;
+      run.controller?.abort?.();
+      setHibidPastAuctionDialogStatus('Stopping selected auction export...', 'danger');
+      debugEvent('hibid.account-auction.scrape.stop');
+      return;
+    }
+    if (!run.exportData || !run.exportData.audit?.selectedGroupFound) return;
+    const isLlm = target.id === 'flipperaddon-hibid-auction-copy-llm';
+    const payload = isLlm
+      ? buildHibidAccountAuctionLlmBrief(run.exportData)
+      : buildHibidAccountAuctionJsonPayload(run.exportData);
+    const copied = await writeClipboard(payload).catch(() => false);
+    setHibidPastAuctionDialogStatus(copied ? `Copied ${isLlm ? 'LLM brief' : 'JSON'} for ${run.exportData.items.length} selected lot(s).` : 'Clipboard failed.', copied ? 'success' : 'danger');
+    debugEvent('hibid.account-auction.copy.result', {
+      mode: isLlm ? 'llm' : 'json',
+      copied,
+      count: run.exportData.items.length,
+      audit: run.exportData.audit
+    });
+  }
+
+  function installHibidPastAuctionActionDelegation() {
+    if (globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_DELEGATION__) return true;
+    if (typeof document === 'undefined' || !document.addEventListener) return false;
+    const handler = event => {
+      const target = event.target?.closest?.('.flipperaddon-hibid-account-auction-copy, #flipperaddon-hibid-auction-copy-json, #flipperaddon-hibid-auction-copy-llm, #flipperaddon-hibid-auction-copy-stop, #flipperaddon-hibid-auction-copy-close');
+      if (!target) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (target.classList?.contains('flipperaddon-hibid-account-auction-copy')) {
+        const context = hibidPastAuctionContextForButton(target);
+        if (context) void runHibidPastAuctionCopy(context);
+        return;
+      }
+      if (target.id === 'flipperaddon-hibid-auction-copy-close') {
+        const run = globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_RUN__;
+        if (run) run.stop = true;
+        run?.controller?.abort?.();
+        document.getElementById('flipperaddon-hibid-auction-copy-dialog')?.remove();
+        return;
+      }
+      void handleHibidPastAuctionDialogAction(target);
+    };
+    document.addEventListener('click', handler, true);
+    globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_DELEGATION__ = { handler };
+    debugEvent('hibid.account-auction.delegation.installed');
+    return true;
+  }
+
+  function mountHibidAccountAuctionActions(root = document) {
+    const route = resolveHiBidPage(typeof location !== 'undefined' ? location : {});
+    if (!isHibidPastAuctionRoute(route) || !root?.querySelectorAll) return 0;
+    installHibidPastAuctionActionDelegation();
+    if (!globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_CONTEXTS__ || !(globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_CONTEXTS__ instanceof Map)) {
+      globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_CONTEXTS__ = new Map();
+    }
+    if (typeof document !== 'undefined' && document.head && !document.getElementById('flipperaddon-hibid-account-auction-styles')) {
+      const style = document.createElement('style');
+      style.id = 'flipperaddon-hibid-account-auction-styles';
+      style.textContent = hibidPastAuctionDialogStyle();
+      document.head.appendChild(style);
+    }
+    const rows = extractHibidPastAuctionRows(root, typeof location !== 'undefined' ? location : null, route.kind);
+    let mounted = 0;
+    rows.forEach((row, index) => {
+      const block = row.__element;
+      const host = block?.querySelector?.('.printer-d-none') || block;
+      if (!host?.appendChild) return;
+      const key = row.scopeKey || `${route.kind}:${index}`;
+      globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_CONTEXTS__.set(key, row);
+      const selector = `[data-hibid-auction-key="${hibidEscapeRegex(key)}"]`;
+      if (host.querySelector?.(selector)) return;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.id = `flipperaddon-hibid-account-auction-copy-${index}`;
+      button.className = 'flipperaddon-hibid-account-auction-copy';
+      button.dataset.hibidAuctionKey = key;
+      button.dataset.controlId = 'flipperaddon-hibid-account-auction-copy';
+      button.title = 'Copy the saved lots in this HiBid auction with full lead, category, description, and photo evidence.';
+      button.textContent = 'Copy Auction';
+      host.appendChild(button);
+      mounted += 1;
+    });
+    debugEvent('hibid.account-auction.actions.mounted', { rows: rows.length, mounted });
+    return mounted;
+  }
+
   function actionButton(id, icon, label, tone = 'primary', extra = '', help = '') {
     return `<button id="${id}" type="button" class="hiba-btn ${tone}"${helpAttrs(help || label)} ${extra}>${hibaIcon(icon)}<span>${label}</span></button>`;
   }
@@ -11515,6 +12314,9 @@ ${cards}
 
   function renderCatalogSection(debugEnabled, route = {}) {
     const isAjWillner = isAjWillnerRoute(route);
+    const isPastBids = route?.kind === 'pastbids';
+    const isPastWatchlist = route?.kind === 'pastwatchlist';
+    const isPastAuctionPage = isPastBids || isPastWatchlist;
     const isWinningBids = route?.kind === 'currentbids-winning';
     const isOutbidBids = route?.kind === 'currentbids-outbid';
     const isWatchlist = route?.kind === 'watchlist' || route?.kind === 'watchlist-outbid';
@@ -11524,6 +12326,22 @@ ${cards}
       ? 'AJ Willner Catalog Export'
       : (isWinningBids ? 'Winning Bids Export' : (isOutbidBids ? 'Outbid Bids Export' : (isWatchlist ? 'Watchlist Export' : 'Catalog Export')));
     const chip = isAjWillner ? 'api-first' : (isWinningBids ? 'winning' : (isOutbidBids ? 'outbid' : (isWatchlist ? 'watchlist' : 'scraper')));
+    if (isPastAuctionPage) {
+      const label = isPastBids ? 'Past Bids Auction Export' : 'Past Watchlist Auction Export';
+      return `
+        <section id="hibid-bid-controls" class="hiba-section" data-module="catalog" data-page-kind="${escapeHtml(route.kind)}">
+          <div class="hiba-section-head">
+            <div>
+              <div class="hiba-kicker">HiBid account</div>
+              <strong>${label}</strong>
+            </div>
+            <span class="hiba-chip neutral">account</span>
+          </div>
+          <div class="hiba-meta">Use the blue Copy Auction buttons beside View Catalog to export one selected auction group with its saved lots and detail descriptions.</div>
+          ${renderDebugActions(debugEnabled)}
+        </section>
+      `;
+    }
     const llmHelp = isAjWillner
       ? 'Copy the resale-analysis prompt plus scraped AJ Willner listing JSON for a desktop LLM.'
       : (isAccountBids
@@ -11959,6 +12777,7 @@ ${cards}
     const activeRoute = assistantMode.route || {};
     debugEvent('panel.init.begin', { activeMode, routeKind: activeRoute.kind || '' });
     const panel = createPanel(activeMode, getStoredDebugEnabled(), activeRoute);
+    if (isHibidPastAuctionRoute(activeRoute)) mountHibidAccountAuctionActions(document);
     const toastEl = panel.querySelector('#flipperaddon-toast');
     const liveMode = activeMode === 'live';
     const listingExportMode = activeMode === 'fliptracker';
@@ -13786,6 +14605,7 @@ ${cards}
       debug('ensureMounted', { reason, allowed, mode: modeInfo.mode, ...routeDebug() });
       debugEvent('mount.ensure', { reason, allowed, mode: modeInfo.mode, routeKind: modeInfo.route?.kind || '' });
       if (!document.body) return false;
+      if (isHibidPastAuctionRoute(modeInfo.route)) mountHibidAccountAuctionActions(document);
       const existingPanel = document.getElementById(PANEL_ID);
       const existingMode = existingPanel?.dataset?.flipperaddonMode || existingPanel?.querySelector?.('.hiba-drawer')?.dataset?.flipperaddonMode || '';
       const existingVersion = existingPanel?.dataset?.flipperaddonVersion || '';

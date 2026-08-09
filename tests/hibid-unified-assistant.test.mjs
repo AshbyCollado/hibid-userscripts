@@ -37,6 +37,9 @@ function loadCore(options = {}) {
   if (options.fetch) {
     sandbox.fetch = options.fetch;
   }
+  if (options.DOMParser) {
+    sandbox.DOMParser = options.DOMParser;
+  }
   if (options.location) {
     sandbox.location = options.location;
   }
@@ -88,6 +91,88 @@ function makeFakeNode({ text = '', attrs = {}, selectors = {} } = {}) {
       return Array.isArray(match) ? match : [match];
     },
   };
+}
+
+function makeTreeNode({ tag = 'div', text = '', attrs = {}, className = '', children = [] } = {}) {
+  const node = {
+    tagName: tag.toUpperCase(),
+    id: attrs.id || '',
+    className,
+    href: attrs.href || '',
+    src: attrs.src || '',
+    disabled: false,
+    parentElement: null,
+    nextElementSibling: null,
+    children: [],
+    getAttribute(name) {
+      if (name === 'class') return className;
+      if (name === 'href') return attrs.href || '';
+      if (name === 'src') return attrs.src || '';
+      if (name === 'srcset') return attrs.srcset || '';
+      if (name === 'data-label') return attrs['data-label'] || '';
+      return attrs[name] || '';
+    },
+    matches(selector) {
+      return selector.split(',').some(part => matchesTreeSelector(node, part.trim()));
+    },
+    querySelector(selector) {
+      return node.querySelectorAll(selector)[0] || null;
+    },
+    querySelectorAll(selector) {
+      const found = [];
+      const visit = child => {
+        if (child.matches?.(selector)) found.push(child);
+        child.children?.forEach(visit);
+      };
+      node.children.forEach(visit);
+      return found;
+    },
+    appendChild(child) {
+      child.parentElement = node;
+      const previous = node.children[node.children.length - 1];
+      if (previous) previous.nextElementSibling = child;
+      node.children.push(child);
+      return child;
+    },
+    contains(candidate) {
+      if (candidate === node) return true;
+      return node.children.some(child => child === candidate || child.contains?.(candidate));
+    },
+  };
+  Object.defineProperty(node, 'textContent', {
+    get() { return text || node.children.map(child => child.textContent || '').join(' '); },
+    set() {},
+  });
+  Object.defineProperty(node, 'innerText', {
+    get() { return text || node.children.map(child => child.innerText || '').join('\n'); },
+    set() {},
+  });
+  children.forEach(child => node.appendChild(child));
+  return node;
+}
+
+function matchesTreeSelector(node, selector) {
+  const normalized = selector.replace(/\s+/g, ' ').trim();
+  const finalPart = normalized.split(' ').pop() || normalized;
+  const tag = node.tagName.toLowerCase();
+  if (finalPart.startsWith('#')) return node.id === finalPart.slice(1);
+  const tagMatch = finalPart.match(/^([a-z][\w-]*)/i);
+  if (tagMatch && tag !== tagMatch[1].toLowerCase()) return false;
+  const classMatches = Array.from(finalPart.matchAll(/\.([\w-]+)/g)).map(match => match[1]);
+  if (classMatches.some(name => !String(node.className || '').split(/\s+/).includes(name))) return false;
+  const classContains = finalPart.match(/\[class\*=["']([^"']+)["']\]/i);
+  if (classContains && !String(node.className || '').includes(classContains[1])) return false;
+  const hrefContains = finalPart.match(/\[href\*=["']([^"']+)["']\]/i);
+  if (hrefContains && !String(node.href || '').includes(hrefContains[1])) return false;
+  if (/\[href\]/i.test(finalPart) && !node.href) return false;
+  if (/\[src\]/i.test(finalPart) && !node.src) return false;
+  const dataLabel = finalPart.match(/\[data-label\]/i);
+  if (dataLabel && !node.getAttribute('data-label')) return false;
+  const dataLead = finalPart.match(/\[data-lead\]/i);
+  if (dataLead && !node.getAttribute('data-lead')) return false;
+  const dataTestIdContains = finalPart.match(/\[data-testid\*=["']([^"']+)["']\]/i);
+  if (dataTestIdContains && !String(node.getAttribute('data-testid') || '').includes(dataTestIdContains[1])) return false;
+  return true;
 }
 
 function makeGovDealsAssetDomFixture({
@@ -205,6 +290,209 @@ test('assistant shared route resolver covers HiBid route families', () => {
   assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/currentbids')), false);
   assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/currentbids?status=CLOSED')), false);
   assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/help')), false);
+});
+
+test('assistant resolves past HiBid auction account routes and renders scoped copy UI', () => {
+  const core = loadCore();
+  const pastBids = new URL('https://hibid.com/account/pastbidsm');
+  const pastWatchlist = new URL('https://hibid.com/account/pastwatchlist');
+  const stateWatchlist = new URL('https://hibid.com/newjersey/account/pastwatchlist');
+
+  assert.equal(core.resolveHiBidPage(pastBids).kind, 'pastbids');
+  assert.equal(core.resolveHiBidPage(pastWatchlist).kind, 'pastwatchlist');
+  assert.equal(core.resolveHiBidPage(stateWatchlist).kind, 'pastwatchlist');
+  assert.equal(core.shouldInitOnLocation(pastBids), true);
+  assert.equal(core.shouldInitOnLocation(pastWatchlist), true);
+  assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/settings')), false);
+
+  const panel = core.buildPanelHtml({ mode: 'catalog', route: core.resolveHiBidPage(pastWatchlist), debugEnabled: false });
+  assert.match(panel, /Past Watchlist Auction Export/);
+  assert.match(panel, /Copy Auction/);
+  assert.doesNotMatch(panel, /Prepare Bid|Snipe Now|Auto-confirm|Max plan/i);
+
+  const dialog = core.buildHibidPastAuctionDialogHtml();
+  ['flipperaddon-hibid-auction-copy-status', 'flipperaddon-hibid-auction-copy-json', 'flipperaddon-hibid-auction-copy-llm', 'flipperaddon-hibid-auction-copy-stop', 'flipperaddon-hibid-auction-copy-close']
+    .forEach(id => assert.match(dialog, new RegExp(`id="${id}"`)));
+});
+
+test('assistant isolates selected past-auction rows and preserves lot lead/description evidence', () => {
+  const core = loadCore();
+  const makeLot = ({ lot, title, lead, category, image, status = 'Won' }) => makeTreeNode({
+    className: 'bid-status-border',
+    text: `Lot # ${lot}\n${lead}\nGroup - Category\n${category}\nDescription\nShelf Location: Z1\nCondition: New - Factory Sealed\nIn Packaging?: Yes\nAssembly Required?: No\nDamaged?: No\nFunctional?: Yes\nMissing Parts?: No\nCurrent Bid: 18.00 USD\n2 Bids\n${status}`,
+    children: [
+      makeTreeNode({ className: 'lot-number-lead', text: `Lot ${lot}` }),
+      makeTreeNode({ className: 'lot-title', text: title }),
+      makeTreeNode({ tag: 'a', attrs: { href: `/lot/765226${lot}/${title.toLowerCase().replace(/\s+/g, '-')}` }, text: title }),
+      makeTreeNode({ tag: 'img', attrs: { src: image } }),
+    ],
+  });
+  const makeAuction = ({ id, title, location, lot }) => {
+    const heading = makeTreeNode({
+      className: 'listing-box-title',
+      children: [
+        makeTreeNode({ tag: 'strong', text: title }),
+        makeTreeNode({ tag: 'a', attrs: { href: `/catalog/${id}/${title.toLowerCase().replace(/\s+/g, '-')}` }, text: title }),
+        makeTreeNode({ tag: 'a', className: 'alert-link', attrs: { href: `https://maps.google.com/maps?q=${location}` }, text: location }),
+        makeTreeNode({ className: 'printer-d-none', children: [makeTreeNode({ tag: 'a', attrs: { href: `/catalog/${id}/${title.toLowerCase().replace(/\s+/g, '-')}` }, text: 'View Catalog' })] }),
+      ],
+    });
+    return makeTreeNode({ className: 'listing-box', children: [heading, lot] });
+  };
+  const firstAuction = makeAuction({
+    id: '765226',
+    title: 'Mid Summer Deals Overstock / Liquidation / Returns W31',
+    location: 'Paterson, NJ',
+    lot: makeLot({
+      lot: '6',
+      title: 'SteelSeries Arctis Nova 7 Wireless Xbox',
+      lead: 'SteelSeries Arctis Nova 7 Wireless Xbox',
+      category: 'Computers & Electronics - Consumer Electronics - Video Games - Accessories',
+      image: '/images/steelseries.jpg',
+    }),
+  });
+  const secondAuction = makeAuction({
+    id: '765227',
+    title: 'Unrelated Auction',
+    location: 'Edison, NJ',
+    lot: makeLot({
+      lot: '99',
+      title: 'Unrelated Item',
+      lead: 'Unrelated Item',
+      category: 'Other',
+      image: '/images/other.jpg',
+    }),
+  });
+  const root = makeTreeNode({ children: [firstAuction, secondAuction] });
+  const loc = new URL('https://hibid.com/account/pastwatchlist');
+  const rows = core.extractHibidPastAuctionRows(root, loc, 'pastwatchlist');
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].auctionTitle, 'Mid Summer Deals Overstock / Liquidation / Returns W31');
+  assert.equal(rows[0].location, 'Paterson, NJ');
+  assert.match(rows[0].locationUrl, /maps\.google\.com/);
+  assert.equal(rows[0].auctionId, '765226');
+
+  const selected = core.extractHibidAccountAuctionLots(root, rows[0], loc, 'pastwatchlist');
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].lot, '6');
+  assert.equal(selected[0].lead, 'SteelSeries Arctis Nova 7 Wireless Xbox');
+  assert.match(selected[0].groupCategory, /Computers & Electronics/);
+  assert.match(selected[0].description, /Condition: New - Factory Sealed/);
+  assert.equal(selected[0].descriptionFields.condition, 'New - Factory Sealed');
+  assert.equal(selected[0].descriptionFields.functional, 'Yes');
+  assert.match(selected[0].image, /steelseries\.jpg/);
+  assert.doesNotMatch(selected.map(item => item.title).join(' '), /Unrelated Item/);
+
+  const payload = JSON.parse(core.buildHibidAccountAuctionJsonPayload({
+    context: rows[0],
+    items: selected,
+    audit: { selectedGroupFound: true, lotsCollected: 1, detailsRequested: 1, detailsSucceeded: 1, detailsFailed: 0, stopReason: 'complete' },
+  }));
+  assert.equal(payload.context.scope, 'selected-account-auction-group');
+  assert.equal(payload.items[0].lead, 'SteelSeries Arctis Nova 7 Wireless Xbox');
+  assert.equal(payload.items[0].descriptionFields.condition, 'New - Factory Sealed');
+  const brief = core.buildHibidAccountAuctionLlmBrief(payload);
+  assert.match(brief, /Mixed \/ Group Lot Rule/);
+  assert.match(brief, /SteelSeries Arctis Nova 7 Wireless Xbox/);
+  assert.match(brief, /Do not bid, watch, unwatch/);
+});
+
+test('assistant extracts HiBid lot detail labels, descriptions, and all images', () => {
+  const core = loadCore();
+  const body = makeTreeNode({ children: [
+    makeTreeNode({ tag: 'h1', text: 'SteelSeries Arctis Nova 7 Wireless Xbox' }),
+    makeTreeNode({ tag: 'tr', children: [makeTreeNode({ tag: 'th', text: 'Lead' }), makeTreeNode({ tag: 'td', text: 'SteelSeries Arctis Nova 7 Wireless Xbox' })] }),
+    makeTreeNode({ tag: 'tr', children: [makeTreeNode({ tag: 'th', text: 'Group - Category' }), makeTreeNode({ tag: 'td', text: 'Computers & Electronics - Consumer Electronics' })] }),
+    makeTreeNode({ tag: 'tr', children: [makeTreeNode({ tag: 'th', text: 'Condition' }), makeTreeNode({ tag: 'td', text: 'New - Factory Sealed' })] }),
+    makeTreeNode({ className: 'description', text: 'Shelf Location: Z1\nCondition: New - Factory Sealed\nFunctional?: Yes' }),
+    makeTreeNode({ tag: 'img', attrs: { src: '/images/one.jpg' } }),
+    makeTreeNode({ tag: 'img', attrs: { src: '/images/two.jpg' } }),
+  ] });
+  const root = makeTreeNode({ children: [body] });
+  root.body = body;
+  const detail = core.extractHibidLotDetail(root, new URL('https://hibid.com/lot/7652266/steelseries'));
+  assert.equal(detail.lead, 'SteelSeries Arctis Nova 7 Wireless Xbox');
+  assert.match(detail.groupCategory, /Computers & Electronics/);
+  assert.equal(detail.descriptionFields.condition, 'New - Factory Sealed');
+  assert.equal(detail.images.length, 2);
+  assert.match(detail.description, /Shelf Location: Z1/);
+});
+
+test('assistant keeps selected HiBid account lots when detail enrichment is unavailable', async () => {
+  const core = loadCore();
+  const lot = makeTreeNode({
+    className: 'bid-status-border',
+    text: 'Lot # 6\nSteelSeries Arctis Nova 7 Wireless Xbox\nCurrent Bid: 18.00 USD',
+    children: [
+      makeTreeNode({ className: 'lot-title', text: 'SteelSeries Arctis Nova 7 Wireless Xbox' }),
+      makeTreeNode({ tag: 'a', attrs: { href: '/lot/7652266/steelseries' }, text: 'SteelSeries Arctis Nova 7 Wireless Xbox' }),
+    ],
+  });
+  const heading = makeTreeNode({
+    className: 'listing-box-title',
+    children: [
+      makeTreeNode({ tag: 'strong', text: 'Selected Auction' }),
+      makeTreeNode({ tag: 'a', attrs: { href: '/catalog/765226/selected-auction' }, text: 'Selected Auction' }),
+    ],
+  });
+  const root = makeTreeNode({ children: [makeTreeNode({ className: 'listing-box', children: [heading, lot] })] });
+  const rows = core.extractHibidPastAuctionRows(root, new URL('https://hibid.com/account/pastbidsm'), 'pastbids');
+  const result = await core.scrapeHibidAccountAuction(rows[0], () => {}, () => false, root);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.audit.selectedGroupFound, true);
+  assert.equal(result.audit.detailsFailed, 1);
+  assert.equal(result.audit.stopReason, 'partial-detail-failures');
+  assert.match(result.items[0].detailError, /browser-fetch-unavailable/);
+});
+
+test('assistant enriches selected HiBid account lots from same-origin detail pages', async () => {
+  const detailRoot = makeTreeNode({
+    text: 'Lot # 6\nLead\nSteelSeries Arctis Nova 7 Wireless Xbox\nDescription\nCondition: New - Factory Sealed',
+    children: [
+      makeTreeNode({ tag: 'img', attrs: { src: '/images/detail-one.jpg' } }),
+      makeTreeNode({ tag: 'img', attrs: { src: '/images/detail-two.jpg' } }),
+    ],
+  });
+  const fetchedUrls = [];
+  const core = loadCore({
+    fetch: async url => {
+      fetchedUrls.push(String(url));
+      return { ok: true, text: async () => '<html>detail</html>' };
+    },
+    DOMParser: class {
+      parseFromString() {
+        return detailRoot;
+      }
+    },
+  });
+  const lot = makeTreeNode({
+    className: 'bid-status-border',
+    text: 'Lot # 6\nSteelSeries Arctis Nova 7 Wireless Xbox\nCurrent Bid: 18.00 USD',
+    children: [
+      makeTreeNode({ tag: 'a', attrs: { href: '/lot/7652266/steelseries' }, text: 'SteelSeries Arctis Nova 7 Wireless Xbox' }),
+    ],
+  });
+  const heading = makeTreeNode({
+    className: 'listing-box-title',
+    children: [
+      makeTreeNode({ tag: 'strong', text: 'Selected Auction' }),
+      makeTreeNode({ tag: 'a', attrs: { href: '/catalog/765226/selected-auction' }, text: 'Selected Auction' }),
+    ],
+  });
+  const root = makeTreeNode({ children: [makeTreeNode({ className: 'listing-box', children: [heading, lot] })] });
+  const rows = core.extractHibidPastAuctionRows(root, new URL('https://hibid.com/account/pastwatchlist'), 'pastwatchlist');
+  const result = await core.scrapeHibidAccountAuction(rows[0], () => {}, () => false, root);
+  assert.deepEqual(fetchedUrls, ['https://hibid.com/lot/7652266/steelseries']);
+  assert.equal(result.audit.detailsRequested, 1);
+  assert.equal(result.audit.detailsSucceeded, 1);
+  assert.equal(result.audit.detailsFailed, 0);
+  assert.equal(result.audit.stopReason, 'complete');
+  assert.equal(result.items[0].detailFetched, true);
+  assert.equal(result.items[0].description, 'Condition: New - Factory Sealed');
+  assert.deepEqual(Array.from(result.items[0].images), [
+    'https://hibid.com/images/detail-one.jpg',
+    'https://hibid.com/images/detail-two.jpg',
+  ]);
 });
 
 test('assistant metadata-covered host variants resolve to their site modules', () => {
