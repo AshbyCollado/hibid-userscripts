@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.10
+// @version      0.8.11
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -63,7 +63,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.10';
+  const SCRIPT_VERSION = '0.8.11';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -1155,6 +1155,9 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const win = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : null);
     const style = win?.getComputedStyle ? win.getComputedStyle(el) : null;
     if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+    // DOMParser documents have no layout box. Their cards are still valid
+    // scrape records, so treat elements from a detached document as visible.
+    if (el.ownerDocument && !el.ownerDocument.defaultView) return true;
     return Boolean(el.offsetParent || el.getClientRects?.().length);
   }
 
@@ -2253,7 +2256,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function extractHibidApolloLots(apolloState, context = {}) {
     const state = apolloState?.['apollo.state'] || apolloState?.apollo?.state || apolloState || {};
     const selectionOptions = { expectedTotal: context.expectedTotal, visibleState: context.visibleState };
-    const refs = collectLotRefsFromApolloState(state, selectionOptions);
+    const chosenConnection = chooseApolloLotConnection(state, selectionOptions);
+    const refs = chosenConnection?.refs || collectLotRefsFromApolloState(state, selectionOptions);
     const unique = new Map();
     refs.forEach(ref => {
       const lot = normalizeApolloLot(state, ref, context);
@@ -2265,17 +2269,26 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       : (!refs.length && shouldRejectAmbiguousUnfilteredApollo(context.visibleState)
         ? 'ambiguous-unfiltered-state'
         : '');
+    const visibleExpectedTotal = Number(context.visibleState?.expectedTotal);
+    const exceedsVisibleTotal = Number.isFinite(visibleExpectedTotal)
+      && visibleExpectedTotal > 0
+      && (unique.size > visibleExpectedTotal
+        || (Number.isFinite(chosenConnection?.totalCount) && chosenConnection.totalCount > visibleExpectedTotal));
     const hasExpectedFromContext = context.expectedTotal !== null
       && context.expectedTotal !== undefined
       && Number.isFinite(Number(context.expectedTotal));
     const expectedFromContext = Number(context.expectedTotal);
     return {
       source: 'hibid-state',
-      items: Array.from(unique.values()),
-      expectedTotal: hasExpectedFromContext ? expectedFromContext : expectedTotalFromApolloState(state, selectionOptions),
+      items: exceedsVisibleTotal ? [] : Array.from(unique.values()),
+      expectedTotal: hasExpectedFromContext
+        ? expectedFromContext
+        : (exceedsVisibleTotal ? visibleExpectedTotal : expectedTotalFromApolloState(state, selectionOptions)),
       pageLength: pageLengthFromApolloState(state, selectionOptions),
-      rejectedSource,
-      stopReason: rejectedSource ? (context.visibleState?.noMatches ? 'visible-no-matches' : 'filter-mismatch') : ''
+      rejectedSource: exceedsVisibleTotal ? 'visible-total-mismatch' : rejectedSource,
+      stopReason: exceedsVisibleTotal
+        ? 'visible-total-mismatch'
+        : (rejectedSource ? (context.visibleState?.noMatches ? 'visible-no-matches' : 'filter-mismatch') : '')
     };
   }
 
@@ -2407,6 +2420,18 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const lotsByKey = new Map();
     const visibleTotal = visibleState.expectedTotal;
     const first = extractHibidApolloLots(firstState, { url: sourceUrl, expectedTotal: visibleTotal, visibleState });
+    const hasVisibleExpectedTotal = Number.isFinite(Number(visibleTotal))
+      && Number(visibleTotal) > 0;
+    if (hasVisibleExpectedTotal && first.items.length > Number(visibleTotal)) {
+      debug('hibid-state result exceeded visible page total; refusing broad state source', {
+        extracted: first.items.length,
+        visibleTotal,
+        activeFilters: visibleState.activeFilterKeys,
+        visibleState,
+        rejectedSource: 'visible-total-mismatch'
+      });
+      return null;
+    }
     if (first.rejectedSource && visibleState.hasActiveFilters) {
       debug('hibid-state first page rejected for active filters', {
         rejectedSource: first.rejectedSource,
@@ -2481,6 +2506,17 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         break;
       }
       mergeCatalogLots(lotsByKey, pageLots.items);
+      if (hasVisibleExpectedTotal && lotsByKey.size > Number(visibleTotal)) {
+        debug('hibid-state pagination exceeded visible page total; refusing broad state source', {
+          page,
+          extracted: lotsByKey.size,
+          visibleTotal,
+          activeFilters: visibleState.activeFilterKeys,
+          visibleState,
+          rejectedSource: 'visible-total-mismatch'
+        });
+        return null;
+      }
       if (hasFilteredVisibleTotal && lotsByKey.size > Number(visibleTotal)) {
         stopReason = 'exceeds-filtered-visible-total';
         debug('hibid-state pagination exceeded filtered visible total; falling back to visible DOM', {
@@ -2526,6 +2562,167 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       visibleState,
       sourceUrl
     };
+  }
+
+  function hibidCatalogPageSize(root = document) {
+    const text = getRootText(root);
+    const showing = text.match(/\bShowing\s+([\d,]+)\s*(?:to|-)\s*([\d,]+)\s+of\s+[\d,]+\s+lots\b/i);
+    if (showing) {
+      const first = Number(showing[1].replace(/,/g, ''));
+      const last = Number(showing[2].replace(/,/g, ''));
+      if (Number.isFinite(first) && Number.isFinite(last) && last >= first) return last - first + 1;
+    }
+    const tileCount = getLotTiles(root).length;
+    return tileCount > 0 ? Math.min(Math.max(tileCount, 1), 100) : 100;
+  }
+
+  async function fetchHibidCatalogDomPage(pageNumber, baseHref = (typeof location !== 'undefined' ? location.href : '')) {
+    if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') return null;
+    const href = catalogPageUrl(pageNumber, baseHref);
+    debug('hibid DOM page fetch start', { pageNumber, href });
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller
+      ? setTimeout(() => controller.abort(), HIBID_STATE_FETCH_TIMEOUT_MS)
+      : null;
+    try {
+      const response = await fetch(href, {
+        credentials: 'same-origin',
+        cache: 'no-cache',
+        ...(controller ? { signal: controller.signal } : {})
+      });
+      if (!response?.ok) {
+        debug('hibid DOM page fetch failed', { pageNumber, href, status: response?.status || 0 });
+        return null;
+      }
+      const html = await response.text();
+      const parsed = new DOMParser().parseFromString(html, 'text/html');
+      const pageUrl = new URL(href);
+      const visibleState = extractHibidVisiblePageState(parsed, pageUrl);
+      const items = uniqueLots(getLotTiles(parsed).map(extractLot));
+      const expectedTotal = Number.isFinite(Number(visibleState.expectedTotal))
+        ? Number(visibleState.expectedTotal)
+        : getExpectedLotTotal(parsed);
+      debug('hibid DOM page fetched', {
+        pageNumber,
+        href,
+        count: items.length,
+        expectedTotal,
+        noMatches: visibleState.noMatches,
+        hasActiveFilters: visibleState.hasActiveFilters
+      });
+      return {
+        source: 'hibid-dom-page-fetch',
+        items,
+        lots: items,
+        pageNumber,
+        expectedTotal,
+        pageLength: hibidCatalogPageSize(parsed),
+        visibleState,
+        sourceUrl: href
+      };
+    } catch (error) {
+      debug('hibid DOM page fetch timed out or failed', {
+        pageNumber,
+        href,
+        error: String(error?.name || error?.message || error)
+      });
+      return null;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  async function scrapeHibidDomPages(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const sourceUrl = String(root?.location?.href || (typeof location !== 'undefined' ? location.href : ''));
+    const visibleState = await waitForHibidVisiblePageState(root, typeof location !== 'undefined' ? location : null);
+    if (visibleState.noMatches) {
+      return {
+        source: 'visible-page-state',
+        items: [],
+        lots: [],
+        expectedTotal: 0,
+        stopped: false,
+        incomplete: false,
+        pagesAttempted: 0,
+        pagesRead: 0,
+        stopReason: 'visible-no-matches',
+        visibleState,
+        sourceUrl
+      };
+    }
+
+    const expectedFromPage = Number(visibleState.expectedTotal);
+    const expectedTotal = Number.isFinite(expectedFromPage) && expectedFromPage > 0
+      ? expectedFromPage
+      : null;
+    const firstPage = await fetchHibidCatalogDomPage(1, sourceUrl);
+    if (!firstPage) return null;
+    const pageSize = Math.max(1, Number(firstPage.pageLength) || 100);
+    const expected = expectedTotal || Number(firstPage.expectedTotal) || null;
+    const totalPages = expected ? Math.min(HIBID_STATE_MAX_PAGES, Math.max(1, Math.ceil(expected / pageSize))) : 1;
+    const itemsByKey = new Map();
+    mergeCatalogLots(itemsByKey, firstPage.items);
+    let pagesRead = 1;
+    let stopReason = '';
+    const startedAt = Date.now();
+    onProgress(`Reading HiBid DOM pages... ${itemsByKey.size}${expected ? `/${expected}` : ''}`);
+
+    for (let page = 2; page <= totalPages; page += 1) {
+      if (shouldStop()) {
+        stopReason = 'user-stop';
+        break;
+      }
+      if (Date.now() - startedAt >= HIBID_STATE_SCRAPE_MAX_MS) {
+        stopReason = 'dom-page-fetch-timeout';
+        break;
+      }
+      const pageResult = await fetchHibidCatalogDomPage(page, sourceUrl);
+      if (!pageResult || !pageResult.items.length) {
+        stopReason = pageResult ? 'empty-dom-page' : 'missing-dom-page';
+        break;
+      }
+      mergeCatalogLots(itemsByKey, pageResult.items);
+      pagesRead += 1;
+      onProgress(`Reading HiBid DOM pages... ${itemsByKey.size}${expected ? `/${expected}` : ''}`);
+      debug('hibid DOM page merged', {
+        page,
+        pageLots: pageResult.items.length,
+        count: itemsByKey.size,
+        expectedTotal: expected
+      });
+      if (expected && itemsByKey.size >= expected) {
+        stopReason = 'expected-total';
+        break;
+      }
+    }
+
+    const items = Array.from(itemsByKey.values());
+    const stopped = shouldStop() || stopReason === 'user-stop';
+    const incomplete = Boolean(expected && items.length < expected && !stopped);
+    const result = {
+      source: 'hibid-dom-pages',
+      items,
+      lots: items,
+      expectedTotal: expected,
+      stopped,
+      incomplete,
+      pageLength: pageSize,
+      pagesAttempted: totalPages,
+      pagesRead,
+      stopReason: stopReason || (incomplete ? 'below-expected-total' : 'complete'),
+      visibleState,
+      sourceUrl
+    };
+    debug('hibid DOM page scrape finished', {
+      count: items.length,
+      expectedTotal: expected,
+      pagesAttempted: totalPages,
+      pagesRead,
+      stopped,
+      incomplete,
+      stopReason: result.stopReason
+    });
+    return result;
   }
 
   function isCatalogScrapeComplete(result) {
@@ -4602,6 +4799,9 @@ ${cards}
     extractHibidVisiblePageState,
     extractHibidApolloLots,
     extractHibidStateFromDocument,
+    hibidCatalogPageSize,
+    fetchHibidCatalogDomPage,
+    scrapeHibidDomPages,
     isHibidCurrentBidsRoute,
     isHibidAccountExportRoute,
     validateCatalogExportAgainstVisibleState,
@@ -5323,6 +5523,26 @@ ${cards}
       }
     } else {
       debug('catalog hibid-state skipped for account export route', activeRoute);
+    }
+
+    if (!accountExportRoute) {
+      const domPageResult = await scrapeHibidDomPages(status, shouldStop).catch(error => {
+        debug('catalog hibid DOM page scrape failed', { error: String(error?.message || error) });
+        return null;
+      });
+      if (domPageResult?.stopReason === 'visible-no-matches') return domPageResult;
+      if (domPageResult?.items?.length) {
+        debug('catalog scrape finished from paginated DOM', {
+          count: domPageResult.items.length,
+          expectedTotal: domPageResult.expectedTotal,
+          pagesRead: domPageResult.pagesRead,
+          pagesAttempted: domPageResult.pagesAttempted,
+          incomplete: domPageResult.incomplete,
+          stopReason: domPageResult.stopReason
+        });
+        if (isCatalogScrapeComplete(domPageResult)) return domPageResult;
+        status(`HiBid paginated DOM data incomplete (${domPageResult.items.length}/${domPageResult.expectedTotal || '?'}); trying live-page fallback...`);
+      }
     }
 
     const itemsMap = new Map();

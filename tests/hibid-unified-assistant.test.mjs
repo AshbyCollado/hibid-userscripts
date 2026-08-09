@@ -640,6 +640,60 @@ test('assistant prefers page-bound Apollo connections on unfiltered catalogs', (
   assert.equal(result.expectedTotal, 483);
 });
 
+test('assistant rejects an Apollo connection that exceeds the visible unfiltered page total', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/765261/collectibles--music--toys-and-vintage-finds-auction');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 - 100 of 618 lots' },
+    documentElement: { textContent: 'Showing 1 - 100 of 618 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  }, loc);
+  const state = {
+    ROOT_QUERY: {
+      'lotSearch({"input":{"eventItemIds":[1,2,3],"sortOrder":"LOT_NUMBER"},"pageLength":3,"pageNumber":1})': {
+        pagedResults: {
+          totalCount: 1236,
+          pageLength: 3,
+          pageNumber: 1,
+          results: [
+            { __ref: 'Lot:one' },
+            { __ref: 'Lot:two' },
+            { __ref: 'Lot:three' },
+          ],
+        },
+      },
+    },
+    'Lot:one': { id: 'one', lotNumber: '1', lead: 'First lot' },
+    'Lot:two': { id: 'two', lotNumber: '2', lead: 'Second lot' },
+    'Lot:three': { id: 'three', lotNumber: '3', lead: 'Third lot' },
+  };
+
+  const result = core.extractHibidApolloLots(state, {
+    url: loc.href,
+    expectedTotal: visibleState.expectedTotal,
+    visibleState,
+  });
+
+  assert.equal(visibleState.expectedTotal, 618);
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(result.rejectedSource, 'visible-total-mismatch');
+  assert.equal(result.stopReason, 'visible-total-mismatch');
+});
+
+test('assistant derives HiBid paginated DOM page size from the visible range', () => {
+  const core = loadCore();
+  const root = {
+    body: { textContent: 'Showing 1 - 100 of 618 lots' },
+    documentElement: { textContent: 'Showing 1 - 100 of 618 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  assert.equal(core.hibidCatalogPageSize(root), 100);
+});
+
 test('assistant rejects ambiguous unfiltered Apollo state instead of exporting a broad connection', () => {
   const core = loadCore();
   const loc = new URL('https://hibid.com/catalog/761410/great-deals-overstock---liquidation---returns-w29');
