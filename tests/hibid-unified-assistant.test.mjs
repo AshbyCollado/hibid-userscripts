@@ -16,6 +16,12 @@ test('userscript metadata version matches the runtime version', () => {
   assert.equal(runtimeVersion, metadataVersion);
 });
 
+test('catalog copy resume helper is hoisted before panel event binding can call it', () => {
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  assert.match(source, /function scheduleCatalogCopyResume\(\)\s*\{/);
+  assert.doesNotMatch(source, /const scheduleCatalogCopyResume\s*=\s*\(/);
+});
+
 function loadCore(options = {}) {
   const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
   const sandbox = {

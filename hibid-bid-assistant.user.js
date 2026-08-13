@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.13
+// @version      0.8.14
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -65,7 +65,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.13';
+  const SCRIPT_VERSION = '0.8.14';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -14480,7 +14480,7 @@ ${cards}
     let panelClosed = false;
     let lastMountedHref = location.href;
 
-    const scheduleCatalogCopyResume = () => {
+    function scheduleCatalogCopyResume() {
       if (globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__) return;
       const tick = () => {
         globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__ = null;
@@ -14533,7 +14533,7 @@ ${cards}
         globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__ = window.setTimeout(tick, 200);
       };
       tick();
-    };
+    }
 
     // HiBid can replace the panel in the same navigation turn that it
     // normalizes catalog filters. Capture the user's copy intent above the
