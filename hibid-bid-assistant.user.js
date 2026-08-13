@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.14
+// @version      0.8.15
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -65,7 +65,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.14';
+  const SCRIPT_VERSION = '0.8.15';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -1675,13 +1675,38 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
       const headings = Array.from(current.querySelectorAll?.('.listing-box-title') || []);
       const candidates = Array.from(current.querySelectorAll?.(hibidAccountLotCandidateSelector()) || []);
-      if (candidates.length && headings.length <= 1) return current;
+      // The live account page renders every saved auction as header + tiles
+      // inside one shared `.lot-tiles` container. The clicked header identifies
+      // the group; rejecting multi-header containers makes every real export
+      // look like an ambiguous scope.
+      if (candidates.length && (headings.length <= 1 || current.matches?.('.lot-tiles, [id^="lot-tiles-"]'))) return current;
     }
     return null;
   }
 
-  function hibidAccountAuctionLotTiles(container) {
+  function hibidAccountAuctionGroupHeader(block) {
+    let current = block || null;
+    for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
+      if (current.matches?.('app-watched-auction-header')) return current;
+    }
+    return null;
+  }
+
+  function hibidAccountAuctionGroupTiles(container, groupHeader) {
+    if (!container?.children || !groupHeader) return null;
+    const children = Array.from(container.children);
+    const start = children.indexOf(groupHeader);
+    if (start < 0) return null;
+    const end = children.findIndex((child, index) => index > start && child.matches?.('app-watched-auction-header'));
+    const tileSelector = 'app-lot-tile, app-lot-card, .lot-tile, [class*="lot-tile"]';
+    return children.slice(start + 1, end < 0 ? children.length : end)
+      .filter(child => child.matches?.(tileSelector));
+  }
+
+  function hibidAccountAuctionLotTiles(container, groupHeader = null) {
     if (!container?.querySelectorAll) return [];
+    const scopedTiles = hibidAccountAuctionGroupTiles(container, groupHeader);
+    if (scopedTiles) return scopedTiles;
     const tiles = new Set();
     const cardSeeds = Array.from(container.querySelectorAll([
       '.bid-status-border',
@@ -1842,6 +1867,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         .trim();
       const auctionId = catalogUrl.match(/\/catalog\/(\d+)/i)?.[1] || '';
       const container = hibidAccountAuctionContainer(block);
+      const groupHeader = hibidAccountAuctionGroupHeader(block);
       return {
         source: 'HiBid',
         pageKind: resolvedPageKind,
@@ -1856,7 +1882,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         scopeKey: `${resolvedPageKind}:${auctionId || catalogUrl}:${index}`,
         selectedGroupFound: Boolean(container),
         __element: block,
-        __container: container
+        __container: container,
+        __groupHeader: groupHeader
       };
     }).filter(Boolean);
   }
@@ -1923,9 +1950,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const effectiveLoc = loc || (typeof location !== 'undefined' ? location : null);
     const container = context.__container;
     if (!container) return [];
-    const headings = Array.from(container.querySelectorAll?.('.listing-box-title') || []);
-    if (headings.length > 1) return [];
-    return hibidAccountAuctionLotTiles(container)
+    return hibidAccountAuctionLotTiles(container, context.__groupHeader)
       .map(tile => extractHibidAccountAuctionLot(tile, context, effectiveLoc, pageKind || context.pageKind))
       .filter(item => item.lot || item.url);
   }

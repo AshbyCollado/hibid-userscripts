@@ -403,6 +403,53 @@ test('assistant isolates selected past-auction rows and preserves lot lead/descr
   assert.match(brief, /Do not bid, watch, unwatch/);
 });
 
+test('assistant isolates a selected HiBid group inside the shared account lot grid', () => {
+  const core = loadCore();
+  const makeHeader = ({ id, title }) => makeTreeNode({
+    tag: 'app-watched-auction-header',
+    children: [makeTreeNode({
+      className: 'ng-star-inserted',
+      children: [makeTreeNode({
+        className: 'listing-box-title',
+        children: [
+          makeTreeNode({ tag: 'strong', text: title }),
+          makeTreeNode({ tag: 'a', attrs: { href: `/catalog/${id}/${title.toLowerCase().replace(/\s+/g, '-')}` }, text: title }),
+          makeTreeNode({ className: 'printer-d-none' }),
+        ],
+      })],
+    })],
+  });
+  const firstHeader = makeHeader({ id: '765226', title: 'Selected Auction' });
+  const secondHeader = makeHeader({ id: '765227', title: 'Unrelated Auction' });
+  const firstLot = makeTreeNode({
+    tag: 'app-lot-tile',
+    className: 'lot-tile',
+    text: 'Lot # 6\nSteelSeries Arctis Nova 7 Wireless Xbox',
+    children: [makeTreeNode({ tag: 'a', attrs: { href: '/lot/7652266/steelseries' }, text: 'SteelSeries Arctis Nova 7 Wireless Xbox' })],
+  });
+  const secondLot = makeTreeNode({
+    tag: 'app-lot-tile',
+    className: 'lot-tile',
+    text: 'Lot # 99\nUnrelated Item',
+    children: [makeTreeNode({ tag: 'a', attrs: { href: '/lot/76522799/unrelated' }, text: 'Unrelated Item' })],
+  });
+  const grid = makeTreeNode({ className: 'lot-tiles md-tiles', children: [firstHeader, firstLot, secondHeader, secondLot] });
+  const root = makeTreeNode({ children: [grid] });
+  const loc = new URL('https://hibid.com/account/pastwatchlist');
+  const rows = core.extractHibidPastAuctionRows(root, loc, 'pastwatchlist');
+
+  assert.equal(rows.length, 2);
+  const selected = core.extractHibidAccountAuctionLots(root, rows[0], loc, 'pastwatchlist');
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].lot, '6');
+  assert.match(selected[0].title, /SteelSeries/);
+  assert.doesNotMatch(selected.map(item => item.title).join(' '), /Unrelated Item/);
+
+  const unrelated = core.extractHibidAccountAuctionLots(root, rows[1], loc, 'pastwatchlist');
+  assert.equal(unrelated.length, 1);
+  assert.equal(unrelated[0].lot, '99');
+});
+
 test('assistant extracts HiBid lot detail labels, descriptions, and all images', () => {
   const core = loadCore();
   const body = makeTreeNode({ children: [
