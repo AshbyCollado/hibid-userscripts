@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.16
+// @version      0.8.17
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -66,7 +66,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.16';
+  const SCRIPT_VERSION = '0.8.17';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -14023,6 +14023,61 @@ ${cards}
     };
   }
 
+  function scheduleCatalogCopyResume() {
+    if (globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__) return;
+    const tick = () => {
+      globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__ = null;
+      const pending = readSharedCatalogCopyIntent();
+      if (!pending) return;
+      if (Date.now() - Number(pending.at || 0) > 15000) {
+        clearSharedCatalogCopyIntent();
+        debug('catalog copy intent expired before dispatch', { mode: pending.mode });
+        return;
+      }
+      try {
+        const previous = new URL(pending.href || '');
+        if (previous.hostname !== location.hostname || previous.pathname !== location.pathname) {
+          clearSharedCatalogCopyIntent();
+          debug('catalog copy intent discarded after route changed', {
+            from: pending.href,
+            to: location.href
+          });
+          return;
+        }
+      } catch {
+        clearSharedCatalogCopyIntent();
+        return;
+      }
+      const panel = document.getElementById(PANEL_ID);
+      const handler = globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__;
+      let panelHrefMatches = panel?.dataset.flipperaddonHref === location.href;
+      if (!panelHrefMatches && panel?.dataset.flipperaddonMode === 'catalog') {
+        try {
+          const panelUrl = new URL(panel.dataset.flipperaddonHref || '', location.href);
+          panelHrefMatches = panelUrl.hostname === location.hostname && panelUrl.pathname === location.pathname;
+        } catch {
+          panelHrefMatches = false;
+        }
+      }
+      const panelReady = panel
+        && handler?.panel === panel
+        && panel.dataset.flipperaddonVersion === SCRIPT_VERSION
+        && panelHrefMatches
+        && typeof handler.run === 'function';
+      if (panelReady) {
+        const dispatched = globalThis.__FLIPPERADDON_CATALOG_COPY_DISPATCHED__;
+        if (!dispatched || dispatched.at !== pending.at || dispatched.panel !== panel) {
+          globalThis.__FLIPPERADDON_CATALOG_COPY_DISPATCHED__ = { at: pending.at, panel };
+          debug('dispatching pending catalog copy', { mode: pending.mode });
+          handler.run(pending.mode);
+        }
+        return;
+      }
+      globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__ = window.setTimeout(tick, 200);
+    };
+    tick();
+  }
+
   function init() {
     const assistantMode = resolveAssistantMode();
     const activeMode = assistantMode.mode === 'unsupported' ? 'catalog' : assistantMode.mode;
@@ -15888,61 +15943,6 @@ ${cards}
 
     let panelClosed = false;
     let lastMountedHref = location.href;
-
-    function scheduleCatalogCopyResume() {
-      if (globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__) return;
-      const tick = () => {
-        globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__ = null;
-        const pending = readSharedCatalogCopyIntent();
-        if (!pending) return;
-        if (Date.now() - Number(pending.at || 0) > 15000) {
-          clearSharedCatalogCopyIntent();
-          debug('catalog copy intent expired before dispatch', { mode: pending.mode });
-          return;
-        }
-        try {
-          const previous = new URL(pending.href || '');
-          if (previous.hostname !== location.hostname || previous.pathname !== location.pathname) {
-            clearSharedCatalogCopyIntent();
-            debug('catalog copy intent discarded after route changed', {
-              from: pending.href,
-              to: location.href
-            });
-            return;
-          }
-        } catch {
-          clearSharedCatalogCopyIntent();
-          return;
-        }
-        const panel = document.getElementById(PANEL_ID);
-        const handler = globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__;
-        let panelHrefMatches = panel?.dataset.flipperaddonHref === location.href;
-        if (!panelHrefMatches && panel?.dataset.flipperaddonMode === 'catalog') {
-          try {
-            const panelUrl = new URL(panel.dataset.flipperaddonHref || '', location.href);
-            panelHrefMatches = panelUrl.hostname === location.hostname && panelUrl.pathname === location.pathname;
-          } catch {
-            panelHrefMatches = false;
-          }
-        }
-        const panelReady = panel
-          && handler?.panel === panel
-          && panel.dataset.flipperaddonVersion === SCRIPT_VERSION
-          && panelHrefMatches
-          && typeof handler.run === 'function';
-        if (panelReady) {
-          const dispatched = globalThis.__FLIPPERADDON_CATALOG_COPY_DISPATCHED__;
-          if (!dispatched || dispatched.at !== pending.at || dispatched.panel !== panel) {
-            globalThis.__FLIPPERADDON_CATALOG_COPY_DISPATCHED__ = { at: pending.at, panel };
-            debug('dispatching pending catalog copy', { mode: pending.mode });
-            handler.run(pending.mode);
-          }
-          return;
-        }
-        globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__ = window.setTimeout(tick, 200);
-      };
-      tick();
-    }
 
     // HiBid can replace the panel in the same navigation turn that it
     // normalizes catalog filters. Capture the user's copy intent above the

@@ -16,9 +16,13 @@ test('userscript metadata version matches the runtime version', () => {
   assert.equal(runtimeVersion, metadataVersion);
 });
 
-test('catalog copy resume helper is hoisted before panel event binding can call it', () => {
+test('catalog copy resume helper shares init scope and is declared before init can call it', () => {
   const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
-  assert.match(source, /function scheduleCatalogCopyResume\(\)\s*\{/);
+  const helperIndex = source.indexOf('function scheduleCatalogCopyResume()');
+  const initIndex = source.indexOf('function init()');
+  assert.ok(helperIndex >= 0, 'missing catalog copy resume helper');
+  assert.ok(initIndex >= 0, 'missing panel init function');
+  assert.ok(helperIndex < initIndex, 'catalog resume helper must be visible in init lexical scope');
   assert.doesNotMatch(source, /const scheduleCatalogCopyResume\s*=\s*\(/);
 });
 
