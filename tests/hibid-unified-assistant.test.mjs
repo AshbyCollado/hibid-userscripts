@@ -28,6 +28,9 @@ function loadCore(options = {}) {
     console,
     URL,
     URLSearchParams,
+    AbortController,
+    clearTimeout,
+    setTimeout,
     globalThis: {},
   };
   if (options.storage) {
@@ -4377,4 +4380,642 @@ test('assistant builds AuctionNinja auction-search brief for whole-sale triage',
   assert.match(brief, /rank sales/i);
   assert.match(brief, /sold\/completed comps first/i);
   assert.match(brief, /"pageKind": "auction-search"/);
+});
+
+function hibidJsonResponse(payload, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async json() {
+      return payload;
+    },
+  };
+}
+
+function makeRichHibidApiLot(id, overrides = {}) {
+  const numericId = Number(id);
+  return {
+    id: numericId,
+    itemId: numericId + 900000,
+    lotNumber: String(numericId),
+    lead: `API Lot ${numericId}`,
+    description: '<p>Factory sealed component</p><br>Model: ZX-900',
+    estimate: '$80 - $120',
+    quantity: 2,
+    shippingOffered: true,
+    pictureCount: 2,
+    distanceMiles: 18.5,
+    featuredPicture: {
+      fullSizeLocation: `https://cdn.example.test/${numericId}-1.jpg`,
+    },
+    pictures: [
+      { fullSizeLocation: `https://cdn.example.test/${numericId}-1.jpg` },
+      { fullSizeLocation: `https://cdn.example.test/${numericId}-2.jpg` },
+    ],
+    category: [
+      {
+        id: 40198,
+        categoryName: 'Computers',
+        fullCategory: 'Computers & Electronics - Computers',
+      },
+      {
+        id: 700005,
+        categoryName: 'Computers & Electronics',
+        fullCategory: 'Computers & Electronics',
+      },
+    ],
+    lotState: {
+      bidCount: 4,
+      highBid: { amount: 25 },
+      minBid: { amount: 30 },
+      buyerBidStatus: 'OUTBID',
+      isWatching: true,
+      productUrl: `/lot/${numericId}/api-lot-${numericId}`,
+      status: 'OPEN',
+      timeLeft: '2h 15m',
+      timeLeftSeconds: 8100,
+    },
+    auction: {
+      id: 769123,
+      eventName: 'API Reliability Auction',
+      description: '<p>Pickup by appointment</p>',
+      buyerPremium: '15% Credit / Debit Card',
+      buyerPremiumRate: 0.15,
+      eventAddress: '100 Main St',
+      eventCity: 'Paterson',
+      eventState: 'NJ',
+      eventZip: '07501',
+      eventDateInfo: 'Closes tonight',
+      auctioneer: { id: 9, name: 'Reliable Auctions' },
+    },
+    ...overrides,
+  };
+}
+
+function makeHibidGraphqlPayload(pageNumber, pageLength, total, lots) {
+  return {
+    data: {
+      lotSearch: {
+        pagedResults: {
+          pageNumber,
+          pageLength,
+          totalCount: total,
+          filteredCount: total,
+          results: lots,
+        },
+      },
+    },
+  };
+}
+
+test('HiBid API-first contract exports helpers and grants search endpoint access', () => {
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  const core = loadCore();
+
+  assert.match(source, /^\/\/\s*@connect\s+hibid-api\.io$/m);
+  assert.match(source, /GM_xmlhttpRequest/);
+  [
+    'buildHibidSearchRequest',
+    'buildHibidGraphqlVariables',
+    'enumerateHibidLotIds',
+    'hydrateHibidLots',
+    'scrapeHibidApiCatalog',
+    'validateHibidApiCoverage',
+  ].forEach(name => assert.equal(typeof core[name], 'function', name));
+});
+
+test('HiBid API request builders distinguish auctions from categories and preserve filters', () => {
+  const core = loadCore();
+  const catalogUrl = new URL('https://hibid.com/catalog/769123/api-reliability-auction');
+  const liveUrl = new URL('https://hibid.com/livecatalog/769123/api-reliability-auction');
+  const categoryUrl = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&zip=Carteret,%20NJ%2007008,%20USA&miles=50&countryname=United%20States&shippingoffered=true&status=OPEN&status=UPCOMING&status=CLOSING_TODAY&s=TIME_LEFT');
+
+  const catalogRoute = core.resolveHiBidPage(catalogUrl);
+  const liveRoute = core.resolveHiBidPage(liveUrl);
+  const categoryRoute = core.resolveHiBidPage(categoryUrl);
+  const catalogSearch = core.buildHibidSearchRequest(catalogRoute, catalogUrl);
+  const catalogGraphql = core.buildHibidGraphqlVariables(catalogRoute, catalogUrl, 1);
+  const liveGraphql = core.buildHibidGraphqlVariables(liveRoute, liveUrl, 1);
+  const categorySearch = core.buildHibidSearchRequest(categoryRoute, categoryUrl);
+
+  assert.equal(catalogSearch.options.auctionId, 769123);
+  assert.equal(catalogSearch.options.categoryId, null);
+  assert.equal(catalogGraphql.auctionId, 769123);
+  assert.equal(liveGraphql.auctionId, 769123);
+  assert.equal(liveGraphql.status, 'OPEN');
+  assert.equal(categorySearch.options.auctionId, null);
+  assert.equal(categorySearch.options.categoryId, 40198);
+  assert.equal(categorySearch.query, 'gaming pc');
+  assert.deepEqual(plain(categorySearch.options.location), { zipcode: 'Carteret, NJ 07008, USA', radius: 50 });
+  assert.equal(categorySearch.options.country, 'USA');
+  assert.equal(categorySearch.options.shipping, true);
+  assert.deepEqual(plain(categorySearch.options.status), ['OPEN', 'UPCOMING', 'CLOSING_TODAY']);
+  assert.equal(categorySearch.options.sortOrder, 'TIME_LEFT');
+});
+
+test('HiBid state-prefixed search uses the portal auctioneer scope from hibid-state', () => {
+  const core = loadCore();
+  const url = new URL('https://hibid.com/newjersey/lots/40196/computers-and-electronics');
+  const route = core.resolveHiBidPage(url);
+  const root = {
+    querySelector() {
+      return {
+        textContent: JSON.stringify({
+          'apollo.state': {
+            ROOT_QUERY: {
+              currentSite: {
+                companyName: 'New Jersey HiBid Portal',
+                portalChildren: '32001,33256,44770,32001',
+              },
+            },
+          },
+        }),
+      };
+    },
+  };
+  const portal = core.extractHibidPortalSearchContext(root, route);
+  const request = core.buildHibidSearchRequest({ ...route, ...portal }, url);
+
+  assert.deepEqual(plain(portal), {
+    portalAuctioneerIds: ['32001', '33256', '44770'],
+    siteType: 2,
+  });
+  assert.deepEqual(plain(request.options.auctioneerId), ['32001', '33256', '44770']);
+  assert.equal(request.options.siteType, 2);
+  assert.deepEqual(plain(request.options.status), ['OPEN', 'UPCOMING']);
+  assert.equal(request.options.sortOrder, 'NO_ORDER');
+  assert.equal(request.options.categoryId, 40196);
+});
+
+test('HiBid route fingerprints are stable across parameter order and sensitive to scope changes', () => {
+  const core = loadCore();
+  const one = new URL('https://hibid.com/lots/40198/computers?q=gaming+pc&status=OPEN&status=UPCOMING&apage=1#top');
+  const two = new URL('https://hibid.com/lots/40198/computers?status=UPCOMING&apage=9&status=OPEN&q=gaming+pc#other');
+  const changed = new URL('https://hibid.com/lots/40198/computers?status=UPCOMING&status=OPEN&q=office+pc');
+
+  const first = core.getHibidRouteFingerprint(core.resolveHiBidPage(one), one);
+  const second = core.getHibidRouteFingerprint(core.resolveHiBidPage(two), two);
+  const third = core.getHibidRouteFingerprint(core.resolveHiBidPage(changed), changed);
+  assert.equal(first, second);
+  assert.notEqual(first, third);
+});
+
+test('HiBid GraphQL normalizer preserves rich resale evidence', () => {
+  const core = loadCore();
+  const item = core.normalizeHibidGraphqlLot(makeRichHibidApiLot(317828112), {
+    url: 'https://hibid.com/catalog/769123/api-reliability-auction',
+    route: { kind: 'catalog' },
+  });
+
+  assert.equal(item.id, '317828112');
+  assert.equal(item.title, 'API Lot 317828112');
+  assert.match(item.description, /Factory sealed component\n+Model: ZX-900/);
+  assert.equal(item.descriptionHtml, '<p>Factory sealed component</p><br>Model: ZX-900');
+  assert.equal(item.category, 'Computers & Electronics - Computers');
+  assert.deepEqual(plain(item.categories), ['Computers & Electronics - Computers', 'Computers & Electronics']);
+  assert.equal(item.categoryId, '40198');
+  assert.deepEqual(plain(item.images), [
+    'https://cdn.example.test/317828112-1.jpg',
+    'https://cdn.example.test/317828112-2.jpg',
+  ]);
+  assert.equal(item.highBidAmount, 25);
+  assert.equal(item.nextBidAmount, 30);
+  assert.equal(item.bidCountNumber, 4);
+  assert.equal(item.quantity, 2);
+  assert.equal(item.shippingOffered, true);
+  assert.equal(item.auctionId, '769123');
+  assert.equal(item.buyerPremiumRate, 0.15);
+  assert.match(item.location, /Paterson, NJ 07501/);
+});
+
+test('HiBid API coverage validates exact identity sets, duplicates, and total drift', () => {
+  const core = loadCore();
+  const wrongSet = core.validateHibidApiCoverage({
+    expectedTotal: 2,
+    enumeratedIds: ['1', '2'],
+    hydratedItems: [{ id: '1' }, { id: '3' }],
+  });
+  assert.equal(wrongSet.complete, false);
+  assert.deepEqual(plain(wrongSet.missingIds), ['2']);
+  assert.deepEqual(plain(wrongSet.unexpectedIds), ['3']);
+
+  const duplicate = core.validateHibidApiCoverage({
+    expectedTotal: 288,
+    enumeratedIds: [...Array.from({ length: 288 }, (_value, index) => String(index + 1)), '288'],
+    hydratedItems: Array.from({ length: 288 }, (_value, index) => ({ id: String(index + 1) })),
+  });
+  assert.equal(duplicate.complete, false);
+  assert.equal(duplicate.reason, 'api-duplicate-ids');
+  assert.deepEqual(plain(duplicate.duplicateIds), ['288']);
+
+  const drift = core.validateHibidApiCoverage({
+    expectedTotal: 288,
+    enumeratedIds: Array.from({ length: 288 }, (_value, index) => String(index + 1)),
+    hydratedItems: Array.from({ length: 288 }, (_value, index) => ({ id: String(index + 1) })),
+    totalDrift: [{ page: 2, reportedTotal: 287 }],
+  });
+  assert.equal(drift.complete, false);
+  assert.equal(drift.reason, 'api-total-drift');
+
+  const wrongVisibleScope = core.validateHibidApiCoverage({
+    expectedTotal: 26887,
+    visibleExpectedTotal: 247,
+    requireVisibleTotalMatch: true,
+    enumeratedIds: Array.from({ length: 2 }, (_value, index) => String(index + 1)),
+    hydratedItems: Array.from({ length: 2 }, (_value, index) => ({ id: String(index + 1) })),
+  });
+  assert.equal(wrongVisibleScope.complete, false);
+  assert.equal(wrongVisibleScope.reason, 'api-visible-total-mismatch');
+  assert.equal(wrongVisibleScope.visibleExpectedCount, 247);
+  assert.equal(wrongVisibleScope.visibleTotalMatches, false);
+});
+
+test('HiBid API-first catalogs enumerate 245, 618, and 287 exact unique IDs', async () => {
+  for (const [auctionId, total] of [[769123, 245], [765261, 618], [767103, 287]]) {
+    const calls = [];
+    const fetchImpl = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      const { pageNumber, pageLength } = body.variables;
+      calls.push(pageNumber);
+      const start = (pageNumber - 1) * pageLength;
+      const count = Math.max(0, Math.min(pageLength, total - start));
+      const lots = Array.from({ length: count }, (_value, index) => makeRichHibidApiLot(start + index + 1, {
+        auction: { ...makeRichHibidApiLot(1).auction, id: auctionId },
+      }));
+      return hibidJsonResponse(makeHibidGraphqlPayload(pageNumber, pageLength, total, lots));
+    };
+    const core = loadCore({ fetch: fetchImpl });
+    const url = new URL(`https://hibid.com/catalog/${auctionId}/api-reliability-auction`);
+    const route = core.resolveHiBidPage(url);
+    const root = auctionId === 767103
+      ? {
+        location: url,
+        querySelector() {
+          throw new Error('stale 1105-lot Apollo state must not be read by the API pipeline');
+        },
+      }
+      : { location: url };
+    const result = await core.scrapeHibidApiCatalog(() => {}, () => false, root, {
+      location: url,
+      route,
+      visibleState: { expectedTotal: total, filters: {}, noMatches: false },
+      getCurrentUrl: () => url.href,
+      fetchImpl,
+      retryDelayMs: 0,
+    });
+
+    assert.equal(result.coverage.complete, true, `${auctionId} coverage`);
+    assert.equal(result.expectedTotal, total, `${auctionId} total`);
+    assert.equal(result.items.length, total, `${auctionId} items`);
+    assert.equal(new Set(result.items.map(item => item.id)).size, total, `${auctionId} unique IDs`);
+    assert.equal(calls.length, Math.ceil(total / 100), `${auctionId} page calls`);
+    assert.deepEqual(plain(result.pageStats.map(page => page.returned)), [
+      ...Array.from({ length: Math.floor(total / 100) }, () => 100),
+      ...(total % 100 ? [total % 100] : []),
+    ]);
+  }
+});
+
+test('HiBid filtered search hydrates only the six enumerated API IDs', async () => {
+  const ids = ['501', '503', '507', '509', '511', '513'];
+  const graphqlRequests = [];
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).includes('hibid-api.io')) {
+      assert.equal(body.query, 'gaming pc');
+      assert.equal(body.options.categoryId, 40198);
+      return hibidJsonResponse({
+        data: {
+          pageNumber: 1,
+          pageSize: 100,
+          totalCount: 6,
+          filteredCount: 6,
+          totalPages: 1,
+          noExactMatches: false,
+          lots: ids.map(id => ({ id: Number(id) })),
+        },
+      });
+    }
+    graphqlRequests.push(body.variables.eventItemIds.map(String));
+    const lots = body.variables.eventItemIds.map(id => makeRichHibidApiLot(id));
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, lots.length, lots.length, lots));
+  };
+  const core = loadCore({ fetch: fetchImpl });
+  const url = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&zip=Carteret,%20NJ%2007008,%20USA&miles=-1&countryname=United%20States&shippingoffered=true&status=OPEN&status=UPCOMING&status=CLOSING_TODAY&s=TIME_LEFT');
+  const result = await core.scrapeHibidApiCatalog(() => {}, () => false, { location: url }, {
+    location: url,
+    route: core.resolveHiBidPage(url),
+    visibleState: { expectedTotal: 6, filters: { q: 'gaming pc' }, noMatches: false },
+    getCurrentUrl: () => url.href,
+    fetchImpl,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(result.source, 'hibid-search-api');
+  assert.equal(result.coverage.complete, true);
+  assert.deepEqual(plain(result.items.map(item => item.id)), ids);
+  assert.deepEqual(graphqlRequests, [ids]);
+});
+
+test('HiBid state-prefixed API scrape stays inside its portal auctioneer set', async () => {
+  const total = 247;
+  const portalIds = ['32001', '33256', '44770'];
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).includes('hibid-api.io')) {
+      assert.deepEqual(body.options.auctioneerId, portalIds);
+      assert.equal(body.options.siteType, 2);
+      const start = (body.options.page - 1) * body.options.size;
+      const count = Math.max(0, Math.min(body.options.size, total - start));
+      return hibidJsonResponse({
+        data: {
+          pageNumber: body.options.page,
+          pageSize: body.options.size,
+          totalCount: total,
+          filteredCount: total,
+          totalPages: 3,
+          noExactMatches: false,
+          lots: Array.from({ length: count }, (_value, index) => ({ id: start + index + 1 })),
+        },
+      });
+    }
+    const lots = body.variables.eventItemIds.map(makeRichHibidApiLot);
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, lots.length, lots.length, lots));
+  };
+  const core = loadCore({ fetch: fetchImpl });
+  const url = new URL('https://hibid.com/newjersey/lots/40196/computers-and-electronics');
+  const root = {
+    location: url,
+    querySelector() {
+      return {
+        textContent: JSON.stringify({
+          'apollo.state': {
+            ROOT_QUERY: { currentSite: { portalChildren: portalIds.join(',') } },
+          },
+        }),
+      };
+    },
+  };
+  const result = await core.scrapeHibidApiCatalog(() => {}, () => false, root, {
+    location: url,
+    route: core.resolveHiBidPage(url),
+    visibleState: { expectedTotal: total, filters: {}, noMatches: false },
+    getCurrentUrl: () => url.href,
+    fetchImpl,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.expectedTotal, total);
+  assert.equal(result.items.length, total);
+  assert.equal(new Set(result.items.map(item => item.id)).size, total);
+  assert.deepEqual(plain(result.pageStats.map(page => page.returned)), [100, 100, 47]);
+});
+
+test('HiBid noExactMatches search completes as an empty exact export', async () => {
+  let graphqlCalls = 0;
+  const fetchImpl = async (url, init) => {
+    if (!String(url).includes('hibid-api.io')) {
+      graphqlCalls += 1;
+      throw new Error('GraphQL must not hydrate suggestions for noExactMatches');
+    }
+    const body = JSON.parse(init.body);
+    assert.equal(body.query, 'lebron');
+    return hibidJsonResponse({
+      data: {
+        pageNumber: 1,
+        pageSize: 100,
+        totalCount: 455,
+        filteredCount: 0,
+        totalPages: 1,
+        noExactMatches: true,
+        lots: [{ id: 999001 }, { id: 999002 }],
+      },
+    });
+  };
+  const core = loadCore({ fetch: fetchImpl });
+  const url = new URL('https://hibid.com/lots?q=lebron');
+  const result = await core.scrapeHibidApiCatalog(() => {}, () => false, { location: url }, {
+    location: url,
+    route: core.resolveHiBidPage(url),
+    visibleState: { expectedTotal: 0, filters: { q: 'lebron' }, noMatches: true },
+    getCurrentUrl: () => url.href,
+    fetchImpl,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.expectedTotal, 0);
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(graphqlCalls, 0);
+});
+
+test('HiBid API retries transient failures and caps hydration concurrency at three', async () => {
+  let attempts = 0;
+  const retryFetch = async (_url, init) => {
+    attempts += 1;
+    if (attempts < 3) throw new Error('temporary network failure');
+    const body = JSON.parse(init.body);
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, 100, 1, [makeRichHibidApiLot(1, {
+      auction: { ...makeRichHibidApiLot(1).auction, id: body.variables.auctionId },
+    })]));
+  };
+  const retryCore = loadCore({ fetch: retryFetch });
+  const retryUrl = new URL('https://hibid.com/catalog/769123/retry-test');
+  const retried = await retryCore.scrapeHibidApiCatalog(() => {}, () => false, { location: retryUrl }, {
+    location: retryUrl,
+    route: retryCore.resolveHiBidPage(retryUrl),
+    visibleState: { expectedTotal: 1, filters: {}, noMatches: false },
+    getCurrentUrl: () => retryUrl.href,
+    fetchImpl: retryFetch,
+    retries: 3,
+    retryDelayMs: 0,
+  });
+  assert.equal(attempts, 3);
+  assert.equal(retried.coverage.complete, true);
+
+  let active = 0;
+  let peak = 0;
+  const concurrencyFetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    active += 1;
+    peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const ids = body.variables.eventItemIds;
+    active -= 1;
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, ids.length, ids.length, ids.map(makeRichHibidApiLot)));
+  };
+  const concurrencyCore = loadCore({ fetch: concurrencyFetch });
+  const ids = Array.from({ length: 301 }, (_value, index) => String(index + 1));
+  const hydrated = await concurrencyCore.hydrateHibidLots(ids, { kind: 'catalog' }, retryUrl, {
+    fetchImpl: concurrencyFetch,
+    retries: 1,
+    retryDelayMs: 0,
+    concurrency: 3,
+  });
+  assert.equal(hydrated.items.length, 301);
+  assert.deepEqual(plain(hydrated.items.map(item => item.id)), ids);
+  assert.equal(peak, 3);
+});
+
+test('HiBid API retries HTTP-200 short pages and missing hydration IDs', async () => {
+  const pageCalls = new Map();
+  const shortPageFetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    const page = body.variables.pageNumber;
+    pageCalls.set(page, (pageCalls.get(page) || 0) + 1);
+    const lots = page === 1
+      ? Array.from({ length: 100 }, (_value, index) => makeRichHibidApiLot(index + 1))
+      : (pageCalls.get(page) === 1 ? [] : [makeRichHibidApiLot(101)]);
+    return hibidJsonResponse(makeHibidGraphqlPayload(page, 100, 101, lots));
+  };
+  const shortCore = loadCore({ fetch: shortPageFetch });
+  const url = new URL('https://hibid.com/catalog/769123/short-page-retry');
+  const result = await shortCore.scrapeHibidApiCatalog(() => {}, () => false, { location: url }, {
+    location: url,
+    route: shortCore.resolveHiBidPage(url),
+    visibleState: { expectedTotal: 101, filters: {}, noMatches: false },
+    getCurrentUrl: () => url.href,
+    fetchImpl: shortPageFetch,
+    retryDelayMs: 0,
+  });
+  assert.equal(pageCalls.get(2), 2);
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.items.length, 101);
+  assert.equal(result.pageStats[1].coverageAttempts, 2);
+
+  let hydrationCalls = 0;
+  const missingIdFetch = async (_url, init) => {
+    hydrationCalls += 1;
+    const body = JSON.parse(init.body);
+    const requested = body.variables.eventItemIds.map(String);
+    const returned = hydrationCalls === 1 ? requested.filter(id => id !== '2') : requested;
+    const lots = returned.map(makeRichHibidApiLot);
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, requested.length, requested.length, lots));
+  };
+  const hydrationCore = loadCore({ fetch: missingIdFetch });
+  const hydrated = await hydrationCore.hydrateHibidLots(['1', '2'], { kind: 'catalog' }, url, {
+    fetchImpl: missingIdFetch,
+    retryDelayMs: 0,
+  });
+  assert.equal(hydrationCalls, 2);
+  assert.deepEqual(plain(hydrated.items.map(item => item.id)), ['1', '2']);
+  assert.deepEqual(plain(hydrated.failedBatches), []);
+  assert.equal(hydrated.batchStats[0].coverageAttempts, 2);
+});
+
+test('HiBid API does not retry permanent client failures', async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return hibidJsonResponse({ error: 'forbidden' }, 403);
+  };
+  const core = loadCore({ fetch: fetchImpl });
+  const url = new URL('https://hibid.com/catalog/769123/permanent-failure');
+  const result = await core.scrapeHibidApiCatalog(() => {}, () => false, { location: url }, {
+    location: url,
+    route: core.resolveHiBidPage(url),
+    visibleState: { expectedTotal: 245, filters: {}, noMatches: false },
+    getCurrentUrl: () => url.href,
+    fetchImpl,
+    retries: 3,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.coverage.reason, 'api-page-failure');
+  assert.equal(result.items.length, 0);
+});
+
+test('HiBid API cancellation and route changes fail closed', async () => {
+  let stopped = false;
+  let calls = 0;
+  const stopFetch = async (_url, init) => {
+    calls += 1;
+    const body = JSON.parse(init.body);
+    const lots = Array.from({ length: 100 }, (_value, index) => makeRichHibidApiLot(index + 1));
+    stopped = true;
+    return hibidJsonResponse(makeHibidGraphqlPayload(body.variables.pageNumber, 100, 245, lots));
+  };
+  const stopCore = loadCore({ fetch: stopFetch });
+  const stopUrl = new URL('https://hibid.com/catalog/769123/stop-test');
+  const stoppedResult = await stopCore.scrapeHibidApiCatalog(() => {}, () => stopped, { location: stopUrl }, {
+    location: stopUrl,
+    route: stopCore.resolveHiBidPage(stopUrl),
+    visibleState: { expectedTotal: 245, filters: {}, noMatches: false },
+    getCurrentUrl: () => stopUrl.href,
+    fetchImpl: stopFetch,
+    retryDelayMs: 0,
+  });
+  assert.equal(calls, 1);
+  assert.equal(stoppedResult.coverage.complete, false);
+  assert.equal(stoppedResult.coverage.reason, 'user-stop');
+
+  let currentHref = 'https://hibid.com/lots/40198/computers?q=gaming+pc';
+  const routeFetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).includes('hibid-api.io')) {
+      currentHref = 'https://hibid.com/lots/40198/computers?q=office+pc';
+      return hibidJsonResponse({ data: { pageNumber: 1, pageSize: 100, totalCount: 1, filteredCount: 1, totalPages: 1, noExactMatches: false, lots: [{ id: 41 }] } });
+    }
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, 1, 1, [makeRichHibidApiLot(body.variables.eventItemIds[0])]));
+  };
+  const routeCore = loadCore({ fetch: routeFetch });
+  const routeUrl = new URL(currentHref);
+  const changed = await routeCore.scrapeHibidApiCatalog(() => {}, () => false, { location: routeUrl }, {
+    location: routeUrl,
+    route: routeCore.resolveHiBidPage(routeUrl),
+    visibleState: { expectedTotal: 1, filters: { q: 'gaming pc' }, noMatches: false },
+    getCurrentUrl: () => currentHref,
+    fetchImpl: routeFetch,
+    retryDelayMs: 0,
+  });
+  assert.equal(changed.coverage.complete, false);
+  assert.equal(changed.coverage.reason, 'route-fingerprint-changed');
+});
+
+test('HiBid verified partial payload and controls are explicit and audited', () => {
+  const core = loadCore();
+  const result = {
+    source: 'hibid-graphql-api',
+    sourceUrl: 'https://hibid.com/catalog/769123/reliability-test',
+    routeFingerprint: 'fingerprint',
+    expectedTotal: 3,
+    items: [{ id: '1', title: 'One' }, { id: '2', title: 'Two' }],
+    coverage: {
+      complete: false,
+      reason: 'api-missing-hydration',
+      expectedCount: 3,
+      missingIds: ['3'],
+      routeMatches: true,
+    },
+  };
+  const payload = JSON.parse(core.buildHibidPartialExportPayload(result, 'json', { source: 'HiBid' }));
+  assert.equal(payload.audit.complete, false);
+  assert.equal(payload.audit.partial, true);
+  assert.equal(payload.audit.expectedTotal, 3);
+  assert.deepEqual(plain(payload.audit.coverage.missingIds), ['3']);
+  assert.equal(payload.items.length, 2);
+
+  const normalHtml = core.buildPanelHtml({ mode: 'catalog', route: { kind: 'catalog' }, debugEnabled: false });
+  const debugHtml = core.buildPanelHtml({ mode: 'catalog', route: { kind: 'catalog' }, debugEnabled: true });
+  const liveHtml = core.buildPanelHtml({ mode: 'live', route: { kind: 'live' }, debugEnabled: true });
+  assert.match(normalHtml, /id="hibid-catalog-copy-partial"[^>]*hidden/);
+  assert.doesNotMatch(normalHtml, /id="hibid-diagnostic-download"/);
+  assert.match(debugHtml, /id="hibid-diagnostic-download"[^>]*hidden/);
+  assert.match(liveHtml, /id="hibid-catalog-copy-partial"[^>]*hidden/);
+  assert.match(liveHtml, /id="hibid-diagnostic-download"[^>]*hidden/);
+
+  const diagnostic = core.buildHibidDiagnosticBundle({
+    request: {
+      variables: { auctionId: 769123 },
+      headers: { authorization: 'Bearer secret', cookie: 'session=secret' },
+      accountInfo: { token: 'private' },
+    },
+    items: [],
+  });
+  const diagnosticText = JSON.stringify(diagnostic);
+  assert.match(diagnosticText, /auctionId/);
+  assert.doesNotMatch(diagnosticText, /Bearer secret|session=secret|private|authorization|cookie|accountInfo|token/i);
 });

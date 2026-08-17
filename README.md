@@ -2,7 +2,7 @@
 
 Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
 
-Current hosted build: `v0.8.15`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. A newer build remounts over an older panel, rebuilds after same-mode SPA URL changes, and removes the legacy `hibid-bid-assistant-panel` so an old enabled script cannot sit above the current UI. AAR `Search.do?auctionId=...&itemId=...` pages use the single-item export path, while filtered HiBid state over-counts fall back to visible DOM tiles. `v0.8.15` fixes selected HiBid past-auction exports on the real account DOM, where multiple auction headers share one lot grid; the clicked header now scopes extraction to its following tiles only. It retains the filtered HiBid export guards, same-origin paginated DOM pages, selected-auction exports on HiBid past-bids and past-watchlist account pages, and explicit account-route metadata.
+Current hosted build: `v0.8.16`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. Public HiBid catalog, live-catalog, category, and filtered-search exports are API-first: exact event-item IDs are enumerated through HiBid's own search/GraphQL endpoints, hydrated in bounded batches, and copied only when the expected, enumerated, and hydrated ID sets agree exactly. Broad Apollo state and generic lot-tile counts are not accepted as catalog identity. Exhausted requests remain blocked and expose an explicit audited partial export instead of silently widening the result. Personalized account pages retain their dedicated DOM scrapers, including selected-auction exports on past-bids and past-watchlist pages.
 
 ## Install
 
@@ -18,7 +18,7 @@ Tampermonkey updates use that same raw GitHub URL through the script metadata. I
 
 - HiBid catalog/category/watchlist/current-bids pages: copy JSON and resale LLM brief, including OUTBID watchlist and WINNING/OUTBID current bids.
 - HiBid `/account/pastbidsm` and `/account/pastwatchlist`: use the inline `Copy Auction` button beside a selected `View Catalog` row. It copies only that auction group's saved account lots, enriches their lead/category/full descriptions/photos, and never sweeps unrelated account rows.
-- HiBid livecatalog pages: expand/copy live lot JSON and resale LLM brief.
+- HiBid livecatalog pages: copy API-verified open-lot JSON and resale LLM brief.
 - AuctionNinja sale catalog pages: copy sale terms plus lot JSON or resale LLM brief.
 - AuctionNinja category pages such as `/category/electronics?miles=30&zip=07008`: copy the visible product-card JSON or a location-filtered resale LLM brief; safe `View All Items` pages are fetched in the background when available.
 - AuctionNinja followed-items, items-won, and bid-history pages: copy account item JSON or page-specific LLM briefs for watchlist triage, won-item inventory planning, or bid-history review.
@@ -47,6 +47,8 @@ When enabled, the drawer exposes copy/clear debug controls. Logs use the `[Flipp
 `#flipperdebug` enables the same diagnostic layer when Tampermonkey menu commands are unavailable. After reproducing a failure, click `Copy Debug` once and wait for the toast, or use `Download Debug`. The exported log should contain `event:ui.click`, `event:debug.control.handler.enter`, `event:debug-download.*` or `event:debug-export.*`, and `event:debug.control.result`. The debug action always refreshes and reveals the selectable log field. Initialization failures are recorded as `panel.init.error`. It does not record raw typed field values.
 
 When an export is rejected, the current build reports the specific guard reason (for example, incomplete scrape, active-filter mismatch, or wrong route) instead of the generic legacy stale-export message. If another computer still shows the old comma-form error wording, update/reinstall the raw GitHub script there before diagnosing page data.
+
+In debug mode, a failed HiBid API coverage check also exposes `Download HiBid Diagnostic`. The bundle contains route filters, request variables, IDs, page/batch counts, timings, and errors; credentials, cookies, authorization headers, account data, and tokens are stripped. `Copy Verified Partial N/M` is deliberately hidden until retries are exhausted and is invalidated if the page route or filters change.
 
 If Tampermonkey hides the script commands, append `#flipperdebug` to the active page URL and reload. The drawer will expose `Copy Debug` and `Download Debug`; use `Download Debug` or copy the selected text field after reproducing the problem. If clipboard access fails, `Copy Debug` downloads `flipperaddon-debug-*.txt` automatically. Remove the hash and reload to turn the bootstrap mode off.
 
@@ -113,4 +115,4 @@ npm test
 
 ## Browser Verification
 
-The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version matches the hosted build (`0.8.14` at this release), and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. The Chrome audit confirmed that site navigation works but the selected Chrome profile was not executing the hosted script, so Chrome is not counted as verified until the hosted script is reinstalled or updated there from `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
+The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version matches the hosted build (`0.8.16` at this release), and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. After every hosted version bump, update or reinstall the raw script in each browser being tested before treating its result as current evidence.

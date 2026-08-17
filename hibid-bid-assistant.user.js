@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.15
+// @version      0.8.16
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -57,6 +57,7 @@
 // @connect      i.ebayimg.com
 // @connect      vi.vipr.ebaydesc.com
 // @connect      itm.ebaydesc.com
+// @connect      hibid-api.io
 // ==/UserScript==
 
 (function () {
@@ -65,7 +66,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.15';
+  const SCRIPT_VERSION = '0.8.16';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -142,6 +143,11 @@
   const HIBID_DOM_SCRAPE_MAX_STEPS = 500;
   const HIBID_DOM_BOTTOM_SETTLE_MS = 900;
   const HIBID_DOM_BOTTOM_SETTLE_RETRIES = 4;
+  const HIBID_API_PAGE_SIZE = 100;
+  const HIBID_API_CONCURRENCY = 3;
+  const HIBID_API_RETRIES = 3;
+  const HIBID_API_TIMEOUT_MS = 15000;
+  const HIBID_SEARCH_ENDPOINT = 'https://hibid-api.io/sr/main/v1/search/lot';
   const DEBUG_PREFIX = '[FlipperAddon]';
   let DEBUG_EVENT_SEQUENCE = 0;
 
@@ -2390,6 +2396,1141 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     return values.find(value => value !== undefined && value !== null && value !== '');
   }
 
+  const HIBID_LOT_SEARCH_QUERY = `
+    query FlipperAddonLotSearch(
+      $auctionId: Int = null,
+      $pageNumber: Int!,
+      $pageLength: Int!,
+      $category: CategoryId = null,
+      $searchText: String = null,
+      $zip: String = null,
+      $miles: Int = null,
+      $shippingOffered: Boolean = false,
+      $countryName: String = null,
+      $state: String = null,
+      $status: AuctionLotStatus = null,
+      $sortOrder: EventItemSortOrder = null,
+      $filter: AuctionLotFilter = null,
+      $isArchive: Boolean = false,
+      $countAsView: Boolean = false,
+      $hideGoogle: Boolean = false,
+      $eventItemIds: [Int!] = null
+    ) {
+      lotSearch(
+        input: {
+          auctionId: $auctionId,
+          category: $category,
+          searchText: $searchText,
+          zip: $zip,
+          miles: $miles,
+          shippingOffered: $shippingOffered,
+          countryName: $countryName,
+          state: $state,
+          status: $status,
+          sortOrder: $sortOrder,
+          filter: $filter,
+          isArchive: $isArchive,
+          countAsView: $countAsView,
+          hideGoogle: $hideGoogle,
+          eventItemIds: $eventItemIds
+        },
+        pageNumber: $pageNumber,
+        pageLength: $pageLength,
+        sortDirection: DESC
+      ) {
+        pagedResults {
+          pageLength
+          pageNumber
+          totalCount
+          filteredCount
+          results {
+            id
+            itemId
+            lotNumber
+            lead
+            description
+            estimate
+            quantity
+            saleOrder
+            ringNumber
+            shippingOffered
+            pictureCount
+            distanceMiles
+            featuredPicture {
+              description
+              fullSizeLocation
+              hdThumbnailLocation
+              thumbnailLocation
+              width
+              height
+            }
+            pictures {
+              description
+              fullSizeLocation
+              hdThumbnailLocation
+              thumbnailLocation
+              width
+              height
+            }
+            category {
+              id
+              categoryName
+              fullCategory
+              description
+              uRLPath
+            }
+            lotState {
+              bidCount
+              highBid
+              minBid
+              buyerBidStatus
+              buyerHighBid
+              isArchived
+              isClosed
+              isLive
+              isNotYetLive
+              isOnLiveCatalog
+              isWatching
+              priceRealized
+              priceRealizedMessage
+              productStatus
+              productUrl
+              status
+              timeLeft
+              timeLeftSeconds
+              timeLeftTitle
+              watchNotes
+            }
+            auction {
+              id
+              eventName
+              description
+              buyerPremium
+              buyerPremiumRate
+              eventAddress
+              eventCity
+              eventState
+              eventZip
+              eventDateBegin
+              eventDateEnd
+              eventDateInfo
+              checkoutDateInfo
+              previewDateInfo
+              currencyAbbreviation
+              lotCount
+              auctioneer {
+                id
+                name
+                address
+                city
+                state
+                postalCode
+                country
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  function hibidRoutePathInfo(route = {}, loc = (typeof location !== 'undefined' ? location : null)) {
+    const url = urlFromLocationLike(loc);
+    const parts = url.pathname.split('/').filter(Boolean);
+    const lower = parts.map(part => part.toLowerCase());
+    const catalogIndex = lower.findIndex(part => part === 'catalog' || part === 'livecatalog');
+    const lotsIndex = lower.findIndex(part => part === 'lots');
+    const auctionId = catalogIndex >= 0 && /^\d+$/.test(parts[catalogIndex + 1] || '')
+      ? Number(parts[catalogIndex + 1])
+      : null;
+    const categoryId = lotsIndex >= 0 && /^\d+$/.test(parts[lotsIndex + 1] || '')
+      ? Number(parts[lotsIndex + 1])
+      : null;
+    return {
+      url,
+      route,
+      isAuctionCatalog: catalogIndex >= 0 && Number.isFinite(auctionId),
+      auctionId,
+      categoryId,
+      statePrefix: route?.statePrefix || (lotsIndex === 1 ? parts[0] : '') || ''
+    };
+  }
+
+  function hibidBooleanParam(url, key, fallback = false) {
+    const value = String(url.searchParams.get(key) || '').trim().toLowerCase();
+    if (!value) return fallback;
+    return value === 'true' || value === '1' || value === 'yes';
+  }
+
+  function hibidIntegerParam(url, key, fallback = null) {
+    const raw = url.searchParams.get(key);
+    if (raw === null || String(raw).trim() === '') return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) ? Math.trunc(value) : fallback;
+  }
+
+  function hibidOptionalNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function hibidCountryCode(value) {
+    const text = String(value || '').trim();
+    if (!text) return null;
+    if (/^(?:united states(?: of america)?|usa|us)$/i.test(text)) return 'USA';
+    if (/^(?:canada|can)$/i.test(text)) return 'CAN';
+    return text;
+  }
+
+  function hibidStatusFilters(url, isAuctionCatalog = false) {
+    const statuses = url.searchParams.getAll('status')
+      .flatMap(value => String(value || '').split(','))
+      .map(value => value.trim().toUpperCase())
+      .filter(Boolean);
+    return Array.from(new Set(statuses.length ? statuses : (isAuctionCatalog ? ['ALL'] : ['OPEN', 'UPCOMING'])));
+  }
+
+  function hibidPortalAuctioneerIds(value) {
+    const values = Array.isArray(value) ? value : String(value || '').split(',');
+    return Array.from(new Set(values
+      .map(item => String(item || '').trim())
+      .filter(item => /^\d+$/.test(item))));
+  }
+
+  function extractHibidPortalSearchContext(root, route = {}) {
+    if (!route?.statePrefix) return { portalAuctioneerIds: [], siteType: 0 };
+    let state = null;
+    try { state = extractHibidStateFromDocument(root); } catch { state = null; }
+    if (!state || typeof state !== 'object') return { portalAuctioneerIds: [], siteType: 2 };
+    const queue = [{ value: state, depth: 0 }];
+    const visited = new Set();
+    let inspected = 0;
+    while (queue.length && inspected < 10000) {
+      const { value, depth } = queue.shift();
+      if (!value || typeof value !== 'object' || visited.has(value)) continue;
+      visited.add(value);
+      inspected += 1;
+      for (const [key, child] of Object.entries(value)) {
+        if (/^portalChildren$/i.test(key)) {
+          const portalAuctioneerIds = hibidPortalAuctioneerIds(child);
+          if (portalAuctioneerIds.length) return { portalAuctioneerIds, siteType: 2 };
+        }
+        if (depth < 6 && child && typeof child === 'object') queue.push({ value: child, depth: depth + 1 });
+      }
+    }
+    return { portalAuctioneerIds: [], siteType: 2 };
+  }
+
+  function buildHibidSearchRequest(route = {}, loc = (typeof location !== 'undefined' ? location : null), page = 1, size = HIBID_API_PAGE_SIZE) {
+    const info = hibidRoutePathInfo(route, loc);
+    const { url } = info;
+    const zip = String(url.searchParams.get('zip') || '').trim();
+    const miles = hibidIntegerParam(url, 'miles', zip ? 50 : null);
+    const searchText = String(url.searchParams.get('q') || '').trim();
+    const statuses = route?.kind === 'live' && !url.searchParams.getAll('status').length
+      ? ['OPEN']
+      : hibidStatusFilters(url, info.isAuctionCatalog);
+    const sortOrder = String(url.searchParams.get('s') || (info.isAuctionCatalog ? 'LOT_NUMBER' : 'NO_ORDER'))
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9_]/g, '_');
+    return {
+      query: searchText || null,
+      options: {
+        auctionId: info.auctionId,
+        auctioneerId: Array.isArray(route?.portalAuctioneerIds) && route.portalAuctioneerIds.length
+          ? route.portalAuctioneerIds
+          : null,
+        categoryId: info.categoryId,
+        country: hibidCountryCode(url.searchParams.get('countryname')),
+        location: zip ? { zipcode: zip, radius: Number.isFinite(miles) ? miles : 50 } : null,
+        portalLocation: null,
+        lotType: [0],
+        maxBid: null,
+        minBid: null,
+        page: Math.max(1, Number(page) || 1),
+        shipping: hibidBooleanParam(url, 'shippingoffered', false),
+        size: Math.max(1, Math.min(100, Number(size) || HIBID_API_PAGE_SIZE)),
+        sortOrder: sortOrder || 'TIME_LEFT',
+        state: null,
+        status: statuses,
+        siteType: Number.isFinite(Number(route?.siteType)) ? Number(route.siteType) : 0
+      }
+    };
+  }
+
+  function buildHibidGraphqlVariables(route = {}, loc = (typeof location !== 'undefined' ? location : null), page = 1, options = {}) {
+    const info = hibidRoutePathInfo(route, loc);
+    const { url } = info;
+    const eventItemIds = Array.isArray(options.eventItemIds)
+      ? options.eventItemIds.map(value => Number(value)).filter(Number.isFinite)
+      : null;
+    const statuses = route?.kind === 'live' && !url.searchParams.getAll('status').length
+      ? ['OPEN']
+      : hibidStatusFilters(url, info.isAuctionCatalog);
+    const zip = String(url.searchParams.get('zip') || '').trim() || null;
+    const countryName = String(url.searchParams.get('countryname') || '').trim() || null;
+    const filterValue = String(url.searchParams.get('filter') || '').trim().toUpperCase();
+    const sortOrder = String(url.searchParams.get('s') || (info.isAuctionCatalog ? 'LOT_NUMBER' : 'NO_ORDER'))
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9_]/g, '_');
+    const hydrateByIds = Boolean(eventItemIds?.length);
+    return {
+      auctionId: hydrateByIds ? null : info.auctionId,
+      pageNumber: Math.max(1, Number(page) || 1),
+      pageLength: Math.max(1, Math.min(HIBID_API_PAGE_SIZE, Number(options.pageLength) || HIBID_API_PAGE_SIZE)),
+      category: hydrateByIds ? null : info.categoryId,
+      searchText: hydrateByIds ? null : (String(url.searchParams.get('q') || '').trim() || null),
+      zip: hydrateByIds ? null : zip,
+      miles: hydrateByIds ? null : hibidIntegerParam(url, 'miles', null),
+      shippingOffered: hydrateByIds ? false : hibidBooleanParam(url, 'shippingoffered', false),
+      countryName: hydrateByIds ? null : countryName,
+      state: null,
+      status: hydrateByIds ? 'ALL' : (statuses.length === 1 ? statuses[0] : 'ALL'),
+      sortOrder: sortOrder || 'LOT_NUMBER',
+      filter: hydrateByIds ? null : (filterValue && filterValue !== 'ALL' ? filterValue : null),
+      isArchive: false,
+      countAsView: false,
+      hideGoogle: false,
+      eventItemIds: hydrateByIds ? eventItemIds : null
+    };
+  }
+
+  function getHibidRouteFingerprint(route = {}, loc = (typeof location !== 'undefined' ? location : null)) {
+    const info = hibidRoutePathInfo(route, loc);
+    const ignored = new Set(['apage']);
+    const params = Array.from(info.url.searchParams.entries())
+      .filter(([key]) => !ignored.has(key.toLowerCase()))
+      .map(([key, value]) => [key.toLowerCase(), String(value)])
+      .sort(([aKey, aValue], [bKey, bValue]) => aKey.localeCompare(bKey) || aValue.localeCompare(bValue));
+    return JSON.stringify({
+      host: info.url.hostname.toLowerCase(),
+      path: info.url.pathname.replace(/\/+$/, '') || '/',
+      kind: route?.kind || '',
+      auctionId: info.auctionId,
+      categoryId: info.categoryId,
+      filters: params
+    });
+  }
+
+  function hibidDescriptionText(value) {
+    return decodeHtml(String(value || '')
+      .replace(/<\s*br\s*\/?>/gi, '\n')
+      .replace(/<\/(?:p|div|li|tr|h\d)>/gi, '\n')
+      .replace(/<li\b[^>]*>/gi, '- ')
+      .replace(/<[^>]+>/g, ' '))
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n[ \t]+/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
+  }
+
+  function hibidPictureUrl(picture) {
+    return String(firstDefined(
+      picture?.fullSizeLocation,
+      picture?.hdThumbnailLocation,
+      picture?.thumbnailLocation,
+      picture?.url,
+      picture?.src,
+      ''
+    ) || '').trim();
+  }
+
+  function normalizeHibidGraphqlLot(lot, context = {}) {
+    if (!lot || typeof lot !== 'object') return null;
+    const id = String(firstDefined(lot.id, lot.eventItemId, lot.itemId, '') || '').trim();
+    if (!id) return null;
+    const lotState = lot.lotState || {};
+    const auction = lot.auction || {};
+    const auctioneer = auction.auctioneer || {};
+    const descriptionHtml = String(lot.description || '').trim();
+    const description = hibidDescriptionText(descriptionHtml);
+    const pictureRecords = [lot.featuredPicture, ...(Array.isArray(lot.pictures) ? lot.pictures : [])].filter(Boolean);
+    const images = Array.from(new Set(pictureRecords.map(hibidPictureUrl).filter(Boolean)));
+    const categoryRecords = (Array.isArray(lot.category) ? lot.category : [lot.category]).filter(Boolean);
+    const categoryLabels = Array.from(new Set(categoryRecords
+      .map(category => stateText(firstDefined(category?.fullCategory, category?.categoryName, category?.name, '')))
+      .filter(Boolean)));
+    const highBidAmount = amountFromState(firstDefined(lotState.highBid, lotState.priceRealized, lot.bidAmount));
+    const nextBidAmount = amountFromState(lotState.minBid);
+    const bidCountNumber = Number(lotState.bidCount);
+    const status = stateText(firstDefined(lotState.status, lotState.productStatus, lotState.priceRealizedMessage, ''));
+    const lotNumber = String(firstDefined(lot.lotNumber, lot.saleOrder, id) || '').trim();
+    const title = stateText(firstDefined(lot.lead, lot.title, lot.name, lotNumber ? `Lot ${lotNumber}` : ''));
+    const productUrl = String(lotState.productUrl || '').trim();
+    const url = productUrl
+      ? absoluteUrl(productUrl, context.url)
+      : normalizeLotUrl({ id, itemId: lot.itemId, lotNumber }, context);
+    const locationText = [auction.eventAddress, auction.eventCity, auction.eventState, auction.eventZip]
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .join(', ')
+      .replace(/, ([A-Z]{2}), /, ', $1 ');
+    return {
+      source: 'hibid-api',
+      pageKind: context.pageKind || context.route?.kind || 'catalog',
+      id,
+      itemId: String(lot.itemId || ''),
+      lot: lotNumber,
+      lotNumber,
+      title,
+      lead: title,
+      url,
+      image: images[0] || '',
+      images,
+      pictureCount: Number(lot.pictureCount) || images.length,
+      description,
+      descriptionHtml,
+      category: categoryLabels[0] || '',
+      categories: categoryLabels,
+      categoryId: String(categoryRecords[0]?.id || ''),
+      estimate: stateText(lot.estimate),
+      highBid: Number.isFinite(highBidAmount) ? `High Bid: ${formatUsd(highBidAmount)}` : '',
+      highBidAmount,
+      currentPrice: highBidAmount,
+      currentBid: highBidAmount,
+      nextBid: Number.isFinite(nextBidAmount) ? `Bid ${formatUsd(nextBidAmount)}` : '',
+      nextBidAmount,
+      bidCount: Number.isFinite(bidCountNumber) ? `${bidCountNumber} ${bidCountNumber === 1 ? 'Bid' : 'Bids'}` : '',
+      bidCountNumber: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      status,
+      userBidStatus: extractUserBidStatus(`${status} ${lotState.buyerBidStatus || ''}`),
+      timeLeft: stateText(firstDefined(lotState.timeLeft, lotState.timeLeftTitle, '')),
+      timeLeftSeconds: Number.isFinite(Number(lotState.timeLeftSeconds)) ? Number(lotState.timeLeftSeconds) : null,
+      watched: Boolean(lotState.isWatching),
+      watchNotes: stateText(lotState.watchNotes),
+      quantity: Number.isFinite(Number(lot.quantity)) ? Number(lot.quantity) : null,
+      shippingOffered: Boolean(lot.shippingOffered),
+      distanceMiles: Number.isFinite(Number(lot.distanceMiles)) ? Number(lot.distanceMiles) : null,
+      auctionId: String(auction.id || context.auctionId || ''),
+      auctionTitle: stateText(firstDefined(auction.eventName, context.auctionTitle, '')),
+      auctionDescription: hibidDescriptionText(auction.description || ''),
+      auctioneer: stateText(auctioneer.name),
+      buyerPremium: stateText(auction.buyerPremium),
+      buyerPremiumRate: Number.isFinite(Number(auction.buyerPremiumRate)) ? Number(auction.buyerPremiumRate) : null,
+      location: locationText,
+      eventDateInfo: stateText(firstDefined(auction.eventDateInfo, auction.eventDateEnd, '')),
+      rawText: [lotNumber ? `Lot ${lotNumber}` : '', title, description, status].filter(Boolean).join(' | ').slice(0, 6000)
+    };
+  }
+
+  function hibidApiErrorText(error) {
+    return String(error?.message || error || 'Unknown HiBid API error').replace(/\s+/g, ' ').trim().slice(0, 500);
+  }
+
+  function hibidGmJsonRequest(url, body, timeoutMs = HIBID_API_TIMEOUT_MS) {
+    if (typeof GM_xmlhttpRequest !== 'function') return Promise.reject(new Error('GM_xmlhttpRequest unavailable'));
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url,
+        headers: { 'Content-Type': 'application/json' },
+        data: JSON.stringify(body),
+        timeout: timeoutMs,
+        anonymous: false,
+        onload(response) {
+          if (response.status < 200 || response.status >= 300) {
+            reject(Object.assign(new Error(`HTTP ${response.status}`), { status: response.status }));
+            return;
+          }
+          try {
+            resolve(JSON.parse(response.responseText || '{}'));
+          } catch (error) {
+            reject(new Error(`Invalid JSON: ${error.message}`));
+          }
+        },
+        ontimeout() { reject(new Error(`Request timed out after ${timeoutMs}ms`)); },
+        onerror(error) { reject(new Error(error?.error || error?.message || 'GM request failed')); }
+      });
+    });
+  }
+
+  async function requestHibidJson(url, body, options = {}) {
+    const fetchImpl = options.fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
+    const retries = Math.max(1, Number(options.retries) || HIBID_API_RETRIES);
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || HIBID_API_TIMEOUT_MS);
+    const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? 300));
+    const shouldStop = options.shouldStop || (() => false);
+    const errors = [];
+    const requestStartedAt = Date.now();
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      if (shouldStop()) throw new Error('HiBid API request stopped');
+      const attemptStartedAt = Date.now();
+      let timeoutId = null;
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      try {
+        debugEvent('hibid.api.request.start', {
+          endpoint: debugHref(url),
+          operation: body?.operationName || (url.includes('/search/lot') ? 'LotIndex' : 'Unknown'),
+          attempt
+        });
+        let json;
+        if (fetchImpl) {
+          try {
+            if (controller) timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            const response = await fetchImpl(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: url.startsWith('https://hibid-api.io/') ? 'omit' : 'include',
+              cache: 'no-store',
+              body: JSON.stringify(body),
+              ...(controller ? { signal: controller.signal } : {})
+            });
+            if (!response?.ok) throw Object.assign(new Error(`HTTP ${response?.status || 0}`), { status: Number(response?.status) || 0 });
+            json = await response.json();
+          } catch (fetchError) {
+            if (!url.startsWith('https://hibid-api.io/') || typeof GM_xmlhttpRequest !== 'function') throw fetchError;
+            debugEvent('hibid.api.request.transport-fallback', {
+              endpoint: debugHref(url),
+              attempt,
+              from: 'fetch',
+              to: 'GM_xmlhttpRequest',
+              error: hibidApiErrorText(fetchError)
+            });
+            json = await hibidGmJsonRequest(url, body, timeoutMs);
+          }
+        } else {
+          json = await hibidGmJsonRequest(url, body, timeoutMs);
+        }
+        if (Array.isArray(json?.errors) && json.errors.length) {
+          throw Object.assign(new Error(json.errors.map(error => error?.message || String(error)).join('; ')), { permanent: true });
+        }
+        debugEvent('hibid.api.request.success', {
+          endpoint: debugHref(url),
+          operation: body?.operationName || (url.includes('/search/lot') ? 'LotIndex' : 'Unknown'),
+          attempt
+        });
+        return { json, attempts: attempt, errors, durationMs: Date.now() - requestStartedAt };
+      } catch (error) {
+        const message = hibidApiErrorText(error);
+        errors.push({ attempt, message, durationMs: Date.now() - attemptStartedAt });
+        debugEvent('hibid.api.request.failure', {
+          endpoint: debugHref(url),
+          operation: body?.operationName || (url.includes('/search/lot') ? 'LotIndex' : 'Unknown'),
+          attempt,
+          error: message
+        });
+        const status = Number(error?.status);
+        const permanentClientError = Number.isFinite(status) && status >= 400 && status < 500 && ![408, 429].includes(status);
+        if (attempt >= retries || error?.permanent || permanentClientError) {
+          throw Object.assign(new Error(message), { attempts: attempt, errors, status: status || undefined });
+        }
+        if (retryDelayMs) await wait(retryDelayMs * attempt * attempt);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    }
+    throw new Error('HiBid API request failed');
+  }
+
+  async function mapHibidConcurrent(values, limit, worker, shouldStop = () => false) {
+    const items = Array.from(values || []);
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    const count = Math.max(1, Math.min(Number(limit) || 1, items.length || 1));
+    async function run() {
+      while (nextIndex < items.length) {
+        if (shouldStop()) return;
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await worker(items[index], index);
+      }
+    }
+    await Promise.all(Array.from({ length: count }, () => run()));
+    return results;
+  }
+
+  async function retryHibidShortPage(initialResult, expectedCount, fetchAgain, options = {}) {
+    const attempts = Math.max(1, Number(options.coverageAttempts) || HIBID_API_RETRIES);
+    const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? 300));
+    const shouldStop = options.shouldStop || (() => false);
+    const countOf = options.countOf || (result => result?.results?.length || 0);
+    const label = options.label || 'page';
+    let result = initialResult;
+    let coverageAttempts = 1;
+    const observedTotals = [Number(firstDefined(result?.filteredCount, result?.totalCount))].filter(Number.isFinite);
+    while (!shouldStop() && countOf(result) !== expectedCount && coverageAttempts < attempts) {
+      coverageAttempts += 1;
+      debugEvent('hibid.api.retry', {
+        reason: 'short-page',
+        label,
+        expected: expectedCount,
+        returned: countOf(result),
+        attempt: coverageAttempts
+      });
+      if (retryDelayMs) await wait(retryDelayMs * coverageAttempts);
+      result = await fetchAgain();
+      const observedTotal = Number(firstDefined(result?.filteredCount, result?.totalCount));
+      if (Number.isFinite(observedTotal)) observedTotals.push(observedTotal);
+    }
+    return {
+      result,
+      coverageAttempts,
+      observedTotals,
+      complete: countOf(result) === expectedCount
+    };
+  }
+
+  async function fetchHibidGraphqlPage(route, loc, page, options = {}) {
+    const url = urlFromLocationLike(loc);
+    const variables = buildHibidGraphqlVariables(route, url, page, options);
+    const endpoint = new URL('/graphql', url.origin).href;
+    const response = await requestHibidJson(endpoint, {
+      operationName: 'FlipperAddonLotSearch',
+      variables,
+      query: HIBID_LOT_SEARCH_QUERY
+    }, options);
+    const paged = response.json?.data?.lotSearch?.pagedResults;
+    if (!paged || !Array.isArray(paged.results)) throw new Error('HiBid GraphQL response did not contain lotSearch results');
+    return {
+      page: Number(paged.pageNumber) || Number(page) || 1,
+      pageLength: Number(paged.pageLength) || variables.pageLength,
+      totalCount: hibidOptionalNumber(paged.totalCount),
+      filteredCount: hibidOptionalNumber(paged.filteredCount),
+      results: paged.results,
+      attempts: response.attempts,
+      durationMs: response.durationMs,
+      variables
+    };
+  }
+
+  async function fetchHibidSearchPage(route, loc, page, options = {}) {
+    const body = buildHibidSearchRequest(route, loc, page, options.pageSize || HIBID_API_PAGE_SIZE);
+    const response = await requestHibidJson(HIBID_SEARCH_ENDPOINT, body, options);
+    const data = response.json?.data;
+    if (!data || !Array.isArray(data.lots)) throw new Error('HiBid search response did not contain lot IDs');
+    const noExactMatches = Boolean(data.noExactMatches) && Boolean(body.query);
+    return {
+      page: Number(data.pageNumber) || Number(page) || 1,
+      pageSize: Number(data.pageSize) || body.options.size,
+      totalCount: hibidOptionalNumber(data.totalCount),
+      filteredCount: hibidOptionalNumber(data.filteredCount),
+      totalPages: hibidOptionalNumber(data.totalPages),
+      ids: noExactMatches ? [] : data.lots.map(lot => String(lot?.id || '')).filter(Boolean),
+      noExactMatches,
+      attempts: response.attempts,
+      durationMs: response.durationMs,
+      request: body
+    };
+  }
+
+  async function enumerateHibidLotIds(route = {}, loc = (typeof location !== 'undefined' ? location : null), options = {}) {
+    const info = hibidRoutePathInfo(route, loc);
+    const onProgress = options.onProgress || (() => {});
+    const shouldStop = options.shouldStop || (() => false);
+    const failures = [];
+    const pageStats = [];
+    const directGraphql = info.isAuctionCatalog && hibidStatusFilters(info.url, true).length <= 1;
+    debugEvent('hibid.api.enumerate.start', {
+      strategy: directGraphql ? 'graphql-auction' : 'search-index',
+      auctionId: info.auctionId,
+      categoryId: info.categoryId,
+      fingerprint: getHibidRouteFingerprint(route, info.url)
+    });
+
+    try {
+      if (directGraphql) {
+        let first = await fetchHibidGraphqlPage(route, info.url, 1, options);
+        const expectedTotal = Number.isFinite(first.filteredCount) ? first.filteredCount : first.totalCount;
+        const totalPages = expectedTotal > 0 ? Math.ceil(expectedTotal / HIBID_API_PAGE_SIZE) : 1;
+        const firstExpected = Math.min(HIBID_API_PAGE_SIZE, Math.max(0, expectedTotal));
+        const firstCoverage = await retryHibidShortPage(first, firstExpected, () => fetchHibidGraphqlPage(route, info.url, 1, options), {
+          ...options,
+          label: 'GraphQL page 1'
+        });
+        first = firstCoverage.result;
+        first.coverageAttempts = firstCoverage.coverageAttempts;
+        first.observedTotals = firstCoverage.observedTotals;
+        if (!firstCoverage.complete) {
+          failures.push({ page: 1, error: `Short GraphQL page after retries (${first.results.length}/${firstExpected})` });
+        }
+        const remaining = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2);
+        onProgress(`Reading HiBid API... ${first.results.length}/${expectedTotal || 0}`);
+        const rest = await mapHibidConcurrent(remaining, options.concurrency || HIBID_API_CONCURRENCY, async page => {
+          try {
+            const expectedOnPage = Math.max(0, Math.min(HIBID_API_PAGE_SIZE, expectedTotal - ((page - 1) * HIBID_API_PAGE_SIZE)));
+            const initial = await fetchHibidGraphqlPage(route, info.url, page, options);
+            const covered = await retryHibidShortPage(initial, expectedOnPage, () => fetchHibidGraphqlPage(route, info.url, page, options), {
+              ...options,
+              label: `GraphQL page ${page}`
+            });
+            const result = covered.result;
+            result.coverageAttempts = covered.coverageAttempts;
+            result.observedTotals = covered.observedTotals;
+            if (!covered.complete) {
+              failures.push({ page, error: `Short GraphQL page after retries (${result.results.length}/${expectedOnPage})` });
+            }
+            onProgress(`Reading HiBid API page ${page}/${totalPages}...`);
+            return result;
+          } catch (error) {
+            failures.push({ page, error: hibidApiErrorText(error) });
+            return null;
+          }
+        }, shouldStop);
+        const pages = [first, ...rest.filter(Boolean)].sort((a, b) => a.page - b.page);
+        const rawLots = pages.flatMap(page => page.results);
+        pages.forEach(page => pageStats.push({
+          page: page.page,
+          returned: page.results.length,
+          reportedTotal: page.filteredCount,
+          attempts: page.attempts,
+          durationMs: page.durationMs,
+          coverageAttempts: page.coverageAttempts || 1,
+          observedTotals: page.observedTotals || []
+        }));
+        const totalDrift = pageStats.filter(stat => (
+          (Number.isFinite(stat.reportedTotal) && stat.reportedTotal !== expectedTotal)
+          || stat.observedTotals.some(total => total !== expectedTotal)
+        ));
+        const ids = rawLots.map(lot => String(lot?.id || '')).filter(Boolean);
+        debugEvent('hibid.api.enumerate.finish', {
+          strategy: 'graphql-auction', expectedTotal, ids: ids.length, uniqueIds: new Set(ids).size, failures
+        });
+        return {
+          source: 'hibid-graphql-api',
+          strategy: 'graphql-auction',
+          request: { endpoint: '/graphql', operationName: 'FlipperAddonLotSearch', variables: first.variables },
+          expectedTotal,
+          ids,
+          rawLots,
+          pageStats,
+          totalDrift,
+          failedPages: failures,
+          apiAvailable: true,
+          stopped: shouldStop()
+        };
+      }
+
+      let first = await fetchHibidSearchPage(route, info.url, 1, options);
+      const expectedTotal = first.noExactMatches
+        ? 0
+        : (Number.isFinite(first.filteredCount) ? first.filteredCount : first.totalCount);
+      const totalPages = Number.isFinite(first.totalPages)
+        ? first.totalPages
+        : (expectedTotal > 0 ? Math.ceil(expectedTotal / first.pageSize) : 1);
+      const firstExpected = Math.min(first.pageSize, Math.max(0, expectedTotal));
+      const firstCoverage = await retryHibidShortPage(first, firstExpected, () => fetchHibidSearchPage(route, info.url, 1, options), {
+        ...options,
+        countOf: result => result?.ids?.length || 0,
+        label: 'search page 1'
+      });
+      first = firstCoverage.result;
+      first.coverageAttempts = firstCoverage.coverageAttempts;
+      first.observedTotals = firstCoverage.observedTotals;
+      if (!firstCoverage.complete) {
+        failures.push({ page: 1, error: `Short search page after retries (${first.ids.length}/${firstExpected})` });
+      }
+      const remaining = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2);
+      onProgress(`Enumerating HiBid lots... ${first.ids.length}/${expectedTotal || 0}`);
+      const rest = await mapHibidConcurrent(remaining, options.concurrency || HIBID_API_CONCURRENCY, async page => {
+        try {
+          const expectedOnPage = Math.max(0, Math.min(first.pageSize, expectedTotal - ((page - 1) * first.pageSize)));
+          const initial = await fetchHibidSearchPage(route, info.url, page, options);
+          const covered = await retryHibidShortPage(initial, expectedOnPage, () => fetchHibidSearchPage(route, info.url, page, options), {
+            ...options,
+            countOf: result => result?.ids?.length || 0,
+            label: `search page ${page}`
+          });
+          const result = covered.result;
+          result.coverageAttempts = covered.coverageAttempts;
+          result.observedTotals = covered.observedTotals;
+          if (!covered.complete) {
+            failures.push({ page, error: `Short search page after retries (${result.ids.length}/${expectedOnPage})` });
+          }
+          onProgress(`Enumerating HiBid page ${page}/${totalPages}...`);
+          return result;
+        } catch (error) {
+          failures.push({ page, error: hibidApiErrorText(error) });
+          return null;
+        }
+      }, shouldStop);
+      const pages = [first, ...rest.filter(Boolean)].sort((a, b) => a.page - b.page);
+      const ids = pages.flatMap(page => page.ids);
+      pages.forEach(page => pageStats.push({
+        page: page.page,
+        returned: page.ids.length,
+        reportedTotal: page.filteredCount,
+        attempts: page.attempts,
+        durationMs: page.durationMs,
+        coverageAttempts: page.coverageAttempts || 1,
+        observedTotals: page.observedTotals || []
+      }));
+      const totalDrift = pageStats.filter(stat => (
+        (Number.isFinite(stat.reportedTotal) && stat.reportedTotal !== expectedTotal)
+        || stat.observedTotals.some(total => total !== expectedTotal)
+      ));
+      debugEvent('hibid.api.enumerate.finish', {
+        strategy: 'search-index', expectedTotal, ids: ids.length, uniqueIds: new Set(ids).size, failures
+      });
+      return {
+        source: 'hibid-search-api',
+        strategy: 'search-index',
+        expectedTotal,
+        ids,
+        rawLots: [],
+        pageStats,
+        totalDrift,
+        failedPages: failures,
+        request: first.request,
+        noExactMatches: first.noExactMatches,
+        apiAvailable: true,
+        stopped: shouldStop()
+      };
+    } catch (error) {
+      debugEvent('hibid.api.enumerate.error', {
+        strategy: directGraphql ? 'graphql-auction' : 'search-index',
+        error: hibidApiErrorText(error)
+      });
+      return {
+        source: directGraphql ? 'hibid-graphql-api' : 'hibid-search-api',
+        strategy: directGraphql ? 'graphql-auction' : 'search-index',
+        expectedTotal: hibidOptionalNumber(options.visibleExpectedTotal),
+        ids: [],
+        rawLots: [],
+        pageStats,
+        totalDrift: [],
+        failedPages: [{ page: 1, error: hibidApiErrorText(error) }],
+        apiAvailable: false,
+        stopped: shouldStop()
+      };
+    }
+  }
+
+  async function hydrateHibidLots(ids = [], route = {}, loc = (typeof location !== 'undefined' ? location : null), options = {}) {
+    const orderedIds = ids.map(value => String(value || '')).filter(Boolean);
+    const shouldStop = options.shouldStop || (() => false);
+    const onProgress = options.onProgress || (() => {});
+    const byId = new Map();
+    (options.rawLots || []).forEach(lot => {
+      const normalized = normalizeHibidGraphqlLot(lot, {
+        url: urlFromLocationLike(loc).href,
+        route,
+        pageKind: route?.kind || 'catalog',
+        auctionId: hibidRoutePathInfo(route, loc).auctionId
+      });
+      if (normalized?.id) byId.set(normalized.id, normalized);
+    });
+    const missing = orderedIds.filter(id => !byId.has(id));
+    const chunks = [];
+    for (let index = 0; index < missing.length; index += HIBID_API_PAGE_SIZE) {
+      chunks.push(missing.slice(index, index + HIBID_API_PAGE_SIZE));
+    }
+    const failedBatches = [];
+    const batchStats = [];
+    let completed = 0;
+    await mapHibidConcurrent(chunks, options.concurrency || HIBID_API_CONCURRENCY, async (chunk, index) => {
+      if (shouldStop()) return null;
+      let pendingIds = chunk.slice();
+      let rounds = 0;
+      let transportAttempts = 0;
+      let durationMs = 0;
+      try {
+        const coverageAttempts = Math.max(1, Number(options.coverageAttempts) || HIBID_API_RETRIES);
+        while (pendingIds.length && rounds < coverageAttempts && !shouldStop()) {
+          rounds += 1;
+          const requestedIds = pendingIds.slice();
+          const page = await fetchHibidGraphqlPage(route, loc, 1, {
+            ...options,
+            eventItemIds: requestedIds,
+            pageLength: requestedIds.length
+          });
+          transportAttempts += Number(page.attempts) || 1;
+          durationMs += Number(page.durationMs) || 0;
+          page.results.forEach(rawLot => {
+            const normalized = normalizeHibidGraphqlLot(rawLot, {
+              url: urlFromLocationLike(loc).href,
+              route,
+              pageKind: route?.kind || 'catalog'
+            });
+            if (normalized?.id) byId.set(normalized.id, normalized);
+          });
+          pendingIds = chunk.filter(id => !byId.has(id));
+          if (pendingIds.length && rounds < coverageAttempts) {
+            debugEvent('hibid.api.retry', {
+              reason: 'missing-hydration-ids',
+              batch: index + 1,
+              missing: pendingIds.length,
+              attempt: rounds + 1
+            });
+            const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? 300));
+            if (retryDelayMs) await wait(retryDelayMs * (rounds + 1));
+          }
+        }
+        const hydratedInBatch = chunk.length - pendingIds.length;
+        completed += hydratedInBatch;
+        batchStats.push({
+          batch: index + 1,
+          requested: chunk.length,
+          returned: hydratedInBatch,
+          coverageAttempts: rounds,
+          transportAttempts,
+          durationMs
+        });
+        onProgress(`Loading HiBid details... ${Math.min(orderedIds.length, byId.size)}/${orderedIds.length}`);
+        debugEvent('hibid.api.hydrate.batch', {
+          batch: index + 1,
+          requested: chunk.length,
+          returned: hydratedInBatch,
+          missing: pendingIds.length,
+          coverageAttempts: rounds,
+          completed
+        });
+        if (pendingIds.length) {
+          failedBatches.push({
+            batch: index + 1,
+            ids: pendingIds,
+            error: `Missing ${pendingIds.length} hydration record(s) after ${rounds} attempt(s)`
+          });
+        }
+        return { batch: index + 1, missingIds: pendingIds };
+      } catch (error) {
+        failedBatches.push({ batch: index + 1, ids: pendingIds, error: hibidApiErrorText(error) });
+        debugEvent('hibid.api.hydrate.failure', {
+          batch: index + 1,
+          requested: pendingIds.length,
+          error: hibidApiErrorText(error)
+        });
+        return null;
+      }
+    }, shouldStop);
+    return {
+      items: orderedIds.map(id => byId.get(id)).filter(Boolean),
+      hydratedIds: Array.from(byId.keys()),
+      failedBatches,
+      batchStats: batchStats.sort((a, b) => a.batch - b.batch),
+      stopped: shouldStop()
+    };
+  }
+
+  function validateHibidApiCoverage(input = {}) {
+    const enumerated = (input.enumeratedIds || []).map(value => String(value || '')).filter(Boolean);
+    const hydrated = (input.hydratedItems || []).map(item => String(item?.id || '')).filter(Boolean);
+    const enumeratedSet = new Set(enumerated);
+    const hydratedSet = new Set(hydrated);
+    const duplicateIds = Array.from(new Set(enumerated.filter((id, index) => enumerated.indexOf(id) !== index)));
+    const missingIds = Array.from(enumeratedSet).filter(id => !hydratedSet.has(id));
+    const unexpectedIds = Array.from(hydratedSet).filter(id => !enumeratedSet.has(id));
+    const expectedRaw = input.expectedTotal;
+    const expectedTotal = Number(expectedRaw);
+    const hasExpected = expectedRaw !== null && expectedRaw !== undefined && expectedRaw !== ''
+      && Number.isFinite(expectedTotal) && expectedTotal >= 0;
+    const visibleExpectedRaw = input.visibleExpectedTotal;
+    const visibleExpectedTotal = Number(visibleExpectedRaw);
+    const hasVisibleExpected = visibleExpectedRaw !== null && visibleExpectedRaw !== undefined && visibleExpectedRaw !== ''
+      && Number.isFinite(visibleExpectedTotal) && visibleExpectedTotal >= 0;
+    const visibleTotalMatches = !input.requireVisibleTotalMatch || !hasVisibleExpected || visibleExpectedTotal === expectedTotal;
+    const routeMatches = !input.startFingerprint || !input.endFingerprint || input.startFingerprint === input.endFingerprint;
+    const failedPages = Array.isArray(input.failedPages) ? input.failedPages : [];
+    const failedBatches = Array.isArray(input.failedBatches) ? input.failedBatches : [];
+    const totalDrift = Array.isArray(input.totalDrift) ? input.totalDrift : [];
+    const complete = hasExpected
+      && enumeratedSet.size === expectedTotal
+      && hydratedSet.size === expectedTotal
+      && duplicateIds.length === 0
+      && missingIds.length === 0
+      && unexpectedIds.length === 0
+      && failedPages.length === 0
+      && failedBatches.length === 0
+      && totalDrift.length === 0
+      && visibleTotalMatches
+      && routeMatches
+      && !input.stopped;
+    let reason = 'complete';
+    if (!routeMatches) reason = 'route-fingerprint-changed';
+    else if (input.stopped) reason = 'user-stop';
+    else if (failedPages.length) reason = 'api-page-failure';
+    else if (failedBatches.length) reason = 'api-hydration-failure';
+    else if (totalDrift.length) reason = 'api-total-drift';
+    else if (!visibleTotalMatches) reason = 'api-visible-total-mismatch';
+    else if (!hasExpected) reason = 'api-total-missing';
+    else if (duplicateIds.length) reason = 'api-duplicate-ids';
+    else if (enumeratedSet.size !== expectedTotal) reason = 'api-enumeration-count-mismatch';
+    else if (missingIds.length) reason = 'api-missing-hydration';
+    else if (unexpectedIds.length) reason = 'api-unexpected-hydration';
+    else if (hydratedSet.size !== expectedTotal) reason = 'api-hydration-count-mismatch';
+    return {
+      complete,
+      reason,
+      expectedCount: hasExpected ? expectedTotal : null,
+      enumeratedCount: enumerated.length,
+      uniqueEnumeratedCount: enumeratedSet.size,
+      hydratedCount: hydrated.length,
+      uniqueHydratedCount: hydratedSet.size,
+      duplicateIds,
+      missingIds,
+      unexpectedIds,
+      failedPages,
+      failedBatches,
+      totalDrift,
+      visibleExpectedCount: hasVisibleExpected ? visibleExpectedTotal : null,
+      visibleTotalMatches,
+      routeMatches,
+      startFingerprint: input.startFingerprint || '',
+      endFingerprint: input.endFingerprint || ''
+    };
+  }
+
+  function sanitizeHibidDiagnosticValue(value, depth = 0) {
+    if (depth > 8) return '[depth-limit]';
+    if (Array.isArray(value)) return value.map(item => sanitizeHibidDiagnosticValue(item, depth + 1));
+    if (!value || typeof value !== 'object') return value;
+    const blockedKey = /(?:authorization|cookie|token|secret|password|accountinfo|account_info|session|credential)/i;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !blockedKey.test(key))
+      .map(([key, child]) => [key, sanitizeHibidDiagnosticValue(child, depth + 1)]));
+  }
+
+  function buildHibidDiagnosticBundle(result = {}) {
+    const coverage = result.coverage || {};
+    return {
+      generatedAt: new Date().toISOString(),
+      version: SCRIPT_VERSION,
+      sourceUrl: result.sourceUrl || '',
+      source: result.source || '',
+      strategy: result.strategy || '',
+      routeFingerprint: result.routeFingerprint || '',
+      filters: result.visibleState?.filters || {},
+      request: result.request ? sanitizeHibidDiagnosticValue(result.request) : null,
+      expectedTotal: result.expectedTotal ?? null,
+      copiedCount: (result.items || result.lots || []).length,
+      durationMs: result.durationMs ?? null,
+      enumeratedIds: result.enumeratedIds || [],
+      hydratedIds: result.hydratedIds || [],
+      pageStats: result.pageStats || [],
+      hydrationStats: result.hydrationStats || [],
+      coverage: {
+        complete: Boolean(coverage.complete),
+        reason: coverage.reason || '',
+        expectedCount: coverage.expectedCount ?? null,
+        enumeratedCount: coverage.enumeratedCount ?? null,
+        uniqueEnumeratedCount: coverage.uniqueEnumeratedCount ?? null,
+        hydratedCount: coverage.hydratedCount ?? null,
+        uniqueHydratedCount: coverage.uniqueHydratedCount ?? null,
+        duplicateIds: coverage.duplicateIds || [],
+        missingIds: coverage.missingIds || [],
+        unexpectedIds: coverage.unexpectedIds || [],
+        failedPages: coverage.failedPages || [],
+        failedBatches: (coverage.failedBatches || []).map(batch => ({
+          batch: batch.batch,
+          ids: batch.ids || [],
+          error: batch.error || ''
+        })),
+        totalDrift: coverage.totalDrift || [],
+        visibleExpectedCount: coverage.visibleExpectedCount ?? null,
+        visibleTotalMatches: coverage.visibleTotalMatches !== false,
+        routeMatches: coverage.routeMatches !== false
+      }
+    };
+  }
+
+  function buildHibidPartialExportPayload(result = {}, mode = 'json', context = {}) {
+    const items = result.items || result.lots || [];
+    const audit = {
+      ...buildHibidDiagnosticBundle(result),
+      complete: false,
+      partial: true
+    };
+    if (mode === 'llm') {
+      return [
+        'PARTIAL HIBID EXPORT - DO NOT TREAT THIS AS COMPLETE CATALOG COVERAGE.',
+        `Verified records: ${items.length}/${result.expectedTotal ?? '?'}.`,
+        `Coverage reason: ${result.coverage?.reason || result.stopReason || 'unknown'}.`,
+        '',
+        buildLlmAuctionBrief(items, context),
+        '',
+        'PARTIAL EXPORT AUDIT',
+        JSON.stringify(audit, null, 2)
+      ].join('\n');
+    }
+    return JSON.stringify({ context, items, audit }, null, 2);
+  }
+
+  async function scrapeHibidApiCatalog(onProgress = () => {}, shouldStop = () => false, root = document, options = {}) {
+    const scrapeStartedAt = Date.now();
+    const loc = options.location || root?.location || (typeof location !== 'undefined' ? location : null);
+    const route = options.route || resolveHiBidPage(loc);
+    if (!loc || !isHiBidHost(urlFromLocationLike(loc).hostname) || !['catalog', 'live'].includes(route?.kind) || isHibidAccountExportRoute(route)) {
+      return null;
+    }
+    const sourceUrl = urlFromLocationLike(loc).href;
+    const getCurrentUrl = options.getCurrentUrl || (() => (typeof location !== 'undefined' ? location.href : sourceUrl));
+    const startFingerprint = getHibidRouteFingerprint(route, sourceUrl);
+    let visibleState = options.visibleState || null;
+    if (!visibleState) {
+      try {
+        visibleState = extractHibidVisiblePageState(root, urlFromLocationLike(loc));
+      } catch {
+        visibleState = { filters: extractHibidUrlFilters(loc).filters, expectedTotal: null, noMatches: false };
+      }
+    }
+    const portalContext = extractHibidPortalSearchContext(root, route);
+    const requestRoute = portalContext.portalAuctioneerIds.length || portalContext.siteType
+      ? { ...route, ...portalContext }
+      : route;
+    const requestOptions = {
+      ...options,
+      onProgress,
+      shouldStop,
+      visibleExpectedTotal: visibleState?.expectedTotal
+    };
+    const enumeration = await enumerateHibidLotIds(requestRoute, sourceUrl, requestOptions);
+    debugEvent('hibid.api.query', {
+      strategy: enumeration.strategy,
+      request: enumeration.request || null,
+      expectedTotal: enumeration.expectedTotal ?? null,
+      pageStats: enumeration.pageStats || []
+    });
+    const hydration = await hydrateHibidLots(enumeration.ids, route, sourceUrl, {
+      ...requestOptions,
+      rawLots: enumeration.rawLots
+    });
+    let endUrl = sourceUrl;
+    try { endUrl = getCurrentUrl() || sourceUrl; } catch { endUrl = sourceUrl; }
+    const endRoute = resolveHiBidPage(urlFromLocationLike(endUrl));
+    const endFingerprint = getHibidRouteFingerprint(endRoute, endUrl);
+    const coverage = validateHibidApiCoverage({
+      expectedTotal: enumeration.expectedTotal,
+      enumeratedIds: enumeration.ids,
+      hydratedItems: hydration.items,
+      failedPages: enumeration.failedPages,
+      failedBatches: hydration.failedBatches,
+      totalDrift: enumeration.totalDrift,
+      visibleExpectedTotal: visibleState?.expectedTotal,
+      requireVisibleTotalMatch: enumeration.strategy === 'search-index',
+      startFingerprint,
+      endFingerprint,
+      stopped: shouldStop() || enumeration.stopped || hydration.stopped
+    });
+    debugEvent('hibid.api.coverage', coverage);
+    const result = {
+      source: enumeration.source,
+      strategy: enumeration.strategy,
+      request: enumeration.request || null,
+      sourceUrl,
+      routeFingerprint: startFingerprint,
+      items: hydration.items,
+      lots: hydration.items,
+      enumeratedIds: enumeration.ids,
+      hydratedIds: hydration.hydratedIds,
+      expectedTotal: enumeration.expectedTotal,
+      pageLength: HIBID_API_PAGE_SIZE,
+      pageStats: enumeration.pageStats,
+      hydrationStats: hydration.batchStats,
+      pagesRead: enumeration.pageStats.length,
+      durationMs: Date.now() - scrapeStartedAt,
+      stopped: shouldStop() || enumeration.stopped || hydration.stopped,
+      incomplete: !coverage.complete,
+      stopReason: coverage.reason,
+      visibleState,
+      coverage
+    };
+    result.diagnostic = buildHibidDiagnosticBundle(result);
+    return result;
+  }
+
   function apolloLotConnections(state) {
     return Object.entries(state?.ROOT_QUERY || {}).map(([key, value]) => {
       const paged = value?.pagedResults || value?.lots?.pagedResults || value?.search?.pagedResults || value;
@@ -3278,6 +4419,10 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const items = result?.items || result?.lots || [];
     if (!visibleState) return { ok: true };
     if (isHibidAccountExportRoute(route)) return { ok: true };
+    const trustedApiCoverage = /^hibid-(?:graphql|search)-api$/i.test(String(result?.source || ''))
+      && result?.coverage?.complete === true
+      && result?.coverage?.routeMatches !== false;
+    if (trustedApiCoverage) return { ok: true };
     if (visibleState.noMatches && items.length) {
       return { ok: false, reason: 'visible-no-matches-with-exported-lots' };
     }
@@ -5328,6 +6473,17 @@ ${cards}
     saveAarResearchSettings,
     getSiteShortcuts,
     findAuctionNinjaNextPageControl,
+    buildHibidSearchRequest,
+    buildHibidGraphqlVariables,
+    extractHibidPortalSearchContext,
+    getHibidRouteFingerprint,
+    normalizeHibidGraphqlLot,
+    enumerateHibidLotIds,
+    hydrateHibidLots,
+    scrapeHibidApiCatalog,
+    validateHibidApiCoverage,
+    buildHibidDiagnosticBundle,
+    buildHibidPartialExportPayload,
     extractHibidVisiblePageState,
     extractHibidApolloLots,
     extractHibidStateFromDocument,
@@ -6002,6 +7158,67 @@ ${cards}
         stopReason: 'visible-no-matches',
         visibleState
       };
+    }
+
+    if (!accountExportRoute && activeRoute?.kind === 'catalog') {
+      const apiResult = await scrapeHibidApiCatalog(status, shouldStop, document, {
+        route: activeRoute,
+        visibleState
+      }).catch(error => {
+        debugEvent('hibid.api.pipeline.error', { error: hibidApiErrorText(error) });
+        return null;
+      });
+      if (apiResult?.coverage?.complete) {
+        debug('catalog scrape finished from HiBid API', {
+          source: apiResult.source,
+          strategy: apiResult.strategy,
+          count: apiResult.items.length,
+          expectedTotal: apiResult.expectedTotal,
+          coverage: apiResult.coverage
+        });
+        return apiResult;
+      }
+      if (apiResult) {
+        debug('catalog API did not reach exact coverage; export remains fail-closed', {
+          source: apiResult.source,
+          strategy: apiResult.strategy,
+          count: apiResult.items?.length || 0,
+          expectedTotal: apiResult.expectedTotal,
+          reason: apiResult.coverage?.reason || apiResult.stopReason
+        });
+        return apiResult;
+      }
+      const fingerprint = getHibidRouteFingerprint(activeRoute, typeof location !== 'undefined' ? location.href : '');
+      const coverage = validateHibidApiCoverage({
+        expectedTotal: visibleState.expectedTotal,
+        enumeratedIds: [],
+        hydratedItems: [],
+        failedPages: [{ page: 1, error: 'HiBid API pipeline did not return a result' }],
+        startFingerprint: fingerprint,
+        endFingerprint: fingerprint,
+        stopped: shouldStop()
+      });
+      const failedResult = {
+        source: 'hibid-api-error',
+        strategy: 'api-first',
+        sourceUrl: typeof location !== 'undefined' ? location.href : '',
+        routeFingerprint: fingerprint,
+        items: [],
+        lots: [],
+        expectedTotal: visibleState.expectedTotal,
+        pageStats: [],
+        stopped: shouldStop(),
+        incomplete: true,
+        stopReason: coverage.reason,
+        visibleState,
+        coverage
+      };
+      failedResult.diagnostic = buildHibidDiagnosticBundle(failedResult);
+      debug('catalog API pipeline unavailable; legacy enumeration blocked', {
+        expectedTotal: visibleState.expectedTotal,
+        reason: coverage.reason
+      });
+      return failedResult;
     }
 
     if (!accountExportRoute) {
@@ -12379,6 +13596,10 @@ ${cards}
       : (isAccountBids
         ? 'Copy visible HiBid account bid lots as JSON for manual use.'
         : 'Copy scraped HiBid lots as JSON for manual use.');
+    const apiOnlyActions = !isAjWillner && !isAccountBids
+      ? `${actionButton('hibid-catalog-copy-partial', 'copy', 'Copy Verified Partial', 'secondary', 'hidden aria-hidden="true"', 'Copy only API-verified HiBid records after exact coverage fails. The export includes a prominent incomplete-coverage audit.')}
+         ${debugEnabled ? actionButton('hibid-diagnostic-download', 'download', 'Download HiBid Diagnostic', 'secondary', 'hidden aria-hidden="true"', 'Download a sanitized HiBid API coverage bundle without cookies, tokens, or account data.') : ''}`
+      : '';
     return `
       <section id="hibid-bid-controls" class="hiba-section" data-module="catalog">
         <div class="hiba-section-head">
@@ -12391,6 +13612,7 @@ ${cards}
         <div class="hiba-actions">
           ${actionButton('hibid-catalog-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', llmHelp)}
           ${actionButton('hibid-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', jsonHelp)}
+          ${apiOnlyActions}
           ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current scrape/export work.')}
         </div>
         ${renderDebugActions(debugEnabled)}
@@ -12411,6 +13633,8 @@ ${cards}
         <div class="hiba-actions">
           ${actionButton('hibid-live-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Expand visible live lots and copy the resale-analysis prompt plus lot JSON.')}
           ${actionButton('hibid-live-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Expand visible live lots and copy their JSON.')}
+          ${actionButton('hibid-catalog-copy-partial', 'copy', 'Copy Verified Partial', 'secondary', 'hidden aria-hidden="true"', 'Copy only API-verified live lots after exact coverage fails. The export includes a prominent incomplete-coverage audit.')}
+          ${debugEnabled ? actionButton('hibid-diagnostic-download', 'download', 'Download HiBid Diagnostic', 'secondary', 'hidden aria-hidden="true"', 'Download a sanitized HiBid API coverage bundle without cookies, tokens, or account data.') : ''}
           ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current scrape/export work.')}
         </div>
         ${renderDebugActions(debugEnabled)}
@@ -12702,6 +13926,7 @@ ${cards}
         #${PANEL_ID} .hiba-btn.success, #${PANEL_ID} .hiba-prepare { background:#15803d; border-color:rgba(74,222,128,.28); }
         #${PANEL_ID} .hiba-btn.danger { background:#991b1b; border-color:rgba(248,113,113,.28); }
         #${PANEL_ID} .hiba-btn[disabled], #${PANEL_ID} .hiba-prepare[disabled] { background:#27272a; color:#71717a; border-color:rgba(113,113,122,.28); cursor:not-allowed; }
+        #${PANEL_ID} .hiba-btn[hidden] { display:none !important; }
         #${PANEL_ID} .hiba-icon-btn { flex:0 0 auto; width:34px; padding:0; background:rgba(30,41,59,.88); border-color:rgba(148,163,184,.24); }
         #${PANEL_ID} .hiba-icon { width:15px; height:15px; flex:0 0 auto; }
         #${PANEL_ID} .hiba-plan { width:100%; height:128px; margin-top:9px; resize:vertical; color:#f8fafc; background:#020617; border:1px solid rgba(148,163,184,.26); border-radius:10px; padding:9px; font:12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
@@ -12846,6 +14071,8 @@ ${cards}
     const liveCopyLlmButton = panel.querySelector('#hibid-live-copy-llm');
     const catalogCopyJsonButton = panel.querySelector('#hibid-catalog-copy-json');
     const catalogCopyLlmButton = panel.querySelector('#hibid-catalog-copy-llm');
+    const catalogCopyPartialButton = panel.querySelector('#hibid-catalog-copy-partial');
+    const hibidDiagnosticDownloadButton = panel.querySelector('#hibid-diagnostic-download');
     const auctionNinjaModeEl = panel.querySelector('[data-module="auctionninja"]');
     const auctionNinjaCategoryCopyJsonButton = panel.querySelector('#auctionninja-category-copy-json');
     const auctionNinjaCategoryCopyLlmButton = panel.querySelector('#auctionninja-category-copy-llm');
@@ -12886,6 +14113,9 @@ ${cards}
       lifecycleEnvelope: null,
       toastTimer: null,
       abortController: null,
+      partialCatalogResult: null,
+      partialCatalogMode: '',
+      hibidDiagnostic: null,
     };
     const panelMatchesCatalogPath = () => {
       if (activeMode !== 'catalog') return false;
@@ -14278,6 +15508,47 @@ ${cards}
       return false;
     };
 
+    const clearCatalogPartial = () => {
+      state.partialCatalogResult = null;
+      state.partialCatalogMode = '';
+      if (catalogCopyPartialButton) {
+        catalogCopyPartialButton.hidden = true;
+        catalogCopyPartialButton.setAttribute('aria-hidden', 'true');
+        catalogCopyPartialButton.querySelector('span').textContent = 'Copy Verified Partial';
+      }
+    };
+
+    const stageCatalogPartial = (result, mode) => {
+      const lots = result?.items || result?.lots || [];
+      if (!lots.length || result?.coverage?.complete || result?.coverage?.routeMatches === false) {
+        clearCatalogPartial();
+        return false;
+      }
+      state.partialCatalogResult = result;
+      state.partialCatalogMode = mode;
+      if (catalogCopyPartialButton) {
+        const expected = result.expectedTotal ?? '?';
+        catalogCopyPartialButton.querySelector('span').textContent = `Copy Partial ${mode === 'llm' ? 'LLM' : 'JSON'} ${lots.length}/${expected}`;
+        catalogCopyPartialButton.hidden = false;
+        catalogCopyPartialButton.removeAttribute('aria-hidden');
+      }
+      debugEvent('hibid.partial.ready', {
+        mode,
+        count: lots.length,
+        expectedTotal: result.expectedTotal ?? null,
+        reason: result.coverage?.reason || result.stopReason || ''
+      });
+      return true;
+    };
+
+    const setHibidDiagnostic = (result) => {
+      state.hibidDiagnostic = result ? buildHibidDiagnosticBundle(result) : null;
+      if (!hibidDiagnosticDownloadButton) return;
+      hibidDiagnosticDownloadButton.hidden = !state.hibidDiagnostic;
+      if (state.hibidDiagnostic) hibidDiagnosticDownloadButton.removeAttribute('aria-hidden');
+      else hibidDiagnosticDownloadButton.setAttribute('aria-hidden', 'true');
+    };
+
     const copyCatalogLots = async (mode) => {
       if (state.busy) return;
       if (!await waitForCatalogRouteToSettle(mode)) return;
@@ -14292,6 +15563,8 @@ ${cards}
       if (catalogCopyJsonButton) catalogCopyJsonButton.disabled = true;
       if (catalogCopyLlmButton) catalogCopyLlmButton.disabled = true;
       state.stop = false;
+      clearCatalogPartial();
+      setHibidDiagnostic(null);
       try {
         status(mode === 'llm' ? 'Scraping catalog for LLM brief...' : 'Scraping catalog for JSON...');
         const result = await scrapeCatalogLots(status, () => state.stop);
@@ -14310,6 +15583,7 @@ ${cards}
           status('No catalog lots found. Copy debug log and check route/data source.');
           return;
         }
+        if (String(result.source || '').startsWith('hibid-')) setHibidDiagnostic(result);
         const lots = result.items || result.lots || [];
         const visibleState = result.visibleState || extractHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null);
         const activeCatalogRoute = currentActiveRoute();
@@ -14323,7 +15597,10 @@ ${cards}
             visibleState,
             route: activeCatalogRoute
           });
-          status(`Blocked stale HiBid export: ${describeExportGuardFailure(validation.reason, { count: lots.length, expectedTotal: result.expectedTotal })}`);
+          const partialReady = stageCatalogPartial(result, mode);
+          status(partialReady
+            ? `Exact HiBid export incomplete (${lots.length}/${result.expectedTotal ?? '?'}). Verified partial is available.`
+            : `Blocked stale HiBid export: ${describeExportGuardFailure(validation.reason, { count: lots.length, expectedTotal: result.expectedTotal })}`);
           return;
         }
         const routeValidation = validateScraperExportAgainstRoute(result, 'catalog', activeCatalogRoute);
@@ -14336,11 +15613,14 @@ ${cards}
             count: lots.length,
             expectedTotal: result.expectedTotal
           });
-          status(`Blocked stale catalog export: ${describeExportGuardFailure(routeValidation.reason, { count: lots.length, expectedTotal: result.expectedTotal })}`);
+          const partialReady = stageCatalogPartial(result, mode);
+          status(partialReady
+            ? `Exact HiBid export incomplete (${lots.length}/${result.expectedTotal ?? '?'}). Verified partial is available.`
+            : `Blocked stale catalog export: ${describeExportGuardFailure(routeValidation.reason, { count: lots.length, expectedTotal: result.expectedTotal })}`);
           return;
         }
         if (!lots.length) {
-          if (visibleState?.noMatches) {
+          if (visibleState?.noMatches || (result?.coverage?.complete && Number(result.expectedTotal) === 0)) {
             if (mode === 'json') {
               const copiedEmpty = await writeClipboard('[]').catch(() => false);
               debug('catalog empty filtered JSON copied', {
@@ -14411,6 +15691,74 @@ ${cards}
       }
     };
 
+    catalogCopyPartialButton?.addEventListener('click', async () => {
+      const result = state.partialCatalogResult;
+      const mode = state.partialCatalogMode || 'json';
+      if (!result || result.coverage?.complete || result.coverage?.routeMatches === false) {
+        clearCatalogPartial();
+        status('Verified partial is no longer available. Run the scrape again.');
+        return;
+      }
+      const activeRoute = currentActiveRoute();
+      const currentFingerprint = getHibidRouteFingerprint(activeRoute, location.href);
+      if (currentFingerprint !== result.routeFingerprint) {
+        debugEvent('hibid.partial.rejected', {
+          reason: 'route-fingerprint-changed',
+          startFingerprint: result.routeFingerprint,
+          currentFingerprint
+        });
+        clearCatalogPartial();
+        status('Partial copy cancelled because the HiBid page or filters changed.');
+        return;
+      }
+      const lots = result.items || result.lots || [];
+      const context = activeRoute?.kind === 'live' ? liveAuctionContext() : catalogAuctionContext();
+      const payload = buildHibidPartialExportPayload(result, mode, context);
+      const copied = await writeClipboard(payload).catch(() => false);
+      let downloaded = false;
+      if (!copied) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const ext = mode === 'llm' ? 'txt' : 'json';
+        try {
+          downloadTextFile(`flipperaddon-hibid-partial-${stamp}.${ext}`, payload, mode === 'llm' ? 'text/plain;charset=utf-8' : 'application/json;charset=utf-8');
+          downloaded = true;
+        } catch (error) {
+          debugEvent('hibid.partial.download.failure', { error: hibidApiErrorText(error) });
+        }
+      }
+      debugEvent('hibid.partial.result', {
+        mode,
+        count: lots.length,
+        expectedTotal: result.expectedTotal ?? null,
+        copied,
+        downloaded
+      });
+      status(copied
+        ? `Copied verified partial ${mode === 'llm' ? 'LLM' : 'JSON'} (${lots.length}/${result.expectedTotal ?? '?'}).`
+        : (downloaded ? `Downloaded verified partial (${lots.length}/${result.expectedTotal ?? '?'}).` : 'Partial export built, but copy and download failed.'));
+    });
+
+    hibidDiagnosticDownloadButton?.addEventListener('click', () => {
+      if (!state.hibidDiagnostic) {
+        status('Run a HiBid API scrape before downloading diagnostics.');
+        return;
+      }
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const payload = JSON.stringify(state.hibidDiagnostic, null, 2);
+      try {
+        downloadTextFile(`flipperaddon-hibid-diagnostic-${stamp}.json`, payload, 'application/json;charset=utf-8');
+        debugEvent('hibid.diagnostic.download', {
+          bytes: payload.length,
+          expectedTotal: state.hibidDiagnostic.expectedTotal,
+          copiedCount: state.hibidDiagnostic.copiedCount
+        });
+        status('Downloaded sanitized HiBid diagnostic.');
+      } catch (error) {
+        debugEvent('hibid.diagnostic.download.failure', { error: hibidApiErrorText(error) });
+        status('HiBid diagnostic download failed.');
+      }
+    });
+
     globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__ = {
       panel,
       run: (copyMode) => copyCatalogLots(copyMode)
@@ -14427,9 +15775,45 @@ ${cards}
       if (liveCopyJsonButton) liveCopyJsonButton.disabled = true;
       if (liveCopyLlmButton) liveCopyLlmButton.disabled = true;
       state.stop = false;
+      clearCatalogPartial();
+      setHibidDiagnostic(null);
       try {
-        status('Loading all open live lots before copy...');
-        const expanded = await expandLivePageLots(status, () => state.stop);
+        status('Loading all open live lots from HiBid API...');
+        const liveRoute = currentActiveRoute();
+        const apiResult = await scrapeHibidApiCatalog(status, () => state.stop, document, {
+          route: liveRoute
+        }).catch(error => {
+          debugEvent('hibid.api.live.error', { error: hibidApiErrorText(error) });
+          return null;
+        });
+        if (apiResult) setHibidDiagnostic(apiResult);
+        if (!apiResult?.coverage?.complete) {
+          const partialReady = stageCatalogPartial(apiResult, mode);
+          debugEvent('hibid.api.live.rejected', {
+            reason: apiResult?.coverage?.reason || 'api-unavailable',
+            count: apiResult?.items?.length || 0,
+            expectedTotal: apiResult?.expectedTotal ?? null,
+            partialReady
+          });
+          status(partialReady
+            ? `Exact live export incomplete (${apiResult.items.length}/${apiResult.expectedTotal ?? '?'}). Verified partial is available.`
+            : 'HiBid live API did not reach exact coverage. No data was copied.');
+          return;
+        }
+        const expanded = {
+          ...apiResult,
+          lots: apiResult.items,
+          expectedOpenLots: apiResult.expectedTotal,
+          loadMoreClicks: 0,
+          scrolls: 0
+        };
+        debugEvent('hibid.api.live.source', {
+          source: expanded.source || '',
+          apiComplete: true,
+          apiReason: apiResult.coverage.reason || '',
+          count: expanded.lots?.length || 0,
+          expected: expanded.expectedOpenLots ?? expanded.expectedTotal ?? null
+        });
         if (!panelIsCurrent()) {
           debug('live export discarded after panel or route changed');
           return;
