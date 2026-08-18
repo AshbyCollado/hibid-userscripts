@@ -2,7 +2,7 @@
 
 Living architecture and release contract for `hibid-bid-assistant.user.js`.
 
-Current release candidate: `v0.8.20`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
+Current release candidate: `v0.8.21`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
 
 ## Current State
 
@@ -124,6 +124,7 @@ A partial is invalidated if the route or filters change. It must never use a suc
 - Deduplicate only by event-item ID; lot number, title, URL fragments, and tile descendants are not identities.
 - Apollo state or DOM may fill a known enumerated ID only. They may not enumerate broad `Lot:*` entities or unrelated connections.
 - Watchlist, current-bids, past-bids, and past-watchlist retain dedicated, route-scoped account DOM collectors. Public API results must not be substituted for personalized account state.
+- Account cards are also keyed by event-item ID, never auction-local lot number. When an account page advertises `Showing ... of N lots`, exact stable-ID count equality is required; unknown totals remain `null` and are never coerced to zero.
 
 ### AJ Willner
 

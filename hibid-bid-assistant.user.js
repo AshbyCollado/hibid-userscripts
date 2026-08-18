@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.20
+// @version      0.8.21
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -66,7 +66,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.20';
+  const SCRIPT_VERSION = '0.8.21';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -1592,6 +1592,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       tile,
       bidButton,
       id: (tile.id || '').replace(/^lot-/, ''),
+      eventItemId: (tile.id || '').replace(/^lot-/, ''),
       lot: lotNumber,
       title,
       url: href ? absoluteUrl(href, base) : '',
@@ -1642,7 +1643,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
     return {
       ...base,
-      id: lot || base.id,
+      id: base.id || lot,
+      eventItemId: base.eventItemId || base.id || '',
       lot,
       title,
       image: image ? absoluteUrl(image) : base.image || '',
@@ -2184,7 +2186,10 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   function uniqueLots(lots) {
     const unique = new Map();
     lots.forEach(lot => {
-      if (lot?.lot && !unique.has(String(lot.lot))) unique.set(String(lot.lot), lot);
+      const key = scraperStableIdentity(lot, 'hibid')
+        || [lot?.auctionId, lot?.lot].filter(Boolean).join(':')
+        || String(lot?.lot || '');
+      if (key && !unique.has(String(key))) unique.set(String(key), lot);
     });
     return Array.from(unique.values());
   }
@@ -3635,7 +3640,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       && Number(visibleLotCount) > 0
       && (!Number.isFinite(Number(parsedExpectedTotal)) || Number(visibleLotCount) > Number(parsedExpectedTotal));
     const expectedTotal = isAccountExportRoute
-      ? null
+      ? parsedExpectedTotal
       : (noMatches
         ? 0
         : (visibleCountExceedsHeader ? Number(visibleLotCount) : parsedExpectedTotal));
@@ -4522,6 +4527,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       result?.completeness?.expected_count,
     ];
     for (const value of candidates) {
+      if (value === null || value === undefined || value === '') continue;
       const total = Number(value);
       if (Number.isFinite(total) && total >= 0) return total;
     }
@@ -4925,6 +4931,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     }
 
     if (isHibidAccountExportRoute(route)) {
+      const completeValidation = validateScraperCompleteness(result, `${routeKind}-incomplete`);
+      if (!completeValidation.ok) return completeValidation;
       const countValidation = validateScraperResultCount(result, `${routeKind}-count-exceeds-expected`);
       if (!countValidation.ok) return countValidation;
       return { ok: true };
@@ -6765,6 +6773,8 @@ ${cards}
     getCanonicalHibidLotTiles,
     extractLot,
     extractCurrentBidsLot,
+    uniqueLots,
+    expectedTotalFromScraperResult,
     extractTextLots,
     extractLiveAuctionState,
     extractLivePageLots,
@@ -7684,7 +7694,7 @@ ${cards}
         ? uniqueLots(tileCandidates.map(extractCurrentBidsLot))
         : uniqueLots(tileCandidates.map(extractLot));
       visibleLots.forEach(lot => {
-        const key = accountExportRoute ? lot.lot : (lot.id || lot.url || lot.lot);
+        const key = scraperStableIdentity(lot, 'hibid') || lot.url || lot.lot;
         if (key && lot.title) itemsMap.set(String(key), lot);
       });
       // Text fallback can contain hidden, featured, or stale catalog records.
@@ -7696,9 +7706,7 @@ ${cards}
       return itemsMap.size;
     };
 
-    const expectedTotal = accountExportRoute
-      ? null
-      : (visibleState.expectedTotal ?? getExpectedLotTotal());
+    const expectedTotal = visibleState.expectedTotal ?? getExpectedLotTotal();
     const loadResult = await loadLots(status, shouldStop, collect, { expectedTotal });
     collect();
     const items = Array.from(itemsMap.values());
@@ -7730,7 +7738,7 @@ ${cards}
       // renderable (closed/filtered/shipping-only). Preserve that proof so a
       // near-complete export is not discarded after the page has exhausted its
       // discoverable DOM records.
-      incomplete: accountExportRoute ? false : Boolean(expectedTotal && items.length < expectedTotal && !settledAtDomBottom),
+      incomplete: Boolean(expectedTotal && items.length < expectedTotal && (accountExportRoute || !settledAtDomBottom)),
       stopReason: loadResult?.stopReason || '',
       visibleState,
       coverage

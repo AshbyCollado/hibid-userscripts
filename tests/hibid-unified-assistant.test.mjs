@@ -1890,6 +1890,7 @@ test('assistant keeps HiBid watchlist cards out of the no-match early exit', () 
       '.lot-number-lead .text-primary': makeFakeNode({ text: 'Lot 26' }),
     },
   });
+  card.id = 'lot-311743157';
   card.offsetParent = {};
   card.getClientRects = () => [{ width: 1, height: 1 }];
 
@@ -1910,8 +1911,41 @@ test('assistant keeps HiBid watchlist cards out of the no-match early exit', () 
   assert.equal(tiles.length, 1);
   const lot = core.extractCurrentBidsLot(tiles[0]);
   assert.equal(lot.lot, '26');
+  assert.equal(lot.id, '311743157');
+  assert.equal(lot.eventItemId, '311743157');
   assert.equal(lot.title, 'LEVOIT Core300-P Air Purifier');
   assert.equal(lot.userBidStatus, 'Outbid');
+});
+
+test('assistant keeps reused HiBid account lot numbers distinct by event-item ID', () => {
+  const core = loadCore();
+  const lots = core.uniqueLots([
+    { id: '311743157', eventItemId: '311743157', lot: '26', title: 'Auction A lot 26' },
+    { id: '399100026', eventItemId: '399100026', lot: '26', title: 'Auction B lot 26' },
+    { id: '311743157', eventItemId: '311743157', lot: '26', title: 'Duplicate tile' },
+  ]);
+
+  assert.equal(lots.length, 2);
+  assert.deepEqual(plain(lots.map(lot => lot.eventItemId)), ['311743157', '399100026']);
+});
+
+test('assistant treats the visible HiBid account total as authoritative', () => {
+  const core = loadCore();
+  const root = {
+    body: { textContent: 'Showing 1 - 74 of 74 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  };
+
+  const visibleState = core.extractHibidVisiblePageState(root, new URL('https://hibid.com/account/watchlist'));
+  assert.equal(visibleState.isAccountExportRoute, true);
+  assert.equal(visibleState.expectedTotal, 74);
+});
+
+test('assistant does not coerce an unknown expected total to zero', () => {
+  const core = loadCore();
+  assert.equal(core.expectedTotalFromScraperResult({ expectedTotal: null, context: { expectedTotal: null } }), null);
 });
 
 test('assistant parses HiBid current-bids account card text fallback', () => {
@@ -2031,7 +2065,7 @@ test('assistant parses HiBid current-bids card text without filter status contam
   });
 });
 
-test('assistant does not reject HiBid current-bids account rows as incomplete catalog exports', () => {
+test('assistant rejects incomplete HiBid current-bids account rows', () => {
   const core = loadCore();
   const route = { kind: 'currentbids-winning', source: 'hibid' };
   const result = {
@@ -2058,7 +2092,35 @@ test('assistant does not reject HiBid current-bids account rows as incomplete ca
 
   assert.equal(core.isHibidCurrentBidsRoute(route), true);
   assert.deepEqual(plain(core.validateCatalogExportAgainstVisibleState(result, result.visibleState, route)), { ok: true });
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', route)), {
+    ok: false,
+    reason: 'currentbids-winning-incomplete',
+  });
+});
+
+test('assistant accepts an exact HiBid account export with distinct stable identities', () => {
+  const core = loadCore();
+  const route = { kind: 'watchlist', source: 'hibid' };
+  const items = [
+    { id: '311743157', eventItemId: '311743157', lot: '26', title: 'Auction A lot 26' },
+    { id: '399100026', eventItemId: '399100026', lot: '26', title: 'Auction B lot 26' },
+  ];
+  const result = {
+    source: 'hibid-watchlist-dom',
+    items,
+    lots: items,
+    expectedTotal: 2,
+    incomplete: false,
+    coverage: { proof: 'scoped-current-page' },
+  };
+
   assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', route)), { ok: true });
+  const readiness = core.assessExportReadiness(result, 'catalog', route, {
+    locationLike: new URL('https://hibid.com/account/watchlist'),
+  });
+  assert.equal(readiness.ok, true);
+  assert.equal(readiness.coverage.collectedCount, 2);
+  assert.equal(readiness.coverage.uniqueIdentityCount, 2);
 });
 
 test('assistant still rejects incomplete normal HiBid catalog exports', () => {
