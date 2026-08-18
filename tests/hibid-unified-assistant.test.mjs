@@ -56,6 +56,18 @@ function loadCore(options = {}) {
   if (options.location) {
     sandbox.location = options.location;
   }
+  if (options.GM) {
+    sandbox.GM = options.GM;
+  }
+  if (options.GM_setClipboard) {
+    sandbox.GM_setClipboard = options.GM_setClipboard;
+  }
+  if (options.navigator) {
+    sandbox.navigator = options.navigator;
+  }
+  if (options.document) {
+    sandbox.document = options.document;
+  }
   sandbox.globalThis = sandbox;
   sandbox.__HIBID_BID_ASSISTANT_TEST__ = true;
   vm.runInNewContext(source, sandbox, { filename: 'hibid-bid-assistant.user.js' });
@@ -642,7 +654,9 @@ test('assistant route and network manifests cover all seven supported sites', ()
 
 test('sanitized network evidence is committed without credentials or account data', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../network-endpoints.sanitized.json', import.meta.url), 'utf8'));
-  assert.equal(manifest.release, '0.8.19');
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  const runtimeVersion = source.match(/const SCRIPT_VERSION = '([^']+)'/)?.[1];
+  assert.equal(manifest.release, runtimeVersion);
   assert.deepEqual(Object.keys(manifest.sites).sort(), ['aar', 'ajwillner', 'auctionninja', 'ebay', 'facebook', 'govdeals', 'hibid']);
   assert.equal(manifest.policy.rawCapturesCommitted, false);
   const serialized = JSON.stringify(manifest);
@@ -2192,6 +2206,98 @@ test('assistant debug instrumentation is verbose, safe, and gated by debug mode'
   enabledCore.debugEvent('unit.test.checkpoint', { control: 'copy-debug', bytes: 42 });
   assert.match(enabledCore.getDebugLogPayload(), /event:unit\.test\.checkpoint/);
   assert.match(enabledCore.getDebugLogPayload(), /"bytes":42/);
+});
+
+test('clipboard writer awaits modern Tampermonkey clipboard before reporting success', async () => {
+  const calls = [];
+  let legacyCalls = 0;
+  const core = loadCore({
+    GM: {
+      async setClipboard(payload, type) {
+        calls.push({ payload, type });
+      },
+    },
+    GM_setClipboard() {
+      legacyCalls += 1;
+    },
+  });
+
+  assert.equal(await core.writeClipboard('verified payload'), true);
+  assert.deepEqual(calls, [{ payload: 'verified payload', type: 'text' }]);
+  assert.equal(legacyCalls, 0);
+});
+
+test('clipboard writer waits for the documented legacy Tampermonkey callback', async () => {
+  let stored = '';
+  let callbackCompleted = false;
+  const core = loadCore({
+    GM_setClipboard(payload, type, callback) {
+      assert.equal(type, 'text');
+      setTimeout(() => {
+        stored = payload;
+        callbackCompleted = true;
+        callback();
+      }, 5);
+    },
+  });
+
+  assert.equal(await core.writeClipboard('legacy callback payload'), true);
+  assert.equal(callbackCompleted, true);
+  assert.equal(stored, 'legacy callback payload');
+});
+
+test('clipboard writer falls through a rejected modern bridge to browser clipboard', async () => {
+  const calls = [];
+  const core = loadCore({
+    GM: {
+      async setClipboard() {
+        throw new Error('bridge rejected');
+      },
+    },
+    navigator: {
+      clipboard: {
+        async writeText(payload) {
+          calls.push(payload);
+        },
+      },
+    },
+  });
+
+  assert.equal(await core.writeClipboard('browser fallback payload'), true);
+  assert.deepEqual(calls, ['browser fallback payload']);
+});
+
+test('clipboard writer uses the selectable textarea fallback and reports false when none work', async () => {
+  let appended;
+  let removed = false;
+  const textarea = {
+    value: '',
+    style: {},
+    setAttribute() {},
+    focus() {},
+    select() {},
+    setSelectionRange() {},
+    remove() { removed = true; },
+  };
+  const document = {
+    body: {
+      appendChild(node) { appended = node; },
+    },
+    createElement() { return textarea; },
+    execCommand(command) {
+      assert.equal(command, 'copy');
+      return true;
+    },
+  };
+  const core = loadCore({ document });
+
+  assert.equal(await core.writeClipboard('textarea payload'), true);
+  assert.equal(appended, textarea);
+  assert.equal(textarea.value, 'textarea payload');
+  assert.equal(removed, true);
+
+  const unavailable = loadCore();
+  assert.equal(await unavailable.writeClipboard('cannot copy'), false);
 });
 
 test('assistant binds debug controls through one delegated panel handler', async () => {

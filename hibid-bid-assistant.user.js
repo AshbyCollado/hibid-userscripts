@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.19
+// @version      0.8.20
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -66,7 +66,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.19';
+  const SCRIPT_VERSION = '0.8.20';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -6841,6 +6841,8 @@ ${cards}
     collectFacebookMarketplaceListings,
     parseFlipTrackerActiveListingsHtml,
     buildFlipTrackerListingsExportHtml,
+    copyWithExecCommand,
+    writeClipboard,
     buildPanelHtml,
     evaluateLiveLot,
     prepareLiveBid,
@@ -11963,52 +11965,96 @@ ${cards}
     setInterval(ensureButton, 5000);
   }
 
+  function copyWithExecCommand(payload) {
+    if (typeof document === 'undefined' || !document.createElement || typeof document.execCommand !== 'function') {
+      return false;
+    }
+    const host = document.body || document.documentElement;
+    if (!host) return false;
+
+    const textarea = document.createElement('textarea');
+    textarea.value = String(payload ?? '');
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-10000px';
+    textarea.style.top = '0';
+    textarea.style.opacity = '0';
+    textarea.style.pointerEvents = 'none';
+    host.appendChild(textarea);
+    try {
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange?.(0, textarea.value.length);
+      return Boolean(document.execCommand('copy'));
+    } finally {
+      textarea.remove();
+    }
+  }
+
   async function writeClipboard(payload) {
-    const bytes = String(payload ?? '').length;
+    const textPayload = String(payload ?? '');
+    const bytes = textPayload.length;
     debugEvent('clipboard.write.begin', { bytes });
     const waitForClipboard = (operation, method) => {
       let timeoutId;
       const timeout = new Promise((_, reject) => {
-        timeoutId = window.setTimeout(() => {
+        timeoutId = setTimeout(() => {
           reject(new Error(`${method} timed out after ${CLIPBOARD_WRITE_TIMEOUT_MS}ms`));
         }, CLIPBOARD_WRITE_TIMEOUT_MS);
       });
       return Promise.race([Promise.resolve(operation), timeout]).finally(() => {
-        window.clearTimeout(timeoutId);
+        clearTimeout(timeoutId);
       });
     };
 
-    try {
-      if (typeof GM_setClipboard === 'function') {
-        debugEvent('clipboard.write.attempt', { method: 'GM_setClipboard', bytes });
-        GM_setClipboard(payload, 'text');
-        debugEvent('clipboard.write.success', { method: 'GM_setClipboard', bytes });
+    const attempt = async (method, operation) => {
+      debugEvent('clipboard.write.attempt', { method, bytes });
+      try {
+        await waitForClipboard(operation(), method);
+        debugEvent('clipboard.write.success', { method, bytes });
+        debugEvent('clipboard.write.result', { copied: true, method, bytes });
         return true;
+      } catch (error) {
+        debug('clipboard write method failed', { method, error: String(error?.message || error) });
+        debugEvent('clipboard.write.failure', {
+          method,
+          bytes,
+          error: debugText(error?.message || error, 260),
+        });
+        return false;
       }
-      if (globalThis.GM?.setClipboard) {
-        debugEvent('clipboard.write.attempt', { method: 'GM.setClipboard', bytes });
-        await waitForClipboard(globalThis.GM.setClipboard(payload, 'text'), 'GM.setClipboard');
-        debugEvent('clipboard.write.success', { method: 'GM.setClipboard', bytes });
-        return true;
-      }
-      if (navigator.clipboard?.writeText) {
-        debugEvent('clipboard.write.attempt', { method: 'navigator.clipboard.writeText', bytes });
-        await waitForClipboard(navigator.clipboard.writeText(payload), 'navigator.clipboard.writeText');
-        debugEvent('clipboard.write.success', { method: 'navigator.clipboard.writeText', bytes });
-        return true;
-      }
-      debugEvent('clipboard.write.unavailable', { bytes });
-    } catch (error) {
-      debug('clipboard write failed', {
-        method: error?.message?.includes('GM.setClipboard') ? 'GM.setClipboard' : 'browser clipboard',
-        error: String(error?.message || error)
-      });
-      debugEvent('clipboard.write.failure', {
-        bytes,
-        error: debugText(error?.message || error, 260),
-      });
+    };
+
+    if (globalThis.GM?.setClipboard) {
+      const copied = await attempt('GM.setClipboard', () => globalThis.GM.setClipboard(textPayload, 'text'));
+      if (copied) return true;
     }
-    debugEvent('clipboard.write.result', { copied: false, bytes });
+
+    if (typeof GM_setClipboard === 'function') {
+      const copied = await attempt('GM_setClipboard(callback)', () => new Promise((resolve, reject) => {
+        try {
+          GM_setClipboard(textPayload, 'text', resolve);
+        } catch (error) {
+          reject(error);
+        }
+      }));
+      if (copied) return true;
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      const copied = await attempt('navigator.clipboard.writeText', () => navigator.clipboard.writeText(textPayload));
+      if (copied) return true;
+    }
+
+    if (typeof document !== 'undefined' && typeof document.execCommand === 'function') {
+      const copied = await attempt('document.execCommand', () => {
+        if (!copyWithExecCommand(textPayload)) throw new Error('document.execCommand returned false');
+      });
+      if (copied) return true;
+    }
+
+    debugEvent('clipboard.write.unavailable', { bytes });
+    debugEvent('clipboard.write.result', { copied: false, method: '', bytes });
     return false;
   }
 

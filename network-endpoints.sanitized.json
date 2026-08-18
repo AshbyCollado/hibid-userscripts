@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "release": "0.8.19",
+  "release": "0.8.20",
   "policy": {
     "discoveryAuthority": "Chrome DevTools Protocol Network",
     "acceptanceBrowser": "Waterfox with installed Tampermonkey release",

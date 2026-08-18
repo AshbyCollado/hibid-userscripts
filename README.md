@@ -2,7 +2,7 @@
 
 Hosted Tampermonkey userscript for auction and resale scraping/export workflows across HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay Seller Hub, and Facebook Marketplace.
 
-Current release candidate: `v0.8.19`. The Cross-Site Network-First Reliability work below is the approved implementation contract. A route is not considered browser-verified until its own Chrome discovery and installed Waterfox acceptance checks have passed.
+Current release candidate: `v0.8.20`. The Cross-Site Network-First Reliability work below is the approved implementation contract. A route is not considered browser-verified until its own Chrome discovery and installed Waterfox acceptance checks have passed.
 
 ## Install
 

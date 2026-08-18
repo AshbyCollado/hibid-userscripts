@@ -2,6 +2,8 @@
 
 Living architecture and release contract for `hibid-bid-assistant.user.js`.
 
+Current release candidate: `v0.8.20`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
+
 ## Current State
 
 - Product: `FlipperAddon by ALOS`.
