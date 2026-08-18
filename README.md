@@ -2,7 +2,7 @@
 
 Hosted Tampermonkey userscript for auction and resale scraping/export workflows across HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay Seller Hub, and Facebook Marketplace.
 
-Current release candidate: `v0.8.24`. The Cross-Site Network-First Reliability work below is the approved implementation contract. A route is not considered browser-verified until its own Chrome discovery and installed Waterfox acceptance checks have passed.
+Current release candidate: `v0.8.25`. The Cross-Site Network-First Reliability work below is the approved implementation contract. A route is not considered browser-verified until its own Chrome discovery and installed Waterfox acceptance checks have passed.
 
 ## Install
 
@@ -38,7 +38,7 @@ After bounded retries, the only permitted fallback is an audited partial export.
 | AJ Willner | Auction catalog pages under `bid.ajwillnerauctions.com` | Enumerate through same-origin `/api/items/search`, validate API total and stable item IDs, and preserve the complete description and image arrays already returned by that endpoint. A lean `/api/auctions/{id}` request supplies public catalog context. |
 | AuctionNinja | Sale catalogs, category/search pages, followed items, won items, and bid history | Exact seller-scoped HTML pagination for catalogs/categories, first-party `marketplace_ajax.php` JSON fragments for nearby auctions, canonical product/sale identities, and bounded product-detail enrichment. |
 | AAR Auctions | Auction calendar, auction catalog, and single-item servlet pages | Calendar IDs require a settled-bottom audit. Catalogs enumerate through deterministic `Search.do` pages at `perPage=100`, validate active filters and unique `itemId` coverage, then hydrate every item detail for full descriptions and large photo arrays. Bidder aliases are discarded. |
-| GovDeals | Seller, filtered search/new-listings, and asset pages | Observed endpoint `https://maestro.lqdt1.com/search/list`. Its opaque `sessionId` is always redacted; until safe request construction and total equality are proven, use canonical DOM with an audited settled-bottom fallback. |
+| GovDeals | Seller, filtered search/new-listings, and asset pages | Observe the native browser request to `POST https://maestro.lqdt1.com/search/list` at document start, bind it to the exact route/filter/seller scope, and replay bounded pages through credentialless Tampermonkey requests. Treat `x-total-count` as authoritative, require `accountId:assetId`, and hydrate only missing description/photo evidence through the identity-checked asset endpoint. If exact proof is unavailable, fail closed rather than certifying a static DOM snapshot. |
 | eBay | Seller Hub Active, Bulk Sell handoff, Ended, Sold, and Transactions | Deterministic Seller Hub pagination using stable listing/order/transaction identities. Exports are recursively sanitized to exclude buyer PII. |
 | Facebook | Marketplace selling listings | Canonical Marketplace listing IDs plus a deterministic virtual-scroll settled-bottom audit. Private/unstable GraphQL calls are not replayed. |
 
@@ -47,6 +47,22 @@ After bounded retries, the only permitted fallback is an audited partial export.
 Chrome DevTools/CDP Network capture is the discovery authority. Sanitized HAR or JSON fixtures are portable test evidence; raw captures stay outside Git.
 
 Committed diagnostics may contain endpoint paths, operation names, sanitized request variables, filters, totals, stable IDs, page/batch counts, timings, and errors. They must remove cookies, authorization headers, CSRF values, access/account tokens, GovDeals `sessionId`, HiBid account-info responses, buyer PII, typed form values, and personal messages. A capture containing only analytics or advertising traffic is not scraper evidence.
+
+### GovDeals Chrome Evidence - `v0.8.25` Candidate
+
+- Search enumeration uses `POST https://maestro.lqdt1.com/search/list`; the response header `x-total-count` is the authoritative filtered total.
+- The `07008` / 50-mile search reported an authoritative total of `749` at 24 rows per page: 32 pages with 5 records on the final page. Page 4 returned 24 unique identities and had no overlap with page 1.
+- Candidate enumeration reproduced all `749/749` unique IDs in 4.6 seconds. Search rows carried photos and public locations but no long descriptions; the asset endpoint supplied full descriptions and all photos for first/middle/final samples.
+- The Rutgers seller request used `accountIds: [7529]` and returned exactly `13/13` unique records.
+- Stable listing identity is `accountId:assetId`.
+- Asset enrichment uses `POST https://maestro.lqdt1.com/assets/{assetId}/{accountId}/false` with the public body `{ "businessId": "GD", "siteId": 1 }`. The response must match both requested IDs before its full long description, specifications, and complete photo array are merged; the inspected sample exposed four photos.
+- The candidate design observes the browser's active request and replays bounded page requests in memory. It never persists the opaque `sessionId`, request-header values, cookies, authorization data, or seller contact PII.
+- Native captures are route-scoped and FlipperAddon replay traffic cannot replace them. Explicit API failure flags, stale seller/query captures, malformed identities, request drift, and total drift are rejected. Stop aborts active replay requests.
+- Search rows with descriptions and photos skip asset hydration. Direct asset DOM is partial-only; normal single-asset export requires an identity-matched API response.
+- Asset hydration is capped at 90 records per export because a stress run reached 108 successful detail responses before the service returned `403`. Deferred descriptions remain explicit in the export audit and the LLM brief is told to inspect the asset URL before rejecting those leads.
+- If the request template, filtered total, stable-ID equality, or route/filter fingerprint cannot be proven, normal export fails closed. A static DOM page is not promoted to an exact export.
+
+This is sanitized Chrome DevTools/CDP discovery evidence, not installed-release acceptance. Waterfox verification of `v0.8.25` is still pending.
 
 Waterfox is the independent installed-release acceptance browser. Chrome network discovery does not prove that the hosted Tampermonkey build is installed or working in Waterfox.
 

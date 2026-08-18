@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "site": "govdeals",
+  "releaseCandidate": "0.8.25",
+  "capture": {
+    "authority": "Chrome DevTools Protocol Network and Runtime",
+    "capturedAt": "2026-08-18",
+    "rawCaptureCommitted": false,
+    "credentialsCommitted": false,
+    "accountDataCommitted": false
+  },
+  "search": {
+    "method": "POST",
+    "endpoint": "https://maestro.lqdt1.com/search/list",
+    "contentType": "application/json",
+    "authoritativeTotalHeader": "x-total-count",
+    "stableIdentity": "accountId:assetId",
+    "pageVariable": "page",
+    "pageSizeVariable": "displayRows",
+    "safeRequestFields": [
+      "accountIds",
+      "auctionTypeId",
+      "businessId",
+      "categoryIds",
+      "displayRows",
+      "facets",
+      "facetsFilter",
+      "locationId",
+      "makebrand",
+      "model",
+      "page",
+      "proximityWithinDistance",
+      "requestType",
+      "responseStyle",
+      "searchText",
+      "sellerTypeId",
+      "sortField",
+      "sortOrder",
+      "timeType",
+      "zipcode"
+    ],
+    "sensitiveRequestFieldsRetainedInMemoryOnly": [
+      "sessionId"
+    ],
+    "requiredReplayHeaderNamesRetainedInMemoryOnly": [
+      "ocp-apim-subscription-key",
+      "x-api-key",
+      "x-ecom-session-id",
+      "x-page-unique-id",
+      "x-referer",
+      "x-user-id",
+      "x-user-timezone"
+    ]
+  },
+  "locationSearchEvidence": {
+    "routeKind": "govdeals-new-listings",
+    "filters": {
+      "zipcode": "07008",
+      "proximityWithinDistance": "50",
+      "searchText": "*",
+      "sortField": "bestfit"
+    },
+    "expectedTotal": 749,
+    "pageSize": 24,
+    "pageCount": 32,
+    "fullPageCount": 31,
+    "finalPageCount": 5,
+    "collected": 749,
+    "uniqueStableIds": 749,
+    "duplicateStableIds": 0,
+    "totalDrift": 0,
+    "enumerationDurationMs": 4614,
+    "searchRowsWithImages": 749,
+    "searchRowsWithDescriptions": 0,
+    "complete": true
+  },
+  "sellerEvidence": {
+    "routeKind": "govdeals-seller",
+    "publicSeller": "Rutgers",
+    "accountIds": [
+      7529
+    ],
+    "expectedTotal": 13,
+    "pageSize": 24,
+    "pageCount": 1,
+    "collected": 13,
+    "uniqueStableIds": 13,
+    "outOfScopeAccountIds": 0,
+    "complete": true
+  },
+  "asset": {
+    "method": "POST",
+    "endpointTemplate": "https://maestro.lqdt1.com/assets/{assetId}/{accountId}/false",
+    "requestBody": {
+      "businessId": "GD",
+      "siteId": 1
+    },
+    "sampleIdentity": {
+      "assetId": 6883,
+      "accountId": 7529,
+      "responseIdentityMatches": true
+    },
+    "descriptionPresent": true,
+    "assetPhotoCount": 4,
+    "allAssetPhotosRetained": true
+  },
+  "enrichment": {
+    "defaultMaximumAssets": 90,
+    "concurrency": 8,
+    "sampledFirstMiddleLast": 3,
+    "sampledDescriptionsPresent": 3,
+    "sampledIdentityMatches": 3,
+    "reasonForCap": "A one-time stress probe reached 108 successful asset details before the service returned HTTP 403; normal releases stop below that observed boundary and audit deferred descriptions."
+  },
+  "privacy": {
+    "cookiesCommitted": false,
+    "authorizationCommitted": false,
+    "apiKeysCommitted": false,
+    "sessionIdsCommitted": false,
+    "buyerDataCommitted": false,
+    "sellerContactNamesCommitted": false,
+    "sellerEmailsCommitted": false,
+    "sellerPhonesCommitted": false,
+    "sellerStreetAddressesCommitted": false,
+    "publicSellerAndCityStatePostalRetained": true
+  }
+}

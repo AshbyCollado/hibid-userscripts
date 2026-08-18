@@ -62,6 +62,9 @@ function loadCore(options = {}) {
   if (options.GM_setClipboard) {
     sandbox.GM_setClipboard = options.GM_setClipboard;
   }
+  if (options.GM_xmlhttpRequest) {
+    sandbox.GM_xmlhttpRequest = options.GM_xmlhttpRequest;
+  }
   if (options.navigator) {
     sandbox.navigator = options.navigator;
   }
@@ -4555,6 +4558,7 @@ Pickup only by appointment.`,
     title: 'Trailer with 6 Current Designs Crosswind Kayaks',
     url: 'https://www.govdeals.com/en/asset/43147/7484',
     image: 'https://www.govdeals.com/images/kayak.jpg',
+    images: ['https://www.govdeals.com/images/kayak.jpg'],
     seller: '',
     sellerUrl: '',
     category: '',
@@ -4575,7 +4579,7 @@ Pickup only by appointment.`,
       Condition: 'Used/See Description',
     },
     description: 'OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer.',
-    rawText: 'Trailer with 6 Current Designs Crosswind Kayaks Asset ID 43147 Lot Number 7484-43147 Manufacturer Current Designs Model Crosswind Condition Used/See Description Current Bid $1,250.00 Bids 9 Item Location: Piscataway, New Jersey 08854 OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer. Pickup only by appointment.',
+    rawText: 'Trailer with 6 Current Designs Crosswind Kayaks | OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer. | Used/See Description | $1,250.00 | 9 | Piscataway, New Jersey 08854 | Pickup only by appointment.',
   });
 });
 
@@ -4629,13 +4633,13 @@ test('assistant scopes GovDeals asset exports to the item DOM for both observed 
     image: 'https://webassets.lqdt1.com/assets/photos/6332/6332_72.jpg',
     seller: 'South Toms River Borough, NJ',
     sellerUrl: 'http://boroughofsouthtomsriver.com/',
-    location: '19 Double Trouble Rd, Toms River, New Jersey, 08757, USA',
+    location: 'New Jersey, 08757, USA',
     closeTime: '14h42m(Jul 15, 2026 03:30 PM EDT)',
     description: 'HP LaserJet Enterprise 600 m601n Laser Printer CE989A Monochrome Black Printer Operational / Recently Removed from Use Sold As Is / Where Is',
   });
   assert.equal(surfaces.image, 'https://webassets.lqdt1.com/assets/photos/7529/7529_6816.jpg');
   assert.equal(surfaces.seller, 'Rutgers University, NJ');
-  assert.equal(surfaces.location, '84 Warehouse Rd, Edison, New Jersey, 08817, USA');
+  assert.equal(surfaces.location, 'New Jersey, 08817, USA');
   assert.equal(surfaces.closeTime, '15h54m(Jul 15, 2026 04:35 PM EDT)');
   assert.equal(surfaces.specs.Manufacturer, 'Microsoft');
   assert.equal(surfaces.specs.Model, '1867');
@@ -4671,6 +4675,7 @@ test('assistant builds GovDeals distance-aware briefs and renders scraper-only U
     zipcode: '07008',
     miles: '25',
     visibleCount: 1,
+    enrichment: { eligible: 749, limit: 90, requested: 90, succeeded: 90, failed: 0, skippedDueLimit: 659 },
   };
 
   const brief = core.buildGovDealsLlmBrief(listings, context, settings);
@@ -4698,6 +4703,8 @@ test('assistant builds GovDeals distance-aware briefs and renders scraper-only U
   assert.match(brief, /distance_miles/);
   assert.match(brief, /distance_proof_url/);
   assert.match(brief, /live map\/search proof/i);
+  assert.match(brief, /Detail enrichment was deliberately capped/i);
+  assert.match(brief, /blank description is not evidence of low value/i);
   assert.match(brief, /Current Tools Conduit Organizer/);
 
   assert.match(sellerHtml, /Copy Seller LLM/);
@@ -6540,4 +6547,986 @@ test('HiBid verified partial payload and controls are explicit and audited', () 
   const diagnosticText = JSON.stringify(diagnostic);
   assert.match(diagnosticText, /auctionId/);
   assert.doesNotMatch(diagnosticText, /Bearer secret|session=secret|private|authorization|cookie|accountInfo|token/i);
+});
+
+function makeGovDealsNetworkCapture(overrides = {}) {
+  const sourceUrl = overrides.sourceUrl
+    || 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search';
+  const body = {
+    categoryIds: [],
+    businessId: 'GD',
+    searchText: '*',
+    isQAL: false,
+    locationId: null,
+    model: '',
+    makebrand: '',
+    auctionTypeId: null,
+    page: 1,
+    displayRows: 24,
+    sortField: 'bestfit',
+    sortOrder: '',
+    sessionId: 'synthetic-session-body-secret',
+    requestType: 'search',
+    responseStyle: 'fullResponse',
+    facets: ['assetCategory', 'auctionTypeId', 'sellerTypeId'],
+    facetsFilter: {},
+    timeType: null,
+    sellerTypeId: null,
+    accountIds: [],
+    zipcode: '07008',
+    proximityWithinDistance: '50',
+    ...(overrides.body || {}),
+  };
+  return {
+    url: 'https://maestro.lqdt1.com/search/list',
+    method: 'POST',
+    sourceUrl,
+    routeHref: overrides.routeHref || sourceUrl,
+    headers: {
+      'content-type': 'application/json',
+      'ocp-apim-subscription-key': 'synthetic-subscription-secret',
+      'x-api-key': 'synthetic-api-key-secret',
+      'x-ecom-session-id': 'synthetic-session-header-secret',
+      'x-page-unique-id': 'synthetic-page-id',
+      'x-referer': 'https://www.govdeals.com/en/search/filters',
+      'x-user-id': 'synthetic-user-id',
+      'x-user-timezone': 'America/New_York',
+      ...(overrides.headers || {}),
+    },
+    body,
+    capturedAt: '2026-08-18T12:00:00.000Z',
+    ...Object.fromEntries(Object.entries(overrides).filter(([key]) => !['body', 'headers', 'sourceUrl', 'routeHref'].includes(key))),
+  };
+}
+
+function makeGovDealsApiRow(assetId, overrides = {}) {
+  const accountId = Number(overrides.accountId ?? 7529);
+  const numericAssetId = Number(assetId);
+  return {
+    accountId,
+    assetId: numericAssetId,
+    auctionId: numericAssetId + 100000,
+    inventoryId: numericAssetId + 200000,
+    assetShortDescription: `GovDeals API Asset ${numericAssetId}`,
+    assetLongDescription: `<p>Full description for asset ${numericAssetId}</p>`,
+    assetCategory: 'Computers and Electronics',
+    categoryDescription: 'Desktop Computers',
+    currentBid: 25 + numericAssetId,
+    minimumBid: 30 + numericAssetId,
+    bidCount: 3,
+    lotNumber: `${accountId}-${numericAssetId}`,
+    city: 'Edison',
+    state: 'New Jersey',
+    postalCode: '08817',
+    country: 'USA',
+    distance: 8.4,
+    companyName: 'Public University Surplus',
+    displaySeller: 'Public University Surplus',
+    auctionEndDate: '2026-08-20T20:00:00Z',
+    status: 'OPEN',
+    currencyCode: 'USD',
+    photo: `https://webassets.lqdt1.com/assets/photos/${accountId}/${numericAssetId}/main.jpg`,
+    clickUrl: `/en/asset/${numericAssetId}/${accountId}`,
+    ...overrides,
+  };
+}
+
+function govDealsJsonResponse(payload, total, status = 200, url = 'https://maestro.lqdt1.com/search/list') {
+  const responseHeaders = new Map([
+    ['content-type', 'application/json'],
+    ['x-total-count', String(total)],
+  ]);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    url,
+    headers: {
+      get(name) {
+        return responseHeaders.get(String(name || '').toLowerCase()) || null;
+      },
+    },
+    async json() {
+      return payload;
+    },
+  };
+}
+
+function parseFetchBody(init = {}) {
+  return typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+}
+
+test('GovDeals sanitized Chrome fixture records exact public contracts without secrets', () => {
+  const fixture = JSON.parse(fs.readFileSync(new URL('../fixtures/govdeals-network.sanitized.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.site, 'govdeals');
+  assert.equal(fixture.releaseCandidate, '0.8.25');
+  assert.equal(fixture.capture.authority, 'Chrome DevTools Protocol Network and Runtime');
+  assert.equal(fixture.capture.rawCaptureCommitted, false);
+  assert.equal(fixture.search.endpoint, 'https://maestro.lqdt1.com/search/list');
+  assert.equal(fixture.search.authoritativeTotalHeader, 'x-total-count');
+  assert.equal(fixture.search.stableIdentity, 'accountId:assetId');
+  assert.equal(fixture.locationSearchEvidence.expectedTotal, 749);
+  assert.equal(fixture.locationSearchEvidence.pageSize, 24);
+  assert.equal(fixture.locationSearchEvidence.pageCount, 32);
+  assert.equal(fixture.locationSearchEvidence.fullPageCount, 31);
+  assert.equal(fixture.locationSearchEvidence.finalPageCount, 5);
+  assert.equal(fixture.locationSearchEvidence.collected, fixture.locationSearchEvidence.uniqueStableIds);
+  assert.equal(fixture.locationSearchEvidence.searchRowsWithImages, 749);
+  assert.equal(fixture.locationSearchEvidence.searchRowsWithDescriptions, 0);
+  assert.equal(fixture.sellerEvidence.publicSeller, 'Rutgers');
+  assert.deepEqual(fixture.sellerEvidence.accountIds, [7529]);
+  assert.equal(fixture.sellerEvidence.expectedTotal, 13);
+  assert.equal(fixture.sellerEvidence.collected, fixture.sellerEvidence.uniqueStableIds);
+  assert.equal(fixture.asset.assetPhotoCount, 4);
+  assert.equal(fixture.asset.allAssetPhotosRetained, true);
+  assert.equal(fixture.enrichment.defaultMaximumAssets, 90);
+  assert.equal(fixture.enrichment.sampledDescriptionsPresent, 3);
+  assert.equal(fixture.privacy.sessionIdsCommitted, false);
+  assert.equal(fixture.privacy.sellerEmailsCommitted, false);
+  assert.equal(fixture.privacy.sellerPhonesCommitted, false);
+  const serialized = JSON.stringify(fixture);
+  assert.doesNotMatch(serialized, /(?:bearer\s+|set-cookie|password|@[a-z0-9.-]+\.[a-z]{2,}|\b\d{3}[-.) ]\d{3}[-. ]\d{4}\b)/i);
+});
+
+test('GovDeals v0.8.25 network contract exports all planned helpers', () => {
+  const core = loadCore();
+  [
+    'buildGovDealsSearchRequest',
+    'govDealsRequestFingerprint',
+    'normalizeGovDealsSearchResult',
+    'normalizeGovDealsAssetResponse',
+    'enumerateGovDealsApiListings',
+    'validateGovDealsApiCoverage',
+    'sanitizeGovDealsNetworkCapture',
+  ].forEach(name => assert.equal(typeof core[name], 'function', name));
+});
+
+test('GovDeals request builder preserves active filters and fingerprint ignores only volatile page/session fields', () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture();
+  const request = core.buildGovDealsSearchRequest(capture, 32);
+
+  assert.equal(request.url, 'https://maestro.lqdt1.com/search/list');
+  assert.equal(request.method, 'POST');
+  assert.equal(request.body.page, 32);
+  assert.equal(request.body.displayRows, 24);
+  assert.equal(request.body.zipcode, '07008');
+  assert.equal(request.body.proximityWithinDistance, '50');
+  assert.equal(request.body.searchText, '*');
+  assert.deepEqual(plain(request.body.accountIds), []);
+  assert.equal(request.headers['x-api-key'], 'synthetic-api-key-secret');
+  assert.equal(capture.body.page, 1, 'request builder must not mutate the observed request template');
+
+  const first = core.govDealsRequestFingerprint(capture.body);
+  const reordered = core.govDealsRequestFingerprint({
+    ...capture.body,
+    sessionId: 'another-live-session',
+    page: 19,
+  });
+  const changedRadius = core.govDealsRequestFingerprint({ ...capture.body, proximityWithinDistance: '25' });
+  const changedQuery = core.govDealsRequestFingerprint({ ...capture.body, searchText: 'laptop' });
+  const changedSeller = core.govDealsRequestFingerprint({ ...capture.body, accountIds: [7529] });
+  assert.equal(first, reordered);
+  assert.notEqual(first, changedRadius);
+  assert.notEqual(first, changedQuery);
+  assert.notEqual(first, changedSeller);
+});
+
+test('GovDeals GM transport returns authoritative totals and aborts immediately on Stop', async () => {
+  let abortCalls = 0;
+  const responses = [];
+  const core = loadCore({
+    GM_xmlhttpRequest(options) {
+      responses.push(options);
+      const timer = setTimeout(() => options.onload({
+        status: 200,
+        responseText: JSON.stringify({ assetSearchResults: [makeGovDealsApiRow(6883)], isAPIFailureActive: false }),
+        responseHeaders: 'content-type: application/json\r\nx-total-count: 1\r\n',
+      }), 0);
+      return {
+        abort() {
+          abortCalls += 1;
+          clearTimeout(timer);
+          options.onabort?.();
+        },
+      };
+    },
+  });
+  const capture = makeGovDealsNetworkCapture();
+  const result = await core.requestGovDealsJson(core.buildGovDealsSearchRequest(capture, 1), { retries: 1 });
+  assert.equal(result.total, 1);
+  assert.equal(result.json.assetSearchResults.length, 1);
+  assert.equal(responses[0].anonymous, true);
+  assert.equal(Object.keys(responses[0].headers).some(name => /cookie|authorization/i.test(name)), false);
+
+  const pendingCore = loadCore({
+    GM_xmlhttpRequest(options) {
+      return {
+        abort() {
+          abortCalls += 1;
+          options.onabort?.();
+        },
+      };
+    },
+  });
+  const controller = new AbortController();
+  const pending = pendingCore.requestGovDealsJson(
+    pendingCore.buildGovDealsSearchRequest(capture, 1),
+    { retries: 3, signal: controller.signal },
+  );
+  controller.abort();
+  await assert.rejects(pending, error => error?.stopped === true);
+  assert.equal(abortCalls > 0, true);
+
+  let forbiddenCalls = 0;
+  const forbiddenCore = loadCore({
+    GM_xmlhttpRequest(options) {
+      forbiddenCalls += 1;
+      setTimeout(() => options.onload({ status: 403, responseText: '{}', responseHeaders: '' }), 0);
+      return { abort() {} };
+    },
+  });
+  await assert.rejects(
+    forbiddenCore.requestGovDealsJson(forbiddenCore.buildGovDealsSearchRequest(capture, 1), { retries: 3 }),
+    /HTTP 403/,
+  );
+  assert.equal(forbiddenCalls, 1, 'permanent client failures must not be retried');
+});
+
+test('GovDeals API normalizers preserve rich fields, all asset photos, and reject mismatched asset identity', () => {
+  const core = loadCore();
+  const searchItem = core.normalizeGovDealsSearchResult(makeGovDealsApiRow(6883), 'govdeals-new-listings');
+  assert.equal(searchItem.id, '7529:6883');
+  assert.equal(searchItem.assetId, '6883');
+  assert.equal(searchItem.accountId, '7529');
+  assert.equal(searchItem.title, 'GovDeals API Asset 6883');
+  assert.match(searchItem.description, /Full description for asset 6883/);
+  assert.equal(searchItem.url, 'https://www.govdeals.com/en/asset/6883/7529');
+  assert.equal(searchItem.currentBid, 6908);
+  assert.equal(searchItem.currentBidText, '6908.00 USD');
+  assert.equal(searchItem.currentBidAmount, 6908);
+  assert.equal(searchItem.bidCount, 3);
+  assert.equal(searchItem.category, 'Computers and Electronics');
+  assert.match(searchItem.location, /Edison.*New Jersey.*08817/i);
+  assert.deepEqual(plain(searchItem.images), [
+    'https://webassets.lqdt1.com/assets/photos/7529/6883/main.jpg',
+  ]);
+
+  const liveSearchShape = core.normalizeGovDealsSearchResult({
+    accountId: 3559,
+    assetId: 133,
+    assetShortDescription: 'Live schema sample',
+    assetLongDescription: null,
+    assetCategory: '101',
+    categoryDescription: 'Public Surplus',
+    photo: '3559_133_sample.jpg',
+    locationCity: 'Edison',
+    locationState: 'NJ',
+    locationZip: '08817',
+    countryDescription: 'USA',
+    proximityDistance: 0,
+    assetAuctionEndDate: '2026-08-20T20:00:00Z',
+  }, 'govdeals-new-listings');
+  assert.equal(liveSearchShape.image, 'https://webassets.lqdt1.com/assets/photos/3559/3559_133_sample.jpg');
+  assert.match(liveSearchShape.location, /Edison.*NJ.*08817.*USA/i);
+  assert.equal(liveSearchShape.distanceText, '0');
+
+  const route = { kind: 'govdeals-asset', assetId: '6883', accountId: '7529' };
+  const assetJson = {
+    accountId: 7529,
+    assetId: 6883,
+    assetShortDesc: 'HP EliteDesk Computers',
+    assetLongDesc: '<p>Ten tested desktop computers with power cables. Contact private-contact@example.invalid or 555-010-9999.</p>',
+    lotNumber: '7529-6883',
+    city: 'Edison',
+    state: 'New Jersey',
+    zipCode: '08817',
+    companyName: 'Public University Surplus',
+    sellerContactName: 'Synthetic Private Contact',
+    sellerContactEmail: 'private-contact@example.invalid',
+    sellerContactPhone: '555-010-9999',
+    address1: '1 Synthetic Private Street',
+    assetPhotos: [
+      { url: 'https://webassets.lqdt1.com/assets/photos/7529/6883/1.jpg' },
+      { url: 'https://webassets.lqdt1.com/assets/photos/7529/6883/2.jpg' },
+      { url: 'https://webassets.lqdt1.com/assets/photos/7529/6883/3.jpg' },
+      { url: 'https://webassets.lqdt1.com/assets/photos/7529/6883/4.jpg' },
+    ],
+  };
+  const asset = core.normalizeGovDealsAssetResponse(assetJson, route);
+  assert.equal(asset.id, '7529:6883');
+  assert.equal(asset.title, 'HP EliteDesk Computers');
+  assert.match(asset.description, /Ten tested desktop computers/);
+  assert.equal(asset.images.length, 4);
+  assert.deepEqual(plain(asset.images), assetJson.assetPhotos.map(photo => photo.url));
+  assert.doesNotMatch(JSON.stringify(asset), /Synthetic Private Contact|private-contact@example\.invalid|555-010-9999|Synthetic Private Street/);
+
+  assert.throws(() => core.normalizeGovDealsAssetResponse({ ...assetJson, assetId: 9999 }, route), /asset-identity-mismatch/i);
+  assert.throws(() => core.normalizeGovDealsAssetResponse({ ...assetJson, accountId: 9999 }, route), /asset-identity-mismatch/i);
+});
+
+test('GovDeals detail enrichment is bounded and audits deferred descriptions', async () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture();
+  const items = Array.from({ length: 8 }, (_value, index) => ({
+    ...core.normalizeGovDealsSearchResult(makeGovDealsApiRow(index + 1), 'govdeals-new-listings'),
+    description: '',
+    descriptionHtml: '',
+    image: '',
+    images: [],
+  }));
+  let requests = 0;
+  const enriched = await core.enrichGovDealsApiListings(items, capture, () => {}, () => false, {
+    enrichmentLimit: 3,
+    enrichmentConcurrency: 2,
+    retries: 1,
+    fetchImpl: async url => {
+      requests += 1;
+      const match = String(url).match(/\/assets\/(\d+)\/(\d+)\/false/i);
+      return govDealsJsonResponse({
+        assetId: Number(match[1]),
+        accountId: Number(match[2]),
+        assetShortDesc: `Asset ${match[1]}`,
+        assetLongDesc: `<p>Description ${match[1]}</p>`,
+        assetPhotos: [{ url: `https://webassets.lqdt1.com/assets/photos/${match[2]}/${match[1]}.jpg` }],
+      }, null, 200, String(url));
+    },
+  });
+  assert.equal(requests, 3);
+  assert.equal(enriched.length, 8);
+  assert.equal(enriched.audit.eligible, 8);
+  assert.equal(enriched.audit.limit, 3);
+  assert.equal(enriched.audit.requested, 3);
+  assert.equal(enriched.audit.succeeded, 3);
+  assert.equal(enriched.audit.skippedDueLimit, 5);
+  assert.equal(enriched.slice(0, 3).every(item => item.description), true);
+  assert.equal(enriched.slice(3).every(item => !item.description), true);
+});
+
+test('GovDeals API enumerates 749 filtered listings at 24 per page with an exact final five', async () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture();
+  const location = new URL(capture.routeHref);
+  const route = core.resolveGovDealsPage(location);
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    assert.equal(String(url), capture.url);
+    const body = parseFetchBody(init);
+    calls.push(body.page);
+    assert.equal(body.zipcode, '07008');
+    assert.equal(body.proximityWithinDistance, '50');
+    const start = (body.page - 1) * body.displayRows;
+    const count = Math.max(0, Math.min(body.displayRows, 749 - start));
+    return govDealsJsonResponse({
+      assetSearchResults: Array.from({ length: count }, (_value, index) => makeGovDealsApiRow(start + index + 1)),
+      assetSearchFacets: [],
+      assetSearchFacetsShortened: [],
+      isAPIFailureActive: false,
+      easMsg: '',
+    }, 749);
+  };
+
+  const result = await core.enumerateGovDealsApiListings(capture, () => {}, () => false, {
+    fetchImpl,
+    retries: 3,
+    retryDelayMs: 0,
+    concurrency: 3,
+    getActiveRequestBody: () => capture.body,
+    route,
+    locationLike: location,
+    currentRoute: route,
+    currentLocationLike: location,
+  });
+  const coverage = core.validateGovDealsApiCoverage(result, route, {
+    activeRequestBody: capture.body,
+    locationLike: location,
+  });
+
+  assert.equal(result.expectedTotal, 749);
+  assert.equal(result.items.length, 749);
+  assert.equal(new Set(result.items.map(item => item.id)).size, 749);
+  assert.deepEqual(calls.slice().sort((a, b) => a - b), Array.from({ length: 32 }, (_value, index) => index + 1));
+  assert.deepEqual(plain(result.coverage.pageAudits.map(page => page.count)), [
+    ...Array.from({ length: 31 }, () => 24),
+    5,
+  ]);
+  assert.equal(coverage.complete, true);
+  assert.equal(coverage.reason, 'complete');
+  assert.equal(coverage.expectedCount, 749);
+  assert.equal(coverage.collectedCount, 749);
+  assert.equal(coverage.uniqueCount, 749);
+});
+
+test('GovDeals API scopes Rutgers seller enumeration to accountIds 7529 and proves 13 of 13', async () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture({
+    sourceUrl: 'https://www.govdeals.com/en/rutgers',
+    body: {
+      accountIds: [7529],
+      zipcode: '',
+      proximityWithinDistance: '',
+    },
+  });
+  const location = new URL(capture.routeHref);
+  const route = core.resolveGovDealsPage(location);
+  const fetchImpl = async (_url, init) => {
+    const body = parseFetchBody(init);
+    assert.deepEqual(body.accountIds, [7529]);
+    assert.equal(body.page, 1);
+    return govDealsJsonResponse({
+      assetSearchResults: Array.from({ length: 13 }, (_value, index) => makeGovDealsApiRow(6800 + index)),
+      isAPIFailureActive: false,
+    }, 13);
+  };
+  const result = await core.enumerateGovDealsApiListings(capture, () => {}, () => false, {
+    fetchImpl,
+    retryDelayMs: 0,
+    getActiveRequestBody: () => capture.body,
+    pageKind: 'govdeals-seller',
+    route,
+    locationLike: location,
+    currentRoute: route,
+    currentLocationLike: location,
+  });
+  const coverage = core.validateGovDealsApiCoverage(result, route, {
+    activeRequestBody: capture.body,
+    expectedAccountIds: ['7529'],
+    locationLike: location,
+  });
+
+  assert.equal(result.expectedTotal, 13);
+  assert.equal(result.items.length, 13);
+  assert.equal(new Set(result.items.map(item => item.id)).size, 13);
+  assert.equal(result.items.every(item => item.accountId === '7529'), true);
+  assert.equal(coverage.complete, true);
+});
+
+test('GovDeals API coverage rejects duplicate and missing stable IDs', () => {
+  const core = loadCore();
+  const body = makeGovDealsNetworkCapture().body;
+  const fingerprint = core.govDealsRequestFingerprint(body);
+  const route = { source: 'govdeals', kind: 'govdeals-new-listings', zipcode: '07008', miles: '50' };
+  const duplicate = core.validateGovDealsApiCoverage({
+    expectedTotal: 3,
+    items: [
+      { id: '7529:1', accountId: '7529', assetId: '1' },
+      { id: '7529:2', accountId: '7529', assetId: '2' },
+      { id: '7529:2', accountId: '7529', assetId: '2' },
+    ],
+    incomplete: false,
+    coverage: {
+      proofTier: 'api-exact',
+      routeMatches: true,
+      requestMatches: true,
+      enumeratedIds: ['7529:1', '7529:2'],
+      duplicateIds: ['7529:2'],
+      failedPages: [],
+      requestFingerprint: fingerprint,
+      currentRequestFingerprint: fingerprint,
+    },
+  }, route, { activeRequestBody: body });
+  assert.equal(duplicate.complete, false);
+  assert.equal(duplicate.reason, 'api-duplicate-ids');
+  assert.deepEqual(plain(duplicate.duplicateIds), ['7529:2']);
+
+  const missing = core.validateGovDealsApiCoverage({
+    expectedTotal: 2,
+    items: [
+      { id: '7529:1', accountId: '7529', assetId: '1' },
+      { id: '7529:3', accountId: '7529', assetId: '3' },
+    ],
+    incomplete: false,
+    coverage: {
+      proofTier: 'api-exact',
+      routeMatches: true,
+      requestMatches: true,
+      enumeratedIds: ['7529:1', '7529:2', '7529:3'],
+      duplicateIds: [],
+      failedPages: [],
+      requestFingerprint: fingerprint,
+      currentRequestFingerprint: fingerprint,
+    },
+  }, route, { activeRequestBody: body });
+  assert.equal(missing.complete, false);
+  assert.equal(missing.reason, 'api-missing-ids');
+  assert.deepEqual(plain(missing.missingIds), ['7529:2']);
+});
+
+test('GovDeals API retries transient failures and rejects x-total-count drift', async () => {
+  const retryCore = loadCore();
+  const retryCapture = makeGovDealsNetworkCapture();
+  const retryLocation = new URL(retryCapture.routeHref);
+  const retryRoute = retryCore.resolveGovDealsPage(retryLocation);
+  let attempts = 0;
+  const retried = await retryCore.enumerateGovDealsApiListings(retryCapture, () => {}, () => false, {
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error('synthetic transient failure');
+      return govDealsJsonResponse({ assetSearchResults: [makeGovDealsApiRow(1)], isAPIFailureActive: false }, 1);
+    },
+    retries: 3,
+    retryDelayMs: 0,
+    getActiveRequestBody: () => retryCapture.body,
+    route: retryRoute,
+    locationLike: retryLocation,
+    currentRoute: retryRoute,
+    currentLocationLike: retryLocation,
+  });
+  assert.equal(attempts, 3);
+  assert.equal(retried.items.length, 1);
+  assert.equal(retryCore.validateGovDealsApiCoverage(retried, retryRoute, {
+    activeRequestBody: retryCapture.body,
+    locationLike: retryLocation,
+  }).complete, true);
+
+  const driftCore = loadCore();
+  const driftCapture = makeGovDealsNetworkCapture();
+  const driftLocation = new URL(driftCapture.routeHref);
+  const driftRoute = driftCore.resolveGovDealsPage(driftLocation);
+  const drifted = await driftCore.enumerateGovDealsApiListings(driftCapture, () => {}, () => false, {
+    fetchImpl: async (_url, init) => {
+      const body = parseFetchBody(init);
+      const reportedTotal = body.page === 1 ? 49 : 48;
+      const start = (body.page - 1) * body.displayRows;
+      const count = Math.max(0, Math.min(body.displayRows, 49 - start));
+      return govDealsJsonResponse({
+        assetSearchResults: Array.from({ length: count }, (_value, index) => makeGovDealsApiRow(start + index + 1)),
+        isAPIFailureActive: false,
+      }, reportedTotal);
+    },
+    retries: 1,
+    retryDelayMs: 0,
+    getActiveRequestBody: () => driftCapture.body,
+    route: driftRoute,
+    locationLike: driftLocation,
+    currentRoute: driftRoute,
+    currentLocationLike: driftLocation,
+  });
+  const driftCoverage = driftCore.validateGovDealsApiCoverage(drifted, driftRoute, {
+    activeRequestBody: driftCapture.body,
+    locationLike: driftLocation,
+  });
+  assert.equal(drifted.coverage.failedPages.length > 0, true);
+  assert.match(drifted.coverage.failedPages.map(page => page.reason).join(' '), /x-total-count drifted/i);
+  assert.equal(drifted.totalDrift.length > 0, true);
+  assert.equal(drifted.stopReason, 'api-total-drift');
+  assert.equal(driftCoverage.complete, false);
+  assert.equal(driftCoverage.reason, 'api-total-drift');
+});
+
+test('GovDeals API cancellation, zero results, and active filter drift all fail or complete explicitly', async () => {
+  const core = loadCore();
+  const zeroCapture = makeGovDealsNetworkCapture({ body: { searchText: 'no-such-public-asset' } });
+  const zeroLocation = new URL(zeroCapture.routeHref);
+  const zeroRoute = core.resolveGovDealsPage(zeroLocation);
+  let zeroCalls = 0;
+  const zero = await core.enumerateGovDealsApiListings(zeroCapture, () => {}, () => false, {
+    fetchImpl: async () => {
+      zeroCalls += 1;
+      return govDealsJsonResponse({ assetSearchResults: [], isAPIFailureActive: false }, 0);
+    },
+    retryDelayMs: 0,
+    getActiveRequestBody: () => zeroCapture.body,
+    route: zeroRoute,
+    locationLike: zeroLocation,
+    currentRoute: zeroRoute,
+    currentLocationLike: zeroLocation,
+  });
+  assert.equal(zeroCalls, 1);
+  assert.equal(zero.expectedTotal, 0);
+  assert.deepEqual(plain(zero.items), []);
+  assert.equal(core.validateGovDealsApiCoverage(zero, zeroRoute, {
+    activeRequestBody: zeroCapture.body,
+    locationLike: zeroLocation,
+  }).complete, true);
+
+  const stopCapture = makeGovDealsNetworkCapture();
+  const stopLocation = new URL(stopCapture.routeHref);
+  const stopRoute = core.resolveGovDealsPage(stopLocation);
+  let stopped = false;
+  let stopCalls = 0;
+  const cancelled = await core.enumerateGovDealsApiListings(stopCapture, () => {}, () => stopped, {
+    fetchImpl: async (_url, init) => {
+      stopCalls += 1;
+      const body = parseFetchBody(init);
+      stopped = true;
+      return govDealsJsonResponse({
+        assetSearchResults: Array.from({ length: 24 }, (_value, index) => makeGovDealsApiRow(index + 1)),
+        isAPIFailureActive: false,
+      }, 49);
+    },
+    retryDelayMs: 0,
+    getActiveRequestBody: () => stopCapture.body,
+    route: stopRoute,
+    locationLike: stopLocation,
+    currentRoute: stopRoute,
+    currentLocationLike: stopLocation,
+  });
+  assert.equal(stopCalls, 1);
+  assert.equal(cancelled.stopped, true);
+  assert.equal(cancelled.stopReason, 'user-stop');
+  assert.equal(core.validateGovDealsApiCoverage(cancelled, stopRoute, {
+    activeRequestBody: stopCapture.body,
+    locationLike: stopLocation,
+  }).complete, false);
+
+  const driftCapture = makeGovDealsNetworkCapture();
+  const activeCapture = makeGovDealsNetworkCapture();
+  const driftLocation = new URL(driftCapture.routeHref);
+  const driftRoute = core.resolveGovDealsPage(driftLocation);
+  const drifted = await core.enumerateGovDealsApiListings(driftCapture, () => {}, () => false, {
+    fetchImpl: async () => {
+      activeCapture.body.searchText = 'changed-while-scraping';
+      return govDealsJsonResponse({
+        assetSearchResults: Array.from({ length: 24 }, (_value, index) => makeGovDealsApiRow(index + 1)),
+        isAPIFailureActive: false,
+      }, 49);
+    },
+    retryDelayMs: 0,
+    currentCapture: activeCapture,
+    route: driftRoute,
+    locationLike: driftLocation,
+    currentRoute: driftRoute,
+    currentLocationLike: driftLocation,
+  });
+  const driftCoverage = core.validateGovDealsApiCoverage(drifted, driftRoute, {
+    activeRequestBody: activeCapture.body,
+    locationLike: driftLocation,
+  });
+  assert.equal(drifted.stopReason, 'request-fingerprint-changed');
+  assert.equal(driftCoverage.complete, false);
+  assert.equal(driftCoverage.reason, 'request-fingerprint-changed');
+});
+
+test('GovDeals network sanitizer removes session, header, and contact PII while retaining coverage evidence', () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture({
+    headers: {
+      authorization: 'Bearer synthetic-authorization-secret',
+      cookie: 'session=synthetic-cookie-secret',
+    },
+    response: {
+      totalCount: 1,
+      assetSearchResults: [{
+        ...makeGovDealsApiRow(9001),
+        sellerContactName: 'Synthetic Private Contact',
+        sellerEmail: 'private-contact@example.invalid',
+        sellerPhone: '555-010-9999',
+        address1: '1 Synthetic Private Street',
+      }],
+    },
+    responseHeaders: { 'x-total-count': '1' },
+  });
+  const sanitized = core.sanitizeGovDealsNetworkCapture(capture);
+  const serialized = JSON.stringify(sanitized);
+
+  assert.match(serialized, /maestro\.lqdt1\.com\/search\/list/);
+  assert.match(serialized, /07008/);
+  assert.equal(sanitized.total, 1);
+  assert.equal(sanitized.resultCount, 1);
+  assert.doesNotMatch(serialized, /synthetic-session-body-secret|synthetic-subscription-secret|synthetic-api-key-secret|synthetic-session-header-secret|synthetic-page-id|synthetic-user-id/);
+  assert.doesNotMatch(serialized, /synthetic-authorization-secret|synthetic-cookie-secret|Synthetic Private Contact|private-contact@example\.invalid|555-010-9999|Synthetic Private Street/);
+  assert.equal(capture.body.sessionId, 'synthetic-session-body-secret', 'sanitizer must not mutate the in-memory capture');
+});
+
+test('GovDeals capture matching rejects stale searches and different seller slugs', () => {
+  const core = loadCore();
+  const laptopsUrl = 'https://www.govdeals.com/en/search/filters?q=laptops&zipcode=07008&miles=50';
+  const serversUrl = 'https://www.govdeals.com/en/search/filters?q=servers&zipcode=07008&miles=50';
+  const laptopsCapture = makeGovDealsNetworkCapture({
+    sourceUrl: laptopsUrl,
+    routeHref: laptopsUrl,
+    body: { searchText: 'laptops' },
+  });
+  laptopsCapture.kind = 'search';
+  laptopsCapture.routeScopeFingerprint = core.govDealsRouteScopeFingerprint(core.resolveGovDealsPage(new URL(laptopsUrl)), new URL(laptopsUrl));
+
+  const laptopsRoute = core.resolveGovDealsPage(new URL(laptopsUrl));
+  const serversRoute = core.resolveGovDealsPage(new URL(serversUrl));
+  assert.equal(core.govDealsCaptureMatchesRoute(laptopsCapture, laptopsRoute, new URL(laptopsUrl)), true);
+  assert.equal(core.govDealsCaptureMatchesRoute(laptopsCapture, serversRoute, new URL(serversUrl)), false);
+
+  const rutgersUrl = 'https://www.govdeals.com/en/rutgers';
+  const anotherSellerUrl = 'https://www.govdeals.com/en/another-public-seller';
+  const sellerCapture = makeGovDealsNetworkCapture({
+    sourceUrl: rutgersUrl,
+    routeHref: rutgersUrl,
+    body: { accountIds: [7529], zipcode: '', proximityWithinDistance: '' },
+  });
+  sellerCapture.kind = 'search';
+  sellerCapture.routeScopeFingerprint = core.govDealsRouteScopeFingerprint(core.resolveGovDealsPage(new URL(rutgersUrl)), new URL(rutgersUrl));
+  assert.equal(core.govDealsCaptureMatchesRoute(
+    sellerCapture,
+    core.resolveGovDealsPage(new URL(rutgersUrl)),
+    new URL(rutgersUrl),
+  ), true);
+  assert.equal(core.govDealsCaptureMatchesRoute(
+    sellerCapture,
+    core.resolveGovDealsPage(new URL(anotherSellerUrl)),
+    new URL(anotherSellerUrl),
+  ), false);
+});
+
+test('GovDeals observer preserves the last accepted native capture after a failed response', () => {
+  const core = loadCore();
+  const url = 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50';
+  const body = makeGovDealsNetworkCapture({ sourceUrl: url, routeHref: url }).body;
+  assert.equal(core.captureGovDealsNetworkExchange({
+    url: 'https://maestro.lqdt1.com/search/list',
+    method: 'POST',
+    body,
+    headers: { 'content-type': 'application/json' },
+    response: { assetSearchResults: [makeGovDealsApiRow(6883)], isAPIFailureActive: false },
+    responseHeaders: { 'x-total-count': '1' },
+    status: 200,
+    routeHref: url,
+  }), true);
+  assert.equal(core.captureGovDealsNetworkExchange({
+    url: 'https://maestro.lqdt1.com/search/list',
+    method: 'POST',
+    body,
+    headers: { 'content-type': 'application/json' },
+    response: null,
+    responseHeaders: {},
+    status: 403,
+    routeHref: url,
+  }), false);
+  const route = core.resolveGovDealsPage(new URL(url));
+  const capture = core.getGovDealsSearchCapture(route, new URL(url));
+  assert.equal(capture.status, 200);
+  assert.equal(capture.total, 1);
+  assert.equal(capture.response.assetSearchResults.length, 1);
+});
+
+test('GovDeals exact coverage requires both account and asset IDs and enforces seller account scope', () => {
+  const core = loadCore();
+  const body = makeGovDealsNetworkCapture().body;
+  const fingerprint = core.govDealsRequestFingerprint(body);
+  const searchRoute = { source: 'govdeals', kind: 'govdeals-new-listings', zipcode: '07008', miles: '50' };
+  const malformed = core.validateGovDealsApiCoverage({
+    expectedTotal: 1,
+    items: [{ id: 'asset:6883', assetId: '6883', accountId: '' }],
+    incomplete: false,
+    coverage: {
+      proofTier: 'api-exact',
+      routeMatches: true,
+      requestMatches: true,
+      enumeratedIds: ['asset:6883'],
+      failedPages: [],
+      requestFingerprint: fingerprint,
+      currentRequestFingerprint: fingerprint,
+    },
+  }, searchRoute, { activeRequestBody: body });
+  assert.equal(malformed.complete, false);
+  assert.match(malformed.reason, /account-scope|stable/i);
+
+  const sellerBody = { ...body, accountIds: [7529], zipcode: '', proximityWithinDistance: '' };
+  const sellerFingerprint = core.govDealsRequestFingerprint(sellerBody);
+  const sellerScope = core.validateGovDealsApiCoverage({
+    expectedTotal: 1,
+    context: { pageKind: 'govdeals-seller', accountIds: [7529] },
+    items: [{ id: '9999:6883', assetId: '6883', accountId: '9999' }],
+    incomplete: false,
+    coverage: {
+      proofTier: 'api-exact',
+      routeMatches: true,
+      requestMatches: true,
+      enumeratedIds: ['9999:6883'],
+      failedPages: [],
+      requestFingerprint: sellerFingerprint,
+      currentRequestFingerprint: sellerFingerprint,
+    },
+  }, { source: 'govdeals', kind: 'govdeals-seller' }, {
+    activeRequestBody: sellerBody,
+    expectedAccountIds: ['7529'],
+  });
+  assert.equal(sellerScope.complete, false);
+  assert.equal(sellerScope.reason, 'api-account-scope-mismatch');
+});
+
+test('GovDeals rejects API failure fallback rows and request-drift partial coverage', async () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture();
+  const location = new URL(capture.routeHref);
+  const route = core.resolveGovDealsPage(location);
+  let calls = 0;
+  const failed = await core.enumerateGovDealsApiListings(capture, () => {}, () => false, {
+    fetchImpl: async () => {
+      calls += 1;
+      return govDealsJsonResponse({
+        assetSearchResults: [makeGovDealsApiRow(6883)],
+        isAPIFailureActive: true,
+        easMsg: 'synthetic upstream fallback',
+      }, 1);
+    },
+    retries: 3,
+    retryDelayMs: 0,
+    getActiveRequestBody: () => capture.body,
+    route,
+    locationLike: location,
+    currentRoute: route,
+    currentLocationLike: location,
+  });
+  assert.equal(calls, 3);
+  assert.equal(failed.items.length, 0);
+  assert.equal(failed.incomplete, true);
+  assert.match(failed.failedPages[0].reason, /API failure flag active/i);
+
+  const driftCoverage = core.buildProofTierCoverage({
+    source: 'govdeals-api',
+    expectedTotal: 1,
+    items: [makeGovDealsApiRow(6883)],
+    incomplete: false,
+    coverage: {
+      proofTier: 'api-exact',
+      routeMatches: true,
+      requestMatches: false,
+      accountScopeMatches: true,
+      enumeratedIds: ['7529:6883'],
+      failedPages: [],
+      failedBatches: [],
+      requestFingerprint: 'start-filter',
+      currentRequestFingerprint: 'changed-filter',
+    },
+  }, 'govdeals', route, { locationLike: location });
+  assert.equal(driftCoverage.complete, false);
+  assert.equal(driftCoverage.reason, 'request-fingerprint-changed');
+  assert.equal(driftCoverage.requestMatches, false);
+});
+
+test('GovDeals asset DOM fallback remains explicitly unproven', async () => {
+  const location = new URL('https://www.govdeals.com/en/asset/43147/7484');
+  const core = loadCore({ location });
+  const root = makeFakeNode({
+    text: 'Asset ID 43147 Lot Number 7484-43147 Item Location: 1 Private St, Edison, New Jersey 08817',
+    selectors: { h1: makeFakeNode({ text: 'Synthetic asset' }) },
+  });
+  root.title = 'Synthetic asset | GovDeals';
+  const result = await core.scrapeGovDealsListings(() => {}, () => false, root, {
+    route: core.resolveGovDealsPage(location),
+    locationLike: location,
+  });
+  assert.equal(result.source, 'govdeals-dom-asset');
+  assert.equal(result.incomplete, true);
+  assert.equal(result.coverage.proofTier, 'unproven');
+  assert.match(result.stopReason, /api-capture-unavailable/i);
+  assert.doesNotMatch(result.items[0].rawText, /Private St/i);
+});
+
+test('GovDeals asset scraper rejects failed captured responses instead of certifying their rows', async () => {
+  const core = loadCore();
+  const location = new URL('https://www.govdeals.com/en/asset/6883/7529');
+  const route = core.resolveGovDealsPage(location);
+  const failedCapture = {
+    kind: 'asset',
+    url: 'https://maestro.lqdt1.com/assets/6883/7529/false',
+    routeHref: location.href,
+    status: 503,
+    body: { businessId: 'GD', siteId: 1 },
+    response: {
+      accountId: 7529,
+      assetId: 6883,
+      assetShortDesc: 'This row came from a failed response',
+      assetLongDesc: '<p>It must never be certified.</p>',
+      isAPIFailureActive: true,
+    },
+  };
+  let requests = 0;
+  const result = await core.scrapeGovDealsApiAsset(route, () => {}, () => false, {
+    capture: failedCapture,
+    locationLike: location,
+    currentLocationLike: location,
+    retries: 1,
+    retryDelayMs: 0,
+    fetchImpl: async () => {
+      requests += 1;
+      throw new Error('synthetic asset transport failure');
+    },
+  });
+
+  assert.equal(requests, 1, 'the failed capture must trigger one fresh bounded request');
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.incomplete, true);
+  assert.equal(result.items.length, 0);
+  assert.equal(result.stopReason, 'asset-api-request-failed');
+  assert.equal(result.audit.captureRejectedReason, 'captured-asset-http-503');
+  assert.equal(result.coverage.failedBatches.length, 1);
+});
+
+test('GovDeals DOM enrichment Stop aborts active detail fetches immediately', async () => {
+  let fetchStarted = false;
+  let fetchAborted = false;
+  const core = loadCore({
+    DOMParser: class {},
+    fetch(_url, init = {}) {
+      fetchStarted = true;
+      return new Promise((_resolve, reject) => {
+        const abort = () => {
+          fetchAborted = true;
+          reject(new Error('synthetic fetch abort'));
+        };
+        if (init.signal?.aborted) abort();
+        else init.signal?.addEventListener?.('abort', abort, { once: true });
+      });
+    },
+  });
+  const controller = new AbortController();
+  const pending = core.enrichGovDealsListings([{
+    source: 'GovDeals',
+    id: '7529:6883',
+    accountId: '7529',
+    assetId: '6883',
+    title: 'Synthetic asset needing DOM enrichment',
+    url: 'https://www.govdeals.com/en/asset/6883/7529',
+    description: '',
+    image: '',
+    images: [],
+  }], () => {}, () => false, {
+    signal: controller.signal,
+    timeoutMs: 20000,
+    concurrency: 1,
+  });
+  controller.abort();
+  const result = await Promise.race([
+    pending,
+    new Promise((_resolve, reject) => setTimeout(() => reject(new Error('Stop did not abort DOM enrichment')), 500)),
+  ]);
+
+  assert.equal(fetchStarted, true);
+  assert.equal(fetchAborted, true);
+  assert.equal(result.audit.stopped, true);
+  assert.equal(result.audit.succeeded, 0);
+  assert.deepEqual(plain(result.audit.failed), []);
+});
+
+test('GovDeals DOM-only advertised equality is never certified as pagination-exact', async () => {
+  const loc = new URL('https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0');
+  const core = loadCore({ location: loc });
+  const cards = [1, 2].map(assetId => {
+    const link = makeFakeNode({
+      text: `Synthetic Asset ${assetId}`,
+      attrs: { href: `/en/asset/${assetId}/7529` },
+    });
+    return makeFakeNode({
+      text: `Online Auction Synthetic Asset ${assetId} Edison, New Jersey, USA USD 10.00 2D Lot#: 7529-${assetId}`,
+      selectors: {
+        'a[href*="/asset/"]': link,
+        img: makeFakeNode({ attrs: { src: `https://cdn.govdeals.test/${assetId}.jpg` } }),
+      },
+    });
+  });
+  const root = makeFakeNode({
+    text: 'Search Results Showing 1 to 2 of 2 lots Synthetic Asset 1 Synthetic Asset 2',
+    selectors: {
+      h1: makeFakeNode({ text: 'Search Results' }),
+      article: cards,
+      'a[href*="/asset/"]': cards.map(card => card.querySelector('a[href*="/asset/"]')),
+    },
+  });
+  root.title = 'Search Results | GovDeals';
+
+  const result = await core.scrapeGovDealsListings(() => {}, () => false, root);
+  const readiness = core.assessExportReadiness(result, 'govdeals', core.resolveSiteRoute(loc), { locationLike: loc });
+  assert.notEqual(result.coverage.proofTier, 'pagination-exact');
+  assert.equal(result.incomplete, true);
+  assert.equal(readiness.ok, false);
 });

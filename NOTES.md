@@ -8,6 +8,7 @@ This repo is the standalone home for FlipperAddon by ALOS, separate from `Deadlo
 - Install URL: https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 - Active file: `hibid-bid-assistant.user.js`
 - Current product name: `FlipperAddon by ALOS`
+- Current release candidate: `v0.8.25`
 - The script uses `@updateURL` and `@downloadURL` pointing at the raw URL. Bump `@version` for every hosted release.
 
 ## Modules
@@ -20,6 +21,20 @@ This repo is the standalone home for FlipperAddon by ALOS, separate from `Deadlo
 - FlipTracker mode: eBay/Facebook active selling pages. Owns scan/copy/download active-listing export.
 
 Only the active page module should expose controls. Do not bring back the old all-controls-visible drawer.
+
+## GovDeals network-first evidence
+
+- Chrome CDP observed `POST https://maestro.lqdt1.com/search/list`; `x-total-count` is the authoritative filtered total and `accountId:assetId` is the stable listing identity.
+- The `07008` / 50-mile search reported an authoritative total of 749 at 24 per page over 32 pages, with five on the final page. Page 4 had 24 unique IDs and no overlap with page 1.
+- Candidate replay reproduced 749/749 unique IDs in 4.6 seconds. Search rows include photos/locations but no long descriptions, so detail enrichment is capped at 90; deferred descriptions are audited and never treated as negative evidence.
+- The Rutgers seller request used `accountIds: [7529]` and returned `13/13` unique records.
+- Asset enrichment uses `POST https://maestro.lqdt1.com/assets/{assetId}/{accountId}/false` with `{ "businessId": "GD", "siteId": 1 }`. Both IDs must match before merging the full long description, specifications, and every photo; the inspected sample had four photos.
+- Capture matching includes the exact normalized route, query/filter scope, and seller slug. Native page requests are observed at `document-start`; FlipperAddon's replay requests cannot overwrite the active capture.
+- Replay prefers credentialless, abortable `GM_xmlhttpRequest` and omits cookie/authorization/browser-managed headers. Search rows with both description and photo skip detail hydration.
+- Reject explicit API failure flags, malformed `accountId:assetId` identities, stale captures, seller-scope leakage, total/request drift, and direct asset DOM as normal complete evidence.
+- The active request template is observed and replayed only in memory. Never persist `sessionId`, request-header values, cookies, authorization data, or seller contact PII.
+- If the network template or exact total/identity proof is unavailable, fail closed. Do not certify the current DOM page as complete.
+- Candidate `v0.8.25` still requires an installed Waterfox update and real copy/export acceptance. Chrome evidence alone is not release acceptance.
 
 ## Legacy Max Plans
 

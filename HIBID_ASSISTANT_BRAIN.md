@@ -2,7 +2,7 @@
 
 Living architecture and release contract for `hibid-bid-assistant.user.js`.
 
-Current release candidate: `v0.8.24`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
+Current release candidate: `v0.8.25`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
 
 ## Current State
 
@@ -52,7 +52,7 @@ The route fingerprint is the canonical path plus stable route IDs and sorted fil
 | AJ Willner | `bid.ajwillnerauctions.com/ui/auctions/*` | Exact first-party API IDs/total, with bounded detail hydration. |
 | AuctionNinja | Sale details, product, category, auction search, followed items, items won, and bid history | Deterministic server-rendered pagination and canonical product/sale identities. |
 | AAR Auctions | `/auctions/`, `/servlet/Search.do?auctionId=*`, optional `itemId` | Deterministic server-rendered pagination keyed to auction/item IDs. |
-| GovDeals | Seller, filtered search/new-listings, and asset pages | Proven search API only after safe request construction; otherwise canonical DOM with settled-bottom audit. |
+| GovDeals | Seller, filtered search/new-listings, and asset pages | In-memory observation/replay of the active `maestro.lqdt1.com` read request, authoritative `x-total-count`, exact `accountId:assetId` coverage, and identity-checked asset hydration. Fail closed when that proof is unavailable. |
 | eBay | Seller Hub Active, Bulk Sell handoff, Ended, Sold, and Transactions | Deterministic Seller Hub pagination with stable listing/order/transaction identities. |
 | Facebook | Marketplace selling listings | Canonical listing IDs with deterministic virtual-scroll settled-bottom audit. |
 
@@ -161,12 +161,18 @@ A partial is invalidated if the route or filters change. It must never use a suc
 
 ### GovDeals
 
-- Observed read endpoint: `https://maestro.lqdt1.com/search/list`.
-- Observed variables include filters, location, page, display rows, sort, facets, and account IDs.
-- The request's opaque `sessionId` is sensitive operational state: redact it from diagnostics/fixtures and do not persist or replay it.
-- Until safe browser-context request construction and filtered-total equality are proven, use canonical asset/listing IDs from the DOM and require a settled-bottom audit.
-- Asset detail enrichment is same-origin, bounded, stoppable, and audited.
-- URL ZIP/miles filters and visible active filters must agree; disagreement is filter drift, not a successful export.
+- Enumeration endpoint: `POST https://maestro.lqdt1.com/search/list`.
+- Observe the active browser request in memory so its route-specific search text, location, ZIP/radius, categories, facets, account IDs, sort, page size, and other active filters remain exact. Bounded page replay changes only the page field.
+- The observer starts at `document-start`, snapshots the route when the native request is sent, and ignores FlipperAddon's own replay XHRs. A captured search must match the current normalized route scope; a Rutgers capture cannot satisfy another seller and a `q=laptops` capture cannot satisfy `q=servers`.
+- The response header `x-total-count` is authoritative. Normal export requires that total to equal both collected records and unique `accountId:assetId` identities, with an unchanged route/request fingerprint.
+- Chrome evidence for the `07008` / 50-mile route: total `749`, page size `24`, 32 pages, and a five-record final page. Page 4 returned 24 unique IDs with zero overlap against page 1.
+- Chrome evidence for the Rutgers seller scope: `accountIds: [7529]` returned `13/13` unique records.
+- Asset hydration endpoint: `POST https://maestro.lqdt1.com/assets/{assetId}/{accountId}/false` with `{ "businessId": "GD", "siteId": 1 }`. Merge a response only when both IDs match the request. Preserve the full long description, specifications, and every photo; the inspected sample returned four photos.
+- Search rows that already contain a description and photo do not trigger a second asset request. The observed search rows contained photos but not long descriptions, so detail enrichment is capped at 90 assets per export with concurrency eight, bounded retries, and the same Stop signal. Deferred descriptions are audited and the LLM brief must treat a blank description as unknown, not low value.
+- Tampermonkey replay prefers `GM_xmlhttpRequest` so Waterfox does not depend on page CORS. It is credentialless, omits cookie/authorization/browser-managed headers, reuses only the observed public API header contract in memory, and aborts immediately when Stop is pressed.
+- The observer and replay template live in memory only. Never persist or log `sessionId`, request-header values, cookies, authorization material, account tokens, or seller contact names, email addresses, phone numbers, and street addresses.
+- Reject `isAPIFailureActive`, missing totals, stale seller/filter captures, malformed identities, total drift, and route/request drift after bounded retries. A direct asset DOM snapshot is `unproven`, never a normal complete export; only an explicitly audited partial may be offered.
+- URL ZIP/miles filters and the observed request body must agree. A disagreement is filter drift, not a successful export.
 
 ### eBay
 
@@ -304,12 +310,23 @@ A push does not update an installed Tampermonkey copy. Do not mark a release, ch
 - `234/234` automated tests passed, including missing totals, bootstrap mismatch, short-page retry, Stop abort, duplicate IDs, route drift, unproven DOM rejection, shared partial staging, and sanitized fixture validation.
 - Raw CDP/network responses, clipboard payloads, and screenshots remain outside Git. Only sanitized endpoint/count fixtures are committed.
 
+### GovDeals - Chrome evidence recorded 2026-08-18; Waterfox pending
+
+- Chrome CDP identified `POST https://maestro.lqdt1.com/search/list` and proved `x-total-count` as the filtered-total authority.
+- The `07008` / 50-mile search reported an authoritative total of `749` over 32 pages of 24, with five on the final page. Sampled page 4 had 24 unique IDs and no overlap with page 1.
+- Candidate enumeration reproduced `749/749` unique IDs in 4.6 seconds. All 749 search rows had a normalized photo and location; long descriptions required the asset endpoint. A stress probe reached 108 successful details before `403`, so normal enrichment is capped at 90 and reports deferred descriptions explicitly.
+- The Rutgers seller request used `accountIds: [7529]` and proved `13/13` unique identities.
+- Stable identity is `accountId:assetId`. The asset endpoint returned an identity-matched full description/specification record and all four sample photos.
+- Adversarial tests reject stale query/seller captures, API failure fallback rows, missing account IDs, seller scope leakage, request-drift partials, and contact-bearing asset DOM as complete evidence. Stop aborts the active GM request.
+- Only endpoint shape, sanitized variables, public IDs, and aggregate counts are committed. Session/header values and seller contact PII remain transient and are not stored.
+- This section records Chrome discovery evidence for candidate `v0.8.25`. It does not claim that the hosted userscript has been updated or accepted in Waterfox.
+
 ## Known Unverified Areas
 
 - HiBid passed this gate at `v0.8.21`; every later hosted version still requires a fresh installed Waterfox acceptance before claiming parity.
 - AJ Willner passed its Chrome and installed Waterfox gate at `v0.8.22`; later releases still require regression acceptance before claiming parity.
 - AuctionNinja and AAR currently rely on deterministic server-rendered pagination.
-- GovDeals `maestro.lqdt1.com/search/list` is observed, but safe replay with exact active filters is not yet accepted; retain the fail-closed DOM fallback.
+- GovDeals Chrome discovery and its network contract are recorded for candidate `v0.8.25`; installed Waterfox copy/export, panel-version, debug-download, and page-usability acceptance are still pending.
 - eBay deterministic Seller Hub pagination needs route-specific completeness and PII tests for each lifecycle page.
 - Facebook needs a canonical-ID settled-bottom implementation; initial visible DOM is not full coverage.
 - Do not convert any of these statements into a browser-pass claim without the required evidence.

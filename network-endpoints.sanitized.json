@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "release": "0.8.24",
+  "release": "0.8.25",
   "policy": {
     "discoveryAuthority": "Chrome DevTools Protocol Network",
     "acceptanceBrowser": "Waterfox with installed Tampermonkey release",
@@ -12,7 +12,9 @@
       "sessionId",
       "csrf",
       "accountData",
-      "buyerData"
+      "buyerData",
+      "requestHeaderValues",
+      "sellerContactPii"
     ]
   },
   "sites": {
@@ -108,10 +110,52 @@
       "privacy": "bidder aliases from embedded Lot records are discarded before export"
     },
     "govdeals": {
-      "enumerate": { "method": "POST", "url": "https://maestro.lqdt1.com/search/list", "filters": ["categoryIds", "searchText", "page", "displayRows", "sortField", "sortOrder", "facetsFilter", "accountIds"] },
+      "enumerate": {
+        "method": "POST",
+        "url": "https://maestro.lqdt1.com/search/list",
+        "filters": ["categoryIds", "searchText", "page", "displayRows", "sortField", "sortOrder", "facetsFilter", "accountIds", "zipcode", "proximityWithinDistance"],
+        "authoritativeTotal": "x-total-count response header",
+        "captureAndReplay": "Observe the native browser request at document-start, bind it to the normalized route/filter/seller scope, ignore FlipperAddon replay traffic, and replay bounded page changes through credentialless abortable Tampermonkey requests."
+      },
+      "enrich": {
+        "method": "POST",
+        "url": "https://maestro.lqdt1.com/assets/{assetId}/{accountId}/false",
+        "body": { "businessId": "GD", "siteId": 1 },
+        "identityRequirement": "Response accountId and assetId must match the requested identity.",
+        "boundedPolicy": "Hydrate at most 90 missing descriptions per export with concurrency 8; audit deferred records and never treat a blank description as negative evidence.",
+        "fields": ["full long description", "specifications", "all photos"]
+      },
       "stableId": "accountId:assetId",
-      "proof": "filtered API or advertised total equals collected count equals unique asset count",
-      "note": "Opaque browser session values are neither committed nor replayed."
+      "proof": "x-total-count equals collected count equals unique accountId:assetId count with an unchanged route and request-filter fingerprint",
+      "sanitizedObservations": [
+        {
+          "scope": "zipcode 07008 within 50 miles",
+          "expected": 749,
+          "pageSize": 24,
+          "pages": 32,
+          "finalPageCount": 5,
+          "page4Count": 24,
+          "page4Unique": 24,
+          "page4OverlapWithPage1": 0
+        },
+        {
+          "scope": "Rutgers seller",
+          "accountIds": [7529],
+          "expected": 13,
+          "collected": 13,
+          "unique": 13
+        },
+        {
+          "scope": "asset detail sample",
+          "identityMatched": true,
+          "fullLongDescription": true,
+          "specifications": true,
+          "photoCount": 4
+        }
+      ],
+      "privacy": "sessionId, request-header values, cookies, authorization data, account tokens, and seller contact PII remain transient and are never committed.",
+      "fallback": "Fail closed for an unavailable/stale capture, isAPIFailureActive, missing or drifting total, malformed accountId:assetId, seller/filter drift, or incomplete enrichment. A static DOM snapshot is partial-only and never exact coverage.",
+      "waterfoxAcceptance": "pending"
     },
     "ebay": {
       "enumerate": { "method": "GET", "url": "Seller Hub document pagination", "filters": ["offset", "limit", "page"] },

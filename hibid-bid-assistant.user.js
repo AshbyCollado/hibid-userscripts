@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.24
+// @version      0.8.25
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -52,12 +52,13 @@
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @grant        window.onurlchange
-// @run-at       document-idle
+// @run-at       document-start
 // @connect      127.0.0.1
 // @connect      i.ebayimg.com
 // @connect      vi.vipr.ebaydesc.com
 // @connect      itm.ebaydesc.com
 // @connect      hibid-api.io
+// @connect      maestro.lqdt1.com
 // ==/UserScript==
 
 (function () {
@@ -66,7 +67,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.24';
+  const SCRIPT_VERSION = '0.8.25';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -148,8 +149,29 @@
   const HIBID_API_RETRIES = 3;
   const HIBID_API_TIMEOUT_MS = 15000;
   const HIBID_SEARCH_ENDPOINT = 'https://hibid-api.io/sr/main/v1/search/lot';
+  const GOVDEALS_SEARCH_ENDPOINT = 'https://maestro.lqdt1.com/search/list';
+  const GOVDEALS_ASSET_ENDPOINT_RE = /^https:\/\/maestro\.lqdt1\.com\/assets\/(\d+)\/(\d+)\/false(?:[?#]|$)/i;
+  const GOVDEALS_API_CONCURRENCY = 3;
+  const GOVDEALS_ENRICH_CONCURRENCY = 8;
+  const GOVDEALS_MAX_ENRICHMENT = 90;
+  const GOVDEALS_API_RETRIES = 3;
+  const GOVDEALS_API_TIMEOUT_MS = 20000;
+  const GOVDEALS_NETWORK_CAPTURE = {
+    installed: false,
+    binding: '',
+    search: null,
+    assets: new Map(),
+    errors: []
+  };
+  const GOVDEALS_INTERNAL_XHRS = new WeakSet();
   const DEBUG_PREFIX = '[FlipperAddon]';
   let DEBUG_EVENT_SEQUENCE = 0;
+
+  if (!globalThis.__HIBID_BID_ASSISTANT_TEST__
+    && typeof location !== 'undefined'
+    && isGovDealsHost(location.hostname)) {
+    installGovDealsNetworkObserver();
+  }
 
   function readSharedCatalogCopyIntent() {
     const candidates = [
@@ -4570,7 +4592,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (/govdeals/.test(normalizedSite)) {
       const assetId = row.assetId || fromUrl([/\/asset\/(\d+)/i]);
       const accountId = row.accountId || fromUrl([/\/asset\/\d+\/(\d+)/i]);
-      return String(assetId ? `${accountId || 'asset'}:${assetId}` : (row.id || row.url || '')).trim();
+      return String(assetId && accountId ? `${accountId}:${assetId}` : '').trim();
     }
     if (/ebay/.test(normalizedSite)) {
       return String(row.transaction_id
@@ -4629,6 +4651,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const startFingerprint = String(result?.routeFingerprint || result?.coverage?.routeFingerprint || options.startFingerprint || '');
     const currentFingerprint = String(options.currentFingerprint || genericRouteFingerprint(route, options.locationLike));
     const routeMatches = result?.coverage?.routeMatches !== false && (!startFingerprint || !currentFingerprint || startFingerprint === currentFingerprint);
+    const requestMatches = result?.coverage?.requestMatches !== false;
+    const accountScopeMatches = result?.coverage?.accountScopeMatches !== false;
     const failedPages = Array.isArray(result?.coverage?.failedPages) ? result.coverage.failedPages : (Array.isArray(result?.failedPages) ? result.failedPages : []);
     const failedBatches = Array.isArray(result?.coverage?.failedBatches) ? result.coverage.failedBatches : (Array.isArray(result?.failedBatches) ? result.failedBatches : []);
     const explicitProof = String(result?.coverage?.proofTier || result?.coverage?.proof || result?.proofTier || '').trim();
@@ -4649,6 +4673,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const countMatches = expectedTotal === null ? (proofTier === 'scoped-current-page' || proofTier === 'single-record' || proofTier === 'dom-bottom-settled') : rows.length === expectedTotal;
     const exactIdentitySet = expectedIds.length ? missingIds.length === 0 && unexpectedIds.length === 0 : true;
     const complete = routeMatches
+      && requestMatches
+      && accountScopeMatches
       && !result?.stopped
       && !result?.incomplete
       && result?.completeness?.complete !== false
@@ -4661,6 +4687,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       && proofTier !== 'unproven';
     let reason = 'complete';
     if (!routeMatches) reason = 'route-fingerprint-changed';
+    else if (!requestMatches) reason = 'request-fingerprint-changed';
+    else if (!accountScopeMatches) reason = 'account-scope-mismatch';
     else if (result?.stopped) reason = 'stopped';
     else if (result?.incomplete) reason = 'incomplete';
     else if (result?.completeness?.complete === false) reason = 'incomplete';
@@ -4693,6 +4721,10 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       failedPages,
       failedBatches,
       routeMatches,
+      requestMatches,
+      accountScopeMatches,
+      requestFingerprint: String(result?.coverage?.requestFingerprint || result?.requestFingerprint || ''),
+      currentRequestFingerprint: String(result?.coverage?.currentRequestFingerprint || result?.currentRequestFingerprint || ''),
       routeFingerprint: startFingerprint || currentFingerprint,
       currentFingerprint,
       stopped: Boolean(result?.stopped),
@@ -4840,6 +4872,12 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     if (pageKinds.length && pageKinds.some(kind => kind !== routeKind)) {
       return { ok: false, reason: 'govdeals-page-kind-mismatch' };
     }
+    if (result?.coverage?.routeMatches === false) {
+      return { ok: false, reason: 'govdeals-route-fingerprint-changed' };
+    }
+    if (result?.coverage?.requestMatches === false) {
+      return { ok: false, reason: 'govdeals-request-filter-mismatch' };
+    }
     if (routeKind === 'govdeals-new-listings') {
       const expectedZip = String(route.zipcode || '').trim();
       const expectedMiles = String(route.miles || '').trim();
@@ -4847,6 +4885,14 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       const contextMiles = String(result?.context?.miles || '').trim();
       if ((expectedZip && contextZip !== expectedZip) || (expectedMiles && contextMiles !== expectedMiles)) {
         return { ok: false, reason: 'govdeals-filter-mismatch' };
+      }
+    }
+    if (routeKind === 'govdeals-seller') {
+      const expectedAccountIds = uniqueNonEmpty(result?.context?.accountIds || []);
+      const rows = scraperResultRows(result);
+      if (!expectedAccountIds.length
+        || rows.some(row => !row?.accountId || !expectedAccountIds.includes(String(row.accountId)))) {
+        return { ok: false, reason: 'govdeals-seller-scope-mismatch' };
       }
     }
     if (routeKind === 'govdeals-asset') {
@@ -6712,6 +6758,26 @@ ${cards}
     extractGovDealsSearchContext,
     extractGovDealsAssetDetail,
     extractGovDealsListings,
+    installGovDealsNetworkObserver,
+    captureGovDealsNetworkExchange,
+    getGovDealsSearchCapture,
+    govDealsSearchRows,
+    sanitizeGovDealsNetworkCapture,
+    govDealsRequestFingerprint,
+    govDealsRouteScopeFingerprint,
+    govDealsRequestMatchesVisibleRoute,
+    buildGovDealsSearchRequest,
+    govDealsCaptureMatchesRoute,
+    requestGovDealsJson,
+    govDealsGmJsonRequest,
+    normalizeGovDealsSearchResult,
+    normalizeGovDealsAssetResponse,
+    enumerateGovDealsApiListings,
+    validateGovDealsApiCoverage,
+    buildGovDealsAssetRequest,
+    enrichGovDealsApiListings,
+    scrapeGovDealsApiAsset,
+    enrichGovDealsListings,
     findAjWillnerScrollContainer,
     getAjWillnerScrollStepSize,
     getAjWillnerExpectedTotal,
@@ -8256,7 +8322,7 @@ ${cards}
         supported: true,
         kind: 'govdeals-new-listings',
         host,
-        zipcode: String(params.get('zipcode') || ''),
+        zipcode: String(params.get('zipcode') || params.get('zip') || ''),
         miles: String(params.get('miles') || ''),
         category: String(params.get('category') || ''),
         categoryName: String(params.get('categoryName') || ''),
@@ -8264,7 +8330,8 @@ ${cards}
       };
     }
 
-    if (parts[0] === 'en' && parts[1] && parts.length === 2 && !/^(?:asset|new-listings|advanced-search|location-search|search|categories?)$/i.test(parts[1])) {
+    if (parts[0] === 'en' && parts[1] && parts.length === 2
+      && !/^(?:asset|new-listings|advanced-search|location-search|search|categories?|about|help|faq|support|contact|privacy|terms|legal|accessibility|cookies?|news|careers?)$/i.test(parts[1])) {
       return {
         supported: true,
         kind: 'govdeals-seller',
@@ -10515,8 +10582,253 @@ ${cards}
     };
   }
 
+  function parseGovDealsJson(value) {
+    if (value && typeof value === 'object') return value;
+    try {
+      return JSON.parse(String(value || ''));
+    } catch {
+      return null;
+    }
+  }
+
+  function cloneGovDealsValue(value) {
+    if (value === null || value === undefined) return value;
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return null;
+    }
+  }
+
+  function govDealsHeadersToObject(headers) {
+    const out = {};
+    if (!headers) return out;
+    try {
+      if (typeof headers.forEach === 'function') {
+        headers.forEach((value, key) => { out[String(key)] = String(value); });
+        return out;
+      }
+      if (Array.isArray(headers)) {
+        headers.forEach(entry => {
+          if (Array.isArray(entry) && entry.length >= 2) out[String(entry[0])] = String(entry[1]);
+        });
+        return out;
+      }
+      Object.entries(headers).forEach(([key, value]) => { out[String(key)] = String(value); });
+    } catch {
+      // Header capture is best-effort and remains in memory only.
+    }
+    return out;
+  }
+
+  function govDealsEndpointInfo(url) {
+    const href = String(url || '');
+    if (/^https:\/\/maestro\.lqdt1\.com\/search\/list(?:[?#]|$)/i.test(href)) {
+      return { kind: 'search', href: GOVDEALS_SEARCH_ENDPOINT, assetId: '', accountId: '' };
+    }
+    const asset = href.match(GOVDEALS_ASSET_ENDPOINT_RE);
+    if (asset) return { kind: 'asset', href: href.split('#')[0], assetId: asset[1], accountId: asset[2] };
+    return null;
+  }
+
+  function govDealsResponseTotal(headers, fallback = null) {
+    let value = null;
+    try {
+      if (typeof headers?.get === 'function') value = headers.get('x-total-count');
+      else {
+        const pair = Object.entries(headers || {}).find(([key]) => String(key).toLowerCase() === 'x-total-count');
+        value = pair?.[1] ?? null;
+      }
+    } catch {
+      value = null;
+    }
+    if (value !== null && value !== undefined && String(value).trim() !== '') {
+      const numeric = Number(String(value).replace(/,/g, ''));
+      if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+    }
+    const fallbackNumber = Number(fallback);
+    return Number.isFinite(fallbackNumber) && fallbackNumber >= 0 ? fallbackNumber : null;
+  }
+
+  function govDealsSearchRows(json) {
+    const candidates = [
+      json?.assetSearchResults,
+      json?.data?.assetSearchResults,
+      json?.results,
+      json?.data?.results,
+      json?.items,
+      json?.data?.items
+    ];
+    return candidates.find(Array.isArray) || [];
+  }
+
+  function captureGovDealsNetworkExchange(exchange = {}) {
+    const endpoint = govDealsEndpointInfo(exchange.url);
+    if (!endpoint) return false;
+    const body = parseGovDealsJson(exchange.body) || {};
+    const response = parseGovDealsJson(exchange.response);
+    const capture = {
+      kind: endpoint.kind,
+      url: endpoint.href,
+      method: String(exchange.method || 'POST').toUpperCase(),
+      body: cloneGovDealsValue(body) || {},
+      headers: govDealsHeadersToObject(exchange.headers),
+      response: cloneGovDealsValue(response),
+      responseHeaders: govDealsHeadersToObject(exchange.responseHeaders),
+      total: govDealsResponseTotal(exchange.responseHeaders, exchange.total),
+      status: Number(exchange.status || 0) || 0,
+      routeHref: String(exchange.routeHref || ''),
+      routeScopeFingerprint: govDealsRouteScopeFingerprint(null, exchange.routeHref || ''),
+      capturedAt: Date.now(),
+      assetId: endpoint.assetId,
+      accountId: endpoint.accountId
+    };
+    if (endpoint.kind === 'search') {
+      const accepted = capture.status >= 200
+        && capture.status < 300
+        && response
+        && typeof response === 'object'
+        && response.isAPIFailureActive !== true;
+      if (accepted) GOVDEALS_NETWORK_CAPTURE.search = capture;
+      debugEvent('govdeals.network.capture', {
+        endpoint: 'search/list',
+        accepted,
+        page: Number(body.page || 0) || 0,
+        displayRows: Number(body.displayRows || 0) || 0,
+        resultCount: govDealsSearchRows(response).length,
+        total: capture.total,
+        status: capture.status,
+        headerNames: Object.keys(capture.headers).map(key => key.toLowerCase()).sort()
+      });
+      return accepted;
+    } else {
+      const accepted = capture.status >= 200 && capture.status < 300 && response && typeof response === 'object';
+      if (accepted) GOVDEALS_NETWORK_CAPTURE.assets.set(`${endpoint.accountId}:${endpoint.assetId}`, capture);
+      debugEvent('govdeals.network.capture', {
+        endpoint: 'assets/{assetId}/{accountId}/false',
+        accepted,
+        assetId: endpoint.assetId,
+        accountId: endpoint.accountId,
+        status: capture.status,
+        photoCount: Array.isArray(response?.assetPhotos) ? response.assetPhotos.length : 0,
+        headerNames: Object.keys(capture.headers).map(key => key.toLowerCase()).sort()
+      });
+      return accepted;
+    }
+  }
+
+  function installGovDealsNetworkObserver(targetWindow = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : (typeof window !== 'undefined' ? window : null))) {
+    if (!targetWindow || GOVDEALS_NETWORK_CAPTURE.installed) return GOVDEALS_NETWORK_CAPTURE.installed;
+    let xhrInstalled = false;
+    let fetchInstalled = false;
+    try {
+      const Xhr = targetWindow.XMLHttpRequest;
+      const prototype = Xhr?.prototype;
+      if (prototype && !prototype.__flipperaddonGovDealsObserver) {
+        const metadata = new WeakMap();
+        const originalOpen = prototype.open;
+        const originalSetHeader = prototype.setRequestHeader;
+        const originalSend = prototype.send;
+        prototype.open = function (method, url, ...args) {
+          metadata.set(this, { method: String(method || 'GET'), url: String(url || ''), headers: {}, body: null });
+          return originalOpen.call(this, method, url, ...args);
+        };
+        prototype.setRequestHeader = function (name, value) {
+          const meta = metadata.get(this);
+          if (meta && govDealsEndpointInfo(meta.url)) meta.headers[String(name)] = String(value);
+          return originalSetHeader.call(this, name, value);
+        };
+        prototype.send = function (body) {
+          const meta = metadata.get(this);
+          if (meta && govDealsEndpointInfo(meta.url)) {
+            meta.routeHref = String(targetWindow.location?.href || '');
+            const internalReplay = GOVDEALS_INTERNAL_XHRS.has(this);
+            meta.body = body;
+            this.addEventListener('loadend', () => {
+              let responseHeaders = {};
+              let responseText = '';
+              try {
+                String(this.getAllResponseHeaders?.() || '').split(/\r?\n/).forEach(line => {
+                  const index = line.indexOf(':');
+                  if (index > 0) responseHeaders[line.slice(0, index).trim()] = line.slice(index + 1).trim();
+                });
+                responseText = this.responseText || '';
+              } catch {
+                // Restricted response access is recorded only as an empty capture.
+              }
+              if (!internalReplay) {
+                captureGovDealsNetworkExchange({
+                  ...meta,
+                  response: responseText,
+                  responseHeaders,
+                  status: this.status
+                });
+              }
+            }, { once: true });
+          }
+          return originalSend.call(this, body);
+        };
+        Object.defineProperty(prototype, '__flipperaddonGovDealsObserver', { value: true, configurable: false });
+        xhrInstalled = true;
+      }
+    } catch (error) {
+      GOVDEALS_NETWORK_CAPTURE.errors.push(`xhr:${String(error?.message || error).slice(0, 160)}`);
+    }
+    try {
+      const originalFetch = targetWindow.fetch;
+      if (typeof originalFetch === 'function' && !originalFetch.__flipperaddonGovDealsObserver) {
+        const wrappedFetch = function (input, init = {}) {
+          const url = String(input?.url || input || '');
+          const endpoint = govDealsEndpointInfo(url);
+          const method = String(init?.method || input?.method || 'GET');
+          const body = init?.body ?? null;
+          const headers = govDealsHeadersToObject(init?.headers || input?.headers);
+          const routeHref = String(targetWindow.location?.href || '');
+          const promise = originalFetch.apply(this, arguments);
+          if (endpoint) {
+            Promise.resolve(promise).then(response => {
+              const clone = response?.clone?.();
+              return clone?.text?.().then(responseText => captureGovDealsNetworkExchange({
+                url,
+                method,
+                body,
+                headers,
+                response: responseText,
+                responseHeaders: govDealsHeadersToObject(response?.headers),
+                status: response?.status,
+                routeHref
+              }));
+            }).catch(error => {
+              GOVDEALS_NETWORK_CAPTURE.errors.push(`fetch:${String(error?.message || error).slice(0, 160)}`);
+            });
+          }
+          return promise;
+        };
+        Object.defineProperty(wrappedFetch, '__flipperaddonGovDealsObserver', { value: true });
+        targetWindow.fetch = wrappedFetch;
+        fetchInstalled = true;
+      }
+    } catch (error) {
+      GOVDEALS_NETWORK_CAPTURE.errors.push(`fetch-bind:${String(error?.message || error).slice(0, 160)}`);
+    }
+    GOVDEALS_NETWORK_CAPTURE.installed = xhrInstalled || fetchInstalled;
+    GOVDEALS_NETWORK_CAPTURE.binding = [xhrInstalled ? 'xhr' : '', fetchInstalled ? 'fetch' : ''].filter(Boolean).join('+');
+    debugEvent('govdeals.network.binding', {
+      installed: GOVDEALS_NETWORK_CAPTURE.installed,
+      binding: GOVDEALS_NETWORK_CAPTURE.binding,
+      errors: GOVDEALS_NETWORK_CAPTURE.errors.length
+    });
+    return GOVDEALS_NETWORK_CAPTURE.installed;
+  }
+
   function cleanGovDealsText(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function sanitizeGovDealsPublicText(value) {
+    return String(value || '')
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted email]')
+      .replace(/(?:\+?1[\s.-]*)?\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}(?:\s*(?:x|ext\.?|extension)\s*\d+)?/gi, '[redacted phone]');
   }
 
   function govDealsLines(node) {
@@ -10627,6 +10939,15 @@ ${cards}
       || lineLocation
       || govDealsCompactListingFields(text).location
       || '';
+  }
+
+  function govDealsPublicLocation(value) {
+    let text = cleanGovDealsText(value)
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted]')
+      .replace(/(?:\+?1[\s.-]*)?\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}/g, '[redacted]');
+    const parts = text.split(',').map(part => part.trim()).filter(Boolean);
+    if (parts.length >= 3 && /\d/.test(parts[0])) text = parts.slice(-3).join(', ');
+    return cleanGovDealsText(text);
   }
 
   function govDealsDistanceText(raw) {
@@ -10935,7 +11256,7 @@ ${cards}
     };
   }
 
-  function govDealsAssetImage(root, base, title = '') {
+  function govDealsAssetImages(root, base, title = '') {
     const selectors = [
       'img.lg-object.lg-image',
       '.lg-object.lg-image',
@@ -10943,7 +11264,8 @@ ${cards}
       'img'
     ];
     const candidates = [];
-    let fallback = '';
+    const preferred = [];
+    const fallback = [];
     selectors.forEach(selector => {
       Array.from(root?.querySelectorAll?.(selector) || []).forEach(image => {
         if (!candidates.includes(image)) candidates.push(image);
@@ -10959,13 +11281,18 @@ ${cards}
       const alt = cleanGovDealsText(image?.getAttribute?.('alt') || image?.alt || '');
       const meta = `${src} ${alt} ${image?.getAttribute?.('class') || ''}`;
       if (!src || /spacer|blank|pixel|logo|brand|favicon|icon|placeholder|allsurplus|govdeals/i.test(meta)) continue;
-      if (!fallback) fallback = absoluteUrl(src, base);
+      const absolute = absoluteUrl(src, base);
+      if (absolute && !fallback.includes(absolute)) fallback.push(absolute);
       if (/webassets\.lqdt1\.com\/assets\/photos|\/assets\/photos\//i.test(src)
         || (wantedTitle && alt.toLowerCase().includes(wantedTitle.slice(0, 24)))) {
-        return absoluteUrl(src, base);
+        if (absolute && !preferred.includes(absolute)) preferred.push(absolute);
       }
     }
-    return fallback;
+    return uniqueNonEmpty([...preferred, ...fallback]);
+  }
+
+  function govDealsAssetImage(root, base, title = '') {
+    return govDealsAssetImages(root, base, title)[0] || '';
   }
 
   function govDealsAssetScopedRawText(root, contentRoot) {
@@ -11006,16 +11333,17 @@ ${cards}
     const condition = govDealsConditionText(rawText);
     const sellerInfo = govDealsAssetSeller(root, base);
     const longDescription = root?.querySelector?.('.long-description');
-    const description = longDescription
+    const description = sanitizeGovDealsPublicText(longDescription
       ? cleanGovDealsText(rawTextOf(longDescription))
-      : govDealsAssetDescription(rawText);
-    const itemLocation = govDealsAssetLabeledValue(root, 'Item Location')
+      : govDealsAssetDescription(rawText));
+    const itemLocation = govDealsPublicLocation(govDealsAssetLabeledValue(root, 'Item Location')
       || textOf(root?.querySelector?.('#lnkAssetDetailLocation'))
-      || govDealsLocation(rawText);
+      || govDealsLocation(rawText));
     const pickupSource = longDescription ? description : (rawText || description);
     const specsFromDom = extractGovDealsSpecsFromDom(root);
     const specs = Object.keys(specsFromDom).length ? specsFromDom : extractGovDealsSpecs(rawText);
-    const image = govDealsAssetImage(root, base, title);
+    const images = govDealsAssetImages(root, base, title);
+    const image = images[0] || '';
     return {
       source: 'GovDeals',
       pageKind: 'govdeals-asset',
@@ -11025,6 +11353,7 @@ ${cards}
       title,
       url: base,
       image,
+      images,
       seller: sellerInfo.seller,
       sellerUrl: sellerInfo.sellerUrl,
       category: '',
@@ -11036,13 +11365,940 @@ ${cards}
       closeTime: govDealsCloseTime(headerText || rawText),
       location: itemLocation,
       distanceText: govDealsDistanceText(rawText),
-      shippingText: govDealsShippingText(pickupSource),
-      pickupText: govDealsPickupText(pickupSource),
+      shippingText: sanitizeGovDealsPublicText(govDealsShippingText(pickupSource)),
+      pickupText: sanitizeGovDealsPublicText(govDealsPickupText(pickupSource)),
       condition,
       specs,
       description,
-      rawText
+      rawText: [
+        title,
+        description,
+        condition,
+        currentBid,
+        bidCount,
+        govDealsCloseTime(headerText || rawText),
+        itemLocation,
+        sanitizeGovDealsPublicText(govDealsShippingText(pickupSource)),
+        sanitizeGovDealsPublicText(govDealsPickupText(pickupSource))
+      ].filter(Boolean).join(' | ').slice(0, 12000)
     };
+  }
+
+  function stableGovDealsValue(value) {
+    if (Array.isArray(value)) return value.map(stableGovDealsValue);
+    if (!value || typeof value !== 'object') return value;
+    return Object.keys(value).sort().reduce((out, key) => {
+      out[key] = stableGovDealsValue(value[key]);
+      return out;
+    }, {});
+  }
+
+  function govDealsRequestFingerprint(body = {}) {
+    const allowed = [
+      'accountIds', 'auctionTypeId', 'businessId', 'categoryIds', 'displayRows', 'facetsFilter',
+      'isQAL', 'locationId', 'makebrand', 'model', 'proximityWithinDistance', 'requestType',
+      'responseStyle', 'searchText', 'sellerTypeId', 'sortField', 'sortOrder', 'timeType', 'zipcode'
+    ];
+    const fingerprint = {};
+    allowed.forEach(key => {
+      if (body?.[key] !== undefined) fingerprint[key] = cloneGovDealsValue(body[key]);
+    });
+    return JSON.stringify(stableGovDealsValue(fingerprint));
+  }
+
+  function govDealsRouteScopeFingerprint(route = null, loc = null) {
+    let url;
+    try {
+      url = urlFromLocationLike(loc || route?.url || route?.href || 'https://invalid.local/');
+    } catch {
+      return '';
+    }
+    const resolved = route?.kind ? route : resolveGovDealsPage(url);
+    const params = new Map();
+    for (const [rawKey, value] of url.searchParams.entries()) {
+      const key = String(rawKey || '').toLowerCase();
+      if (['page', 'pn'].includes(key)) continue;
+      const normalizedKey = key === 'zipcode' ? 'zip' : key;
+      if (!params.has(normalizedKey)) params.set(normalizedKey, []);
+      params.get(normalizedKey).push(String(value || ''));
+    }
+    const query = Array.from(params.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, values]) => `${encodeURIComponent(key)}=${values.slice().sort().map(encodeURIComponent).join(',')}`)
+      .join('&');
+    return [
+      String(resolved?.kind || ''),
+      url.hostname.toLowerCase(),
+      url.pathname.replace(/\/+$/, '').toLowerCase(),
+      query
+    ].join('|');
+  }
+
+  function govDealsRequestMatchesVisibleRoute(body = {}, route = {}, loc = null) {
+    let url;
+    try {
+      url = urlFromLocationLike(loc || route?.url || route?.href || 'https://invalid.local/');
+    } catch {
+      return false;
+    }
+    if (route?.kind === 'govdeals-seller') return Array.isArray(body.accountIds) && body.accountIds.length > 0;
+    if (route?.kind !== 'govdeals-new-listings') return false;
+    const expected = {
+      zipcode: String(route?.zipcode || url.searchParams.get('zipcode') || url.searchParams.get('zip') || '').trim(),
+      miles: String(route?.miles || url.searchParams.get('miles') || '').trim(),
+      searchText: String(url.searchParams.get('q') || url.searchParams.get('searchText') || url.searchParams.get('keyword') || '').trim(),
+      category: String(route?.category || url.searchParams.get('category') || url.searchParams.get('categoryId') || '').trim(),
+      sortField: String(url.searchParams.get('sf') || url.searchParams.get('sortField') || '').trim(),
+      sortOrder: String(url.searchParams.get('so') || url.searchParams.get('sortOrder') || '').trim()
+    };
+    if (expected.zipcode && String(body.zipcode || '').trim() !== expected.zipcode) return false;
+    if (expected.miles && String(body.proximityWithinDistance || '').trim() !== expected.miles) return false;
+    if (expected.searchText && String(body.searchText || '').trim().toLowerCase() !== expected.searchText.toLowerCase()) return false;
+    if (expected.category) {
+      const categories = uniqueNonEmpty(Array.isArray(body.categoryIds) ? body.categoryIds : [body.categoryIds]);
+      if (!categories.includes(expected.category)) return false;
+    }
+    if (expected.sortField && String(body.sortField || '').trim().toLowerCase() !== expected.sortField.toLowerCase()) return false;
+    if (expected.sortOrder && String(body.sortOrder || '').trim().toLowerCase() !== expected.sortOrder.toLowerCase()) return false;
+    return true;
+  }
+
+  function sanitizeGovDealsNetworkCapture(capture = {}) {
+    const body = cloneGovDealsValue(capture.body) || {};
+    const stripSensitive = value => {
+      if (Array.isArray(value)) return value.map(stripSensitive);
+      if (!value || typeof value !== 'object') return value;
+      return Object.entries(value).reduce((out, [key, child]) => {
+        if (/(?:session|token|cookie|authorization|api[-_]?key|subscription[-_]?key|user[-_]?id|email|phone|address|contact)/i.test(key)) return out;
+        out[key] = stripSensitive(child);
+        return out;
+      }, {});
+    };
+    const response = capture.response || {};
+    const endpoint = govDealsEndpointInfo(capture.url);
+    const stableIds = endpoint?.kind === 'search'
+      ? uniqueNonEmpty(govDealsSearchRows(response).map(row => {
+        const assetId = String(firstDefined(row?.assetId, row?.assetID, '') || '').trim();
+        const accountId = String(firstDefined(row?.accountId, row?.accountID, '') || '').trim();
+        return assetId && accountId ? `${accountId}:${assetId}` : '';
+      }))
+      : uniqueNonEmpty([endpoint?.assetId && endpoint?.accountId ? `${endpoint.accountId}:${endpoint.assetId}` : '']);
+    return {
+      kind: endpoint?.kind || capture.kind || '',
+      url: endpoint?.kind === 'asset'
+        ? 'https://maestro.lqdt1.com/assets/{assetId}/{accountId}/false'
+        : (endpoint?.href || ''),
+      method: String(capture.method || 'POST').toUpperCase(),
+      request: stripSensitive(body),
+      requestHeaderNames: Object.keys(capture.headers || {}).map(key => key.toLowerCase()).sort(),
+      responseHeaderNames: Object.keys(capture.responseHeaders || {}).map(key => key.toLowerCase()).sort(),
+      total: govDealsResponseTotal(capture.responseHeaders, firstDefined(capture.total, response?.totalCount, response?.total, null)),
+      resultCount: endpoint?.kind === 'search' ? govDealsSearchRows(response).length : (response ? 1 : 0),
+      stableIds,
+      assetId: endpoint?.assetId || capture.assetId || '',
+      accountId: endpoint?.accountId || capture.accountId || '',
+      status: Number(capture.status || 0) || 0,
+      requestFingerprint: govDealsRequestFingerprint(body)
+    };
+  }
+
+  function buildGovDealsSearchRequest(capture = {}, page = 1) {
+    const body = cloneGovDealsValue(capture.body) || {};
+    body.page = Math.max(1, Number(page) || 1);
+    return {
+      method: 'POST',
+      url: GOVDEALS_SEARCH_ENDPOINT,
+      headers: govDealsHeadersToObject(capture.headers),
+      body,
+      page: body.page,
+      pageSize: Math.max(1, Number(body.displayRows) || 24),
+      requestFingerprint: govDealsRequestFingerprint(body),
+      routeHref: String(capture.routeHref || '')
+    };
+  }
+
+  function govDealsCaptureMatchesRoute(capture = {}, route = {}, loc = null) {
+    if (!capture?.body || capture.kind !== 'search') return false;
+    if (Number(capture.status || 0) && (Number(capture.status) < 200 || Number(capture.status) >= 300)) return false;
+    if (capture.response?.isAPIFailureActive === true) return false;
+    const body = capture.body;
+    const kind = String(route?.kind || '');
+    if (!['govdeals-seller', 'govdeals-new-listings'].includes(kind)) return false;
+    if (!capture.routeHref || !loc) return false;
+    let capturedRoute;
+    try {
+      capturedRoute = resolveGovDealsPage(new URL(capture.routeHref, 'https://www.govdeals.com/'));
+    } catch {
+      return false;
+    }
+    if (capturedRoute.kind !== kind) return false;
+    if (kind === 'govdeals-seller'
+      && String(capturedRoute.sellerSlug || '').toLowerCase() !== String(route.sellerSlug || '').toLowerCase()) return false;
+    const captureScope = String(capture.routeScopeFingerprint || govDealsRouteScopeFingerprint(capturedRoute, capture.routeHref));
+    const currentScope = govDealsRouteScopeFingerprint(route, loc);
+    if (!captureScope || !currentScope || captureScope !== currentScope) return false;
+    return govDealsRequestMatchesVisibleRoute(body, route, loc);
+  }
+
+  function getGovDealsSearchCapture(route = (typeof location !== 'undefined' ? resolveGovDealsPage(location) : {}), loc = (typeof location !== 'undefined' ? location : null)) {
+    const capture = GOVDEALS_NETWORK_CAPTURE.search;
+    return govDealsCaptureMatchesRoute(capture, route, loc) ? capture : null;
+  }
+
+  function govDealsPhotoUrls(value, base = 'https://www.govdeals.com/') {
+    const urls = [];
+    const add = candidate => {
+      const raw = String(candidate || '').trim();
+      if (!raw || !/(?:^https?:\/\/|^\/)/i.test(raw)) return;
+      const url = absoluteUrl(raw, base);
+      if (!url || /(?:placeholder|spacer|blank|pixel|logo|favicon|icon)/i.test(url)) return;
+      if (!urls.includes(url)) urls.push(url);
+    };
+    const visit = (candidate, depth = 0) => {
+      if (depth > 3 || candidate === null || candidate === undefined) return;
+      if (typeof candidate === 'string') {
+        add(candidate);
+        return;
+      }
+      if (Array.isArray(candidate)) {
+        candidate.forEach(child => visit(child, depth + 1));
+        return;
+      }
+      if (typeof candidate === 'object') {
+        const preferred = ['url', 'src', 'photo', 'photoUrl', 'assetPhotoUrl', 'fullUrl', 'fullSize', 'large', 'original', 'thumbnailUrl'];
+        preferred.forEach(key => {
+          if (candidate[key] !== undefined) visit(candidate[key], depth + 1);
+        });
+      }
+    };
+    visit(value);
+    return urls;
+  }
+
+  function govDealsLocationFromApi(row = {}) {
+    const locationData = row.assetLocation || row.location || row.locationData || {};
+    const city = firstDefined(
+      row.city, row.cityName, row.locationCity, row.assetCity,
+      locationData.city, locationData.cityName, locationData.locationCity, ''
+    );
+    const state = firstDefined(
+      row.state, row.stateName, row.stateCode, row.locationState, row.assetState,
+      locationData.state, locationData.stateName, locationData.stateCode, ''
+    );
+    const zip = firstDefined(
+      row.zipcode, row.zipCode, row.postalCode, row.postal, row.locationZip, row.assetZip,
+      locationData.zipcode, locationData.zipCode, locationData.postalCode, locationData.postal, ''
+    );
+    const country = firstDefined(
+      row.countryDescription, row.country, row.countryName, row.countryCode,
+      locationData.countryDescription, locationData.country, locationData.countryName, locationData.countryCode, ''
+    );
+    return [city, state, zip, country].map(cleanGovDealsText).filter(Boolean).join(', ');
+  }
+
+  function govDealsPriceValue(value) {
+    if (value && typeof value === 'object') value = firstDefined(value.amount, value.value, value.currentBid, '');
+    const numeric = Number(String(value ?? '').replace(/[$,\s]/g, ''));
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function govDealsApiText(value) {
+    if (value === null || value === undefined) return '';
+    if (Array.isArray(value)) return value.map(govDealsApiText).filter(Boolean).join(' > ');
+    if (typeof value === 'object') {
+      return cleanGovDealsText(firstDefined(
+        value.name,
+        value.description,
+        value.label,
+        value.displayName,
+        value.value,
+        ''
+      ));
+    }
+    return cleanGovDealsText(value);
+  }
+
+  function normalizeGovDealsSearchResult(row = {}, pageKind = 'govdeals-new-listings') {
+    const assetId = String(firstDefined(row.assetId, row.assetID, row.id, '') || '').trim();
+    const accountId = String(firstDefined(row.accountId, row.accountID, row.sellerAccountId, '') || '').trim();
+    const title = govDealsApiText(firstDefined(
+      row.assetShortDescription, row.assetShortDesc, row.shortDescription, row.assetTitle, row.title, row.name, ''
+    ));
+    const descriptionHtml = sanitizeGovDealsPublicText(String(firstDefined(
+      row.assetLongDescription, row.assetLongDesc, row.longDescription, row.assetDescription,
+      row.fullDescription, row.descriptionHtml, row.description, row.descriptionText, ''
+    ) || ''));
+    const description = stripHtml(descriptionHtml);
+    const images = uniqueNonEmpty([
+      ...govDealsPhotoUrls(row.photo),
+      ...govDealsPhotoUrls(row.assetPhotos),
+      ...govDealsPhotoUrls(row.assetPhoto),
+      ...govDealsPhotoUrls(row.primaryPhoto),
+      ...govDealsPhotoUrls(row.photoUrl),
+      ...govDealsPhotoUrls(row.photoURL),
+      ...govDealsPhotoUrls(row.image),
+      ...govDealsPhotoUrls(row.imageUrl),
+      ...govDealsPhotoUrls(row.thumbnail),
+      ...govDealsPhotoUrls(row.thumbnailUrl),
+      ...govDealsPhotoUrls(row.images),
+      ...govDealsPhotoUrls(row.photoList)
+    ]);
+    const barePhoto = String(row.photo || '').trim();
+    if (!images.length && accountId && /^[A-Za-z0-9_.-]+\.(?:jpe?g|png|webp)(?:[?#].*)?$/i.test(barePhoto)) {
+      images.push(`https://webassets.lqdt1.com/assets/photos/${encodeURIComponent(accountId)}/${encodeURIComponent(barePhoto)}`);
+    }
+    const currentBidAmount = govDealsPriceValue(firstDefined(
+      row.currentBid, row.currentBidPrice, row.currentPrice, row.highBid, row.minimumBid, row.price, null
+    ));
+    const bidCountNumber = Number(firstDefined(row.bidCount, row.numberOfBids, row.totalBids, row.bids, 0));
+    const seller = govDealsApiText(firstDefined(
+      row.companyName, row.accountCompanyName, row.displaySellerName, row.displaySeller,
+      row.sellerCompany, row.sellerName, row.seller, ''
+    ));
+    const category = govDealsApiText(firstDefined(
+      row.assetCategory, row.categoryDescription, row.categoryName, row.categoryDesc,
+      row.category, row.assetCategoryDescription, row.categoryBreadcrumbs, ''
+    ));
+    const url = assetId && accountId
+      ? new URL(`/en/asset/${encodeURIComponent(assetId)}/${encodeURIComponent(accountId)}`, 'https://www.govdeals.com/').href
+      : absoluteUrl(firstDefined(row.clickUrl, row.assetUrl, row.url, ''), 'https://www.govdeals.com/');
+    const location = govDealsLocationFromApi(row);
+    const model = cleanGovDealsText(firstDefined(row.model, ''));
+    const make = cleanGovDealsText(firstDefined(row.makebrand, row.makeBrand, row.manufacturer, row.make, ''));
+    const year = cleanGovDealsText(firstDefined(row.modelYear, row.year, ''));
+    const condition = govDealsApiText(firstDefined(row.condition, row.assetCondition, row.conditionDescription, ''));
+    const status = govDealsApiText(firstDefined(
+      row.status, row.assetStatus, row.assetStatusCd, row.saleStatus, row.auctionStatus, condition, ''
+    ));
+    const closeTime = govDealsApiText(firstDefined(
+      row.auctionEndDate, row.closeTime, row.endDate, row.assetAuctionEndDate, row.endTime, row.closingDate, ''
+    ));
+    const shippingText = sanitizeGovDealsPublicText(govDealsApiText(firstDefined(
+      row.shippingDescription, row.shipping, row.shippingText, row.shippingMethod, ''
+    )));
+    const pickupText = sanitizeGovDealsPublicText(govDealsApiText(firstDefined(
+      row.removalInstructions, row.pickupInstructions, row.pickupText, row.pickupDetails, ''
+    )));
+    return {
+      source: 'GovDeals',
+      pageKind,
+      id: assetId && accountId ? `${accountId}:${assetId}` : '',
+      assetId,
+      accountId,
+      auctionId: String(firstDefined(row.auctionId, '') || ''),
+      inventoryId: String(firstDefined(row.inventoryId, '') || ''),
+      lotNumber: String(firstDefined(row.lotNumber, row.lotNo, '') || ''),
+      title,
+      url,
+      image: images[0] || '',
+      images,
+      seller,
+      sellerUrl: '',
+      category,
+      status,
+      currentBid: currentBidAmount,
+      currentBidText: currentBidAmount === null ? '' : `${currentBidAmount.toFixed(2)} USD`,
+      currentBidAmount,
+      bidCount: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      bidCountNumber: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      closeTime,
+      location,
+      distanceText: (() => {
+        const value = firstDefined(row.proximityDistance, row.distance, row.distanceText, null);
+        return value === null || value === undefined ? '' : cleanGovDealsText(String(value));
+      })(),
+      shippingText,
+      pickupText,
+      condition,
+      specs: Object.fromEntries(Object.entries({ Manufacturer: make, Model: model, Year: year }).filter(([, value]) => value)),
+      description,
+      descriptionHtml,
+      quantity: Number.isFinite(Number(row.quantity)) ? Number(row.quantity) : null,
+      latitude: Number.isFinite(Number(firstDefined(row.latitude, row.lat, null))) ? Number(firstDefined(row.latitude, row.lat, null)) : null,
+      longitude: Number.isFinite(Number(firstDefined(row.longitude, row.lon, row.lng, null))) ? Number(firstDefined(row.longitude, row.lon, row.lng, null)) : null,
+      rawText: [title, category, make, model, year, condition, description, location, shippingText, pickupText].filter(Boolean).join(' | ').slice(0, 12000)
+    };
+  }
+
+  function normalizeGovDealsAssetResponse(json = {}, route = {}) {
+    const row = json?.asset || json?.data?.asset || json?.data || json;
+    const assetId = String(firstDefined(row?.assetId, row?.assetID, '') || '').trim();
+    const accountId = String(firstDefined(row?.accountId, row?.accountID, '') || '').trim();
+    const title = cleanGovDealsText(firstDefined(row?.assetShortDesc, row?.assetShortDescription, row?.title, ''));
+    const descriptionHtml = sanitizeGovDealsPublicText(String(firstDefined(
+      row?.assetLongDesc, row?.assetLongDescription, row?.description, ''
+    ) || ''));
+    const description = stripHtml(descriptionHtml);
+    const images = uniqueNonEmpty([
+      ...govDealsPhotoUrls(row?.assetPhotos),
+      ...govDealsPhotoUrls(row?.photo),
+      ...govDealsPhotoUrls(row?.images)
+    ]);
+    const currentBidAmount = govDealsPriceValue(firstDefined(row?.currentBid, row?.currentBidPrice, row?.highBid, null));
+    const bidCountNumber = Number(firstDefined(row?.bidCount, row?.numberOfBids, row?.totalBids, 0));
+    const make = cleanGovDealsText(firstDefined(row?.makebrand, row?.makeBrand, row?.manufacturer, row?.make, ''));
+    const model = cleanGovDealsText(firstDefined(row?.model, ''));
+    const year = cleanGovDealsText(firstDefined(row?.modelYear, row?.year, ''));
+    const condition = cleanGovDealsText(firstDefined(
+      row?.condition, row?.assetCondition, row?.assetConditionCd, row?.conditionDescription, ''
+    ));
+    const category = cleanGovDealsText(firstDefined(
+      row?.categoryDescription,
+      row?.catDesc,
+      row?.assetCategory,
+      row?.categoryName,
+      Array.isArray(row?.categoryBreadcrumbs) ? row.categoryBreadcrumbs.map(item => cleanGovDealsText(item?.name || item?.description || item)).filter(Boolean).join(' > ') : '',
+      ''
+    ));
+    const location = govDealsLocationFromApi(row || {});
+    const seller = cleanGovDealsText(firstDefined(row?.companyName, row?.accountCompanyName, row?.displaySellerName, row?.sellerCompany, ''));
+    const identityMatches = (!route?.assetId || String(route.assetId) === assetId)
+      && (!route?.accountId || String(route.accountId) === accountId);
+    if (!identityMatches) {
+      throw new Error(`asset-identity-mismatch: expected ${route?.accountId || '*'}:${route?.assetId || '*'}, received ${accountId || '?'}:${assetId || '?'}`);
+    }
+    const specs = Object.fromEntries(Object.entries({
+      Manufacturer: make,
+      Model: model,
+      Year: year,
+      VIN: cleanGovDealsText(firstDefined(row?.vin, row?.VIN, '')),
+      Condition: condition
+    }).filter(([, value]) => value));
+    return {
+      source: 'GovDeals',
+      pageKind: 'govdeals-asset',
+      id: assetId && accountId ? `${accountId}:${assetId}` : '',
+      assetId,
+      accountId,
+      lotNumber: String(firstDefined(row?.lotNumber, row?.lotNo, '') || ''),
+      title,
+      url: assetId && accountId ? `https://www.govdeals.com/en/asset/${assetId}/${accountId}` : '',
+      image: images[0] || '',
+      images,
+      seller,
+      sellerUrl: '',
+      category,
+      status: cleanGovDealsText(firstDefined(row?.status, row?.assetStatus, row?.assetStatusCd, condition, '')),
+      currentBid: currentBidAmount,
+      currentBidText: currentBidAmount === null ? '' : `${currentBidAmount.toFixed(2)} USD`,
+      currentBidAmount,
+      bidCount: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      bidCountNumber: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      closeTime: cleanGovDealsText(firstDefined(row?.auctionEndDate, row?.closeTime, row?.endDate, '')),
+      location,
+      distanceText: cleanGovDealsText(firstDefined(row?.distance, row?.distanceText, '')),
+      shippingText: sanitizeGovDealsPublicText(cleanGovDealsText(firstDefined(
+        row?.shippingDescription, row?.shipping, row?.shippingText, ''
+      ))),
+      pickupText: sanitizeGovDealsPublicText(cleanGovDealsText(firstDefined(
+        row?.removalInstructions, row?.pickupInstructions, row?.pickupText, ''
+      ))),
+      condition,
+      specs,
+      description,
+      descriptionHtml,
+      identityMatches,
+      rawText: [title, category, make, model, year, condition, description, location].filter(Boolean).join(' | ').slice(0, 12000)
+    };
+  }
+
+  function govDealsResponseHeaderObject(raw = '') {
+    const headers = {};
+    String(raw || '').split(/\r?\n/).forEach(line => {
+      const index = line.indexOf(':');
+      if (index > 0) headers[line.slice(0, index).trim()] = line.slice(index + 1).trim();
+    });
+    return headers;
+  }
+
+  function govDealsReplayHeaders(headers = {}) {
+    return Object.fromEntries(Object.entries(headers).filter(([name]) => {
+      const key = String(name || '').toLowerCase();
+      return !/^(?:cookie|authorization|host|origin|referer|content-length|connection|sec-)/i.test(key);
+    }));
+  }
+
+  function govDealsGmJsonRequest(request = {}, timeoutMs = GOVDEALS_API_TIMEOUT_MS, signal = null) {
+    if (typeof GM_xmlhttpRequest !== 'function') return Promise.reject(new Error('GovDeals GM request unavailable'));
+    if (signal?.aborted) return Promise.reject(Object.assign(new Error('GovDeals request stopped'), { stopped: true }));
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let handle = null;
+      const finish = callback => value => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener?.('abort', onAbort);
+        callback(value);
+      };
+      const onAbort = () => {
+        try { handle?.abort?.(); } catch { /* best effort */ }
+        finish(reject)(Object.assign(new Error('GovDeals request stopped'), { stopped: true }));
+      };
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+      handle = GM_xmlhttpRequest({
+        method: request.method || 'POST',
+        url: request.url,
+        headers: {
+          'Content-Type': 'application/json',
+          ...govDealsReplayHeaders(request.headers || {})
+        },
+        data: JSON.stringify(request.body || {}),
+        timeout: timeoutMs,
+        anonymous: true,
+        onload: finish(response => {
+          if (response.status < 200 || response.status >= 300) {
+            reject(Object.assign(new Error(`HTTP ${response.status || 0}`), { status: Number(response.status || 0) }));
+            return;
+          }
+          const json = parseGovDealsJson(response.responseText);
+          if (!json || typeof json !== 'object') {
+            reject(new Error('Invalid GovDeals JSON response'));
+            return;
+          }
+          const responseHeaders = govDealsResponseHeaderObject(response.responseHeaders);
+          resolve({
+            json,
+            total: govDealsResponseTotal(responseHeaders, null),
+            status: Number(response.status || 200)
+          });
+        }),
+        ontimeout: finish(() => reject(new Error(`GovDeals GM request timed out after ${timeoutMs}ms`))),
+        onerror: finish(error => reject(new Error(error?.error || error?.message || 'GovDeals GM request failed'))),
+        onabort: finish(() => reject(Object.assign(new Error('GovDeals request stopped'), { stopped: true })))
+      });
+    });
+  }
+
+  function govDealsXhrJsonRequest(request = {}, timeoutMs = GOVDEALS_API_TIMEOUT_MS, targetWindow = null, signal = null) {
+    const pageWindow = targetWindow
+      || (typeof unsafeWindow !== 'undefined' ? unsafeWindow : (typeof window !== 'undefined' ? window : null));
+    const Xhr = pageWindow?.XMLHttpRequest;
+    if (typeof Xhr !== 'function') return Promise.reject(new Error('GovDeals page XHR unavailable'));
+    if (signal?.aborted) return Promise.reject(Object.assign(new Error('GovDeals request stopped'), { stopped: true }));
+    return new Promise((resolve, reject) => {
+      const xhr = new Xhr();
+      GOVDEALS_INTERNAL_XHRS.add(xhr);
+      xhr.open(request.method || 'POST', request.url, true);
+      // GovDeals' cross-origin Maestro request is credentialless; its scoped
+      // session headers are already present in the captured in-memory template.
+      xhr.withCredentials = false;
+      xhr.timeout = timeoutMs;
+      Object.entries(request.headers || {}).forEach(([name, value]) => {
+        try {
+          xhr.setRequestHeader(name, value);
+        } catch {
+          // Browser-managed or forbidden headers are intentionally skipped.
+        }
+      });
+      let settled = false;
+      const finish = callback => value => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener?.('abort', onAbort);
+        callback(value);
+      };
+      const onAbort = () => {
+        try { xhr.abort(); } catch { /* best effort */ }
+        finish(reject)(Object.assign(new Error('GovDeals request stopped'), { stopped: true }));
+      };
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+      xhr.onload = finish(() => {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(Object.assign(new Error(`HTTP ${xhr.status || 0}`), { status: Number(xhr.status || 0) }));
+          return;
+        }
+        const json = parseGovDealsJson(xhr.responseText);
+        if (!json || typeof json !== 'object') {
+          reject(new Error('Invalid GovDeals JSON response'));
+          return;
+        }
+        resolve({
+          json,
+          total: govDealsResponseTotal({ get: name => xhr.getResponseHeader(name) }, null),
+          status: xhr.status
+        });
+      });
+      xhr.onerror = finish(() => reject(new Error('GovDeals XHR network error')));
+      xhr.ontimeout = finish(() => reject(new Error(`GovDeals XHR timed out after ${timeoutMs}ms`)));
+      xhr.onabort = finish(() => reject(Object.assign(new Error('GovDeals XHR aborted'), { stopped: true })));
+      xhr.send(JSON.stringify(request.body || {}));
+    });
+  }
+
+  async function requestGovDealsJson(request = {}, options = {}) {
+    const retries = Math.max(1, Number(options.retries) || GOVDEALS_API_RETRIES);
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || GOVDEALS_API_TIMEOUT_MS);
+    const shouldStop = options.shouldStop || (() => false);
+    const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? 250));
+    const signal = options.signal || null;
+    const validateResponse = typeof options.validateResponse === 'function' ? options.validateResponse : null;
+    const explicitFetch = typeof options.fetchImpl === 'function';
+    const fetchImpl = options.fetchImpl
+      || (typeof unsafeWindow !== 'undefined' && typeof unsafeWindow.fetch === 'function' ? unsafeWindow.fetch.bind(unsafeWindow) : null)
+      || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
+    const xhrAvailable = !explicitFetch && (typeof unsafeWindow !== 'undefined'
+      ? typeof unsafeWindow.XMLHttpRequest === 'function'
+      : (typeof window !== 'undefined' && typeof window.XMLHttpRequest === 'function'));
+    const gmAvailable = !explicitFetch && typeof GM_xmlhttpRequest === 'function';
+    if (!fetchImpl && !xhrAvailable && !gmAvailable) throw new Error('GovDeals browser request transport unavailable');
+    const errors = [];
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      if (shouldStop() || signal?.aborted) throw Object.assign(new Error('GovDeals request stopped'), { stopped: true, errors });
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = controller ? globalThis.setTimeout(() => controller.abort(), timeoutMs) : null;
+      const onExternalAbort = () => controller?.abort?.();
+      signal?.addEventListener?.('abort', onExternalAbort, { once: true });
+      try {
+        debugEvent('govdeals.api.request.start', {
+          endpoint: govDealsEndpointInfo(request.url)?.kind || 'unknown',
+          page: Number(request.body?.page || 0) || 0,
+          attempt,
+          headerNames: Object.keys(request.headers || {}).map(key => key.toLowerCase()).sort()
+        });
+        let json;
+        let total;
+        let responseStatus = 200;
+        if (gmAvailable) {
+          const response = await govDealsGmJsonRequest(request, timeoutMs, signal);
+          json = response.json;
+          total = response.total;
+          responseStatus = response.status;
+        } else if (xhrAvailable) {
+          const response = await govDealsXhrJsonRequest(request, timeoutMs, null, signal);
+          json = response.json;
+          total = response.total;
+          responseStatus = response.status;
+        } else {
+          const response = await fetchImpl(request.url, {
+            method: request.method || 'POST',
+            headers: request.headers || {},
+            credentials: 'omit',
+            cache: 'no-store',
+            body: JSON.stringify(request.body || {}),
+            ...(controller ? { signal: controller.signal } : {})
+          });
+          if (!response?.ok) throw Object.assign(new Error(`HTTP ${response?.status || 0}`), { status: Number(response?.status || 0) });
+          json = typeof response.json === 'function' ? await response.json() : parseGovDealsJson(response.responseText);
+          if (!json || typeof json !== 'object') throw new Error('Invalid GovDeals JSON response');
+          total = govDealsResponseTotal(response.headers, response.total);
+          responseStatus = Number(response.status || 200);
+        }
+        if (json?.isAPIFailureActive === true) {
+          throw new Error(`GovDeals API failure flag active${json?.easMsg ? `: ${cleanGovDealsText(json.easMsg).slice(0, 180)}` : ''}`);
+        }
+        if (validateResponse) validateResponse({ json, total, status: responseStatus, attempt });
+        debugEvent('govdeals.api.request.success', {
+          endpoint: govDealsEndpointInfo(request.url)?.kind || 'unknown',
+          page: Number(request.body?.page || 0) || 0,
+          attempt,
+          total,
+          resultCount: govDealsSearchRows(json).length
+        });
+        return { json, total, attempts: attempt, errors, status: responseStatus };
+      } catch (error) {
+        const message = String(error?.message || error).replace(/\s+/g, ' ').slice(0, 300);
+        const status = Number(error?.status || 0) || 0;
+        errors.push({ attempt, status, message });
+        debugEvent('govdeals.api.request.failure', {
+          endpoint: govDealsEndpointInfo(request.url)?.kind || 'unknown',
+          page: Number(request.body?.page || 0) || 0,
+          attempt,
+          error: message
+        });
+        const stopped = Boolean(error?.stopped || shouldStop() || signal?.aborted);
+        const permanentClientError = status >= 400 && status < 500 && ![408, 429].includes(status);
+        if (attempt >= retries || stopped || permanentClientError) {
+          throw Object.assign(new Error(message), { errors, stopped, status });
+        }
+        await wait(Math.min(1200, retryDelayMs * attempt));
+      } finally {
+        if (timer) globalThis.clearTimeout(timer);
+        signal?.removeEventListener?.('abort', onExternalAbort);
+      }
+    }
+    throw new Error('GovDeals request failed');
+  }
+
+  function govDealsCurrentRouteFingerprint(route = {}, loc = null) {
+    return genericRouteFingerprint({ ...route, source: 'govdeals' }, loc || route?.url || null);
+  }
+
+  async function enumerateGovDealsApiListings(capture = {}, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const startedAt = Date.now();
+    const route = options.route || (typeof location !== 'undefined'
+      ? resolveGovDealsPage(location)
+      : { kind: options.pageKind || 'govdeals-new-listings', source: 'govdeals' });
+    const loc = options.locationLike || (typeof location !== 'undefined'
+      ? location
+      : capture.routeHref || capture.sourceUrl || 'https://www.govdeals.com/en/search');
+    const routeFingerprint = String(options.routeFingerprint || govDealsCurrentRouteFingerprint(route, loc));
+    const requestFingerprint = govDealsRequestFingerprint(capture.body || {});
+    const pageSize = Math.max(1, Number(capture.body?.displayRows) || 24);
+    const records = [];
+    const failedPages = [];
+    const pageAudits = [];
+    const duplicateIds = new Set();
+    const totalDrift = [];
+    const seenIds = new Set();
+    let expectedTotal = null;
+    let stopped = false;
+
+    const readPage = async page => {
+      const request = buildGovDealsSearchRequest(capture, page);
+      const expectedBeforeRequest = expectedTotal;
+      try {
+        const result = await requestGovDealsJson(request, {
+          ...options,
+          shouldStop,
+          validateResponse: ({ total }) => {
+            if (total === null) throw new Error('x-total-count missing');
+            if (expectedBeforeRequest !== null && total !== expectedBeforeRequest) {
+              throw new Error(`x-total-count drifted from ${expectedBeforeRequest} to ${total}`);
+            }
+          }
+        });
+        const rows = govDealsSearchRows(result.json);
+        const total = result.total;
+        if (expectedTotal === null) expectedTotal = total;
+        pageAudits.push({ page, count: rows.length, total, attempts: result.attempts });
+        onProgress(`GovDeals API page ${page}: ${rows.length} row(s), total ${total}.`);
+        return rows.map(row => normalizeGovDealsSearchResult(row, route.kind));
+      } catch (error) {
+        const drift = (error?.errors || []).map(entry => entry?.message || '').find(message => /x-total-count drifted/i.test(message));
+        if (drift) {
+          const received = Number(String(drift).match(/\bto\s+(\d+)\b/i)?.[1]);
+          totalDrift.push({ page, expected: expectedBeforeRequest, received: Number.isFinite(received) ? received : null });
+        }
+        failedPages.push({ page, reason: String(error?.message || error).slice(0, 300), attempts: error?.errors?.length || 0 });
+        return [];
+      }
+    };
+
+    const firstPage = await readPage(1);
+    if (shouldStop()) stopped = true;
+    const totalPages = expectedTotal === null ? 1 : Math.ceil(expectedTotal / pageSize);
+    const pages = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2);
+    let cursor = 0;
+    const pageResults = new Map([[1, firstPage]]);
+    const worker = async () => {
+      while (cursor < pages.length && !shouldStop()) {
+        const page = pages[cursor++];
+        pageResults.set(page, await readPage(page));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(Math.max(1, Number(options.concurrency) || GOVDEALS_API_CONCURRENCY), pages.length || 1) }, () => worker()));
+    if (shouldStop()) stopped = true;
+
+    Array.from(pageResults.keys()).sort((a, b) => a - b).forEach(page => {
+      (pageResults.get(page) || []).forEach(item => {
+        const identity = scraperStableIdentity(item, 'govdeals');
+        if (identity && seenIds.has(identity)) {
+          duplicateIds.add(identity);
+          return;
+        }
+        if (identity) seenIds.add(identity);
+        records.push(item);
+      });
+    });
+
+    const currentRoute = options.currentRoute
+      || (typeof location !== 'undefined' && isGovDealsHost(location.hostname) ? resolveGovDealsPage(location) : route);
+    const currentLoc = options.currentLocationLike || (typeof location !== 'undefined' ? location : loc);
+    const currentFingerprint = String(options.currentFingerprint || govDealsCurrentRouteFingerprint(currentRoute, currentLoc));
+    const activeRequestBody = typeof options.getActiveRequestBody === 'function'
+      ? options.getActiveRequestBody()
+      : (options.activeRequestBody || options.currentCapture?.body || getGovDealsSearchCapture(currentRoute, currentLoc)?.body || capture.body || {});
+    const currentRequestFingerprint = govDealsRequestFingerprint(activeRequestBody);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const requestMatches = requestFingerprint === currentRequestFingerprint;
+    const expectedAccountIds = route.kind === 'govdeals-seller'
+      ? uniqueNonEmpty(capture.body?.accountIds || [])
+      : [];
+    const accountScopeMatches = route.kind !== 'govdeals-seller'
+      || (expectedAccountIds.length > 0
+        && records.every(item => item?.accountId && expectedAccountIds.includes(String(item.accountId))));
+    const missingIdentityIndexes = records.map((item, index) => scraperStableIdentity(item, 'govdeals') ? -1 : index).filter(index => index >= 0);
+    const complete = !stopped
+      && routeMatches
+      && requestMatches
+      && accountScopeMatches
+      && expectedTotal !== null
+      && records.length === expectedTotal
+      && seenIds.size === expectedTotal
+      && duplicateIds.size === 0
+      && missingIdentityIndexes.length === 0
+      && failedPages.length === 0
+      && totalDrift.length === 0;
+    let stopReason = 'verified-api-total';
+    if (stopped) stopReason = 'user-stop';
+    else if (!routeMatches) stopReason = 'route-fingerprint-changed';
+    else if (!requestMatches) stopReason = 'request-fingerprint-changed';
+    else if (!accountScopeMatches) stopReason = 'api-account-scope-mismatch';
+    else if (expectedTotal === null) stopReason = 'authoritative-total-unavailable';
+    else if (totalDrift.length) stopReason = 'api-total-drift';
+    else if (failedPages.length) stopReason = 'failed-pages';
+    else if (duplicateIds.size) stopReason = 'duplicate-identities';
+    else if (missingIdentityIndexes.length) stopReason = 'missing-stable-identities';
+    else if (records.length !== expectedTotal || seenIds.size !== expectedTotal) stopReason = 'api-total-mismatch';
+
+    const context = route.kind === 'govdeals-seller'
+      ? {
+        source: 'GovDeals', pageKind: route.kind, sellerSlug: route.sellerSlug || '', url: String(loc?.href || loc || capture.routeHref || ''),
+        accountIds: cloneGovDealsValue(capture.body?.accountIds) || [], generatedAt: new Date().toISOString()
+      }
+      : {
+        source: 'GovDeals', pageKind: route.kind, url: String(loc?.href || loc || capture.routeHref || ''),
+        zipcode: String(capture.body?.zipcode || route.zipcode || ''),
+        miles: String(capture.body?.proximityWithinDistance || route.miles || ''),
+        categoryIds: cloneGovDealsValue(capture.body?.categoryIds) || [],
+        searchText: String(capture.body?.searchText || ''),
+        sortField: String(capture.body?.sortField || ''),
+        sortOrder: String(capture.body?.sortOrder || ''),
+        activeFilters: cloneGovDealsValue(capture.body?.facetsFilter) || {},
+        generatedAt: new Date().toISOString()
+      };
+    const coverage = {
+      proofTier: 'api-exact',
+      strategy: 'maestro-search-list',
+      complete,
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      requestFingerprint,
+      currentRequestFingerprint,
+      requestMatches,
+      accountScopeMatches,
+      enumeratedIds: Array.from(seenIds),
+      duplicateIds: Array.from(duplicateIds),
+      missingIdentityIndexes,
+      failedPages,
+      totalDrift,
+      pageAudits: pageAudits.sort((a, b) => a.page - b.page),
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('govdeals.api.coverage', {
+      expectedTotal,
+      collected: records.length,
+      unique: seenIds.size,
+      complete,
+      stopReason,
+      failedPageCount: failedPages.length,
+      duplicateCount: duplicateIds.size,
+      routeMatches,
+      requestMatches,
+      accountScopeMatches
+    });
+    return {
+      source: 'govdeals-api',
+      items: records,
+      listings: records,
+      expectedTotal,
+      complete,
+      enumeratedIds: Array.from(seenIds),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages,
+      totalDrift,
+      pageStats: coverage.pageAudits.map(page => ({ page: page.page, returned: page.count, total: page.total, attempts: page.attempts })),
+      requestFingerprint,
+      currentRequestFingerprint,
+      context: { ...context, expectedTotal, requestFingerprint },
+      stopped,
+      incomplete: !complete,
+      stopReason,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      audit: { pages: coverage.pageAudits, capture: sanitizeGovDealsNetworkCapture(capture) }
+    };
+  }
+
+  function validateGovDealsApiCoverage(result = {}, route = {}, options = {}) {
+    const items = primaryScraperRows(result);
+    const identities = items.map(item => scraperStableIdentity(item, 'govdeals'));
+    const identityCounts = new Map();
+    identities.filter(Boolean).forEach(id => identityCounts.set(id, (identityCounts.get(id) || 0) + 1));
+    const duplicateIds = uniqueNonEmpty([
+      ...(result?.duplicateIds || []),
+      ...(result?.coverage?.duplicateIds || []),
+      ...Array.from(identityCounts.entries()).filter(([, count]) => count > 1).map(([id]) => id)
+    ]);
+    const collectedIds = uniqueNonEmpty(identities);
+    const enumeratedIds = uniqueNonEmpty(result?.enumeratedIds || result?.coverage?.enumeratedIds || []);
+    const expectedSet = new Set(enumeratedIds);
+    const collectedSet = new Set(collectedIds);
+    const missingIds = enumeratedIds.filter(id => !collectedSet.has(id));
+    const unexpectedIds = enumeratedIds.length ? collectedIds.filter(id => !expectedSet.has(id)) : [];
+    const missingIdentityIndexes = identities.map((id, index) => id ? -1 : index).filter(index => index >= 0);
+    const expectedCount = expectedTotalFromScraperResult(result);
+    const failedPages = Array.isArray(result?.failedPages) ? result.failedPages : (result?.coverage?.failedPages || []);
+    const totalDrift = Array.isArray(result?.totalDrift) ? result.totalDrift : (result?.coverage?.totalDrift || []);
+    const requestFingerprint = String(result?.requestFingerprint || result?.coverage?.requestFingerprint || '');
+    const activeRequestFingerprint = options.activeRequestBody
+      ? govDealsRequestFingerprint(options.activeRequestBody)
+      : String(result?.currentRequestFingerprint || result?.coverage?.currentRequestFingerprint || requestFingerprint);
+    const requestMatches = result?.coverage?.requestMatches !== false
+      && (!requestFingerprint || !activeRequestFingerprint || requestFingerprint === activeRequestFingerprint);
+    const routeMatches = result?.coverage?.routeMatches !== false;
+    const sellerRoute = String(route?.kind || result?.context?.pageKind || '') === 'govdeals-seller';
+    const expectedAccountIds = uniqueNonEmpty(
+      options.expectedAccountIds
+      || (sellerRoute ? result?.context?.accountIds : [])
+      || []
+    );
+    const accountIds = uniqueNonEmpty(items.map(item => item?.accountId));
+    const accountScopeMatches = sellerRoute
+      ? expectedAccountIds.length > 0
+        && accountIds.length > 0
+        && items.every(item => item?.accountId && expectedAccountIds.includes(String(item.accountId)))
+      : items.every(item => item?.assetId && item?.accountId);
+    const countMatches = expectedCount !== null && items.length === expectedCount && collectedIds.length === expectedCount;
+    const complete = !result?.stopped
+      && !result?.incomplete
+      && routeMatches
+      && requestMatches
+      && accountScopeMatches
+      && expectedCount !== null
+      && countMatches
+      && duplicateIds.length === 0
+      && missingIdentityIndexes.length === 0
+      && missingIds.length === 0
+      && unexpectedIds.length === 0
+      && failedPages.length === 0
+      && totalDrift.length === 0;
+    let reason = 'complete';
+    if (result?.stopped) reason = 'user-stop';
+    else if (!routeMatches) reason = 'route-fingerprint-changed';
+    else if (!requestMatches) reason = 'request-fingerprint-changed';
+    else if (!accountScopeMatches) reason = 'api-account-scope-mismatch';
+    else if (totalDrift.length) reason = 'api-total-drift';
+    else if (failedPages.length) reason = 'api-failed-pages';
+    else if (duplicateIds.length) reason = 'api-duplicate-ids';
+    else if (missingIdentityIndexes.length) reason = 'api-missing-stable-ids';
+    else if (missingIds.length) reason = 'api-missing-ids';
+    else if (unexpectedIds.length) reason = 'api-unexpected-ids';
+    else if (expectedCount === null) reason = 'api-total-unavailable';
+    else if (!countMatches) reason = 'api-count-mismatch';
+    const coverage = {
+      expectedCount,
+      expectedTotal: expectedCount,
+      collectedCount: items.length,
+      uniqueCount: collectedIds.length,
+      uniqueIdentityCount: collectedIds.length,
+      collectedIds,
+      enumeratedIds,
+      duplicateIds,
+      missingIdentityIndexes,
+      missingIds,
+      unexpectedIds,
+      failedPages,
+      totalDrift,
+      routeMatches,
+      requestMatches,
+      accountScopeMatches,
+      requestFingerprint,
+      activeRequestFingerprint
+    };
+    return { ok: complete, complete, reason, coverage, ...coverage };
   }
 
   function mergeGovDealsDetail(listing, detail) {
@@ -11054,11 +12310,152 @@ ${cards}
     if (next.currentBid && next.currentBidAmount == null) next.currentBidAmount = moneyFromText(next.currentBid);
     if (next.bidCount && next.bidCountNumber == null) next.bidCountNumber = numberFromText(next.bidCount);
     next.specs = Object.keys(next.specs || {}).length ? next.specs : (detail.specs || {});
+    next.images = uniqueNonEmpty([...(next.images || []), ...(detail.images || []), next.image, detail.image]);
+    next.image = next.images[0] || '';
+    if (detail.identityMatches !== undefined) next.identityMatches = detail.identityMatches;
     return next;
   }
 
   function govDealsNeedsEnrichment(item) {
     return Boolean(item?.url && (!item.description || !item.image || !item.location || !item.status || !Object.keys(item.specs || {}).length));
+  }
+
+  function govDealsApiNeedsEnrichment(item) {
+    return Boolean(item?.assetId && item?.accountId && (!item.description || !(item.images || []).length));
+  }
+
+  function buildGovDealsAssetRequest(capture = {}, assetId = '', accountId = '') {
+    return {
+      method: 'POST',
+      url: `https://maestro.lqdt1.com/assets/${encodeURIComponent(assetId)}/${encodeURIComponent(accountId)}/false`,
+      headers: govDealsHeadersToObject(capture.headers),
+      body: { businessId: 'GD', siteId: 1 },
+      assetId: String(assetId),
+      accountId: String(accountId)
+    };
+  }
+
+  async function enrichGovDealsApiListings(listings, capture = {}, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const out = listings.slice();
+    const eligible = out.map((item, index) => ({ item, index })).filter(({ item }) => govDealsApiNeedsEnrichment(item));
+    const limit = Math.max(0, Number(options.enrichmentLimit ?? GOVDEALS_MAX_ENRICHMENT));
+    const queue = eligible.slice(0, limit);
+    const audit = {
+      eligible: eligible.length,
+      limit,
+      requested: queue.length,
+      notNeeded: out.length - eligible.length,
+      skippedDueLimit: Math.max(0, eligible.length - queue.length),
+      succeeded: 0,
+      failed: [],
+      stopped: false
+    };
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queue.length && !shouldStop()) {
+        const entry = queue[cursor++];
+        const request = buildGovDealsAssetRequest(capture, entry.item.assetId, entry.item.accountId);
+        const identity = `${entry.item.accountId}:${entry.item.assetId}`;
+        try {
+          const response = await requestGovDealsJson(request, { ...options, shouldStop });
+          const detail = normalizeGovDealsAssetResponse(response.json, {
+            kind: 'govdeals-asset',
+            assetId: entry.item.assetId,
+            accountId: entry.item.accountId
+          });
+          if (!detail.identityMatches || !detail.title) throw new Error('asset-response-identity-mismatch');
+          out[entry.index] = mergeGovDealsDetail(entry.item, detail);
+          audit.succeeded += 1;
+        } catch (error) {
+          audit.failed.push({ id: identity, reason: String(error?.message || error).slice(0, 300) });
+        }
+        onProgress(`Enriched ${audit.succeeded}/${audit.requested} GovDeals asset(s).`);
+      }
+    };
+    const concurrency = Math.min(Math.max(1, Number(options.enrichmentConcurrency) || GOVDEALS_ENRICH_CONCURRENCY), queue.length || 1);
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    audit.stopped = shouldStop();
+    out.audit = audit;
+    return out;
+  }
+
+  async function scrapeGovDealsApiAsset(route = {}, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const key = `${route.accountId}:${route.assetId}`;
+    const capture = options.capture || GOVDEALS_NETWORK_CAPTURE.assets.get(key) || null;
+    if (!capture) return null;
+    const routeFingerprint = govDealsCurrentRouteFingerprint(route, options.locationLike || (typeof location !== 'undefined' ? location : capture.routeHref));
+    const captureStatus = Number(capture.status || 0) || 0;
+    const captureUsable = Boolean(
+      capture.response
+      && (!captureStatus || (captureStatus >= 200 && captureStatus < 300))
+      && capture.response?.isAPIFailureActive !== true
+    );
+    const captureRejectedReason = captureUsable
+      ? ''
+      : (captureStatus && (captureStatus < 200 || captureStatus >= 300)
+        ? `captured-asset-http-${captureStatus}`
+        : (capture.response?.isAPIFailureActive === true ? 'captured-asset-api-failure' : 'captured-asset-response-empty'));
+    let json = captureUsable ? capture.response : null;
+    const failedBatches = [];
+    if (!json) {
+      try {
+        const response = await requestGovDealsJson(buildGovDealsAssetRequest(capture, route.assetId, route.accountId), { ...options, shouldStop });
+        json = response.json;
+      } catch (error) {
+        failedBatches.push({ id: key, reason: String(error?.message || error).slice(0, 300) });
+      }
+    }
+    let item = null;
+    if (json) {
+      try {
+        item = normalizeGovDealsAssetResponse(json, route);
+      } catch (error) {
+        failedBatches.push({ id: key, reason: String(error?.message || error).slice(0, 300) });
+      }
+    }
+    const currentRoute = typeof location !== 'undefined' && isGovDealsHost(location.hostname) ? resolveGovDealsPage(location) : route;
+    const currentFingerprint = govDealsCurrentRouteFingerprint(currentRoute, options.currentLocationLike || (typeof location !== 'undefined' ? location : capture.routeHref));
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const complete = Boolean(item?.title && item?.identityMatches && routeMatches && !shouldStop() && failedBatches.length === 0);
+    const stopReason = shouldStop()
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedBatches.length
+          ? 'asset-api-request-failed'
+          : (!item?.identityMatches ? 'asset-response-identity-mismatch' : (!item?.title ? 'asset-response-empty' : 'verified-api-asset'))));
+    const rows = item ? [item] : [];
+    onProgress(complete ? 'Verified GovDeals asset response.' : `GovDeals asset export incomplete: ${stopReason}.`);
+    return {
+      source: 'govdeals-api-asset',
+      items: rows,
+      listings: rows,
+      expectedTotal: 1,
+      context: {
+        source: 'GovDeals',
+        pageKind: 'govdeals-asset',
+        assetId: String(route.assetId || ''),
+        accountId: String(route.accountId || ''),
+        title: item?.title || '',
+        url: item?.url || String(capture.routeHref || ''),
+        generatedAt: new Date().toISOString()
+      },
+      stopped: shouldStop(),
+      incomplete: !complete,
+      stopReason,
+      routeFingerprint,
+      coverage: {
+        proofTier: 'single-record',
+        strategy: 'maestro-asset',
+        complete,
+        routeFingerprint,
+        currentFingerprint,
+        routeMatches,
+        enumeratedIds: item?.identityMatches ? [key] : [],
+        failedBatches
+      },
+      audit: { capture: sanitizeGovDealsNetworkCapture(capture), captureRejectedReason }
+    };
   }
 
   async function enrichGovDealsListings(listings, onProgress = () => {}, shouldStop = () => false, options = {}) {
@@ -11068,14 +12465,16 @@ ${cards}
       return out;
     }
     const candidates = out.map((item, index) => ({ item, index })).filter(({ item }) => govDealsNeedsEnrichment(item));
-    const limit = Math.min(candidates.length, Math.max(0, Number(options.limit ?? 100)));
+    const requestedLimit = options.limit === undefined ? candidates.length : Math.max(0, Number(options.limit));
+    const limit = Math.min(candidates.length, requestedLimit);
     const queue = candidates.slice(0, limit);
-    const audit = { requested: queue.length, succeeded: 0, failed: [], stopped: false };
+    const audit = { requested: queue.length, succeeded: 0, failed: [], skippedDueLimit: candidates.length - queue.length, stopped: false };
     const concurrency = Math.max(1, Math.min(3, Number(options.concurrency || 3)));
     const timeoutMs = Math.max(1000, Number(options.timeoutMs || 20000));
+    const externalSignal = options.signal || null;
     let cursor = 0;
     const worker = async () => {
-      while (cursor < queue.length && !shouldStop()) {
+      while (cursor < queue.length && !shouldStop() && !externalSignal?.aborted) {
         const entry = queue[cursor++];
         const identity = scraperStableIdentity(entry.item, 'govdeals');
         let url;
@@ -11091,13 +12490,19 @@ ${cards}
         }
         let success = false;
         let lastError = '';
-        for (let attempt = 1; attempt <= 3 && !success && !shouldStop(); attempt += 1) {
+        for (let attempt = 1; attempt <= 3 && !success && !shouldStop() && !externalSignal?.aborted; attempt += 1) {
           const controller = typeof AbortController === 'function' ? new AbortController() : null;
           const timer = controller ? globalThis.setTimeout(() => controller.abort(), timeoutMs) : null;
+          const onExternalAbort = () => controller?.abort?.();
+          externalSignal?.addEventListener?.('abort', onExternalAbort, { once: true });
           try {
             debugEvent('govdeals.enrichment.request', { id: identity, attempt });
             const response = await fetch(url.href, { credentials: 'include', cache: 'no-store', signal: controller?.signal });
             if (!response?.ok) throw new Error(`HTTP ${response?.status || 'unknown'}`);
+            if (response.url) {
+              const finalIdentity = scraperStableIdentity({ url: response.url }, 'govdeals');
+              if (finalIdentity && finalIdentity !== identity) throw new Error('detail-response-identity-mismatch');
+            }
             const html = await response.text();
             const doc = parseAuctionNinjaHtmlDocument(html);
             const detail = doc ? extractGovDealsAssetDetail(doc, url) : null;
@@ -11110,65 +12515,177 @@ ${cards}
             debugEvent('govdeals.enrichment.retry', { id: identity, attempt, error: lastError });
           } finally {
             if (timer) globalThis.clearTimeout(timer);
+            externalSignal?.removeEventListener?.('abort', onExternalAbort);
           }
         }
-        if (!success && !shouldStop()) audit.failed.push({ id: identity, reason: lastError || 'enrichment-failed' });
+        if (!success && !shouldStop() && !externalSignal?.aborted) audit.failed.push({ id: identity, reason: lastError || 'enrichment-failed' });
         onProgress(`Enriched ${audit.succeeded}/${audit.requested} GovDeals asset(s).`);
       }
     };
     await Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, () => worker()));
-    audit.stopped = shouldStop();
+    audit.stopped = Boolean(shouldStop() || externalSignal?.aborted);
     out.audit = audit;
     return out;
   }
 
-  async function scrapeGovDealsListings(onProgress = () => {}, shouldStop = () => false, root = document) {
+  async function scrapeGovDealsListings(onProgress = () => {}, shouldStop = () => false, root = document, options = {}) {
     const loc = typeof location !== 'undefined' ? location : null;
-    const route = loc ? resolveGovDealsPage(loc) : { kind: 'govdeals-new-listings' };
+    const route = options.route || (loc ? resolveGovDealsPage(loc) : { kind: 'govdeals-new-listings' });
     const startedAt = Date.now();
-    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'govdeals' }, loc);
+    const routeFingerprint = govDealsCurrentRouteFingerprint(route, options.locationLike || loc);
     const pageKind = route.kind || 'govdeals-new-listings';
+
+    if (pageKind === 'govdeals-asset') {
+      const apiAsset = await scrapeGovDealsApiAsset(route, onProgress, shouldStop, {
+        ...options,
+        locationLike: options.locationLike || loc
+      });
+      if (apiAsset) return apiAsset;
+      const item = extractGovDealsAssetDetail(root, loc);
+      const identity = scraperStableIdentity(item, 'govdeals');
+      const expectedIdentity = `${route.accountId}:${route.assetId}`;
+      const routeMatches = routeFingerprint === govDealsCurrentRouteFingerprint(
+        typeof location !== 'undefined' && isGovDealsHost(location.hostname) ? resolveGovDealsPage(location) : route,
+        typeof location !== 'undefined' ? location : (options.locationLike || loc)
+      );
+      const identityMatches = Boolean(item?.title && identity === expectedIdentity && routeMatches);
+      const complete = false;
+      const stopReason = shouldStop()
+        ? 'stopped-by-user'
+        : (!routeMatches
+          ? 'route-fingerprint-changed'
+          : (identity !== expectedIdentity
+            ? 'asset-dom-identity-mismatch'
+            : (!item?.title ? 'asset-dom-empty' : 'asset-api-capture-unavailable')));
+      return {
+        source: 'govdeals-dom-asset',
+        items: item?.title ? [item] : [],
+        listings: item?.title ? [item] : [],
+        expectedTotal: 1,
+        context: {
+          source: 'GovDeals', pageKind, assetId: route.assetId || '', accountId: route.accountId || '',
+          title: item?.title || '', url: loc?.href || '', generatedAt: new Date().toISOString()
+        },
+        stopped: shouldStop(),
+        incomplete: true,
+        stopReason,
+        routeFingerprint,
+        durationMs: Date.now() - startedAt,
+        coverage: {
+          proofTier: 'unproven',
+          strategy: 'canonical-asset-dom',
+          routeFingerprint,
+          routeMatches,
+          enumeratedIds: identityMatches ? [expectedIdentity] : [],
+          failedBatches: []
+        }
+      };
+    }
+
+    const capture = options.capture || getGovDealsSearchCapture(route, options.locationLike || loc);
+    if (capture) {
+      let apiResult = await enumerateGovDealsApiListings(capture, onProgress, shouldStop, {
+        ...options,
+        route,
+        locationLike: options.locationLike || loc,
+        routeFingerprint
+      });
+      const enriched = await enrichGovDealsApiListings(apiResult.listings || [], capture, onProgress, shouldStop, options);
+      const enrichmentAudit = enriched.audit || { requested: 0, notNeeded: enriched.length, succeeded: 0, failed: [], stopped: shouldStop() };
+      const enrichmentComplete = !enrichmentAudit.stopped
+        && enrichmentAudit.failed.length === 0
+        && enrichmentAudit.requested === enrichmentAudit.succeeded;
+      const domContext = pageKind === 'govdeals-seller'
+        ? extractGovDealsSellerContext(root, loc)
+        : extractGovDealsSearchContext(root, loc);
+      apiResult = {
+        ...apiResult,
+        items: enriched,
+        listings: enriched,
+        context: {
+          ...domContext,
+          ...apiResult.context,
+          expectedTotal: apiResult.expectedTotal,
+          enrichment: {
+            eligible: enrichmentAudit.eligible ?? enrichmentAudit.requested,
+            limit: enrichmentAudit.limit ?? enrichmentAudit.requested,
+            requested: enrichmentAudit.requested,
+            succeeded: enrichmentAudit.succeeded,
+            failed: enrichmentAudit.failed.length,
+            skippedDueLimit: enrichmentAudit.skippedDueLimit || 0
+          }
+        },
+        incomplete: apiResult.incomplete || !enrichmentComplete,
+        stopReason: !enrichmentComplete && apiResult.stopReason === 'verified-api-total'
+          ? (enrichmentAudit.stopped ? 'stopped-during-enrichment' : 'required-enrichment-failed')
+          : apiResult.stopReason,
+        audit: { ...(apiResult.audit || {}), enrichment: enrichmentAudit },
+        coverage: {
+          ...(apiResult.coverage || {}),
+          failedBatches: enrichmentAudit.failed,
+          enrichment: {
+            eligible: enrichmentAudit.eligible ?? enrichmentAudit.requested,
+            limit: enrichmentAudit.limit ?? enrichmentAudit.requested,
+            requested: enrichmentAudit.requested,
+            notNeeded: enrichmentAudit.notNeeded,
+            succeeded: enrichmentAudit.succeeded,
+            failed: enrichmentAudit.failed.length,
+            skippedDueLimit: enrichmentAudit.skippedDueLimit || 0
+          }
+        }
+      };
+      debugEvent('govdeals.scrape.api.complete', {
+        kind: pageKind,
+        expectedTotal: apiResult.expectedTotal,
+        collected: enriched.length,
+        unique: uniqueNonEmpty(enriched.map(item => scraperStableIdentity(item, 'govdeals'))).length,
+        incomplete: apiResult.incomplete,
+        stopReason: apiResult.stopReason,
+        enrichmentRequested: enrichmentAudit.requested,
+        enrichmentFailed: enrichmentAudit.failed.length
+      });
+      return apiResult;
+    }
+
     let context;
     let items;
-    if (pageKind === 'govdeals-asset') {
-      context = { source: 'GovDeals', pageKind, title: String(root?.title || '').replace(/\s*\|\s*GovDeals.*$/i, '').trim() || 'GovDeals Asset', url: loc?.href || '', generatedAt: new Date().toISOString() };
-      items = [extractGovDealsAssetDetail(root, loc)].filter(item => item.title);
-    } else if (pageKind === 'govdeals-seller') {
+    if (pageKind === 'govdeals-seller') {
       context = extractGovDealsSellerContext(root, loc);
       items = extractGovDealsListings(root, loc, pageKind);
     } else {
       context = extractGovDealsSearchContext(root, loc);
       items = extractGovDealsListings(root, loc, pageKind);
     }
-    const advertisedTotal = pageKind === 'govdeals-asset'
-      ? 1
-      : (Number.isFinite(Number(context?.advertisedTotal)) ? Number(context.advertisedTotal) : null);
+    const advertisedTotal = context?.advertisedTotal !== null
+      && context?.advertisedTotal !== undefined
+      && Number.isFinite(Number(context.advertisedTotal))
+      ? Number(context.advertisedTotal)
+      : null;
     onProgress(`Read ${items.length} GovDeals listing(s).`);
-    const enriched = await enrichGovDealsListings(items, onProgress, shouldStop);
+    const enriched = await enrichGovDealsListings(items, onProgress, shouldStop, options);
     const enrichmentAudit = enriched.audit || { requested: 0, succeeded: 0, failed: [], stopped: shouldStop() };
     const currentRoute = typeof location !== 'undefined' ? resolveGovDealsPage(location) : route;
-    const currentFingerprint = genericRouteFingerprint({ ...currentRoute, source: 'govdeals' }, typeof location !== 'undefined' ? location : loc);
+    const currentFingerprint = govDealsCurrentRouteFingerprint(currentRoute, typeof location !== 'undefined' ? location : (options.locationLike || loc));
     const routeMatches = routeFingerprint === currentFingerprint;
     const identities = enriched.map(item => scraperStableIdentity(item, 'govdeals'));
     const duplicateIds = uniqueNonEmpty(identities.filter((id, index) => id && identities.indexOf(id) !== index));
     const missingStableIds = identities.filter(id => !id).length;
-    const countMatches = advertisedTotal !== null && enriched.length === advertisedTotal;
     const stopped = shouldStop();
-    const incomplete = stopped || !routeMatches || !countMatches || duplicateIds.length > 0 || missingStableIds > 0 || enrichmentAudit.failed.length > 0;
+    const incomplete = true;
     const stopReason = stopped
       ? 'stopped-by-user'
       : (!routeMatches
         ? 'route-fingerprint-changed'
-        : (advertisedTotal === null
-          ? 'authoritative-total-unavailable'
-          : (!countMatches
-            ? 'advertised-total-mismatch'
-            : (duplicateIds.length
-              ? 'duplicate-identities'
-              : (missingStableIds ? 'missing-stable-identities' : (enrichmentAudit.failed.length ? 'enrichment-failed' : 'verified-total-reached'))))));
+        : (duplicateIds.length
+          ? 'duplicate-identities'
+          : (missingStableIds
+            ? 'missing-stable-identities'
+            : (enrichmentAudit.failed.length || enrichmentAudit.skippedDueLimit
+              ? 'enrichment-incomplete'
+              : 'network-capture-unavailable'))));
     const coverage = {
-      proofTier: pageKind === 'govdeals-asset' ? 'single-record' : (advertisedTotal === null ? 'unproven' : 'pagination-exact'),
-      strategy: 'canonical-dom-plus-same-origin-detail',
+      proofTier: 'unproven',
+      strategy: 'canonical-dom-snapshot',
       routeFingerprint,
       currentFingerprint,
       routeMatches,
@@ -12610,8 +14127,9 @@ ${cards}
       },
       govdeals: {
         discovery: 'chrome-cdp',
-        enumerate: { method: 'POST', url: 'https://maestro.lqdt1.com/search/list', variables: ['categoryIds', 'searchText', 'page', 'displayRows', 'sortField', 'sortOrder', 'facetsFilter', 'accountIds'] },
-        note: 'Opaque browser session values are never persisted or logged; fall back to deterministic DOM pagination when unavailable.'
+        enumerate: { method: 'POST', url: 'https://maestro.lqdt1.com/search/list', variables: ['categoryIds', 'searchText', 'page', 'displayRows', 'sortField', 'sortOrder', 'facetsFilter', 'accountIds', 'zipcode', 'proximityWithinDistance'], total: 'x-total-count', stableId: 'accountId:assetId' },
+        enrich: { method: 'POST', url: 'https://maestro.lqdt1.com/assets/{assetId}/{accountId}/false', variables: ['businessId', 'siteId'] },
+        note: 'Capture and replay the exact read request in page memory; never persist or log session/header values or seller contact data. DOM snapshots remain unproven partials.'
       },
       ebay: {
         discovery: 'chrome-cdp',
@@ -13290,6 +14808,9 @@ ${cards}
       'Use sold/completed comps first, profit second, hunches last. Apply buyer premium, taxes, payment/pickup rules, seller terms, shipping availability, travel time, and sedan/logistics risk before recommending a buy.',
       '',
       'GovDeals safety boundary: this export is for resale research and planning only. Do not click bid, offer, cart, checkout, payment, registration, login, invoice, or account-changing controls from this brief.',
+      context?.enrichment?.skippedDueLimit
+        ? `Detail enrichment was deliberately capped: ${context.enrichment.succeeded || 0} enriched, ${context.enrichment.skippedDueLimit} deferred. A blank description is not evidence of low value; open the asset URL and inspect its full description/photos before rejecting a lead.`
+        : '',
       '',
       buildGovDealsDistanceResearchBlock(settings, context),
       '',
@@ -16663,6 +18184,8 @@ ${cards}
         && rows.length
         && coverage.complete !== true
         && coverage.routeMatches !== false
+        && coverage.requestMatches !== false
+        && coverage.accountScopeMatches !== false
       );
       state.verifiedPartial = eligible ? { result, coverage, format, context } : null;
       if (verifiedPartialWrap) verifiedPartialWrap.hidden = !state.verifiedPartial;
@@ -17040,11 +18563,22 @@ ${cards}
       const activeRoute = currentActiveRoute();
       const currentFingerprint = genericRouteFingerprint(activeRoute, typeof location !== 'undefined' ? location : null);
       const startFingerprint = String(partial.coverage?.routeFingerprint || '');
-      if (partial.coverage?.routeMatches === false || (startFingerprint && currentFingerprint && startFingerprint !== currentFingerprint)) {
+      let activeRequestMatches = partial.coverage?.requestMatches !== false;
+      let activeRequestFingerprint = String(partial.coverage?.currentRequestFingerprint || partial.coverage?.requestFingerprint || '');
+      if (String(partial.coverage?.site || '').toLowerCase() === 'govdeals' && partial.coverage?.requestFingerprint) {
+        const activeCapture = getGovDealsSearchCapture(activeRoute, typeof location !== 'undefined' ? location : null);
+        activeRequestFingerprint = activeCapture ? govDealsRequestFingerprint(activeCapture.body || {}) : '';
+        activeRequestMatches = Boolean(activeRequestFingerprint && activeRequestFingerprint === partial.coverage.requestFingerprint);
+      }
+      if (partial.coverage?.routeMatches === false
+        || !activeRequestMatches
+        || (startFingerprint && currentFingerprint && startFingerprint !== currentFingerprint)) {
         debugEvent('partial-export.rejected', {
-          reason: 'route-fingerprint-changed',
+          reason: !activeRequestMatches ? 'request-fingerprint-changed' : 'route-fingerprint-changed',
           startFingerprint,
-          currentFingerprint
+          currentFingerprint,
+          requestFingerprint: partial.coverage?.requestFingerprint || '',
+          activeRequestFingerprint
         });
         stageVerifiedPartial(null, null);
         status('Partial copy cancelled because the page or filters changed.');
@@ -17884,6 +19418,7 @@ ${cards}
       stageVerifiedPartial(null, null);
       setScrapingBusy(true);
       state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
       [
         auctionNinjaCategoryCopyJsonButton,
         auctionNinjaCategoryCopyLlmButton,
@@ -18204,6 +19739,7 @@ ${cards}
       stageVerifiedPartial(null, null);
       setScrapingBusy(true);
       state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
       govDealsButtons.forEach(button => {
         if (button) button.disabled = true;
       });
@@ -18211,7 +19747,9 @@ ${cards}
         const settings = saveResearchSettingsFromUi();
         const label = govDealsKind === 'govdeals-seller' ? 'seller page' : (govDealsKind === 'govdeals-asset' ? 'asset page' : 'listings page');
         status(mode === 'llm' ? `Scraping GovDeals ${label} for LLM brief...` : `Scraping GovDeals ${label}...`);
-        const result = await scrapeGovDealsListings(status, () => state.stop);
+        const result = await scrapeGovDealsListings(status, () => state.stop, document, {
+          signal: state.abortController?.signal
+        });
         result.context = { ...(result.context || {}), researchSettings: settings };
         const readiness = assessExportReadiness(result, 'govdeals', currentActiveRoute(), { locationLike: location });
         if (!readiness.ok) {
@@ -18240,6 +19778,7 @@ ${cards}
         }
         return result;
       } finally {
+        state.abortController = null;
         setScrapingBusy(false);
         govDealsButtons.forEach(button => {
           if (button) button.disabled = false;
@@ -18254,7 +19793,7 @@ ${cards}
       if (!listings.length) return;
       const payload = mode === 'llm'
         ? buildGovDealsLlmBrief(listings, result.context, result.context?.researchSettings || getResearchSettings())
-        : JSON.stringify({ context: result.context, listings }, null, 2);
+        : JSON.stringify({ context: result.context, listings, audit: result.audit || {} }, null, 2);
       const copied = await writeClipboard(payload).catch(() => false);
       const countText = result.expectedTotal ? `${listings.length}/${result.expectedTotal}` : String(listings.length);
       status(copied
