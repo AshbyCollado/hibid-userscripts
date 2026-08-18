@@ -128,10 +128,13 @@ A partial is invalidated if the route or filters change. It must never use a suc
 
 ### AJ Willner
 
-- Catalog enumeration endpoint: same-origin `/api/items/search`.
-- Require the API's total, unique item IDs, unchanged auction route, and complete page coverage.
-- Enrich descriptions and photos only through observed, same-origin, read-only item/detail data.
-- A virtualized DOM is a bounded fallback and needs canonical item IDs plus a settled-bottom audit; stopping early is incomplete.
+- Public auction context endpoint: same-origin `/api/auctions/{auctionId}?page={active|closed}&include_items_data=false&include_documents=true`. Normalize public auction metadata only; omit contact email and phone fields.
+- Catalog enumeration endpoint: same-origin `/api/items/search` with `auction_id`, `page`, `per_page`, `exact_category_match=true`, and the active category/subcategory/search filters.
+- Use pages of 200 with three workers, request timeouts, three bounded retries, and an abort signal wired to Stop.
+- Require the API's explicit total, unique item IDs, unchanged auction route/filter fingerprint, complete page coverage, and agreement with the unfiltered auction's published count. A missing total is not inferred from returned rows.
+- The search response already contains full description text/HTML, category paths, quantity, pricing/closing fields, and every image URL, so routine per-item detail crawling is unnecessary.
+- A virtualized DOM is a bounded fallback only when an exact total is known, every row has a canonical item ID, the route still matches, and settled-bottom coverage equals that total. A one-card/no-total surface fails closed.
+- After bounded failure, stage only the shared audited partial action with expected/copied counts, missing IDs/pages, filters, and route fingerprint.
 
 ### AuctionNinja
 
@@ -283,10 +286,21 @@ A push does not update an installed Tampermonkey copy. Do not mark a release, ch
 - `226/226` automated tests passed, including duplicate IDs, reused auction-local lot numbers, short pages, missing hydration, stale state, filter drift, route changes, retries, cancellation, zero results, and audited partials.
 - Raw account payloads and CDP traffic were not committed. Only sanitized endpoint/count evidence belongs in Git.
 
+### AJ Willner - accepted 2026-08-18
+
+- Chrome CDP/API evidence on auction `164037`: explicit total `868`, page counts `200/200/200/200/68`, copied unique IDs `868`, duplicates `0`, and wrong-auction IDs `0`.
+- Every one of the 868 API records carried a non-empty description and image data; total image URLs were `4,052`. First, middle, and final records retained descriptions and complete image arrays.
+- Filter evidence: `query=sofa` produced exactly `26/26` unique matching records; the Closed route mapped to `sub_category=Closed` without widening scope.
+- Installed Waterfox `v0.8.22` proof: the AJ module mounted on the real page, copied a valid 4,099,263-byte JSON array with `868/868` unique IDs, descriptions on `868`, images on `868`, and `4,052` image URLs.
+- Installed Waterfox LLM proof: the 4,103,410-byte brief contained all 868 IDs, description/image arrays, first/middle/final titles, the verified eBay sold-data rule, and the mixed/group component rule.
+- Debug acceptance: delegated `Download Debug` produced a 690,162-byte file and recorded the AJ bootstrap total plus page request counts. The normal site search field remained focusable while the panel was open.
+- `234/234` automated tests passed, including missing totals, bootstrap mismatch, short-page retry, Stop abort, duplicate IDs, route drift, unproven DOM rejection, shared partial staging, and sanitized fixture validation.
+- Raw CDP/network responses, clipboard payloads, and screenshots remain outside Git. Only sanitized endpoint/count fixtures are committed.
+
 ## Known Unverified Areas
 
 - HiBid passed this gate at `v0.8.21`; every later hosted version still requires a fresh installed Waterfox acceptance before claiming parity.
-- AJ Willner Chrome discovery is exact at `868/868` unique IDs across `200/200/200/200/68`, with all 868 records carrying descriptions and images; installed Waterfox copy acceptance remains required before its gate is closed.
+- AJ Willner passed its Chrome and installed Waterfox gate at `v0.8.22`; later releases still require regression acceptance before claiming parity.
 - AuctionNinja and AAR currently rely on deterministic server-rendered pagination.
 - GovDeals `maestro.lqdt1.com/search/list` is observed, but safe replay with exact active filters is not yet accepted; retain the fail-closed DOM fallback.
 - eBay deterministic Seller Hub pagination needs route-specific completeness and PII tests for each lifecycle page.
