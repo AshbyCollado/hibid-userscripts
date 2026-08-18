@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "site": "auctionninja",
+  "release": "0.8.23",
+  "capture": {
+    "authority": "Chrome DevTools Protocol Network and Runtime",
+    "capturedAt": "2026-08-18",
+    "rawCaptureCommitted": false
+  },
+  "saleCatalog": {
+    "routeKind": "sale-catalog",
+    "transport": "document",
+    "method": "GET",
+    "contentType": "text/html",
+    "scope": "one seller and sale id",
+    "expectedTotal": 106,
+    "pages": [
+      { "page": 1, "range": [1, 20], "count": 20, "firstId": "2436781", "lastId": "2436801" },
+      { "page": 2, "range": [21, 40], "count": 20, "firstId": "2436754", "lastId": "2436756" },
+      { "page": 3, "range": [41, 60], "count": 20, "firstId": "2436764", "lastId": "2438130" },
+      { "page": 4, "range": [61, 80], "count": 20, "firstId": "2436755", "lastId": "2436796" },
+      { "page": 5, "range": [81, 100], "count": 20, "firstId": "2436722", "lastId": "2436765" },
+      { "page": 6, "range": [101, 106], "count": 6, "firstId": "2438117", "lastId": "2438122" }
+    ],
+    "coverage": { "collected": 106, "unique": 106, "duplicates": 0, "complete": true },
+    "detailObservation": {
+      "stableProductId": "2436754",
+      "fieldsPresent": ["title", "lot", "description", "images", "currentBid", "bidCount", "buyerPremium", "pickup", "shipping"]
+    }
+  },
+  "category": {
+    "routeKind": "category-search",
+    "transport": "document",
+    "method": "GET",
+    "contentType": "text/html",
+    "filters": { "category": "electronics", "srt": "Distance", "miles": "50", "zip": "07008" },
+    "expectedTotal": 94,
+    "pageCounts": [20, 20, 20, 20, 14],
+    "coverage": { "collected": 94, "unique": 94, "duplicates": 0, "complete": true }
+  },
+  "auctionSearch": {
+    "routeKind": "auction-search",
+    "transport": "fetch",
+    "method": "GET",
+    "path": "/marketplace_ajax.php",
+    "contentType": "application-json-with-html-fragments",
+    "filters": { "miles": "50", "zip": "07008", "shipping": "s", "pickup": "p" },
+    "parsedKeys": ["head", "body", "pagination"],
+    "ignoredKeys": ["DefLati", "DefLongi", "SlrCnt", "SlrVals", "StateVals", "ZoomLvl", "location"],
+    "expectedTotal": 118,
+    "pageCounts": [12, 12, 12, 12, 12, 12, 12, 12, 12, 10],
+    "identity": "canonical target hostname plus path; backurl redirects are unwrapped",
+    "coverage": { "collected": 118, "unique": 118, "duplicates": 0, "complete": true },
+    "scopeRejection": { "promotionalShippingCardsOutsideResultContainer": 12 }
+  },
+  "accountRoutes": {
+    "routes": ["followed-items", "items-won", "bid-history"],
+    "captureAuthority": "route-contract notes only; the current Chrome probe redirected to sign-in",
+    "coverageStatus": "no-authenticated-account-coverage-committed",
+    "explicitZeroObserved": [],
+    "historicalUiZeroLabelsNotAcceptedAsFixtureProof": ["items-won", "bid-history"],
+    "unprovenEmptyRejected": ["followed-items"],
+    "nonEmptyCoverageCommitted": false,
+    "normalExportRequirement": "explicit total equality or an observed canonical-DOM settled-bottom audit",
+    "retainedFields": ["canonical product id", "title", "price", "status", "public seller", "city/state", "shipping", "pickup"],
+    "redactedFields": ["opaque an value", "account name", "bidder alias", "email", "phone", "street address", "invoice", "payment"]
+  },
+  "redactions": [
+    "authorization",
+    "cookies",
+    "csrf",
+    "session",
+    "account identity",
+    "contact information",
+    "raw location map payload"
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "release": "0.8.22",
+  "release": "0.8.23",
   "policy": {
     "discoveryAuthority": "Chrome DevTools Protocol Network",
     "acceptanceBrowser": "Waterfox with installed Tampermonkey release",
@@ -50,10 +50,38 @@
       ]
     },
     "auctionninja": {
-      "enumerate": { "method": "GET", "url": "server-rendered document pagination", "filters": ["Page", "srt", "miles", "zip"] },
-      "stableId": "product id from canonical product URL",
-      "proof": "advertised total equals collected count equals unique product-id count",
-      "note": "No reusable first-party listing XHR was observed."
+      "saleCatalog": {
+        "method": "GET",
+        "url": "seller-scoped /sales/details/{sale}.html?Page={page}",
+        "response": "server-rendered text/html",
+        "stableId": "product id from canonical product URL",
+        "proof": "contiguous advertised ranges equal collected count equal unique product-id count",
+        "enrichment": "same-origin canonical product document"
+      },
+      "category": {
+        "method": "GET",
+        "url": "/category/{slug}?Page={page}",
+        "filters": ["srt", "miles", "zip"],
+        "response": "server-rendered text/html",
+        "stableId": "product id from canonical product URL",
+        "proof": "advertised result total equals collected count equals unique product-id count"
+      },
+      "auctionSearch": {
+        "method": "GET",
+        "url": "/marketplace_ajax.php",
+        "filters": ["Page", "miles", "zip", "shipping", "pickup"],
+        "response": "JSON object containing head, body, and pagination HTML fragments",
+        "ignoredResponseKeys": ["location", "SlrVals", "StateVals", "DefLati", "DefLongi", "ZoomLvl", "SlrCnt"],
+        "stableId": "canonical sale target host plus path; external redirect backurl is unwrapped",
+        "proof": "advertised sale total equals collected card count equals unique canonical-sale identity count"
+      },
+      "account": {
+        "method": "GET",
+        "routes": ["/followed-items", "/items-won", "/bid-history"],
+        "proof": "explicit total plus exact pages, explicit empty state, or non-empty settled canonical DOM",
+        "privacy": "opaque an values, account identity, bidder aliases, email, phone, street addresses, invoices, and payment data are not retained"
+      },
+      "note": "Sale catalog and category pages expose no reusable listing JSON API; exact server-rendered pagination is authoritative."
     },
     "aar": {
       "enumerate": { "method": "GET", "url": "https://aarauctions.com/servlet/Search.do", "filters": ["auctionId", "itemId", "page"] },

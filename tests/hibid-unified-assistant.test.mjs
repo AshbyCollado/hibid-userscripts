@@ -68,6 +68,12 @@ function loadCore(options = {}) {
   if (options.document) {
     sandbox.document = options.document;
   }
+  if (options.window) {
+    sandbox.window = options.window;
+  }
+  if (options.setTimeout) {
+    sandbox.setTimeout = options.setTimeout;
+  }
   sandbox.globalThis = sandbox;
   sandbox.__HIBID_BID_ASSISTANT_TEST__ = true;
   vm.runInNewContext(source, sandbox, { filename: 'hibid-bid-assistant.user.js' });
@@ -681,6 +687,27 @@ test('AJ Willner sanitized Chrome fixture proves exact coverage and rich records
   assert.equal(fixture.filteredCoverage.expected, fixture.filteredCoverage.collected);
   assert.equal(fixture.filteredCoverage.collected, fixture.filteredCoverage.uniqueStableIds);
   assert.doesNotMatch(JSON.stringify(fixture), /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token|contact_email|contact_phone)/i);
+});
+
+test('AuctionNinja sanitized Chrome fixture proves public contracts and labels account probes honestly', () => {
+  const fixture = JSON.parse(fs.readFileSync(new URL('../fixtures/auctionninja-network.sanitized.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.capture.authority, 'Chrome DevTools Protocol Network and Runtime');
+  assert.equal(fixture.capture.rawCaptureCommitted, false);
+  assert.deepEqual(fixture.saleCatalog.pages.map(page => page.count), [20, 20, 20, 20, 20, 6]);
+  assert.equal(fixture.saleCatalog.expectedTotal, 106);
+  assert.equal(fixture.saleCatalog.coverage.collected, fixture.saleCatalog.coverage.unique);
+  assert.deepEqual(fixture.category.pageCounts, [20, 20, 20, 20, 14]);
+  assert.equal(fixture.category.expectedTotal, 94);
+  assert.deepEqual(fixture.auctionSearch.pageCounts, [12, 12, 12, 12, 12, 12, 12, 12, 12, 10]);
+  assert.equal(fixture.auctionSearch.expectedTotal, 118);
+  assert.equal(fixture.auctionSearch.coverage.collected, fixture.auctionSearch.coverage.unique);
+  assert.equal(fixture.auctionSearch.scopeRejection.promotionalShippingCardsOutsideResultContainer, 12);
+  assert.equal(fixture.accountRoutes.coverageStatus, 'no-authenticated-account-coverage-committed');
+  assert.equal(fixture.accountRoutes.nonEmptyCoverageCommitted, false);
+  assert.deepEqual(fixture.accountRoutes.explicitZeroObserved, []);
+  assert.deepEqual(fixture.accountRoutes.historicalUiZeroLabelsNotAcceptedAsFixtureProof, ['items-won', 'bid-history']);
+  assert.deepEqual(fixture.accountRoutes.unprovenEmptyRejected, ['followed-items']);
+  assert.doesNotMatch(JSON.stringify(fixture), /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token|@gmail|\b\d{3}[-.) ]\d{3}[-. ]\d{4}\b)/i);
 });
 
 test('assistant parses HiBid showing totals and safe next-page controls', () => {
@@ -4414,6 +4441,283 @@ test('assistant parses AuctionNinja catalog ranges for guarded loading', () => {
   assert.equal(core.parseAuctionNinjaCatalogRange('no count here'), null);
 });
 
+test('assistant parses AuctionNinja JSON pagination without retaining map or account payloads', () => {
+  const core = loadCore();
+  const parsed = plain(core.parseAuctionNinjaPagedResponse(JSON.stringify({
+    head: '<div class="location-search-result-head-left"><span>118 sales</span></div>',
+    body: '<div class="location-search-result-all_"><a href="/seller/sales/details/example--1.html">Example</a></div>',
+    pagination: '<a onclick="pagination(\'marketplace_ajax.php?Page=2&miles=50&zip=07008\')">2</a>',
+    location: ['private map popup'],
+    SlrVals: '<input value="private-account-filter">',
+    DefLati: '40.0000',
+  })));
+  assert.equal(parsed.responseKind, 'auctionninja-json-fragment');
+  assert.equal(parsed.totalSales, 118);
+  assert.match(parsed.html, /location-search-result-all_/);
+  assert.match(parsed.html, /marketplace_ajax\.php/);
+  assert.doesNotMatch(parsed.html, /private map popup|private-account-filter|40\.0000/);
+  assert.deepEqual(parsed.ignoredSensitiveKeys, ['DefLati', 'SlrVals', 'location']);
+});
+
+test('assistant validates AuctionNinja exact page coverage and rejects gaps, overlap, and duplicates', () => {
+  const core = loadCore();
+  const exact = [
+    { page: 1, start: 1, end: 2, total: 5, count: 2, ids: ['p1', 'p2'] },
+    { page: 2, start: 3, end: 4, total: 5, count: 2, ids: ['p3', 'p4'] },
+    { page: 3, start: 5, end: 5, total: 5, count: 1, ids: ['p5'] },
+  ];
+  assert.equal(core.validateAuctionNinjaPageCoverage(exact, 5).complete, true);
+  assert.equal(core.validateAuctionNinjaPageCoverage(exact.map(page => ({
+    ...page,
+    start: null,
+    end: null,
+  })), 5).complete, true);
+  assert.equal(core.validateAuctionNinjaPageCoverage(exact.map(page => ({
+    ...page,
+    start: null,
+    end: null,
+  })), 5, { requireRanges: true }).reason, 'missing-range-proof');
+  assert.equal(core.validateAuctionNinjaPageCoverage([
+    exact[0],
+    { ...exact[1], start: null, end: null },
+    exact[2],
+  ], 5).reason, 'incomplete-range-proof');
+  assert.equal(core.validateAuctionNinjaPageCoverage([exact[0], exact[2]], 5).reason, 'missing-pages');
+  assert.equal(core.validateAuctionNinjaPageCoverage([
+    exact[0],
+    { page: 2, start: 2, end: 3, total: 5, count: 2, ids: ['p2', 'p3'] },
+    { page: 3, start: 4, end: 5, total: 5, count: 2, ids: ['p4', 'p5'] },
+  ], 5).reason, 'duplicate-identities');
+  assert.equal(core.validateAuctionNinjaPageCoverage(exact.map(page => ({ ...page, total: page.page === 2 ? 6 : 5 })), 5).reason, 'total-drift');
+  assert.deepEqual(plain(core.buildAuctionNinjaPageAudit([], 'https://www.auctionninja.com/category/electronics?Page=1', null, null)), {
+    page: 1,
+    total: null,
+    start: null,
+    end: null,
+    count: 0,
+    ids: [],
+  });
+});
+
+test('assistant preserves AuctionNinja category and auction-search pagination scope', () => {
+  const core = loadCore();
+  const category = 'https://www.auctionninja.com/category/electronics?miles=50&zip=07008';
+  assert.equal(core.auctionNinjaCategoryPageMatches(category, `${category}&Page=2&srt=Distance`), true);
+  assert.equal(core.auctionNinjaCategoryPageMatches(category, 'https://www.auctionninja.com/category/electronics?miles=100&zip=07008&Page=2&srt=Distance'), false);
+  assert.equal(core.auctionNinjaCategoryPageMatches(category, 'https://www.auctionninja.com/category/jewelry?miles=50&zip=07008&Page=2&srt=Distance'), false);
+
+  const search = 'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=opaque';
+  const page2 = 'https://www.auctionninja.com/marketplace_ajax.php?Page=2&miles=50&zip=07008&shipping=s&pickup=p';
+  const scope = core.auctionNinjaPaginationScope(page2);
+  assert.equal(core.auctionNinjaSearchPageMatches(search, page2, scope), true);
+  assert.equal(core.auctionNinjaSearchPageMatches(search, page2.replace('miles=50', 'miles=100'), scope), false);
+
+  const activeFilters = { miles: '50', zip: '07008', shipping: 's', pickup: 'p', srt: 'Distance' };
+  assert.equal(core.auctionNinjaSearchPageMatches(search, page2, scope, activeFilters), true);
+  assert.equal(core.auctionNinjaSearchPageMatches(search, page2.replace('shipping=s', 'shipping=x'), '', activeFilters), false);
+  assert.equal(core.auctionNinjaSearchPageMatches(search, page2.replace('&shipping=s', ''), '', activeFilters), false);
+
+  const scopeA = makeFakeNode({
+    text: '2',
+    attrs: { href: '/marketplace_ajax.php?Page=2&miles=50&zip=07008&shipping=s&pickup=p' },
+  });
+  const scopeB = makeFakeNode({
+    text: '3',
+    attrs: { href: '/marketplace_ajax.php?Page=3&miles=50&zip=07008&shipping=x&pickup=p' },
+  });
+  const paging = makeFakeNode({ selectors: { 'a[href]': [scopeA, scopeB] } });
+  const ambiguousRoot = makeFakeNode({ selectors: { '.paging-deta': [paging] } });
+  assert.deepEqual(plain(core.findAuctionNinjaAuctionSearchPageUrls(ambiguousRoot, new URL(search))), []);
+});
+
+test('assistant unwraps AuctionNinja external sale redirects into unique canonical identities', () => {
+  const core = loadCore();
+  const redirect = 'https://www.blackrockgalleries.com/an-to-brg.php?email=&backurl=https%3A%2F%2Fwww.blackrockgalleries.com%2Fsales%2Fdetails%2Fexample-sale-3053.html%3Fbrgtkn%3Dopaque';
+  assert.equal(core.auctionNinjaSaleStableIdentity(redirect), 'www.blackrockgalleries.com/sales/details/example-sale-3053.html');
+});
+
+test('assistant requires explicit AuctionNinja account totals before certifying empty pages', () => {
+  const core = loadCore();
+  assert.equal(core.parseAuctionNinjaAccountTotal('Items Won (Total: 0)'), 0);
+  assert.equal(core.parseAuctionNinjaAccountTotal('Bid History (Total: 27)'), 27);
+  assert.equal(core.parseAuctionNinjaAccountTotal('Items I am following'), null);
+  assert.equal(
+    core.sanitizeAuctionNinjaAccountUrl('https://www.auctionninja.com/items-won?an=private-account-value&Page=3'),
+    'https://www.auctionninja.com/items-won?Page=3',
+  );
+});
+
+test('assistant rejects an unknown-total AuctionNinja account page without a real bottom audit', async () => {
+  const loc = new URL('https://www.auctionninja.com/followed-items?an=private-account-value');
+  const core = loadCore({ location: loc });
+  const itemLink = makeFakeNode({
+    text: 'Portable Receiver',
+    attrs: { href: 'https://www.auctionninja.com/testseller/product/portable-receiver-12345.html' },
+  });
+  const row = makeFakeNode({
+    text: 'Portable Receiver Lot #: 7 Current Bid: $5 Following Pickup: 123 Private Street Bidder: private_alias',
+    selectors: { 'a[href*="/product/"]': itemLink },
+  });
+  const root = makeFakeNode({
+    text: 'Items I am following',
+    selectors: { '.account-item-card': [row] },
+  });
+  root.title = 'Items I am following | AuctionNinja';
+
+  const result = await core.scrapeAuctionNinjaAccountItems('followed-items', () => {}, () => false, root);
+
+  assert.equal(result.expectedTotal, null);
+  assert.equal(result.incomplete, true);
+  assert.equal(result.coverage.proofTier, 'unproven');
+  assert.equal(result.coverage.reachedBottom, false);
+  assert.equal(result.context.url, 'https://www.auctionninja.com/followed-items');
+  assert.doesNotMatch(result.items[0].rawText, /private_alias|123 Private Street/i);
+});
+
+test('assistant accumulates recycled AuctionNinja account windows before certifying bottom', async () => {
+  const documentRoot = {
+    documentElement: { scrollTop: 0, scrollHeight: 1000 },
+    body: { scrollHeight: 1000 },
+    scrollingElement: { scrollHeight: 1000 },
+    querySelectorAll() { return []; },
+  };
+  const windowRoot = {
+    scrollY: 0,
+    innerHeight: 500,
+    scrollTo({ top }) { this.scrollY = Number(top || 0); },
+  };
+  const loc = new URL('https://www.auctionninja.com/followed-items');
+  const core = loadCore({
+    document: documentRoot,
+    window: windowRoot,
+    location: loc,
+    setTimeout(callback) { callback(); return 0; },
+  });
+  const a = { id: 'a', stableId: 'a', title: 'First' };
+  const b = { id: 'b', stableId: 'b', title: 'Second' };
+  const c = { id: 'c', stableId: 'c', title: 'Third' };
+  const windows = [[a], [b], [b, c], [c], [c], [c], [c]];
+  let call = 0;
+
+  const settled = await core.settleAuctionNinjaAccountDom(
+    () => windows[Math.min(call++, windows.length - 1)],
+    documentRoot,
+    () => {},
+    () => false,
+  );
+
+  assert.equal(settled.audit.complete, true);
+  assert.equal(settled.audit.finalCount, 3);
+  assert.deepEqual(plain(settled.items.map(item => item.id)), ['a', 'b', 'c']);
+});
+
+test('assistant sanitizes AuctionNinja account detail enrichment at the export boundary', () => {
+  const core = loadCore();
+  const safe = core.sanitizeAuctionNinjaAccountExport({
+    source: 'AuctionNinja',
+    pageKind: 'items-won',
+    url: 'https://www.auctionninja.com/items-won?an=private-account-value',
+  }, [{
+    id: '12345',
+    stableId: '12345',
+    title: 'Portable Receiver',
+    url: 'https://www.auctionninja.com/testseller/product/portable-receiver-12345.html?an=private-account-value',
+    description: 'Pickup contact private@example.test at 123 Private Street',
+    pickupText: 'Pickup: 123 Private Street',
+    rawText: 'Bidder Alias: private_alias Current Bid: $5',
+  }]);
+  const serialized = JSON.stringify(plain(safe));
+
+  assert.equal(safe.context.url, 'https://www.auctionninja.com/items-won');
+  assert.equal(safe.items[0].url, 'https://www.auctionninja.com/testseller/product/portable-receiver-12345.html');
+  assert.doesNotMatch(serialized, /private-account-value|private@example\.test|123 Private Street|private_alias/i);
+});
+
+test('assistant ignores unrelated empty widgets on AuctionNinja account pages', () => {
+  const core = loadCore();
+  const root = makeFakeNode({
+    selectors: {
+      main: makeFakeNode({ text: 'Search widget: no results' }),
+    },
+  });
+  assert.equal(core.hasAuctionNinjaExplicitEmptyState(root), false);
+});
+
+test('assistant rejects redirected AuctionNinja detail pages and prefers full detail descriptions', () => {
+  const core = loadCore();
+  const detailSurface = makeFakeNode({ text: 'Sign in to continue' });
+  const redirected = makeFakeNode({
+    selectors: {
+      'link[rel="canonical"]': makeFakeNode({ attrs: { href: 'https://www.auctionninja.com/login' } }),
+      '.item-detail-main': detailSurface,
+      'h1.item-detail-box-title': makeFakeNode({ text: 'Sign In' }),
+    },
+  });
+  assert.equal(core.extractAuctionNinjaItemDetail(
+    redirected,
+    new URL('https://www.auctionninja.com/testseller/product/portable-receiver-12345.html'),
+  ), null);
+
+  const merged = core.mergeAuctionNinjaItemDetail(
+    { id: '12345', description: 'Short card teaser', images: [] },
+    { id: '12345', description: 'Complete product detail description', images: ['https://images.example.test/full.jpg'] },
+  );
+  assert.equal(merged.cardDescription, 'Short card teaser');
+  assert.equal(merged.description, 'Complete product detail description');
+  assert.deepEqual(plain(merged.images), ['https://images.example.test/full.jpg']);
+});
+
+test('assistant rejects a direct AuctionNinja item whose canonical product id changed', async () => {
+  const requested = new URL('https://www.auctionninja.com/testseller/product/portable-receiver-12345.html');
+  const core = loadCore({ location: requested });
+  const detailSurface = makeFakeNode({ text: 'Wrong Product Lot # 9 Current Bid $4.00' });
+  const root = makeFakeNode({
+    selectors: {
+      'link[rel="canonical"]': makeFakeNode({ attrs: { href: 'https://www.auctionninja.com/testseller/product/wrong-product-99999.html' } }),
+      '.item-detail-main': detailSurface,
+      'h1.item-detail-box-title': makeFakeNode({ text: 'Wrong Product' }),
+    },
+  });
+
+  const result = await core.scrapeAuctionNinjaItemDetail(() => {}, () => false, root);
+
+  assert.equal(result.incomplete, true);
+  assert.equal(result.stopReason, 'direct-item-identity-mismatch');
+  assert.deepEqual(plain(result.items), []);
+  assert.deepEqual(plain(result.coverage.unexpectedIds), ['99999']);
+});
+
+test('assistant treats the item range as authoritative when AuctionNinja also shows a broader result count', () => {
+  const core = loadCore();
+  const root = makeFakeNode({
+    text: 'Electronics 193 results Showing 1-20 of 177 items',
+    selectors: {
+      '.category-search-item-title.desktop-show': makeFakeNode({ text: 'Electronics 193 results' }),
+    },
+  });
+  const context = core.extractAuctionNinjaCategoryContext(root, new URL('https://www.auctionninja.com/category/electronics?miles=50&zip=07008'));
+  assert.equal(context.totalItems, 177);
+});
+
+test('assistant rejects foreign-sale links while discovering AuctionNinja catalog pages', () => {
+  const core = loadCore();
+  const sameSale = makeFakeNode({
+    text: '2',
+    attrs: { href: 'https://www.auctionninja.com/seller-a/sales/details/sale-a--100.html?Page=2#items' },
+  });
+  const foreignSale = makeFakeNode({
+    text: '2',
+    attrs: { href: 'https://www.auctionninja.com/seller-b/sales/details/sale-b--200.html?Page=2#items' },
+  });
+  const root = makeFakeNode({
+    text: '1-20 of 40 items',
+    selectors: { '.auction-paging a[href]': [sameSale, foreignSale] },
+  });
+  assert.deepEqual(plain(core.findAuctionNinjaCatalogPageUrls(root, new URL('https://www.auctionninja.com/seller-a/sales/details/sale-a--100.html'))), [
+    'https://www.auctionninja.com/seller-a/sales/details/sale-a--100.html?Page=2#items',
+  ]);
+});
+
 test('assistant discovers AuctionNinja catalog pagination URLs without product or account links', () => {
   const core = loadCore();
   const page2 = makeFakeNode({
@@ -4550,7 +4854,9 @@ Bid Now`,
   assert.deepEqual(plain(lots), [
     {
       source: 'AuctionNinja',
+      pageKind: 'sale-catalog',
       id: '555',
+      stableId: '555',
       lot: '16',
       title: "An Antique French Mahogany Sideboard, C. 1930's.",
       url: 'https://www.auctionninja.com/clearinghouseestatesales/product/sideboard--555.html',
@@ -4650,6 +4956,7 @@ Following`,
       source: 'AuctionNinja',
       pageKind: 'followed-items',
       id: '243760',
+      stableId: '243760',
       lot: '1627sf',
       title: 'Chloe Eau De Toilette Spray',
       url: 'https://www.auctionninja.com/clearinghouseestatesales/product/chloe-spray--243760.html',
@@ -4899,6 +5206,7 @@ Pink Lady Liquidation
       source: 'AuctionNinja',
       pageKind: 'auction-search',
       id: '21001',
+      stableId: 'www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html',
       title: 'Dumont New Jersey Estate Sale',
       url: 'https://www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html',
       image: 'https://images.example.test/dumont.jpg',
@@ -4974,6 +5282,77 @@ test('assistant mounts AuctionNinja category pages and preserves location filter
     loc,
   );
   assert.equal(context.totalItems, 193);
+
+  const emptyRoot = makeFakeNode({
+    text: 'Electronics & Computers 0 results',
+    selectors: {
+      '.category-search-item-title.desktop-show': makeFakeNode({ text: 'Electronics & Computers 0 results' }),
+    },
+  });
+  emptyRoot.title = 'Electronics & Computers Online Auctions';
+  assert.equal(core.extractAuctionNinjaCategoryContext(emptyRoot, loc).totalItems, 0);
+});
+
+test('assistant certifies an exact empty AuctionNinja category result', async () => {
+  const loc = new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008');
+  const core = loadCore({ location: loc });
+  const root = makeFakeNode({
+    text: 'Electronics & Computers 0 results',
+    selectors: {
+      '.category-search-item-title.desktop-show': makeFakeNode({ text: 'Electronics & Computers 0 results' }),
+    },
+  });
+  root.title = 'Electronics & Computers Online Auctions';
+
+  const result = await core.scrapeAuctionNinjaCategoryItems(() => {}, () => false, root);
+
+  assert.equal(result.expectedTotal, 0);
+  assert.equal(result.items.length, 0);
+  assert.equal(result.incomplete, false);
+  assert.equal(result.stopReason, 'verified-total-reached');
+});
+
+test('assistant rejects AuctionNinja category pagination redirected to another category', async () => {
+  const loc = new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008');
+  const makeCategoryCard = (id, title) => makeFakeNode({
+    text: `${title} Starting Bid $5.00`,
+    selectors: {
+      'a[href*="/product/"]': makeFakeNode({ attrs: { href: `https://www.auctionninja.com/testseller/product/item-${id}.html` } }),
+      img: makeFakeNode({ attrs: { src: `https://images.example.test/${id}.jpg`, alt: title } }),
+      'hot-items-bottoms': makeFakeNode({ text: '$5.00' }),
+    },
+  });
+  const pageTwoLink = makeFakeNode({
+    text: 'Page 2',
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?Page=2&srt=Distance&miles=30&zip=07008' },
+  });
+  const root = makeFakeNode({
+    text: 'Electronics & Computers 2 results',
+    selectors: {
+      '.category-search-item-title.desktop-show': makeFakeNode({ text: 'Electronics & Computers 2 results' }),
+      '.hot-items-box': [makeCategoryCard('10001', 'First Item')],
+      'a[href]': [pageTwoLink],
+    },
+  });
+  root.title = 'Electronics & Computers Online Auctions';
+  const parsedDoc = makeFakeNode({ text: 'Jewelry 2 results' });
+  parsedDoc.title = 'Jewelry Online Auctions';
+  const core = loadCore({
+    location: loc,
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      url: 'https://www.auctionninja.com/category/jewelry?Page=2&srt=Distance&miles=30&zip=07008',
+      text: async () => '<html></html>',
+    }),
+    DOMParser: class { parseFromString() { return parsedDoc; } },
+  });
+
+  const result = await core.scrapeAuctionNinjaCategoryItems(() => {}, () => false, root);
+
+  assert.equal(result.incomplete, true);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.failedPages[0].error, 'category-filter-drift');
 });
 
 test('assistant accepts only safe same-category View All links for AuctionNinja category loading', () => {

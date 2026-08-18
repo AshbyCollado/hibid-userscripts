@@ -2,7 +2,7 @@
 
 Living architecture and release contract for `hibid-bid-assistant.user.js`.
 
-Current release candidate: `v0.8.22`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
+Current release candidate: `v0.8.23`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
 
 ## Current State
 
@@ -138,11 +138,16 @@ A partial is invalidated if the route or filters change. It must never use a suc
 
 ### AuctionNinja
 
-- Current discovery found deterministic server-rendered pages rather than a reusable listing API.
-- Follow numbered/load-more pagination using advertised ranges such as `1-40 of N`.
-- Stable identity comes from canonical product and sale URLs/IDs.
+- Sale catalogs and category pages are deterministic server-rendered HTML. Chrome CDP observed no reusable listing JSON endpoint for those routes.
+- Sale catalogs require one seller/sale ID, contiguous advertised ranges, canonical product IDs, and exact total equality. The proven 106-item fixture is `20/20/20/20/20/6` with no duplicates.
+- Category pages preserve every active filter except the page number. The sanitized capture fixture was 94 items across `20/20/20/20/14`; live Chrome revalidation on 2026-08-18 observed the changing inventory at `148/148`, with 148 successful detail enrichments. A new filter, category, ZIP, radius, or sort value is route drift.
+- Nearby-auction search pages use first-party `/marketplace_ajax.php`. Its response is JSON containing `head`, `body`, and `pagination` HTML fragments. Ignore map/contact/filter payload keys, and scope cards to `.location-search-result-all[_]` so the unrelated promotional shipping strip cannot contaminate results.
+- Auction-search stable identity is canonical target hostname plus path, not the numeric sale suffix alone. Integrated Black Rock Gallery links must unwrap the public `backurl` before dedupe.
+- Product cards are enriched with bounded same-origin detail-page requests for full descriptions, all product photos, category, bids, pickup/shipping, and buyer premium. Detail failures remain audited failures.
+- Followed items, won items, and bid history require an explicit total, explicit empty state, or a non-empty canonical DOM that has demonstrably settled across every discovered page. A blank shell may not certify zero.
+- Chrome's signed-out account-route probe redirected to sign-in, so it is not account-export acceptance evidence. Account acceptance must come from an authenticated installed browser without committing account identifiers.
+- Opaque `an` values, map/contact payloads, account identity, bidder aliases, email, phone, street addresses, invoice data, and payment data never enter committed fixtures.
 - Never trim over-collected rows to make a total appear correct.
-- Sale catalogs, category/search results, followed items, won items, and bid history keep route-specific extractors and account scope.
 
 ### AAR Auctions
 
