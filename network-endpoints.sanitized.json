@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "release": "0.8.19",
+  "policy": {
+    "discoveryAuthority": "Chrome DevTools Protocol Network",
+    "acceptanceBrowser": "Waterfox with installed Tampermonkey release",
+    "rawCapturesCommitted": false,
+    "redactedFields": [
+      "authorization",
+      "cookie",
+      "token",
+      "sessionId",
+      "csrf",
+      "accountData",
+      "buyerData"
+    ]
+  },
+  "sites": {
+    "hibid": {
+      "enumerate": {
+        "method": "POST",
+        "url": "https://hibid-api.io/sr/main/v1/search/lot",
+        "filters": ["auctionId", "auctioneerId", "categoryId", "country", "location", "page", "shipping", "size", "sortOrder", "status"]
+      },
+      "hydrate": {
+        "method": "POST",
+        "url": "https://hibid.com/graphql",
+        "operation": "LotSearchLotOnly",
+        "filters": ["auctionId", "eventItemIds", "sortOrder", "status"]
+      },
+      "stableId": "eventItemId",
+      "proof": "enumerated total equals hydrated count equals unique eventItemId count",
+      "sanitizedObservations": [
+        { "expected": 245, "collected": 245, "unique": 245 },
+        { "expected": 618, "collected": 618, "unique": 618 },
+        { "expected": 287, "collected": 287, "unique": 287 },
+        { "filter": "gaming pc", "expected": 6, "collected": 6, "unique": 6 }
+      ]
+    },
+    "ajwillner": {
+      "bootstrap": { "method": "GET", "url": "https://bid.ajwillnerauctions.com/api/auctions/{auctionId}" },
+      "enumerate": { "method": "GET", "url": "https://bid.ajwillnerauctions.com/api/items/search", "filters": ["auction_id", "page", "per_page", "category", "sub_category", "query"] },
+      "stableId": "item id",
+      "proof": "API total equals collected count equals unique item-id count"
+    },
+    "auctionninja": {
+      "enumerate": { "method": "GET", "url": "server-rendered document pagination", "filters": ["Page", "srt", "miles", "zip"] },
+      "stableId": "product id from canonical product URL",
+      "proof": "advertised total equals collected count equals unique product-id count",
+      "note": "No reusable first-party listing XHR was observed."
+    },
+    "aar": {
+      "enumerate": { "method": "GET", "url": "https://aarauctions.com/servlet/Search.do", "filters": ["auctionId", "itemId", "page"] },
+      "stableId": "auctionId:itemId",
+      "proof": "auction-scoped advertised total equals collected count equals unique item count"
+    },
+    "govdeals": {
+      "enumerate": { "method": "POST", "url": "https://maestro.lqdt1.com/search/list", "filters": ["categoryIds", "searchText", "page", "displayRows", "sortField", "sortOrder", "facetsFilter", "accountIds"] },
+      "stableId": "accountId:assetId",
+      "proof": "filtered API or advertised total equals collected count equals unique asset count",
+      "note": "Opaque browser session values are neither committed nor replayed."
+    },
+    "ebay": {
+      "enumerate": { "method": "GET", "url": "Seller Hub document pagination", "filters": ["offset", "limit", "page"] },
+      "stableId": "transaction, order-line, or item id appropriate to the active route",
+      "proof": "visible result total equals collected count equals unique lifecycle-record count",
+      "privacy": "Buyer PII is removed before export."
+    },
+    "facebook": {
+      "enumerate": { "method": "DOM", "url": "Marketplace selling virtual list", "filters": ["canonical listing id"] },
+      "stableId": "canonical Marketplace listing id",
+      "proof": "settled-bottom audit with no missing canonical identities",
+      "note": "Private GraphQL operations are not persisted or replayed."
+    }
+  }
+}

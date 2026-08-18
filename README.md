@@ -1,118 +1,92 @@
 # FlipperAddon by ALOS
 
-Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
+Hosted Tampermonkey userscript for auction and resale scraping/export workflows across HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay Seller Hub, and Facebook Marketplace.
 
-Current hosted build: `v0.8.18`. The panel exposes its build through `data-flipperaddon-version` and `window.__FLIPPERADDON_VERSION__`; use those markers to confirm a browser is not running a stale Tampermonkey copy. Public HiBid catalog, live-catalog, category, and filtered-search exports are API-first: exact event-item IDs are enumerated through HiBid's own search/GraphQL endpoints, hydrated in bounded batches, and copied only when the expected, enumerated, and hydrated ID sets agree exactly. Broad Apollo state and generic lot-tile counts are not accepted as catalog identity. Exhausted requests remain blocked and expose an explicit audited partial export instead of silently widening the result. Personalized account pages retain their dedicated DOM scrapers, including selected-auction exports on past-bids and past-watchlist pages.
+Current release candidate: `v0.8.19`. The Cross-Site Network-First Reliability work below is the approved implementation contract. A route is not considered browser-verified until its own Chrome discovery and installed Waterfox acceptance checks have passed.
 
 ## Install
 
-Open the unified addon URL in a browser with Tampermonkey enabled:
+Install or update the unified script from:
 
 https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 
-Tampermonkey updates use that same raw GitHub URL through the script metadata. Install from the raw URL, not a one-off copied file, so future version bumps can update.
+Only `hibid-bid-assistant.user.js` is the active install path. The older standalone HiBid scripts remain repository references and should not be enabled beside FlipperAddon.
 
-## Active Modules
+## Product Boundary
 
-`FlipperAddon by ALOS` is the single active hosted script. It starts minimized in the bottom-right corner and shows only the module for the page you are actually on:
+FlipperAddon is scraper/export only. Supported actions read page or first-party response data, copy/download JSON or an LLM brief, stop an active scrape, and navigate to a supported site.
 
-- HiBid catalog/category/watchlist/current-bids pages: copy JSON and resale LLM brief, including OUTBID watchlist and WINNING/OUTBID current bids.
-- HiBid `/account/pastbidsm` and `/account/pastwatchlist`: use the inline `Copy Auction` button beside a selected `View Catalog` row. It copies only that auction group's saved account lots, enriches their lead/category/full descriptions/photos, and never sweeps unrelated account rows.
-- HiBid livecatalog pages: copy API-verified open-lot JSON and resale LLM brief.
-- AuctionNinja sale catalog pages: copy sale terms plus lot JSON or resale LLM brief.
-- AuctionNinja category pages such as `/category/electronics?miles=30&zip=07008`: copy the visible product-card JSON or a location-filtered resale LLM brief; safe `View All Items` pages are fetched in the background when available.
-- AuctionNinja followed-items, items-won, and bid-history pages: copy account item JSON or page-specific LLM briefs for watchlist triage, won-item inventory planning, or bid-history review.
-- AuctionNinja auction search / nearby sales pages: copy whole-auction JSON or an LLM brief that ranks sales before drilling into lots.
-- AAR Auctions calendar and catalog pages: copy auction cards or catalog lots as JSON, or copy an LLM brief with persisted origin/radius distance-verification instructions.
-- GovDeals seller, search/new-listings filter, and asset pages: copy visible listings/assets as JSON, or copy a resale LLM brief with shared origin/radius and URL zipcode/miles context.
-- eBay Seller Hub/Facebook selling pages: FlipTracker active listing copy/download export.
-- eBay `/bulksell` revise-listings pages: copy normalized JSON or an LLM brief containing each visible title and full row-level listing fields; HTML/Download remain available for FlipTracker import.
+It must not click bids or offers, write bid fields, register for an auction, check out, pay, publish a listing, fill a marketplace draft, change account settings, or invoke another account mutation. Seller and account pages may be read only for the explicitly supported export scope. Buyer PII, credentials, cookies, authorization values, CSRF values, account tokens, and private messages must never enter an export or committed fixture.
 
-The older `hibid-lot-catalog-scraper.user.js` remains in the repo for legacy reference/tests, but normal use should install only `hibid-bid-assistant.user.js`.
+## Reliability Contract
 
-## LLM Brief
+Every route uses the strongest proven source available:
 
-Copy LLM Brief includes the full auction-resale coordinator prompt plus enriched lot JSON. The prompt requires visible exact or close eBay sold proof for populated resale estimates, separate `profit_if_won_now` and `profit_at_recommended_max_bid` calculations, clickable item/sold URLs, and workbook sorting/formatting rules.
+1. **First-party API:** enumerate exact stable IDs and an authoritative total, hydrate only those IDs, and require total/ID equality.
+2. **Deterministic pagination:** follow server-rendered pages or ranges and require exact range/count/identity coverage.
+3. **Canonical DOM:** when no authoritative total exists, collect canonical stable IDs until the virtual list reaches a settled bottom and record that weaker proof tier.
 
-AAR and GovDeals LLM briefs also include a `Distance Agent` instruction. Expand `Research Settings` on either module to edit the persisted origin/ZIP, radius, sales-tax assumption, vehicle/logistics profile, and extra research notes. The first-run shared defaults are `Edison, NJ 08817`, `100` miles, `6.625%`, and `CT200h sedan`. GovDeals search/new-listings exports also preserve URL filters such as `categoryName=Consumer Electronics`, `zipcode=07008`, and `miles=25`.
+Normal copy is rejected on duplicate IDs, missing hydration, unexpected IDs, short pages, total drift, filter drift, route changes, stale state, cross-page data, or source contamination. Broad embedded state and generic card/text counts are never accepted as identity evidence.
 
-## Debug
+After bounded retries, the only permitted fallback is an audited partial export. It contains `complete: false`, expected and copied counts, unique stable IDs, missing IDs, failed pages/batches, active filters, source URL, route fingerprint, proof tier, and stop reason. A partial must never be presented as complete.
 
-Debug UI and console/log capture are hidden until enabled from the Tampermonkey menu command:
+## Seven-Site Source Map
 
-`Toggle FlipperAddon Debug Mode [OFF]` (the label changes to `[ON]` after enabling it)
+| Site | Supported read scope | Primary source and proof |
+| --- | --- | --- |
+| HiBid | Public catalog, live catalog, global/category/filtered lots; dedicated watchlist/current-bids/past-auction account exports | Enumerate through `https://hibid-api.io/sr/main/v1/search/lot` or same-origin `https://hibid.com/graphql`, then GraphQL-hydrate exact event-item IDs. Account routes keep their scoped canonical-DOM collectors. |
+| AJ Willner | Auction catalog pages under `bid.ajwillnerauctions.com` | Enumerate through same-origin `/api/items/search`, validate API total and stable item IDs, then hydrate descriptions/photos only from proven first-party detail data. |
+| AuctionNinja | Sale catalogs, category/search pages, followed items, won items, and bid history | Deterministic server-rendered pagination with canonical product/sale identities and exact visible range/total validation. |
+| AAR Auctions | Auction calendar, auction catalog, and single-item servlet pages | Deterministic server-rendered pagination keyed by `auctionId` and optional `itemId`; page-size values are not treated as totals. |
+| GovDeals | Seller, filtered search/new-listings, and asset pages | Observed endpoint `https://maestro.lqdt1.com/search/list`. Its opaque `sessionId` is always redacted; until safe request construction and total equality are proven, use canonical DOM with an audited settled-bottom fallback. |
+| eBay | Seller Hub Active, Bulk Sell handoff, Ended, Sold, and Transactions | Deterministic Seller Hub pagination using stable listing/order/transaction identities. Exports are recursively sanitized to exclude buyer PII. |
+| Facebook | Marketplace selling listings | Canonical Marketplace listing IDs plus a deterministic virtual-scroll settled-bottom audit. Private/unstable GraphQL calls are not replayed. |
 
-When enabled, the drawer exposes copy/clear debug controls. Logs use the `[FlipperAddon]` prefix.
+## Network Evidence Policy
 
-`#flipperdebug` enables the same diagnostic layer when Tampermonkey menu commands are unavailable. After reproducing a failure, click `Copy Debug` once and wait for the toast, or use `Download Debug`. The exported log should contain `event:ui.click`, `event:debug.control.handler.enter`, `event:debug-download.*` or `event:debug-export.*`, and `event:debug.control.result`. The debug action always refreshes and reveals the selectable log field. Initialization failures are recorded as `panel.init.error`. It does not record raw typed field values.
+Chrome DevTools/CDP Network capture is the discovery authority. Sanitized HAR or JSON fixtures are portable test evidence; raw captures stay outside Git.
 
-When an export is rejected, the current build reports the specific guard reason (for example, incomplete scrape, active-filter mismatch, or wrong route) instead of the generic legacy stale-export message. If another computer still shows the old comma-form error wording, update/reinstall the raw GitHub script there before diagnosing page data.
+Committed diagnostics may contain endpoint paths, operation names, sanitized request variables, filters, totals, stable IDs, page/batch counts, timings, and errors. They must remove cookies, authorization headers, CSRF values, access/account tokens, GovDeals `sessionId`, HiBid account-info responses, buyer PII, typed form values, and personal messages. A capture containing only analytics or advertising traffic is not scraper evidence.
 
-In debug mode, a failed HiBid API coverage check also exposes `Download HiBid Diagnostic`. The bundle contains route filters, request variables, IDs, page/batch counts, timings, and errors; credentials, cookies, authorization headers, account data, and tokens are stripped. `Copy Verified Partial N/M` is deliberately hidden until retries are exhausted and is invalidated if the page route or filters change.
+Waterfox is the independent installed-release acceptance browser. Chrome network discovery does not prove that the hosted Tampermonkey build is installed or working in Waterfox.
 
-If Tampermonkey hides the script commands, append `#flipperdebug` to the active page URL and reload. The drawer will expose `Copy Debug` and `Download Debug`; use `Download Debug` or copy the selected text field after reproducing the problem. If clipboard access fails, `Copy Debug` downloads `flipperaddon-debug-*.txt` automatically. Remove the hash and reload to turn the bootstrap mode off.
+## Site Switcher
 
-## FlipTracker Active Listing Export
+The primary switcher contains one row each for HiBid, AJ Willner, AuctionNinja, AAR Auctions, and GovDeals. A separate `Selling Tools` row contains same-tab navigation for:
 
-Open an active selling page:
+- eBay Active: `https://www.ebay.com/sh/lst/active`
+- eBay Bulk Sell: open eBay Active and follow eBay's current signed-in `Edit all listings` link; never persist a personal `workspaceId`
+- eBay Ended: `https://www.ebay.com/sh/lst/ended`
+- eBay Sold: `https://www.ebay.com/mys/sold`
+- eBay Transactions: `https://www.ebay.com/mes/transactionlist?sh=true`
+- Facebook Selling: `https://www.facebook.com/marketplace/you/selling`
+- Facebook Create Listing: `https://www.facebook.com/marketplace/create/item`
 
-- `https://www.ebay.com/sh/lst/active`
-- `https://www.facebook.com/marketplace/you/selling`
+The Create Listing shortcut is navigation only. FlipperAddon does not fill or publish the form. Navigation is disabled during a scrape, and menus close after selection, Escape, outside click, or minimize.
 
-For eBay's bulk revise page, open `https://www.ebay.com/bulksell?...` and use `Copy JSON` or `Copy LLM Brief` to capture the visible listing rows, including the title, image, price, quantity, format, duration, shipping, handling, condition, category, recommendations, and raw row fields.
+## Debug And Verification
 
-Workflow:
+Debug logging is opt-in through the Tampermonkey menu or `#flipperdebug`. Sanitized diagnostics should identify the version, route fingerprint, source/proof tier, filters, request/page/batch outcomes, counts, IDs, retries, rejection reason, clipboard/download result, and caught errors without recording protected data.
 
-1. Scroll/load the listings you want included.
-2. Open FlipperAddon.
-3. Click `Scan Listings`.
-4. Click `Download`.
-5. Put the downloaded `FlipTracker-listings-*.html` file into `C:\Users\ashby\Documents\MarketplaceScraper\ImportInbox`.
-6. In FlipTracker, run the import/review flow.
-
-## eBay to Facebook Marketplace Drafts
-
-This workflow keeps eBay as the listing source and fills one reviewable Facebook Marketplace draft. FlipperAddon never clicks Publish.
-
-One-time connection:
-
-1. Open `FlipTracker.xlsm` from the MarketplaceScraper project folder and enable macros.
-2. On `Import Review`, click `Start eBay Sync`, then `Copy Sync Token`.
-3. On a supported eBay or Facebook page, open FlipperAddon, click `Connect`, and paste the token. The token stays in Tampermonkey storage and the bridge listens only on `127.0.0.1:8468`.
-
-Create a draft:
-
-1. Open `https://www.ebay.com/mys/active` or `https://www.ebay.com/sh/lst/active` and load the active listings you need.
-2. Open FlipperAddon and click `Scan Page`.
-3. Choose the eBay listing under `Facebook draft source`, verify the Facebook location, and click `Queue Facebook Draft`.
-4. Review the confirmation. FlipperAddon enriches the listing from its public eBay item page before queueing it.
-5. Open `https://www.facebook.com/marketplace/create/item`.
-6. Open FlipperAddon and click `Fill Next eBay Draft`.
-7. Review the title, whole-dollar price, description, category, condition, location, and photos. Continue through Facebook and click Publish yourself only when the listing is correct.
-8. After Facebook opens the new Marketplace item page, open FlipperAddon and click `Confirm Published`. This stores the Facebook listing ID and prevents that eBay item from being queued again.
-
-Duplicate and recovery rules:
-
-- One durable queue record exists per eBay item ID.
-- Requeueing unchanged eBay evidence is a no-op.
-- Changed eBay evidence updates the existing unpublished queue record.
-- A confirmed Published record cannot be queued again unless it is explicitly reset in the local queue.
-- A failed form fill stays visible as Failed; queue the eBay item again after correcting the cause.
-- If `Connect` reports a bridge error, reopen FlipTracker and use `Start eBay Sync`, then copy and save the token again.
-- Do not confirm Published from an unrelated Facebook item page; FlipperAddon checks both the Marketplace listing ID and title evidence.
-
-## Scraper-First UI
-
-FlipperAddon starts as a small bottom-right pill. Opening it shows only the current page's export actions. Copy buttons do not render lot previews in the drawer; they copy the payload and show a short toast. The Stop button appears while a scrape/export is running.
-
-## Tests
+Required local checks:
 
 ```powershell
 node --check .\hibid-bid-assistant.user.js
 node --check .\hibid-lot-catalog-scraper.user.js
 npm test
+git diff --check
 ```
 
-## Browser Verification
+Browser acceptance requires more than opening a page. For each site gate, verify the active route and panel version, run the page-appropriate copy action, parse the copied payload, compare expected count to item count and unique stable-ID count when an authoritative total exists, inspect first/middle/final records, confirm normal page use remains available, and save sanitized CDP plus full-window evidence. Waterfox must perform the same real copy through the installed Tampermonkey script.
 
-The source-level smoke matrix covers the supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook routes. A browser is only considered verified after the active page exposes `#flipperaddon-panel`, the panel version matches the hosted build (`0.8.18` at this release), and a page-appropriate JSON/LLM copy action completes. Tampermonkey must be installed separately in each browser profile; updating Waterfox does not update Chrome or Firefox. After every hosted version bump, update or reinstall the raw script in each browser being tested before treating its result as current evidence.
+## Mandatory Release Rule
+
+Every version change follows this order without exception:
+
+1. Complete the site gate's tests and browser evidence.
+2. Commit the intended files.
+3. Push the commit to the hosted GitHub branch.
+4. Update or reinstall the raw userscript in the Waterfox profile being verified.
+5. Confirm the installed panel reports the new version and complete a real copy/export check.
+
+A GitHub push alone does not update Tampermonkey. Do not claim a release or browser gate complete until the installed Waterfox instance has been updated and verified.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.18
+// @version      0.8.19
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -66,7 +66,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.18';
+  const SCRIPT_VERSION = '0.8.19';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -4513,22 +4513,237 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const candidates = [
       result?.expectedTotal,
       result?.context?.expectedTotal,
+      result?.context?.advertisedTotal,
       result?.context?.totalSales,
+      result?.context?.totalItems,
+      result?.context?.totalLots,
+      result?.context?.total,
       result?.context?.visibleCount,
+      result?.completeness?.expected_count,
     ];
     for (const value of candidates) {
       const total = Number(value);
-      if (Number.isFinite(total) && total > 0) return total;
+      if (Number.isFinite(total) && total >= 0) return total;
     }
     return null;
   }
 
   function validateScraperResultCount(result, reason) {
     const expectedTotal = expectedTotalFromScraperResult(result);
-    if (!expectedTotal) return { ok: true };
+    if (expectedTotal === null) return { ok: true };
     const rows = scraperResultRows(result);
     if (rows.length > expectedTotal) return { ok: false, reason };
     return { ok: true };
+  }
+
+  function primaryScraperRows(result = {}) {
+    const candidates = [result.items, result.lots, result.sales, result.listings, result.records];
+    const rows = candidates.find(value => Array.isArray(value));
+    return Array.isArray(rows) ? rows.filter(Boolean) : [];
+  }
+
+  function scraperStableIdentity(row = {}, site = '') {
+    const normalizedSite = String(site || row.source || row.pageKind || '').toLowerCase();
+    const fromUrl = (patterns) => firstMatch(String(row.url || row.itemUrl || row.saleUrl || ''), patterns);
+    if (/hibid/.test(normalizedSite)) {
+      return String(row.eventItemId || row.event_item_id || row.id || fromUrl([/\/lot\/(\d+)/i]) || '').trim();
+    }
+    if (/ajwillner|aj\s+willner/.test(normalizedSite)) {
+      return String(row.id || row.itemId || fromUrl([/\/items?\/(\d+)/i, /[?&]item(?:_|)id=(\d+)/i]) || '').trim();
+    }
+    if (/auctionninja/.test(normalizedSite)) {
+      return String(row.id || fromUrl([/\/product\/[^/?]*?-(\d+)\.html/i, /\/product\/(\d+)/i]) || row.url || '').trim();
+    }
+    if (/\baar\b|aar auctions/.test(normalizedSite)) {
+      const itemId = row.itemId || fromUrl([/[?&]itemId=(\d+)/i]);
+      return String(itemId || (row.auctionId && row.lot ? `${row.auctionId}:${row.lot}` : '') || row.url || '').trim();
+    }
+    if (/govdeals/.test(normalizedSite)) {
+      const assetId = row.assetId || fromUrl([/\/asset\/(\d+)/i]);
+      const accountId = row.accountId || fromUrl([/\/asset\/\d+\/(\d+)/i]);
+      return String(assetId ? `${accountId || 'asset'}:${assetId}` : (row.id || row.url || '')).trim();
+    }
+    if (/ebay/.test(normalizedSite)) {
+      return String(row.transaction_id
+        || row.order_line_id
+        || ([row.order_id, row.item_id].filter(Boolean).join(':'))
+        || row.item_id
+        || row.itemId
+        || fromUrl([/\/itm\/(\d+)/i, /[?&]itemId=(\d+)/i])
+        || '').trim();
+    }
+    if (/facebook|marketplace/.test(normalizedSite)) {
+      return String(row.listingId || row.itemId || row.id || fromUrl([/\/marketplace\/item\/(\d+)/i]) || '').trim();
+    }
+    return String(row.eventItemId || row.itemId || row.assetId || row.id || row.url || '').trim();
+  }
+
+  function genericRouteFingerprint(route = {}, locationLike = null) {
+    const fallbackUrl = route?.url || route?.href || (typeof location !== 'undefined' ? location.href : 'https://invalid.local/');
+    let url;
+    try {
+      url = urlFromLocationLike(locationLike || fallbackUrl);
+    } catch {
+      url = new URL('https://invalid.local/');
+    }
+    const ignored = new Set(['_', 'cb', 'cacheBust', 'timestamp', 't']);
+    const search = Array.from(url.searchParams.entries())
+      .filter(([key]) => !ignored.has(key))
+      .sort(([aKey, aValue], [bKey, bValue]) => aKey.localeCompare(bKey) || aValue.localeCompare(bValue))
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join('&');
+    return [
+      String(route?.source || ''),
+      String(route?.kind || ''),
+      url.hostname.toLowerCase(),
+      url.pathname.replace(/\/+$/, '') || '/',
+      search,
+      String(route?.auctionId || route?.saleId || route?.assetId || route?.itemId || route?.sellerSlug || '')
+    ].join('|');
+  }
+
+  function buildProofTierCoverage(result = {}, mode = '', route = {}, options = {}) {
+    const rows = primaryScraperRows(result);
+    const site = String(options.site || route?.source || result?.context?.source || result?.source || mode || '').toLowerCase();
+    const identities = rows.map(row => scraperStableIdentity(row, site));
+    const missingIdentityIndexes = identities.map((value, index) => value ? -1 : index).filter(index => index >= 0);
+    const identityCounts = new Map();
+    identities.filter(Boolean).forEach(identity => identityCounts.set(identity, (identityCounts.get(identity) || 0) + 1));
+    const duplicateIds = Array.from(identityCounts.entries()).filter(([, count]) => count > 1).map(([identity]) => identity);
+    const collectedIds = Array.from(identityCounts.keys());
+    const expectedIds = uniqueNonEmpty(options.expectedIds || result?.coverage?.enumeratedIds || result?.enumeratedIds || []);
+    const expectedSet = new Set(expectedIds);
+    const collectedSet = new Set(collectedIds);
+    const missingIds = expectedIds.filter(identity => !collectedSet.has(identity));
+    const unexpectedIds = expectedIds.length ? collectedIds.filter(identity => !expectedSet.has(identity)) : [];
+    const expectedTotal = expectedTotalFromScraperResult(result);
+    const startFingerprint = String(result?.routeFingerprint || result?.coverage?.routeFingerprint || options.startFingerprint || '');
+    const currentFingerprint = String(options.currentFingerprint || genericRouteFingerprint(route, options.locationLike));
+    const routeMatches = result?.coverage?.routeMatches !== false && (!startFingerprint || !currentFingerprint || startFingerprint === currentFingerprint);
+    const failedPages = Array.isArray(result?.coverage?.failedPages) ? result.coverage.failedPages : (Array.isArray(result?.failedPages) ? result.failedPages : []);
+    const failedBatches = Array.isArray(result?.coverage?.failedBatches) ? result.coverage.failedBatches : (Array.isArray(result?.failedBatches) ? result.failedBatches : []);
+    const explicitProof = String(result?.coverage?.proofTier || result?.coverage?.proof || result?.proofTier || '').trim();
+    const source = String(result?.source || '');
+    const detailRoute = /(?:item-detail|asset)$/.test(String(route?.kind || ''));
+    const scopedRoute = isHibidAccountExportRoute(route) || /(?:followed-items|items-won|bid-history|pastbids|pastwatchlist)/.test(String(route?.kind || ''));
+    const settledDom = result?.coverage?.reachedBottom === true
+      || result?.coverage?.settledBottom === true
+      || explicitProof === 'dom-bottom-settled';
+    let proofTier = explicitProof;
+    if (!proofTier && /api/i.test(source)) proofTier = 'api-exact';
+    else if (!proofTier && detailRoute && rows.length <= 1) proofTier = 'single-record';
+    else if (!proofTier && scopedRoute) proofTier = 'scoped-current-page';
+    else if (!proofTier && settledDom) proofTier = 'dom-bottom-settled';
+    else if (!proofTier && expectedTotal !== null) proofTier = 'pagination-exact';
+    else if (!proofTier) proofTier = 'unproven';
+
+    const countMatches = expectedTotal === null ? (proofTier === 'scoped-current-page' || proofTier === 'single-record' || proofTier === 'dom-bottom-settled') : rows.length === expectedTotal;
+    const exactIdentitySet = expectedIds.length ? missingIds.length === 0 && unexpectedIds.length === 0 : true;
+    const complete = routeMatches
+      && !result?.stopped
+      && !result?.incomplete
+      && result?.completeness?.complete !== false
+      && countMatches
+      && duplicateIds.length === 0
+      && missingIdentityIndexes.length === 0
+      && exactIdentitySet
+      && failedPages.length === 0
+      && failedBatches.length === 0
+      && proofTier !== 'unproven';
+    let reason = 'complete';
+    if (!routeMatches) reason = 'route-fingerprint-changed';
+    else if (result?.stopped) reason = 'stopped';
+    else if (result?.incomplete) reason = 'incomplete';
+    else if (result?.completeness?.complete === false) reason = 'incomplete';
+    else if (!countMatches) reason = expectedTotal === null ? 'expected-total-unknown' : 'count-mismatch';
+    else if (duplicateIds.length) reason = 'duplicate-identities';
+    else if (missingIdentityIndexes.length) reason = 'missing-stable-identities';
+    else if (missingIds.length) reason = 'missing-identities';
+    else if (unexpectedIds.length) reason = 'unexpected-identities';
+    else if (failedPages.length) reason = 'failed-pages';
+    else if (failedBatches.length) reason = 'failed-batches';
+    else if (proofTier === 'unproven') reason = 'proof-unavailable';
+
+    return {
+      site,
+      routeKind: String(route?.kind || ''),
+      source,
+      strategy: String(result?.coverage?.strategy || result?.strategy || source || 'unknown'),
+      proofTier,
+      complete,
+      reason,
+      expectedTotal,
+      collectedCount: rows.length,
+      uniqueIdentityCount: collectedIds.length,
+      collectedIds,
+      expectedIds,
+      duplicateIds,
+      missingIdentityIndexes,
+      missingIds,
+      unexpectedIds,
+      failedPages,
+      failedBatches,
+      routeMatches,
+      routeFingerprint: startFingerprint || currentFingerprint,
+      currentFingerprint,
+      stopped: Boolean(result?.stopped),
+      durationMs: Number(result?.durationMs || result?.coverage?.durationMs || 0) || 0
+    };
+  }
+
+  function assessExportReadiness(result = {}, mode = '', route = {}, options = {}) {
+    const routeValidation = validateScraperExportAgainstRoute(result, mode, route);
+    const coverage = buildProofTierCoverage(result, mode, route, options);
+    if (!routeValidation.ok) return { ok: false, reason: routeValidation.reason, coverage, routeValidation };
+    if (!coverage.complete) return { ok: false, reason: coverage.reason, coverage, routeValidation };
+    return { ok: true, reason: 'complete', coverage, routeValidation };
+  }
+
+  function buildVerifiedPartialPayload(result = {}, coverage = {}, format = 'json', context = {}) {
+    const items = primaryScraperRows(result);
+    const audit = {
+      ...coverage,
+      complete: false,
+      sourceUrl: String(context.sourceUrl || result?.context?.url || result?.context?.sourceUrl || ''),
+      generatedAt: new Date().toISOString()
+    };
+    const payload = { context: { ...result?.context, ...context }, items, audit };
+    if (String(format).toLowerCase() === 'llm') {
+      return [
+        AUCTION_RESALE_COORDINATOR_PROMPT,
+        '',
+        'VERIFIED PARTIAL EXPORT: This collection is incomplete. Use it only for provisional research and do not infer anything about missing records.',
+        JSON.stringify(payload, null, 2)
+      ].join('\n');
+    }
+    return JSON.stringify(payload, null, 2);
+  }
+
+  function buildSanitizedDiagnosticBundle(result = {}, coverage = {}, context = {}) {
+    return {
+      schemaVersion: 1,
+      generatedAt: new Date().toISOString(),
+      site: coverage.site || '',
+      routeKind: coverage.routeKind || '',
+      source: coverage.source || result?.source || '',
+      strategy: coverage.strategy || '',
+      proofTier: coverage.proofTier || '',
+      complete: coverage.complete === true,
+      reason: coverage.reason || '',
+      expectedTotal: coverage.expectedTotal ?? null,
+      collectedCount: coverage.collectedCount ?? primaryScraperRows(result).length,
+      uniqueIdentityCount: coverage.uniqueIdentityCount ?? null,
+      duplicateIds: coverage.duplicateIds || [],
+      missingIds: coverage.missingIds || [],
+      unexpectedIds: coverage.unexpectedIds || [],
+      failedPages: coverage.failedPages || [],
+      failedBatches: coverage.failedBatches || [],
+      routeFingerprint: coverage.routeFingerprint || '',
+      currentFingerprint: coverage.currentFingerprint || '',
+      routeMatches: coverage.routeMatches !== false,
+      durationMs: coverage.durationMs || 0,
+      sourceUrl: String(context.sourceUrl || result?.context?.url || '').replace(/([?&](?:token|auth|session|csrf|xsrf)[^=]*)=[^&]*/gi, '$1=[redacted]')
+    };
   }
 
   function validateScraperCompleteness(result, reason) {
@@ -4556,15 +4771,19 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function validateAuctionNinjaExportAgainstRoute(result, route = {}) {
     const routeKind = String(route?.kind || '').trim();
-    const allowedKind = routeKind === 'item-detail' ? 'sale-catalog' : routeKind;
-    if (!allowedKind) return { ok: true };
+    const allowedKinds = routeKind ? [routeKind] : [];
+    if (!allowedKinds.length) return { ok: true };
     const pageKinds = scraperResultPageKinds(result);
-    if (pageKinds.length && pageKinds.some(kind => kind !== allowedKind)) {
+    if (pageKinds.length && pageKinds.some(kind => !allowedKinds.includes(kind))) {
       return { ok: false, reason: 'auctionninja-page-kind-mismatch' };
     }
     if (routeKind === 'sale-catalog' && route.saleId && result?.context?.saleId
       && String(result.context.saleId) !== String(route.saleId)) {
       return { ok: false, reason: 'auctionninja-sale-id-mismatch' };
+    }
+    if (routeKind === 'item-detail' && route.productId && result?.context?.productId
+      && String(result.context.productId) !== String(route.productId)) {
+      return { ok: false, reason: 'auctionninja-product-id-mismatch' };
     }
     const completeValidation = validateScraperCompleteness(result, 'auctionninja-incomplete');
     if (!completeValidation.ok) return completeValidation;
@@ -4744,6 +4963,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
 
   function validateFlipTrackerExportAgainstRoute(result, route = {}) {
     const routeKind = String(route?.kind || '');
+    const bulkSellRoute = routeKind === 'fliptracker-ebay-bulk';
     const lifecyclePageKind = {
       'fliptracker-ebay-active': 'active',
       'fliptracker-ebay-ended': 'ended',
@@ -4752,7 +4972,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     }[routeKind] || '';
     const rows = scraperResultRows(result);
     const lifecycleRows = rows.filter(row => row?.record_type);
-    if (/^fliptracker-ebay-/i.test(routeKind) && !lifecyclePageKind) {
+    if (/^fliptracker-ebay-/i.test(routeKind) && !lifecyclePageKind && !bulkSellRoute) {
       return { ok: false, reason: 'fliptracker-route-mismatch' };
     }
     if (lifecyclePageKind) {
@@ -6348,7 +6568,8 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function buildEbayBulkSellLlmBrief(listings, context = {}) {
-    const rows = Array.isArray(listings) ? listings : [];
+    const rows = sanitizeEbayLifecycleValue(Array.isArray(listings) ? listings : []);
+    const safeContext = sanitizeEbayLifecycleValue(context);
     return [
       AUCTION_RESALE_COORDINATOR_PROMPT,
       '',
@@ -6357,12 +6578,12 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
       'Do not submit, revise, delete, publish, or otherwise mutate eBay listings from this brief.',
       '',
       'eBay bulk-sell context:',
-      JSON.stringify(context, null, 2),
+      JSON.stringify(safeContext, null, 2),
       '',
       `Listings exported: ${rows.length}`,
       '',
       'Full eBay bulk listing JSON:',
-      JSON.stringify({ context, listings: rows }, null, 2)
+      JSON.stringify({ context: safeContext, listings: rows }, null, 2)
     ].join('\n');
   }
 
@@ -6417,12 +6638,16 @@ ${cards}
     DEBUG_PREFIX,
     MENU_COMMANDS,
     resolveHiBidPage,
+    resolveAjWillnerPage,
     resolveFlipTrackerPage,
     resolveAuctionNinjaPage,
     resolveAarAuctionsPage,
     getAarItemId,
     resolveGovDealsPage,
+    resolveSiteRoute,
     resolveAssistantMode,
+    getRouteManifest,
+    getNetworkEndpointManifest,
     getExpectedLotTotal,
     findCatalogNextPageButton,
     parseAuctionNinjaCatalogRange,
@@ -6430,6 +6655,7 @@ ${cards}
     findAuctionNinjaCatalogPageUrls,
     extractAuctionNinjaSaleContext,
     extractAuctionNinjaCatalogLots,
+    extractAuctionNinjaItemDetail,
     extractAuctionNinjaFollowedItems,
     extractAuctionNinjaWonItems,
     extractAuctionNinjaBidHistoryItems,
@@ -6454,6 +6680,7 @@ ${cards}
     scrapeAjWillnerApiListings,
     scrapeAjWillnerListings,
     scrapeAuctionNinjaCatalogLots,
+    scrapeAuctionNinjaItemDetail,
     scrapeAuctionNinjaAccountItems,
     scrapeAuctionNinjaAuctionSearchSales,
     findAuctionNinjaCategoryPageUrls,
@@ -6478,6 +6705,8 @@ ${cards}
     getAarResearchSettings,
     saveAarResearchSettings,
     getSiteShortcuts,
+    getSellingToolShortcuts,
+    fetchHtmlDocumentWithRetries,
     findAuctionNinjaNextPageControl,
     buildHibidSearchRequest,
     buildHibidGraphqlVariables,
@@ -6501,6 +6730,12 @@ ${cards}
     validateCatalogExportAgainstVisibleState,
     describeExportGuardFailure,
     validateScraperExportAgainstRoute,
+    genericRouteFingerprint,
+    scraperStableIdentity,
+    buildProofTierCoverage,
+    assessExportReadiness,
+    buildVerifiedPartialPayload,
+    buildSanitizedDiagnosticBundle,
     isCatalogScrapeComplete,
     getHibidScrapeLimits,
     getHibidStateScrapeMaxMs,
@@ -6523,6 +6758,7 @@ ${cards}
     getLoadTarget,
     isLiveCatalogPage,
     isEbayBulkSellPage,
+    findEbayBulkEditLink,
     isFlipTrackerListingPage,
     shouldInitOnLocation,
     getLotTiles,
@@ -6602,6 +6838,7 @@ ${cards}
     getFlipTrackerSyncToken,
     saveFlipTrackerSyncToken,
     parseFacebookMarketplaceListingsHtml,
+    collectFacebookMarketplaceListings,
     parseFlipTrackerActiveListingsHtml,
     buildFlipTrackerListingsExportHtml,
     buildPanelHtml,
@@ -6968,23 +7205,76 @@ ${cards}
     return absoluteUrl(`/api/items/search?${apiParams}`, loc?.href || 'https://bid.ajwillnerauctions.com/');
   }
 
-  async function fetchAjWillnerSearchPage(loc = location, page = 1, perPage = 200) {
+  async function fetchAjWillnerSearchPage(loc = location, page = 1, perPage = 200, options = {}) {
     const href = ajWillnerSearchApiUrl(loc, page, perPage);
-    const response = await fetch(href, { credentials: 'include' });
-    if (!response?.ok) throw new Error(`AJ Willner API page ${page} failed: ${response?.status}`);
-    const data = await response.json();
-    return { href, data };
+    const retries = Math.max(1, Math.min(3, Number(options.retries) || 3));
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 20000);
+    const fetchImpl = options.fetchImpl || fetch;
+    const errors = [];
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      if (options.shouldStop?.()) throw new Error('AJ Willner API request stopped');
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      try {
+        debugEvent('ajwillner.api.request.start', { page, attempt, endpoint: debugHref(href) });
+        const response = await fetchImpl(href, {
+          credentials: 'include',
+          cache: 'no-store',
+          ...(controller ? { signal: controller.signal } : {})
+        });
+        if (!response?.ok) throw Object.assign(new Error(`HTTP ${response?.status || 0}`), { status: Number(response?.status) || 0 });
+        const data = await response.json();
+        debugEvent('ajwillner.api.request.success', { page, attempt, count: Array.isArray(data?.items) ? data.items.length : 0, total: Number(data?.total) || 0 });
+        return { href, data, attempts: attempt, errors };
+      } catch (error) {
+        const status = Number(error?.status) || 0;
+        errors.push({ attempt, status, message: String(error?.message || error) });
+        debugEvent('ajwillner.api.request.failure', { page, attempt, status, error: String(error?.message || error) });
+        if (attempt >= retries || (status >= 400 && status < 500 && ![408, 429].includes(status))) {
+          throw Object.assign(new Error(`AJ Willner API page ${page} failed: ${error?.message || error}`), { page, errors, status });
+        }
+        await wait(250 * attempt * attempt);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    }
+    throw new Error(`AJ Willner API page ${page} failed`);
   }
 
   async function scrapeAjWillnerApiListings(status = () => {}, shouldStop = () => false, root = document, loc = location) {
+    const startedAt = Date.now();
     const perPage = 200;
     const auctionId = getAjWillnerAuctionId(loc);
     if (!auctionId || typeof fetch !== 'function') return null;
+    const route = resolveAjWillnerPage(loc);
+    const routeFingerprint = genericRouteFingerprint(route, loc);
+    const pageFailures = [];
+    const retryShortPage = async (page, pageSize, expectedCount = null) => {
+      let result = await fetchAjWillnerSearchPage(loc, page, pageSize, { shouldStop });
+      let attempts = 1;
+      while (!shouldStop() && Number.isFinite(expectedCount) && expectedCount >= 0
+        && (result.data?.items || []).length < expectedCount && attempts < 3) {
+        attempts += 1;
+        debugEvent('ajwillner.api.short-page.retry', {
+          page,
+          attempt: attempts,
+          expectedCount,
+          receivedCount: (result.data?.items || []).length
+        });
+        await wait(250 * attempts);
+        result = await fetchAjWillnerSearchPage(loc, page, pageSize, { shouldStop });
+      }
+      return result;
+    };
     status('Reading AJ Willner API page 1...');
-    const first = await fetchAjWillnerSearchPage(loc, 1, perPage);
-    const total = Number(first.data?.total) || 0;
+    let first = await fetchAjWillnerSearchPage(loc, 1, perPage, { shouldStop });
+    const rawTotal = Number(first.data?.total);
+    const hasApiTotal = Number.isFinite(rawTotal) && rawTotal >= 0;
+    const total = hasApiTotal ? rawTotal : 0;
     const pageSize = Number(first.data?.per_page) || perPage;
     const totalPages = total ? Math.ceil(total / pageSize) : 1;
+    const firstExpected = total ? Math.min(pageSize, total) : 0;
+    if ((first.data?.items || []).length < firstExpected) first = await retryShortPage(1, pageSize, firstExpected);
     const pages = [first];
     const remaining = [];
     for (let page = 2; page <= totalPages; page += 1) remaining.push(page);
@@ -6994,39 +7284,87 @@ ${cards}
         const page = remaining[cursor];
         cursor += 1;
         status(`Reading AJ Willner API page ${page}/${totalPages}...`);
-        pages.push(await fetchAjWillnerSearchPage(loc, page, pageSize));
+        const expectedOnPage = total ? Math.min(pageSize, Math.max(0, total - ((page - 1) * pageSize))) : null;
+        try {
+          pages.push(await retryShortPage(page, pageSize, expectedOnPage));
+        } catch (error) {
+          pageFailures.push({ page, error: String(error?.message || error) });
+        }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(4, remaining.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(3, remaining.length) }, worker));
     const byId = new Map();
+    const duplicateIds = new Set();
+    const observedTotals = new Set();
     pages
       .sort((a, b) => (Number(a.data?.page) || 0) - (Number(b.data?.page) || 0))
       .forEach(page => {
+        if (Number.isFinite(Number(page.data?.total))) observedTotals.add(Number(page.data.total));
         (page.data?.items || []).forEach(item => {
           const normalized = normalizeAjWillnerApiItem(item, loc);
-          if (normalized?.id) byId.set(normalized.id, normalized);
+          if (!normalized?.id) return;
+          if (byId.has(normalized.id)) duplicateIds.add(String(normalized.id));
+          byId.set(normalized.id, normalized);
         });
       });
     const items = Array.from(byId.values()).sort((a, b) => String(a.lot || '').localeCompare(String(b.lot || ''), undefined, {
       numeric: true,
       sensitivity: 'base'
     }));
-    const expectedTotal = total || items.length || getAjWillnerExpectedTotal(root, findAjWillnerScrollContainer(root));
+    const expectedTotal = hasApiTotal ? total : (items.length || getAjWillnerExpectedTotal(root, findAjWillnerScrollContainer(root)));
     const stopped = !!shouldStop();
+    const currentLocation = typeof location !== 'undefined' ? location : loc;
+    const currentFingerprint = genericRouteFingerprint(resolveAjWillnerPage(currentLocation), currentLocation);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const totalDrift = observedTotals.size > 1 || (observedTotals.size === 1 && !observedTotals.has(total));
+    const incomplete = stopped
+      || !routeMatches
+      || pageFailures.length > 0
+      || totalDrift
+      || duplicateIds.size > 0
+      || (Number.isFinite(expectedTotal) && items.length !== expectedTotal);
+    const coverage = {
+      strategy: 'ajwillner-items-search-api',
+      proofTier: 'api-exact',
+      complete: !incomplete,
+      reason: stopped
+        ? 'stopped'
+        : (!routeMatches
+          ? 'route-fingerprint-changed'
+          : (pageFailures.length
+            ? 'failed-pages'
+            : (totalDrift
+              ? 'total-drift'
+              : (duplicateIds.size ? 'duplicate-identities' : (items.length === expectedTotal ? 'api-complete' : 'count-mismatch'))))),
+      routeFingerprint,
+      routeMatches,
+      expectedTotal,
+      enumeratedIds: items.map(item => String(item.id)),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages: pageFailures,
+      observedTotals: Array.from(observedTotals),
+      durationMs: Date.now() - startedAt
+    };
     debug('AJ Willner API scrape finished', {
       count: items.length,
       expectedTotal,
       totalPages,
-      stopped
+      stopped,
+      coverage
     });
+    debugEvent('ajwillner.api.coverage', coverage);
     return {
       source: 'ajwillner-api',
       items,
       lots: items,
       expectedTotal,
       stopped,
-      incomplete: Boolean(!stopped && expectedTotal && items.length < expectedTotal),
-      stopReason: stopped ? 'stopped by user' : 'api-complete',
+      incomplete,
+      stopReason: coverage.reason,
+      routeFingerprint,
+      coverage,
+      failedPages: pageFailures,
+      durationMs: Date.now() - startedAt,
       context: {
         source: 'ajwillner',
         pageKind: 'catalog',
@@ -7126,7 +7464,11 @@ ${cards}
     collect();
     const items = Array.from(itemsMap.values());
     const stopped = !!shouldStop();
-    const incomplete = Boolean(expectedTotal && items.length < expectedTotal);
+    const route = resolveAjWillnerPage(loc);
+    const routeFingerprint = genericRouteFingerprint(route, loc);
+    const currentLocation = typeof location !== 'undefined' ? location : loc;
+    const routeMatches = routeFingerprint === genericRouteFingerprint(resolveAjWillnerPage(currentLocation), currentLocation);
+    const incomplete = stopped || !routeMatches || Boolean(expectedTotal && items.length !== expectedTotal);
     const stopReason = stopped ? 'stopped by user' : (incomplete ? 'virtual list ended before expected total' : 'complete');
     debug('AJ Willner scrape finished', { count: items.length, expectedTotal, stopped, incomplete, stopReason, scrollSteps });
     return {
@@ -7137,7 +7479,27 @@ ${cards}
       stopped,
       incomplete,
       stopReason,
-      scrollSteps
+      scrollSteps,
+      routeFingerprint,
+      context: {
+        source: 'ajwillner',
+        pageKind: 'catalog',
+        auctionId: getAjWillnerAuctionId(loc),
+        url: loc?.href || ''
+      },
+      coverage: {
+        strategy: 'ajwillner-virtual-list',
+        proofTier: 'dom-bottom-settled',
+        complete: !incomplete,
+        reason: stopReason,
+        routeFingerprint,
+        routeMatches,
+        reachedBottom: stuckAtBottomChecks >= 2,
+        expectedTotal,
+        enumeratedIds: items.map(item => String(item.id || '')).filter(Boolean),
+        duplicateIds: [],
+        failedPages: []
+      }
     };
   }
 
@@ -8475,23 +8837,31 @@ ${cards}
     return items.sort((a, b) => String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' }));
   }
 
-  function mergeAuctionNinjaCategoryItems(target, items) {
+  function mergeAuctionNinjaCategoryItems(target, items, duplicateIds = null) {
     items.forEach(item => {
       const key = item.url || item.id || item.lot || item.title;
-      if (key && item.title) target.set(String(key), item);
+      if (!key || !item.title) return;
+      if (target.has(String(key))) duplicateIds?.add?.(String(key));
+      target.set(String(key), item);
     });
     return target;
   }
 
   async function scrapeAuctionNinjaCategoryItems(onProgress = () => {}, shouldStop = () => false, root = document) {
     const itemsByKey = new Map();
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAuctionNinjaPage(loc) : { kind: 'category-search', source: 'auctionninja' };
+    const startedAt = Date.now();
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'auctionninja' }, loc);
     let steps = 0;
     let stopReason = '';
-    const context = extractAuctionNinjaCategoryContext(root);
-    mergeAuctionNinjaCategoryItems(itemsByKey, extractAuctionNinjaCategoryItems(root));
+    const failedPages = [];
+    const duplicateIds = new Set();
+    const context = extractAuctionNinjaCategoryContext(root, loc);
+    mergeAuctionNinjaCategoryItems(itemsByKey, extractAuctionNinjaCategoryItems(root, loc), duplicateIds);
     debug('auctionninja category scrape start', { count: itemsByKey.size, context });
 
-    const queuedPageUrls = findAuctionNinjaCategoryPageUrls(root);
+    const queuedPageUrls = findAuctionNinjaCategoryPageUrls(root, loc);
     const seenPageUrls = new Set(queuedPageUrls);
     const maxSteps = Math.max(20, Math.ceil(Number(context.totalItems || 0) / 20) + 2);
     while (queuedPageUrls.length && !shouldStop() && steps < maxSteps && typeof fetch === 'function' && typeof DOMParser !== 'undefined') {
@@ -8502,52 +8872,135 @@ ${cards}
       steps += 1;
       onProgress(`Fetching AuctionNinja category page ${steps}... ${before} item(s)`);
       debug('auctionninja category page fetch start', { step: steps, url, before });
-      try {
-        const response = await fetch(url, { credentials: 'include' });
-        if (!response?.ok) {
-          stopReason = `fetch-failed-${response?.status || 'unknown'}`;
-          break;
-        }
-        const html = await response.text();
-        const pageDoc = parseAuctionNinjaHtmlDocument(html);
-        if (!pageDoc) {
-          stopReason = 'fetch-parse-failed';
-          break;
-        }
-        mergeAuctionNinjaCategoryItems(itemsByKey, extractAuctionNinjaCategoryItems(pageDoc, new URL(url)));
-        if (context.totalItems && itemsByKey.size >= context.totalItems) {
-          stopReason = 'expected-total-reached';
-          debug('auctionninja category expected total reached', { step: steps, expectedTotal: context.totalItems, count: itemsByKey.size });
-          break;
-        }
-        findAuctionNinjaCategoryPageUrls(pageDoc, new URL(url)).forEach(nextUrl => {
-          if (!seenPageUrls.has(nextUrl) && !seenPageUrls.has(`${nextUrl}:fetched`)) {
-            seenPageUrls.add(nextUrl);
-            queuedPageUrls.push(nextUrl);
-          }
-        });
-        debug('auctionninja category page fetch finished', { step: steps, url, before, after: itemsByKey.size, queued: queuedPageUrls.length });
-      } catch (error) {
-        stopReason = 'fetch-threw';
-        debug('auctionninja category page fetch threw', { step: steps, url, error: String(error) });
+      const fetched = await fetchHtmlDocumentWithRetries(url, 'auctionninja.category.pagination', shouldStop);
+      if (!fetched.document) {
+        failedPages.push({ url: new URL(url).pathname, error: fetched.error });
+        continue;
+      }
+      const pageDoc = fetched.document;
+      mergeAuctionNinjaCategoryItems(itemsByKey, extractAuctionNinjaCategoryItems(pageDoc, new URL(url)), duplicateIds);
+      if (context.totalItems && itemsByKey.size === context.totalItems) {
+        stopReason = 'expected-total-reached';
+        debug('auctionninja category expected total reached', { step: steps, expectedTotal: context.totalItems, count: itemsByKey.size });
         break;
       }
+      findAuctionNinjaCategoryPageUrls(pageDoc, new URL(url)).forEach(nextUrl => {
+        if (!seenPageUrls.has(nextUrl) && !seenPageUrls.has(`${nextUrl}:fetched`)) {
+          seenPageUrls.add(nextUrl);
+          queuedPageUrls.push(nextUrl);
+        }
+      });
+      debug('auctionninja category page fetch finished', { step: steps, url, before, after: itemsByKey.size, queued: queuedPageUrls.length });
     }
 
-    if (!stopReason) stopReason = shouldStop() ? 'stopped-by-user' : (steps ? 'category-pages-complete' : 'visible-category-complete');
-    if (shouldStop()) stopReason = 'stopped-by-user';
+    const stopped = shouldStop();
     const items = Array.from(itemsByKey.values()).sort((a, b) => String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' }));
-    const expectedTotal = context.totalItems || items.length;
-    debug('auctionninja category scrape finished', { items: items.length, expectedTotal, steps, stopReason });
+    const expectedTotal = Number.isFinite(Number(context.totalItems)) ? Number(context.totalItems) : null;
+    const currentRoute = typeof location !== 'undefined' ? resolveAuctionNinjaPage(location) : route;
+    const currentFingerprint = genericRouteFingerprint({ ...currentRoute, source: 'auctionninja' }, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const incomplete = stopped || !routeMatches || expectedTotal === null || items.length !== expectedTotal || failedPages.length > 0 || duplicateIds.size > 0;
+    stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedPages.length
+          ? 'failed-pages'
+          : (duplicateIds.size
+            ? 'duplicate-identities'
+            : (expectedTotal === null ? 'authoritative-total-unavailable' : (items.length === expectedTotal ? 'verified-total-reached' : 'count-mismatch')))));
+    const coverage = {
+      proofTier: expectedTotal === null ? 'unproven' : 'pagination-exact',
+      strategy: 'auctionninja-category-pagination',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      enumeratedIds: items.map(item => scraperStableIdentity(item, 'auctionninja')).filter(Boolean),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages,
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('auctionninja.category.coverage', { items: items.length, expectedTotal, steps, stopReason, coverage });
     return {
       source: 'auctionninja-category-dom',
       context: { ...context, visibleItems: items.length },
       items,
       expectedTotal,
-      stopped: shouldStop(),
+      stopped,
       stopReason,
-      incomplete: context.totalItems ? items.length < context.totalItems : false,
-      pageSteps: steps
+      incomplete,
+      pageSteps: steps,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      failedPages
+    };
+  }
+
+  function extractAuctionNinjaItemDetail(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.auctionninja.com/');
+    const route = loc ? resolveAuctionNinjaPage(loc) : {};
+    const raw = rawTextOf(root?.body || root?.documentElement || root);
+    const title = normalizeAuctionNinjaTitle(pickFirstText(root, [
+      'h1', '.product-title', '.item-title', '[class*="product"][class*="title"]'
+    ]) || String(root?.title || '').replace(/\s*\|\s*AuctionNinja.*$/i, ''));
+    if (!title) return null;
+    const bid = parseAuctionNinjaBidText(raw);
+    const images = uniqueNonEmpty(Array.from(root?.querySelectorAll?.('img[src], img[data-src], source[srcset]') || [])
+      .flatMap(node => [node.currentSrc, node.src, node.getAttribute?.('data-src'), String(node.getAttribute?.('srcset') || '').split(/[\s,]+/)[0]])
+      .filter(value => value && !/logo|icon|avatar|spinner|pixel/i.test(value))
+      .map(value => absoluteUrl(value, base)));
+    const description = pickFirstDescription(root)
+      || pickFirstText(root, ['.product-description', '.item-description', '#description', '[class*="description"]'])
+      || '';
+    const id = String(route.productId || productIdFromAuctionNinjaUrl(base) || '').trim();
+    const lot = raw.match(/Lot\s*#\s*:?\s*([A-Za-z0-9.-]+)/i)?.[1] || '';
+    const bidCount = raw.match(/(?:^|[^#:])\b(\d+)\s+Bids?\b(?!\s*Now)/i);
+    return {
+      source: 'AuctionNinja',
+      pageKind: 'item-detail',
+      id,
+      lot,
+      title,
+      url: base,
+      image: images[0] || '',
+      images,
+      description,
+      highBid: bid.label,
+      highBidAmount: bid.amount,
+      currentBid: bid.amount,
+      bidCount: bidCount?.[0] || '',
+      bidCountNumber: bidCount ? Number(bidCount[1]) : null,
+      timeText: raw.match(/((?:\d+\s+)?(?:days?|hours?|minutes?|seconds?)(?:\s+\d+\s+(?:days?|hours?|minutes?|seconds?))*\s+left)/i)?.[1] || '',
+      status: /\b(?:closed|lot won|bidding closed)\b/i.test(raw) ? 'CLOSED' : 'OPEN',
+      rawText: cleanGovDealsText(raw)
+    };
+  }
+
+  async function scrapeAuctionNinjaItemDetail(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAuctionNinjaPage(loc) : { kind: 'item-detail', source: 'auctionninja' };
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'auctionninja' }, loc);
+    const item = shouldStop() ? null : extractAuctionNinjaItemDetail(root, loc);
+    const items = item ? [item] : [];
+    onProgress(`Read ${items.length} AuctionNinja item detail record(s).`);
+    return {
+      source: 'auctionninja-item-dom',
+      context: { source: 'AuctionNinja', pageKind: 'item-detail', productId: route.productId || '', url: loc?.href || '' },
+      items,
+      expectedTotal: 1,
+      stopped: shouldStop(),
+      incomplete: shouldStop() || !item || !scraperStableIdentity(item, 'auctionninja'),
+      stopReason: shouldStop() ? 'stopped-by-user' : (item ? 'single-item-detail' : 'item-not-found'),
+      routeFingerprint,
+      coverage: {
+        proofTier: 'single-record',
+        strategy: 'server-rendered-item-dom',
+        routeFingerprint,
+        routeMatches: true,
+        enumeratedIds: item ? [scraperStableIdentity(item, 'auctionninja')].filter(Boolean) : [],
+        failedPages: []
+      }
     };
   }
 
@@ -8708,8 +9161,8 @@ ${cards}
     let locationText = locationMatch?.[1]?.trim() || parseAarLocationHint(raw);
     if (locationText.includes(':')) locationText = locationText.split(':').pop().trim();
     const expectedMatch = flat.match(/\bAll\s+Items\s*\(\s*([\d,]+)\s*\)/i)
-      || flat.match(/\b(\d{1,6})\s+items?\s+per\s+page\b/i)
-      || flat.match(/\bof\s+([\d,]+)\s+items?\b/i);
+      || flat.match(/\bShowing\s+[\d,]+\s*(?:-|to)\s*[\d,]+\s+of\s+([\d,]+)\s+(?:lots?|items?)\b/i)
+      || flat.match(/\bof\s+([\d,]+)\s+(?:lots?|items?)\b/i);
     return {
       source: 'AAR Auctions',
       pageKind: 'aar-auction-catalog',
@@ -8865,7 +9318,8 @@ ${cards}
     const seen = new Set();
 
     const addLot = (lot) => {
-      const key = lot.lot ? `${lot.auctionId || ''}:${lot.lot}` : (lot.url || lot.title);
+      const itemId = String(lot.itemId || firstMatch(lot.url || '', [/[?&]itemId=([^&]+)/i]) || '').trim();
+      const key = itemId ? `${lot.auctionId || auctionId || ''}:${itemId}` : (lot.lot ? `${lot.auctionId || auctionId || ''}:${lot.lot}` : (lot.url || lot.title));
       if (!key || seen.has(key) || !lot.lot || !lot.title) return;
       seen.add(key);
       lots.push(lot);
@@ -8945,10 +9399,13 @@ ${cards}
     };
   }
 
-  function mergeAarLots(target, lots) {
+  function mergeAarLots(target, lots, duplicateIds = null) {
     lots.forEach(lot => {
-      const key = lot.lot ? `${lot.auctionId || ''}:${lot.lot}` : (lot.url || lot.title);
-      if (key && lot.title) target.set(String(key), lot);
+      const itemId = String(lot.itemId || firstMatch(lot.url || '', [/[?&]itemId=([^&]+)/i]) || '').trim();
+      const key = itemId ? `${lot.auctionId || ''}:${itemId}` : (lot.lot ? `${lot.auctionId || ''}:${lot.lot}` : (lot.url || lot.title));
+      if (!key || !lot.title) return;
+      if (target.has(String(key))) duplicateIds?.add?.(String(key));
+      target.set(String(key), { ...lot, itemId: itemId || lot.itemId || '' });
     });
     return target;
   }
@@ -8977,38 +9434,70 @@ ${cards}
   }
 
   async function scrapeAarAuctionCards(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAarAuctionsPage(loc) : { kind: 'aar-auction-list', source: 'aar' };
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'aar' }, loc);
     const settings = getAarResearchSettings();
-    const sales = extractAarAuctionCards(root, typeof location !== 'undefined' ? location : null, settings);
+    const sales = extractAarAuctionCards(root, loc, settings);
     const context = {
       source: 'AAR Auctions',
       pageKind: 'aar-auction-list',
       title: String(root?.title || '').replace(/\s*\|\s*Absolute Auctions.*$/i, '').trim() || 'AAR Auction Calendar',
-      url: typeof location !== 'undefined' ? location.href : '',
+      url: loc?.href || '',
       researchSettings: settings,
       generatedAt: new Date().toISOString()
     };
     onProgress(`Read ${sales.length} AAR auction card(s).`);
     debug('aar auction list scrape finished', { count: sales.length, settings });
-    return { source: 'aar-dom', items: sales, sales, expectedTotal: sales.length, context, stopped: shouldStop(), stopReason: shouldStop() ? 'stopped-by-user' : 'current-page-only' };
+    const stopped = shouldStop();
+    const identities = sales.map(item => scraperStableIdentity(item, 'aar'));
+    const incomplete = stopped || identities.some(id => !id);
+    return {
+      source: 'aar-dom',
+      items: sales,
+      sales,
+      expectedTotal: sales.length,
+      context,
+      stopped,
+      incomplete,
+      stopReason: stopped ? 'stopped-by-user' : (incomplete ? 'missing-stable-identities' : 'server-rendered-calendar-complete'),
+      routeFingerprint,
+      coverage: {
+        proofTier: 'scoped-current-page',
+        strategy: 'server-rendered-calendar-dom',
+        routeFingerprint,
+        routeMatches: true,
+        enumeratedIds: identities.filter(Boolean),
+        reachedBottom: true,
+        failedPages: []
+      }
+    };
   }
 
   async function scrapeAarCatalogLots(onProgress = () => {}, shouldStop = () => false, root = document) {
     const lotsByKey = new Map();
     const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAarAuctionsPage(loc) : { kind: 'aar-auction-catalog', source: 'aar' };
+    const startedAt = Date.now();
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'aar' }, loc);
     let context = extractAarCatalogContext(root, loc);
     let stopReason = '';
     let steps = 0;
-    mergeAarLots(lotsByKey, extractAarCatalogLots(root, loc));
+    const duplicateIds = new Set();
+    const failedPages = [];
+    const observedTotals = new Set();
+    if (Number.isFinite(Number(context.expectedTotal))) observedTotals.add(Number(context.expectedTotal));
+    mergeAarLots(lotsByKey, extractAarCatalogLots(root, loc), duplicateIds);
     const queued = findAarCatalogPageUrls(root, loc);
     const seenUrls = new Set(queued);
     debug('aar catalog scrape start', { count: lotsByKey.size, context, queued: queued.length });
 
     while (queued.length && !shouldStop()) {
-      if (steps >= 12) {
+      if (steps >= 100) {
         stopReason = 'max-fetch-steps';
         break;
       }
-      if (context.expectedTotal && lotsByKey.size >= context.expectedTotal) {
+      if (context.expectedTotal !== null && lotsByKey.size === context.expectedTotal) {
         stopReason = 'expected-total-reached';
         break;
       }
@@ -9019,58 +9508,104 @@ ${cards}
       const url = queued.shift();
       steps += 1;
       onProgress(`Fetching AAR catalog page ${steps}...`);
-      try {
-        const response = await fetch(url, { credentials: 'include' });
-        if (!response?.ok) {
-          stopReason = `fetch-failed-${response?.status || 'unknown'}`;
-          break;
+      let pageDoc = null;
+      let lastError = '';
+      for (let attempt = 1; attempt <= 3 && !pageDoc && !shouldStop(); attempt += 1) {
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timer = controller ? globalThis.setTimeout(() => controller.abort(), 20000) : null;
+        try {
+          debugEvent('aar.pagination.request', { step: steps, attempt, url: new URL(url).pathname });
+          const response = await fetch(url, { credentials: 'include', cache: 'no-store', signal: controller?.signal });
+          if (!response?.ok) throw new Error(`HTTP ${response?.status || 'unknown'}`);
+          pageDoc = parseAuctionNinjaHtmlDocument(await response.text());
+          if (!pageDoc) throw new Error('fetch-parse-failed');
+        } catch (error) {
+          lastError = String(error?.message || error);
+          pageDoc = null;
+          debugEvent('aar.pagination.retry', { step: steps, attempt, error: lastError });
+        } finally {
+          if (timer) globalThis.clearTimeout(timer);
         }
-        const html = await response.text();
-        const pageDoc = parseAuctionNinjaHtmlDocument(html);
-        if (!pageDoc) {
-          stopReason = 'fetch-parse-failed';
-          break;
-        }
-        const pageLoc = new URL(url);
-        mergeAarLots(lotsByKey, extractAarCatalogLots(pageDoc, pageLoc));
-        const pageContext = extractAarCatalogContext(pageDoc, pageLoc);
-        context = { ...context, expectedTotal: context.expectedTotal || pageContext.expectedTotal };
-        findAarCatalogPageUrls(pageDoc, pageLoc).forEach(pageUrl => {
-          if (!seenUrls.has(pageUrl)) {
-            seenUrls.add(pageUrl);
-            queued.push(pageUrl);
-          }
-        });
-      } catch (error) {
-        stopReason = 'fetch-threw';
-        debug('aar catalog fetch threw', { url, error: String(error) });
-        break;
       }
+      if (!pageDoc) {
+        failedPages.push({ url: String(url).replace(/([?&](?:token|session|auth)[^=]*)=[^&]*/gi, '$1=[redacted]'), error: lastError || 'fetch-failed' });
+        continue;
+      }
+      const pageLoc = new URL(url);
+      mergeAarLots(lotsByKey, extractAarCatalogLots(pageDoc, pageLoc), duplicateIds);
+      const pageContext = extractAarCatalogContext(pageDoc, pageLoc);
+      if (Number.isFinite(Number(pageContext.expectedTotal))) observedTotals.add(Number(pageContext.expectedTotal));
+      context = { ...context, expectedTotal: context.expectedTotal ?? pageContext.expectedTotal };
+      findAarCatalogPageUrls(pageDoc, pageLoc).forEach(pageUrl => {
+        if (!seenUrls.has(pageUrl)) {
+          seenUrls.add(pageUrl);
+          queued.push(pageUrl);
+        }
+      });
     }
 
-    if (shouldStop()) stopReason = 'stopped-by-user';
-    if (!stopReason) stopReason = context.expectedTotal && lotsByKey.size >= context.expectedTotal ? 'expected-total-reached' : 'current-page-exhausted';
+    const stopped = shouldStop();
+    const currentRoute = typeof location !== 'undefined' ? resolveAarAuctionsPage(location) : route;
+    const currentFingerprint = genericRouteFingerprint({ ...currentRoute, source: 'aar' }, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
     const lots = Array.from(lotsByKey.values()).sort((a, b) => String(a.lot || '').localeCompare(String(b.lot || ''), undefined, {
       numeric: true,
       sensitivity: 'base'
     }));
-    const expectedTotal = context.expectedTotal || lots.length;
-    debug('aar catalog scrape finished', { lots: lots.length, expectedTotal, stopReason, steps });
+    const expectedTotal = Number.isFinite(Number(context.expectedTotal)) ? Number(context.expectedTotal) : null;
+    const totalDrift = observedTotals.size > 1;
+    const incomplete = stopped
+      || !routeMatches
+      || expectedTotal === null
+      || lots.length !== expectedTotal
+      || duplicateIds.size > 0
+      || failedPages.length > 0
+      || totalDrift;
+    stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedPages.length
+          ? 'failed-pages'
+          : (totalDrift
+            ? 'total-drift'
+            : (duplicateIds.size
+              ? 'duplicate-identities'
+              : (expectedTotal === null ? 'authoritative-total-unavailable' : (lots.length === expectedTotal ? 'verified-total-reached' : 'count-mismatch'))))));
+    const coverage = {
+      proofTier: expectedTotal === null ? 'unproven' : 'pagination-exact',
+      strategy: 'aar-servlet-pagination',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      enumeratedIds: lots.map(item => scraperStableIdentity(item, 'aar')).filter(Boolean),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages,
+      observedTotals: Array.from(observedTotals),
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('aar.coverage', { lots: lots.length, expectedTotal, stopReason, steps, coverage });
     return {
       source: 'aar-dom',
       items: lots,
       lots,
       expectedTotal,
       context,
-      stopped: shouldStop(),
+      stopped,
       stopReason,
-      incomplete: expectedTotal ? lots.length < expectedTotal : false,
-      pageSteps: steps
+      incomplete,
+      pageSteps: steps,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      failedPages
     };
   }
 
   async function scrapeAarItemDetail(onProgress = () => {}, shouldStop = () => false, root = document) {
     const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAarAuctionsPage(loc) : { kind: 'aar-item-detail', source: 'aar' };
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'aar' }, loc);
     const settings = getAarResearchSettings();
     const item = extractAarItemDetail(root, loc);
     const context = extractAarItemContext(root, loc, settings);
@@ -9087,11 +9622,20 @@ ${cards}
       source: 'aar-item-dom',
       items,
       lots: items,
-      expectedTotal: item ? 1 : 0,
+      expectedTotal: 1,
       context,
       stopped: shouldStop(),
-      incomplete: false,
-      stopReason
+      incomplete: shouldStop() || !item,
+      stopReason,
+      routeFingerprint,
+      coverage: {
+        proofTier: 'single-record',
+        strategy: 'server-rendered-item-dom',
+        routeFingerprint,
+        routeMatches: true,
+        enumeratedIds: item ? [scraperStableIdentity(item, 'aar')].filter(Boolean) : [],
+        failedPages: []
+      }
     };
   }
 
@@ -9415,6 +9959,7 @@ ${cards}
       || route.sellerSlug
       || 'GovDeals Seller';
     const locationHint = govDealsLines({ textContent: raw }).find(line => /\b[A-Z]{2}\b|New Jersey|Pennsylvania|Connecticut|New York/i.test(line) && !/Showing|GovDeals|Current Bid|Asset ID/i.test(line)) || '';
+    const advertisedTotal = extractGovDealsVisibleCount(raw, null);
     return {
       source: 'GovDeals',
       pageKind: 'govdeals-seller',
@@ -9424,7 +9969,9 @@ ${cards}
       sellerSlug: route.sellerSlug || '',
       url: loc?.href || '',
       locationHint,
-      visibleCount: extractGovDealsVisibleCount(raw, listings.length)
+      visibleCount: advertisedTotal ?? listings.length,
+      renderedCount: listings.length,
+      advertisedTotal
     };
   }
 
@@ -9433,6 +9980,7 @@ ${cards}
     const params = loc ? govDealsSearchParams(loc) : new URLSearchParams('');
     const raw = rawTextOf(root?.body || root?.documentElement || root);
     const listings = extractGovDealsListings(root, loc, 'govdeals-new-listings');
+    const advertisedTotal = extractGovDealsVisibleCount(raw, null);
     return {
       source: 'GovDeals',
       pageKind: 'govdeals-new-listings',
@@ -9443,7 +9991,9 @@ ${cards}
       category: route.category || String(params.get('category') || ''),
       categoryName: route.categoryName || String(params.get('categoryName') || ''),
       sortLabel: cleanGovDealsText(raw).match(/\bSort\s*:?\s*([A-Za-z ]+?)(?=\s+(?:Showing|Filters|$))/i)?.[1]?.trim() || '',
-      visibleCount: extractGovDealsVisibleCount(raw, listings.length),
+      visibleCount: advertisedTotal ?? listings.length,
+      renderedCount: listings.length,
+      advertisedTotal,
       generatedAt: new Date().toISOString()
     };
   }
@@ -9635,40 +10185,72 @@ ${cards}
     return Boolean(item?.url && (!item.description || !item.image || !item.location || !item.status || !Object.keys(item.specs || {}).length));
   }
 
-  async function enrichGovDealsListings(listings, onProgress = () => {}, shouldStop = () => false) {
-    if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') return listings;
+  async function enrichGovDealsListings(listings, onProgress = () => {}, shouldStop = () => false, options = {}) {
     const out = listings.slice();
-    let enriched = 0;
-    for (let index = 0; index < out.length && enriched < 20; index += 1) {
-      if (shouldStop()) break;
-      const item = out[index];
-      if (!govDealsNeedsEnrichment(item)) continue;
-      let url;
-      try {
-        url = new URL(item.url, typeof location !== 'undefined' ? location.href : 'https://www.govdeals.com/');
-      } catch {
-        continue;
-      }
-      if (!isGovDealsHost(url.hostname)) continue;
-      try {
-        onProgress(`Enriching GovDeals asset ${enriched + 1}...`);
-        const response = await fetch(url.href, { credentials: 'include' });
-        if (!response?.ok) continue;
-        const html = await response.text();
-        const doc = parseAuctionNinjaHtmlDocument(html);
-        const detail = doc ? extractGovDealsAssetDetail(doc, url) : null;
-        out[index] = mergeGovDealsDetail(item, detail);
-        enriched += 1;
-      } catch (error) {
-        debug('govdeals enrichment failed', { url: url.href, error: String(error) });
-      }
+    if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') {
+      out.audit = { requested: 0, succeeded: 0, failed: [], stopped: shouldStop() };
+      return out;
     }
+    const candidates = out.map((item, index) => ({ item, index })).filter(({ item }) => govDealsNeedsEnrichment(item));
+    const limit = Math.min(candidates.length, Math.max(0, Number(options.limit ?? 100)));
+    const queue = candidates.slice(0, limit);
+    const audit = { requested: queue.length, succeeded: 0, failed: [], stopped: false };
+    const concurrency = Math.max(1, Math.min(3, Number(options.concurrency || 3)));
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 20000));
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queue.length && !shouldStop()) {
+        const entry = queue[cursor++];
+        const identity = scraperStableIdentity(entry.item, 'govdeals');
+        let url;
+        try {
+          url = new URL(entry.item.url, typeof location !== 'undefined' ? location.href : 'https://www.govdeals.com/');
+        } catch {
+          audit.failed.push({ id: identity, reason: 'invalid-url' });
+          continue;
+        }
+        if (!isGovDealsHost(url.hostname)) {
+          audit.failed.push({ id: identity, reason: 'wrong-host' });
+          continue;
+        }
+        let success = false;
+        let lastError = '';
+        for (let attempt = 1; attempt <= 3 && !success && !shouldStop(); attempt += 1) {
+          const controller = typeof AbortController === 'function' ? new AbortController() : null;
+          const timer = controller ? globalThis.setTimeout(() => controller.abort(), timeoutMs) : null;
+          try {
+            debugEvent('govdeals.enrichment.request', { id: identity, attempt });
+            const response = await fetch(url.href, { credentials: 'include', cache: 'no-store', signal: controller?.signal });
+            if (!response?.ok) throw new Error(`HTTP ${response?.status || 'unknown'}`);
+            const html = await response.text();
+            const doc = parseAuctionNinjaHtmlDocument(html);
+            const detail = doc ? extractGovDealsAssetDetail(doc, url) : null;
+            if (!detail?.title) throw new Error('detail-parse-empty');
+            out[entry.index] = mergeGovDealsDetail(entry.item, detail);
+            audit.succeeded += 1;
+            success = true;
+          } catch (error) {
+            lastError = String(error?.message || error);
+            debugEvent('govdeals.enrichment.retry', { id: identity, attempt, error: lastError });
+          } finally {
+            if (timer) globalThis.clearTimeout(timer);
+          }
+        }
+        if (!success && !shouldStop()) audit.failed.push({ id: identity, reason: lastError || 'enrichment-failed' });
+        onProgress(`Enriched ${audit.succeeded}/${audit.requested} GovDeals asset(s).`);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, () => worker()));
+    audit.stopped = shouldStop();
+    out.audit = audit;
     return out;
   }
 
   async function scrapeGovDealsListings(onProgress = () => {}, shouldStop = () => false, root = document) {
     const loc = typeof location !== 'undefined' ? location : null;
     const route = loc ? resolveGovDealsPage(loc) : { kind: 'govdeals-new-listings' };
+    const startedAt = Date.now();
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'govdeals' }, loc);
     const pageKind = route.kind || 'govdeals-new-listings';
     let context;
     let items;
@@ -9682,38 +10264,70 @@ ${cards}
       context = extractGovDealsSearchContext(root, loc);
       items = extractGovDealsListings(root, loc, pageKind);
     }
-    if (context?.visibleCount && items.length > context.visibleCount) {
-      debug('govdeals trimming extra cards to visible count', {
-        before: items.length,
-        visibleCount: context.visibleCount,
-        kind: pageKind
-      });
-      items = items.slice(0, context.visibleCount);
-    }
-    const advertisedTotal = context?.visibleCount || null;
+    const advertisedTotal = pageKind === 'govdeals-asset'
+      ? 1
+      : (Number.isFinite(Number(context?.advertisedTotal)) ? Number(context.advertisedTotal) : null);
     onProgress(`Read ${items.length} GovDeals listing(s).`);
     const enriched = await enrichGovDealsListings(items, onProgress, shouldStop);
-    debug('govdeals scrape finished', { kind: pageKind, count: enriched.length, context });
+    const enrichmentAudit = enriched.audit || { requested: 0, succeeded: 0, failed: [], stopped: shouldStop() };
+    const currentRoute = typeof location !== 'undefined' ? resolveGovDealsPage(location) : route;
+    const currentFingerprint = genericRouteFingerprint({ ...currentRoute, source: 'govdeals' }, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const identities = enriched.map(item => scraperStableIdentity(item, 'govdeals'));
+    const duplicateIds = uniqueNonEmpty(identities.filter((id, index) => id && identities.indexOf(id) !== index));
+    const missingStableIds = identities.filter(id => !id).length;
+    const countMatches = advertisedTotal !== null && enriched.length === advertisedTotal;
+    const stopped = shouldStop();
+    const incomplete = stopped || !routeMatches || !countMatches || duplicateIds.length > 0 || missingStableIds > 0 || enrichmentAudit.failed.length > 0;
+    const stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (advertisedTotal === null
+          ? 'authoritative-total-unavailable'
+          : (!countMatches
+            ? 'advertised-total-mismatch'
+            : (duplicateIds.length
+              ? 'duplicate-identities'
+              : (missingStableIds ? 'missing-stable-identities' : (enrichmentAudit.failed.length ? 'enrichment-failed' : 'verified-total-reached'))))));
+    const coverage = {
+      proofTier: pageKind === 'govdeals-asset' ? 'single-record' : (advertisedTotal === null ? 'unproven' : 'pagination-exact'),
+      strategy: 'canonical-dom-plus-same-origin-detail',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      enumeratedIds: identities.filter(Boolean),
+      duplicateIds,
+      failedBatches: enrichmentAudit.failed,
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('govdeals.coverage', { kind: pageKind, count: enriched.length, advertisedTotal, incomplete, stopReason, coverage });
     return {
       source: 'govdeals-dom',
       items: enriched,
       listings: enriched,
-      expectedTotal: enriched.length,
+      expectedTotal: advertisedTotal,
       context: {
         ...context,
         advertisedTotal,
         visiblePageCount: enriched.length
       },
-      stopped: shouldStop(),
-      stopReason: shouldStop() ? 'stopped-by-user' : (advertisedTotal && enriched.length < advertisedTotal ? 'current-visible-page-plus-safe-enrichment' : 'current-page-plus-safe-enrichment'),
-      incomplete: false
+      stopped,
+      stopReason,
+      incomplete,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      audit: { enrichment: enrichmentAudit }
     };
   }
 
-  function mergeAuctionNinjaLots(target, lots) {
+  function mergeAuctionNinjaLots(target, lots, duplicateIds = null) {
     lots.forEach(lot => {
       const key = lot.url || lot.id || lot.lot || lot.title;
-      if (key && lot.title) target.set(String(key), lot);
+      if (!key || !lot.title) return;
+      if (target.has(String(key))) duplicateIds?.add?.(String(key));
+      target.set(String(key), lot);
     });
     return target;
   }
@@ -9882,12 +10496,18 @@ ${cards}
 
   async function scrapeAuctionNinjaCatalogLots(onProgress = () => {}, shouldStop = () => false, root = document) {
     const lotsByKey = new Map();
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAuctionNinjaPage(loc) : { kind: 'sale-catalog', source: 'auctionninja' };
+    const startedAt = Date.now();
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'auctionninja' }, loc);
+    const duplicateIds = new Set();
+    const failedPages = [];
     let steps = 0;
     let stopReason = '';
     let lastRange = parseAuctionNinjaCatalogRange(textOf(root?.body || root?.documentElement || root));
-    const context = extractAuctionNinjaSaleContext(root);
+    const context = extractAuctionNinjaSaleContext(root, loc);
 
-    mergeAuctionNinjaLots(lotsByKey, extractAuctionNinjaCatalogLots(root));
+    mergeAuctionNinjaLots(lotsByKey, extractAuctionNinjaCatalogLots(root, loc), duplicateIds);
     debug('auctionninja catalog scrape start', { count: lotsByKey.size, range: lastRange, context });
 
     const queuedPageUrls = [];
@@ -9899,16 +10519,16 @@ ${cards}
         queuedPageUrls.push(url);
       });
     };
-    enqueuePageUrls(findAuctionNinjaCatalogPageUrls(root));
+    enqueuePageUrls(findAuctionNinjaCatalogPageUrls(root, loc));
 
     if (queuedPageUrls.length && typeof fetch === 'function' && typeof DOMParser !== 'undefined') {
       while (queuedPageUrls.length && !shouldStop()) {
         const expectedTotal = lastRange?.total || 0;
-        if (expectedTotal && lotsByKey.size >= expectedTotal) {
+        if (expectedTotal && lotsByKey.size === expectedTotal) {
           stopReason = 'expected-total-reached';
           break;
         }
-        if (steps >= 20) {
+        if (steps >= 100) {
           stopReason = 'max-fetch-steps';
           break;
         }
@@ -9919,43 +10539,30 @@ ${cards}
         onProgress(`Fetching AuctionNinja catalog page ${steps}... ${before}/${expectedTotal || '?'} lot(s)`);
         debug('auctionninja catalog page fetch start', { step: steps, url, before, expectedTotal });
 
-        try {
-          const response = await fetch(url, { credentials: 'include' });
-          if (!response?.ok) {
-            stopReason = `fetch-failed-${response?.status || 'unknown'}`;
-            debug('auctionninja catalog page fetch failed', { step: steps, url, status: response?.status });
-            break;
-          }
-          if (shouldStop()) break;
-          const html = await response.text();
-          const pageDoc = parseAuctionNinjaHtmlDocument(html);
-          if (!pageDoc) {
-            stopReason = 'fetch-parse-failed';
-            break;
-          }
-          mergeAuctionNinjaLots(lotsByKey, extractAuctionNinjaCatalogLots(pageDoc, new URL(url)));
-          lastRange = parseAuctionNinjaCatalogRange(textOf(pageDoc.body || pageDoc.documentElement || pageDoc)) || lastRange;
-          enqueuePageUrls(findAuctionNinjaCatalogPageUrls(pageDoc, new URL(url)));
-          debug('auctionninja catalog page fetch finished', { step: steps, url, before, after: lotsByKey.size, range: lastRange, queued: queuedPageUrls.length });
-        } catch (error) {
-          stopReason = 'fetch-threw';
-          debug('auctionninja catalog page fetch threw', { step: steps, url, error: String(error) });
-          break;
+        const fetched = await fetchHtmlDocumentWithRetries(url, 'auctionninja.catalog.pagination', shouldStop);
+        if (!fetched.document) {
+          failedPages.push({ url: new URL(url).pathname, error: fetched.error });
+          continue;
         }
+        const pageDoc = fetched.document;
+        mergeAuctionNinjaLots(lotsByKey, extractAuctionNinjaCatalogLots(pageDoc, new URL(url)), duplicateIds);
+        lastRange = parseAuctionNinjaCatalogRange(textOf(pageDoc.body || pageDoc.documentElement || pageDoc)) || lastRange;
+        enqueuePageUrls(findAuctionNinjaCatalogPageUrls(pageDoc, new URL(url)));
+        debug('auctionninja catalog page fetch finished', { step: steps, url, before, after: lotsByKey.size, range: lastRange, queued: queuedPageUrls.length });
       }
 
       const expectedTotal = lastRange?.total || 0;
       if (!stopReason) {
         stopReason = shouldStop()
           ? 'stopped-by-user'
-          : (expectedTotal && lotsByKey.size >= expectedTotal ? 'expected-total-reached' : 'catalog-page-fetch-exhausted');
+          : (expectedTotal && lotsByKey.size === expectedTotal ? 'expected-total-reached' : 'catalog-page-fetch-exhausted');
       }
     }
 
     while (!shouldStop()) {
       if (stopReason) break;
       const expectedTotal = lastRange?.total || 0;
-      if (!expectedTotal || lotsByKey.size >= expectedTotal || lastRange?.complete) {
+      if (!expectedTotal || lotsByKey.size === expectedTotal || lastRange?.complete) {
         stopReason = expectedTotal ? 'expected-total-reached' : 'no-expected-total';
         break;
       }
@@ -9995,40 +10602,76 @@ ${cards}
       }
     }
 
-    if (shouldStop()) stopReason = 'stopped-by-user';
+    const stopped = shouldStop();
     const lots = Array.from(lotsByKey.values()).sort((a, b) => String(a.lot || a.title).localeCompare(String(b.lot || b.title), undefined, {
       numeric: true,
       sensitivity: 'base'
     }));
-    const expectedTotal = lastRange?.total || lots.length;
-    debug('auctionninja catalog scrape finished', { lots: lots.length, expectedTotal, steps, stopReason });
+    const expectedTotal = Number.isFinite(Number(lastRange?.total)) ? Number(lastRange.total) : null;
+    const currentRoute = typeof location !== 'undefined' ? resolveAuctionNinjaPage(location) : route;
+    const currentFingerprint = genericRouteFingerprint({ ...currentRoute, source: 'auctionninja' }, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const incomplete = stopped || !routeMatches || expectedTotal === null || lots.length !== expectedTotal || failedPages.length > 0 || duplicateIds.size > 0;
+    stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedPages.length
+          ? 'failed-pages'
+          : (duplicateIds.size
+            ? 'duplicate-identities'
+            : (expectedTotal === null ? 'authoritative-total-unavailable' : (lots.length === expectedTotal ? 'verified-total-reached' : 'count-mismatch')))));
+    const coverage = {
+      proofTier: expectedTotal === null ? 'unproven' : 'pagination-exact',
+      strategy: 'auctionninja-sale-pagination',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      enumeratedIds: lots.map(item => scraperStableIdentity(item, 'auctionninja')).filter(Boolean),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages,
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('auctionninja.catalog.coverage', { lots: lots.length, expectedTotal, steps, stopReason, coverage });
     return {
       source: 'auctionninja-dom',
       items: lots,
       lots,
       expectedTotal,
       context,
-      stopped: shouldStop(),
+      stopped,
       stopReason,
-      incomplete: expectedTotal ? lots.length < expectedTotal : false,
-      pageSteps: steps
+      incomplete,
+      pageSteps: steps,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      failedPages
     };
   }
 
-  function mergeAuctionNinjaSales(target, sales) {
+  function mergeAuctionNinjaSales(target, sales, duplicateIds = null) {
     sales.forEach(sale => {
       const key = canonicalAuctionNinjaSaleUrl(sale.url) || sale.id || sale.title;
-      if (key && sale.title) target.set(String(key), sale);
+      if (!key || !sale.title) return;
+      if (target.has(String(key))) duplicateIds?.add?.(String(key));
+      target.set(String(key), sale);
     });
     return target;
   }
 
   async function scrapeAuctionNinjaAuctionSearchSales(onProgress = () => {}, shouldStop = () => false, root = document) {
     const salesByKey = new Map();
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAuctionNinjaPage(loc) : { kind: 'auction-search', source: 'auctionninja' };
+    const startedAt = Date.now();
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'auctionninja' }, loc);
+    const duplicateIds = new Set();
+    const failedPages = [];
     let steps = 0;
     let stopReason = '';
-    const context = extractAuctionNinjaAuctionSearchContext(root);
-    mergeAuctionNinjaSales(salesByKey, extractAuctionNinjaAuctionSearchSales(root));
+    const context = extractAuctionNinjaAuctionSearchContext(root, loc);
+    mergeAuctionNinjaSales(salesByKey, extractAuctionNinjaAuctionSearchSales(root, loc), duplicateIds);
     debug('auctionninja auction-search scrape start', { count: salesByKey.size, context });
 
     const queuedPageUrls = [];
@@ -10040,16 +10683,16 @@ ${cards}
         queuedPageUrls.push(url);
       });
     };
-    enqueuePageUrls(findAuctionNinjaAuctionSearchPageUrls(root));
+    enqueuePageUrls(findAuctionNinjaAuctionSearchPageUrls(root, loc));
 
     if (queuedPageUrls.length && typeof fetch === 'function' && typeof DOMParser !== 'undefined') {
       while (queuedPageUrls.length && !shouldStop()) {
-        if (steps >= 20) {
+        if (steps >= 100) {
           stopReason = 'max-fetch-steps';
           break;
         }
         const expectedTotal = context.totalSales || 0;
-        if (expectedTotal && salesByKey.size >= expectedTotal) {
+        if (expectedTotal && salesByKey.size === expectedTotal) {
           stopReason = 'expected-total-reached';
           break;
         }
@@ -10058,65 +10701,69 @@ ${cards}
         steps += 1;
         onProgress(`Fetching AuctionNinja auction page ${steps}... ${before}/${expectedTotal || '?'} sale(s)`);
         debug('auctionninja auction-search page fetch start', { step: steps, url, before, expectedTotal });
-        try {
-          const response = await fetch(url, { credentials: 'include' });
-          if (!response?.ok) {
-            stopReason = `fetch-failed-${response?.status || 'unknown'}`;
-            debug('auctionninja auction-search page fetch failed', { step: steps, url, status: response?.status });
-            break;
-          }
-          if (shouldStop()) break;
-          const html = await response.text();
-          const pageDoc = parseAuctionNinjaHtmlDocument(html);
-          if (!pageDoc) {
-            stopReason = 'fetch-parse-failed';
-            break;
-          }
-          const pageUrl = new URL(url);
-          mergeAuctionNinjaSales(salesByKey, extractAuctionNinjaAuctionSearchSales(pageDoc, pageUrl));
-          enqueuePageUrls(findAuctionNinjaAuctionSearchPageUrls(pageDoc, pageUrl));
-          debug('auctionninja auction-search page fetch finished', { step: steps, url, before, after: salesByKey.size, queued: queuedPageUrls.length });
-        } catch (error) {
-          stopReason = 'fetch-threw';
-          debug('auctionninja auction-search page fetch threw', { step: steps, url, error: String(error) });
-          break;
+        const fetched = await fetchHtmlDocumentWithRetries(url, 'auctionninja.search.pagination', shouldStop);
+        if (!fetched.document) {
+          failedPages.push({ url: new URL(url).pathname, error: fetched.error });
+          continue;
         }
+        const pageUrl = new URL(url);
+        mergeAuctionNinjaSales(salesByKey, extractAuctionNinjaAuctionSearchSales(fetched.document, pageUrl), duplicateIds);
+        enqueuePageUrls(findAuctionNinjaAuctionSearchPageUrls(fetched.document, pageUrl));
+        debug('auctionninja auction-search page fetch finished', { step: steps, url, before, after: salesByKey.size, queued: queuedPageUrls.length });
       }
     }
 
     if (!stopReason) {
       stopReason = shouldStop()
         ? 'stopped-by-user'
-        : (context.totalSales && salesByKey.size >= context.totalSales ? 'expected-total-reached' : 'visible-or-fetch-complete');
+        : (context.totalSales && salesByKey.size === context.totalSales ? 'expected-total-reached' : 'visible-or-fetch-complete');
     }
-    if (shouldStop()) stopReason = 'stopped-by-user';
+    const stopped = shouldStop();
     let sales = Array.from(salesByKey.values());
-    const expectedTotal = context.totalSales || sales.length;
-    const capped = trimRowsToExpectedTotal(sales, expectedTotal);
-    if (capped.trimmed) {
-      debug('auctionninja auction-search trimmed to expected total', {
-        originalCount: capped.originalCount,
-        expectedTotal,
-        currentUrl: context.url || ''
-      });
-      sales = capped.rows;
-      stopReason = 'trimmed-to-expected-total';
-    }
+    const expectedTotal = Number.isFinite(Number(context.totalSales)) ? Number(context.totalSales) : null;
     sales = sales.sort((a, b) => String(a.closingText || a.title).localeCompare(String(b.closingText || b.title), undefined, {
       numeric: true,
       sensitivity: 'base'
     }));
-    debug('auctionninja auction-search scrape finished', { sales: sales.length, expectedTotal, steps, stopReason });
+    const currentRoute = typeof location !== 'undefined' ? resolveAuctionNinjaPage(location) : route;
+    const currentFingerprint = genericRouteFingerprint({ ...currentRoute, source: 'auctionninja' }, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const incomplete = stopped || !routeMatches || expectedTotal === null || sales.length !== expectedTotal || failedPages.length > 0 || duplicateIds.size > 0;
+    stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedPages.length
+          ? 'failed-pages'
+          : (duplicateIds.size
+            ? 'duplicate-identities'
+            : (expectedTotal === null ? 'authoritative-total-unavailable' : (sales.length === expectedTotal ? 'verified-total-reached' : 'count-mismatch')))));
+    const coverage = {
+      proofTier: expectedTotal === null ? 'unproven' : 'pagination-exact',
+      strategy: 'auctionninja-search-pagination',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      enumeratedIds: sales.map(item => scraperStableIdentity(item, 'auctionninja')).filter(Boolean),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages,
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('auctionninja.search.coverage', { sales: sales.length, expectedTotal, steps, stopReason, coverage });
     return {
       source: 'auctionninja-auction-search-dom',
       context,
       items: sales,
       sales,
       expectedTotal,
-      stopped: shouldStop(),
+      stopped,
       stopReason,
-      incomplete: context.totalSales ? sales.length < context.totalSales : false,
-      pageSteps: steps
+      incomplete,
+      pageSteps: steps,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      failedPages
     };
   }
 
@@ -10144,7 +10791,10 @@ ${cards}
 
   async function scrapeAuctionNinjaAccountItems(kind = 'followed-items', onProgress = () => {}, shouldStop = () => false, root = document) {
     const normalizedKind = kind === 'items-won' || kind === 'bid-history' ? kind : 'followed-items';
-    const context = extractAuctionNinjaAccountContext(normalizedKind, root);
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAuctionNinjaPage(loc) : { kind: normalizedKind, source: 'auctionninja' };
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'auctionninja' }, loc);
+    const context = extractAuctionNinjaAccountContext(normalizedKind, root, loc);
     if (shouldStop()) {
       return {
         source: 'auctionninja-account-dom',
@@ -10152,7 +10802,10 @@ ${cards}
         items: [],
         expectedTotal: 0,
         stopped: true,
-        stopReason: 'stopped-by-user'
+        incomplete: true,
+        stopReason: 'stopped-by-user',
+        routeFingerprint,
+        coverage: { proofTier: 'scoped-current-page', strategy: 'account-dom', routeFingerprint, routeMatches: true, enumeratedIds: [] }
       };
     }
 
@@ -10167,14 +10820,26 @@ ${cards}
       stopReason,
       title: context.title || ''
     });
+    const identities = items.map(item => scraperStableIdentity(item, 'auctionninja'));
+    const incomplete = identities.some(id => !id);
     return {
       source: 'auctionninja-account-dom',
       context,
       items,
       expectedTotal: items.length,
-      stopped: shouldStop(),
-      stopReason,
-      incomplete: false
+      stopped: false,
+      stopReason: incomplete ? 'missing-stable-identities' : stopReason,
+      incomplete,
+      routeFingerprint,
+      coverage: {
+        proofTier: 'scoped-current-page',
+        strategy: 'account-dom',
+        routeFingerprint,
+        routeMatches: true,
+        enumeratedIds: identities.filter(Boolean),
+        reachedBottom: true,
+        failedPages: []
+      }
     };
   }
 
@@ -10280,7 +10945,45 @@ ${cards}
   function isEbayBulkSellPage(loc = location) {
     const host = String(loc.hostname || '').toLowerCase();
     const pathname = String(loc.pathname || '');
-    return (host === 'www.ebay.com' || host === 'ebay.com') && /^\/bulksell\b/i.test(pathname);
+    return (host === 'www.ebay.com' || host === 'ebay.com')
+      && (/^\/bulksell\b/i.test(pathname) || /^\/sh\/lst\/active\/bulkedit\/?$/i.test(pathname));
+  }
+
+  async function fetchHtmlDocumentWithRetries(url, namespace = 'pagination', shouldStop = () => false, options = {}) {
+    if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') {
+      return { document: null, error: 'fetch-unavailable', attempts: 0 };
+    }
+    const maxAttempts = Math.max(1, Math.min(3, Number(options.maxAttempts || 3)));
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 20000));
+    let lastError = '';
+    for (let attempt = 1; attempt <= maxAttempts && !shouldStop(); attempt += 1) {
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = controller ? globalThis.setTimeout(() => controller.abort(), timeoutMs) : null;
+      try {
+        const parsed = new URL(url, typeof location !== 'undefined' ? location.href : 'https://invalid.local/');
+        debugEvent(`${namespace}.request`, { attempt, path: parsed.pathname, page: parsed.searchParams.get('Page') || parsed.searchParams.get('page') || '' });
+        const response = await fetch(parsed.href, { credentials: 'include', cache: 'no-store', signal: controller?.signal });
+        if (!response?.ok) throw new Error(`HTTP ${response?.status || 'unknown'}`);
+        const documentValue = parseAuctionNinjaHtmlDocument(await response.text());
+        if (!documentValue) throw new Error('parse-empty');
+        return { document: documentValue, error: '', attempts: attempt };
+      } catch (error) {
+        lastError = String(error?.message || error);
+        debugEvent(`${namespace}.retry`, { attempt, error: lastError });
+      } finally {
+        if (timer) globalThis.clearTimeout(timer);
+      }
+    }
+    return { document: null, error: shouldStop() ? 'stopped-by-user' : (lastError || 'fetch-failed'), attempts: maxAttempts };
+  }
+
+  function findEbayBulkEditLink(root = document) {
+    return Array.from(root?.querySelectorAll?.('a[href]') || []).find(link => {
+      const href = String(link.getAttribute?.('href') || link.href || '');
+      const label = textOf(link);
+      return /^https:\/\/www\.ebay\.com\/sh\/lst\/active\/bulkedit\b/i.test(absoluteUrl(href, 'https://www.ebay.com/'))
+        && /edit\s+all|bulk\s+edit/i.test(label);
+    }) || null;
   }
 
   function isEbayMyLifecyclePath(pathname, leaf) {
@@ -10311,7 +11014,8 @@ ${cards}
   function resolveFlipTrackerPage(loc = location) {
     const host = String(loc.hostname || '').toLowerCase();
     const pathname = String(loc.pathname || '');
-    if ((host === 'www.ebay.com' || host === 'ebay.com') && /^\/bulksell\b/i.test(pathname)) {
+    if ((host === 'www.ebay.com' || host === 'ebay.com')
+      && (/^\/bulksell\b/i.test(pathname) || /^\/sh\/lst\/active\/bulkedit\/?$/i.test(pathname))) {
       return { supported: true, kind: 'fliptracker-ebay-bulk', source: 'ebay', host, reason: 'eBay bulk-sell listing export route' };
     }
     if (host === 'www.ebay.com' && (/^\/sh\/lst\/active\/?$/i.test(pathname) || isEbayMyLifecyclePath(pathname, 'active'))) {
@@ -10341,72 +11045,184 @@ ${cards}
     return { supported: false, kind: 'unsupported', source: 'unknown', host, reason: 'unsupported FlipTracker listing route' };
   }
 
-  function shouldInitOnLocation(loc = location) {
+  function resolveAjWillnerPage(loc = location) {
     const host = String(loc.hostname || '').toLowerCase();
     const pathname = String(loc.pathname || '');
-
-    if (host === 'bid.ajwillnerauctions.com') {
-      return /^\/ui\/auctions\//i.test(pathname);
+    if (host !== 'bid.ajwillnerauctions.com') {
+      return { supported: false, kind: 'unsupported', source: 'ajwillner', host, reason: 'unsupported AJ Willner host' };
     }
+    if (!/^\/ui\/auctions\/\d+/i.test(pathname)) {
+      return { supported: false, kind: 'unsupported', source: 'ajwillner', host, reason: 'unsupported AJ Willner path' };
+    }
+    return {
+      supported: true,
+      kind: 'catalog',
+      source: 'ajwillner',
+      host,
+      auctionId: getAjWillnerAuctionId(loc),
+      reason: 'AJ Willner auction route'
+    };
+  }
 
-    if (isFlipTrackerListingPage(loc)) return true;
+  function getRouteManifest() {
+    return [
+      {
+        site: 'hibid',
+        label: 'HiBid',
+        source: 'hibid',
+        mode: 'catalog',
+        navigation: { group: 'auction', url: 'https://hibid.com/lots', modeHint: 'catalog', help: 'Open HiBid lots search in this tab.' },
+        routeKinds: ['catalog', 'live', 'lot', 'watchlist', 'watchlist-outbid', 'currentbids-winning', 'currentbids-outbid', 'pastbids', 'pastwatchlist'],
+        proofPolicy: 'api-exact-or-scoped-account'
+      },
+      {
+        site: 'ajwillner',
+        label: 'AJ Willner',
+        source: 'ajwillner',
+        mode: 'catalog',
+        navigation: { group: 'auction', url: 'https://bid.ajwillnerauctions.com/', modeHint: 'auctions', help: 'Open the AJ Willner auction site in this tab.' },
+        routeKinds: ['catalog'],
+        proofPolicy: 'api-exact'
+      },
+      {
+        site: 'auctionninja',
+        label: 'AuctionNinja',
+        source: 'auctionninja',
+        mode: 'auctionninja',
+        navigation: { group: 'auction', url: 'https://www.auctionninja.com/auctions', modeHint: 'auctions', help: 'Open AuctionNinja auction search in this tab.' },
+        routeKinds: ['auction-search', 'category-search', 'sale-catalog', 'item-detail', 'followed-items', 'items-won', 'bid-history'],
+        proofPolicy: 'pagination-exact-or-scoped-account'
+      },
+      {
+        site: 'aar',
+        label: 'AAR Auctions',
+        source: 'aar',
+        mode: 'aar',
+        navigation: { group: 'auction', url: 'https://aarauctions.com/auctions/', modeHint: 'auctions', help: 'Open the AAR Auctions calendar in this tab.' },
+        routeKinds: ['aar-auction-list', 'aar-auction-catalog', 'aar-item-detail'],
+        proofPolicy: 'pagination-exact-or-single-record'
+      },
+      {
+        site: 'govdeals',
+        label: 'GovDeals',
+        source: 'govdeals',
+        mode: 'govdeals',
+        navigation: { group: 'auction', url: 'https://www.govdeals.com/en/search', modeHint: 'search', help: 'Open GovDeals search in this tab.' },
+        routeKinds: ['govdeals-seller', 'govdeals-new-listings', 'govdeals-asset'],
+        proofPolicy: 'api-exact-or-pagination-exact'
+      },
+      {
+        site: 'ebay',
+        label: 'eBay',
+        source: 'ebay',
+        mode: 'fliptracker',
+        navigation: {
+          group: 'selling',
+          workflows: [
+            { id: 'ebay-active', label: 'eBay Active', modeHint: 'listings', url: 'https://www.ebay.com/sh/lst/active', help: 'Open active eBay Seller Hub listings.' },
+            { id: 'ebay-bulk', label: 'eBay Bulk Edit', modeHint: 'bulk', url: 'https://www.ebay.com/sh/lst/active#flipperaddon-bulk-edit', help: 'Open Seller Hub Active and continue to its current Edit all listings workflow.' },
+            { id: 'ebay-ended', label: 'eBay Ended', modeHint: 'ended', url: 'https://www.ebay.com/sh/lst/ended', help: 'Open ended eBay Seller Hub listings.' },
+            { id: 'ebay-sold', label: 'eBay Sold', modeHint: 'sold', url: 'https://www.ebay.com/mys/sold', help: 'Open My eBay sold orders.' },
+            { id: 'ebay-transactions', label: 'eBay Transactions', modeHint: 'records', url: 'https://www.ebay.com/mes/transactionlist?sh=true', help: 'Open eBay seller transaction records.' }
+          ]
+        },
+        routeKinds: ['fliptracker-ebay-active', 'fliptracker-ebay-bulk', 'fliptracker-ebay-ended', 'fliptracker-ebay-sold', 'fliptracker-ebay-transactions'],
+        proofPolicy: 'pagination-exact'
+      },
+      {
+        site: 'facebook',
+        label: 'Facebook Marketplace',
+        source: 'facebook',
+        mode: 'fliptracker',
+        navigation: {
+          group: 'selling',
+          workflows: [
+            { id: 'facebook-selling', label: 'Facebook Selling', modeHint: 'listings', url: 'https://www.facebook.com/marketplace/you/selling', help: 'Open your Facebook Marketplace selling listings.' },
+            { id: 'facebook-create', label: 'Facebook Create Listing', modeHint: 'create', url: 'https://www.facebook.com/marketplace/create/item', help: 'Open the official Facebook Marketplace listing form.' }
+          ]
+        },
+        routeKinds: ['fliptracker-facebook', 'fliptracker-facebook-create', 'fliptracker-facebook-create-hub', 'fliptracker-facebook-published'],
+        proofPolicy: 'dom-bottom-settled'
+      }
+    ];
+  }
 
-    if (isAuctionNinjaHost(host)) return resolveAuctionNinjaPage(loc).supported;
+  function getNetworkEndpointManifest() {
+    return {
+      hibid: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'POST', url: 'https://hibid-api.io/sr/main/v1/search/lot', variables: ['auctionId', 'auctioneerId', 'categoryId', 'country', 'location', 'page', 'shipping', 'size', 'sortOrder', 'status'] },
+        hydrate: { method: 'POST', url: 'https://hibid.com/graphql', operation: 'LotSearchLotOnly', variables: ['auctionId', 'eventItemIds', 'sortOrder', 'status'] }
+      },
+      ajwillner: {
+        discovery: 'chrome-cdp',
+        bootstrap: { method: 'GET', url: 'https://bid.ajwillnerauctions.com/api/auctions/{auctionId}', variables: ['page', 'include_items_data', 'include_documents'] },
+        enumerate: { method: 'GET', url: 'https://bid.ajwillnerauctions.com/api/items/search', variables: ['auction_id', 'page', 'per_page', 'category', 'sub_category', 'query'] }
+      },
+      auctionninja: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'GET', url: 'document pagination', variables: ['Page', 'srt', 'miles', 'zip'] },
+        note: 'No reusable first-party listing XHR was observed; use deterministic server-rendered pagination.'
+      },
+      aar: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'GET', url: 'https://aarauctions.com/servlet/Search.do', variables: ['auctionId', 'itemId', 'page'] },
+        note: 'Catalog data is server-rendered; scope every page to the active auctionId.'
+      },
+      govdeals: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'POST', url: 'https://maestro.lqdt1.com/search/list', variables: ['categoryIds', 'searchText', 'page', 'displayRows', 'sortField', 'sortOrder', 'facetsFilter', 'accountIds'] },
+        note: 'Opaque browser session values are never persisted or logged; fall back to deterministic DOM pagination when unavailable.'
+      },
+      ebay: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'GET', url: 'Seller Hub document pagination', variables: ['offset', 'limit', 'page'] },
+        note: 'Seller Hub rows are server-rendered; lifecycle exports exclude buyer PII.'
+      },
+      facebook: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'DOM', url: 'Marketplace selling virtual list', variables: ['canonical listing id'] },
+        note: 'Private GraphQL operations are not persisted or replayed; use settled virtual-DOM coverage.'
+      }
+    };
+  }
 
-    if (isAarAuctionsHost(host)) return resolveAarAuctionsPage(loc).supported;
+  function resolveSiteRoute(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    if (host === 'bid.ajwillnerauctions.com') return resolveAjWillnerPage(loc);
+    if (isFlipTrackerListingPage(loc)) return resolveFlipTrackerPage(loc);
+    if (isAuctionNinjaHost(host)) return { ...resolveAuctionNinjaPage(loc), source: 'auctionninja' };
+    if (isAarAuctionsHost(host)) return { ...resolveAarAuctionsPage(loc), source: 'aar' };
+    if (isGovDealsHost(host)) return { ...resolveGovDealsPage(loc), source: 'govdeals' };
+    if (isHiBidHost(host)) return { ...resolveHiBidPage(loc), source: 'hibid' };
+    return { supported: false, kind: 'unsupported', source: 'unknown', host, reason: 'unsupported host' };
+  }
 
-    if (isGovDealsHost(host)) return resolveGovDealsPage(loc).supported;
+  function modeForResolvedRoute(route = {}) {
+    const source = String(route?.source || '').toLowerCase();
+    if (source === 'ajwillner') return 'catalog';
+    if (source === 'ebay' || source === 'facebook') return 'fliptracker';
+    if (source === 'auctionninja') return 'auctionninja';
+    if (source === 'aar') return 'aar';
+    if (source === 'govdeals') return 'govdeals';
+    if (source === 'hibid') return route.kind === 'live' ? 'live' : 'catalog';
+    return 'unsupported';
+  }
 
-    if (isHiBidHost(host)) return resolveHiBidPage(loc).supported;
-    return false;
+  function shouldInitOnLocation(loc = location) {
+    return resolveSiteRoute(loc).supported === true;
   }
 
   function resolveAssistantMode(loc = location) {
-    const host = String(loc.hostname || '').toLowerCase();
-    if (host === 'bid.ajwillnerauctions.com' && /^\/ui\/auctions\//i.test(loc.pathname || '')) {
-      return {
-        supported: true,
-        mode: 'catalog',
-        source: 'ajwillner',
-        reason: 'AJ Willner auction route',
-        route: { supported: true, kind: 'catalog', source: 'ajwillner', host, auctionId: getAjWillnerAuctionId(loc), reason: 'AJ Willner auction route' }
-      };
-    }
-
-    if (isFlipTrackerListingPage(loc)) {
-      const route = resolveFlipTrackerPage(loc);
-      return { supported: true, mode: 'fliptracker', source: route.source, reason: route.reason, route };
-    }
-
-    if (isAuctionNinjaHost(host)) {
-      const route = resolveAuctionNinjaPage(loc);
-      return route.supported
-        ? { supported: true, mode: 'auctionninja', source: 'auctionninja', reason: route.reason, route }
-        : { supported: false, mode: 'unsupported', source: 'auctionninja', reason: route.reason, route };
-    }
-
-    if (isAarAuctionsHost(host)) {
-      const route = resolveAarAuctionsPage(loc);
-      return route.supported
-        ? { supported: true, mode: 'aar', source: 'aar', reason: route.reason, route }
-        : { supported: false, mode: 'unsupported', source: 'aar', reason: route.reason, route };
-    }
-
-    if (isGovDealsHost(host)) {
-      const route = resolveGovDealsPage(loc);
-      return route.supported
-        ? { supported: true, mode: 'govdeals', source: 'govdeals', reason: route.reason, route }
-        : { supported: false, mode: 'unsupported', source: 'govdeals', reason: route.reason, route };
-    }
-
-    if (isHiBidHost(host)) {
-      const route = resolveHiBidPage(loc);
-      if (!route.supported) return { supported: false, mode: 'unsupported', source: 'hibid', reason: route.reason, route };
-      if (route.kind === 'live') return { supported: true, mode: 'live', source: 'hibid', reason: route.reason, route };
-      return { supported: true, mode: 'catalog', source: 'hibid', reason: route.reason, route };
-    }
-
-    return { supported: false, mode: 'unsupported', source: 'unknown', reason: 'unsupported host', route: null };
+    const route = resolveSiteRoute(loc);
+    const mode = modeForResolvedRoute(route);
+    return {
+      supported: route.supported === true,
+      mode: route.supported ? mode : 'unsupported',
+      source: route.source || 'unknown',
+      reason: route.reason || '',
+      route
+    };
   }
 
   function getLoadTarget(options = {}, loc = location) {
@@ -12371,8 +13187,8 @@ ${cards}
 
   function canExportEbayLifecycleEnvelope(envelope) {
     const records = Array.isArray(envelope?.records) ? envelope.records : [];
-    return records.length > 0
-      || (envelope?.completeness?.complete === true && envelope?.completeness?.expected_count === 0);
+    return envelope?.completeness?.complete === true
+      && (records.length > 0 || envelope?.completeness?.expected_count === 0);
   }
 
   function scanCurrentEbayLifecycle(route = resolveFlipTrackerPage(location)) {
@@ -12700,6 +13516,96 @@ ${cards}
     return parseFlipTrackerActiveListingsHtml(document.documentElement?.outerHTML || '', {
       url: location.href
     });
+  }
+
+  async function collectFacebookMarketplaceListings(root = document, options = {}) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveFlipTrackerPage(loc) : { kind: 'fliptracker-facebook', source: 'facebook' };
+    const startedAt = Date.now();
+    const routeFingerprint = genericRouteFingerprint(route, loc);
+    const rowsById = new Map();
+    const duplicateIds = new Set();
+    const missingIdentityRows = [];
+    const maxSteps = Math.max(1, Math.min(250, Number(options.maxSteps || 160)));
+    const settleTarget = Math.max(2, Math.min(10, Number(options.settleCycles || 4)));
+    const waitMs = Math.max(100, Number(options.waitMs || 450));
+    const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
+    const view = root?.defaultView || (typeof window !== 'undefined' ? window : null);
+    const originalY = Number(view?.scrollY || 0);
+    let stableCycles = 0;
+    let previousCount = -1;
+    let previousHeight = -1;
+    let reachedBottom = false;
+    let steps = 0;
+    for (; steps < maxSteps && !shouldStop(); steps += 1) {
+      const html = root?.documentElement?.outerHTML || '';
+      parseFacebookMarketplaceListingsHtml(html).forEach(row => {
+        const identity = scraperStableIdentity(row, 'facebook');
+        if (!identity) {
+          missingIdentityRows.push(row.title || `row-${missingIdentityRows.length + 1}`);
+          return;
+        }
+        if (rowsById.has(identity)) duplicateIds.add(identity);
+        rowsById.set(identity, row);
+      });
+      const documentElement = root?.documentElement;
+      const body = root?.body;
+      const height = Math.max(Number(documentElement?.scrollHeight || 0), Number(body?.scrollHeight || 0));
+      const viewport = Number(view?.innerHeight || documentElement?.clientHeight || 0);
+      const y = Number(view?.scrollY || documentElement?.scrollTop || body?.scrollTop || 0);
+      reachedBottom = Boolean(view?.scrollTo && height > 0 && viewport > 0 && y + viewport >= height - 8);
+      const unchanged = rowsById.size === previousCount && height === previousHeight;
+      stableCycles = unchanged && reachedBottom ? stableCycles + 1 : 0;
+      debugEvent('facebook.dom.progress', { step: steps + 1, count: rowsById.size, height, reachedBottom, stableCycles });
+      options.onProgress?.(`Reading Facebook listings... ${rowsById.size} found.`);
+      if (stableCycles >= settleTarget) break;
+      previousCount = rowsById.size;
+      previousHeight = height;
+      if (!view?.scrollTo || !height) break;
+      view.scrollTo(0, height);
+      await wait(waitMs);
+    }
+    if (options.restoreScroll !== false && view?.scrollTo) view.scrollTo(0, originalY);
+    const currentRoute = typeof location !== 'undefined' ? resolveFlipTrackerPage(location) : route;
+    const currentFingerprint = genericRouteFingerprint(currentRoute, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const stopped = shouldStop();
+    const settledBottom = reachedBottom && stableCycles >= settleTarget;
+    const items = Array.from(rowsById.values());
+    const incomplete = stopped || !routeMatches || !settledBottom || missingIdentityRows.length > 0;
+    const stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (missingIdentityRows.length ? 'missing-stable-identities' : (settledBottom ? 'settled-bottom' : 'bottom-not-proven')));
+    const coverage = {
+      proofTier: settledBottom ? 'dom-bottom-settled' : 'unproven',
+      strategy: 'canonical-listing-id-virtual-scroll',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      reachedBottom,
+      settledBottom,
+      enumeratedIds: Array.from(rowsById.keys()),
+      duplicateIds: Array.from(duplicateIds),
+      missingIdentityRows,
+      failedPages: [],
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('facebook.dom.coverage', { count: items.length, incomplete, stopReason, coverage });
+    return {
+      source: 'facebook-dom',
+      context: { source: 'Facebook Marketplace', pageKind: 'fliptracker-facebook', url: loc?.href || '' },
+      items,
+      listings: items,
+      expectedTotal: null,
+      stopped,
+      incomplete,
+      stopReason,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage
+    };
   }
 
   function lotSummary(rows) {
@@ -13317,48 +14223,23 @@ ${cards}
     return route?.source === 'ajwillner' || route?.host === 'bid.ajwillnerauctions.com';
   }
 
-  const SITE_SHORTCUTS = Object.freeze([
-    Object.freeze({
-      id: 'hibid',
-      label: 'HiBid',
-      site: 'hibid',
-      modeHint: 'catalog',
-      url: 'https://hibid.com/lots',
-      help: 'Open HiBid lots search in this tab.'
-    }),
-    Object.freeze({
-      id: 'ajwillner',
-      label: 'AJ Willner',
-      site: 'ajwillner',
-      modeHint: 'catalog',
-      url: 'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active',
-      help: 'Open the AJ Willner active auction catalog in this tab.'
-    }),
-    Object.freeze({
-      id: 'auctionninja',
-      label: 'AuctionNinja',
-      site: 'auctionninja',
-      modeHint: 'auction-search',
-      url: 'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=',
-      help: 'Open AuctionNinja nearby auctions near Carteret, NJ in this tab.'
-    }),
-    Object.freeze({
-      id: 'aar',
-      label: 'AAR Auctions',
-      site: 'aar',
-      modeHint: 'auction-list',
-      url: 'https://aarauctions.com/auctions/',
-      help: 'Open the AAR Auctions calendar in this tab.'
-    }),
-    Object.freeze({
-      id: 'govdeals',
-      label: 'GovDeals',
-      site: 'govdeals',
-      modeHint: 'new-listings',
-      url: 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search',
-      help: 'Open GovDeals listings near 07008 within 50 miles in this tab.'
-    })
-  ]);
+  const SITE_SHORTCUTS = Object.freeze(getRouteManifest()
+    .filter(entry => entry.navigation?.group === 'auction')
+    .map(entry => Object.freeze({
+      id: entry.site,
+      label: entry.label,
+      site: entry.site,
+      modeHint: entry.navigation.modeHint,
+      url: entry.navigation.url,
+      help: entry.navigation.help
+    })));
+
+  const SELLING_TOOL_SHORTCUTS = Object.freeze(getRouteManifest()
+    .filter(entry => entry.navigation?.group === 'selling')
+    .flatMap(entry => entry.navigation.workflows.map(workflow => Object.freeze({
+      ...workflow,
+      site: entry.site
+    }))));
 
   function shortcutIdForHost(hostname = '') {
     const host = String(hostname || '').toLowerCase();
@@ -13367,6 +14248,7 @@ ${cards}
     if (isAarAuctionsHost(host)) return 'aar';
     if (isAuctionNinjaHost(host)) return 'auctionninja';
     if (isHiBidHost(host)) return 'hibid';
+    if (host === 'www.ebay.com' || host === 'ebay.com' || host === 'www.facebook.com' || host === 'facebook.com') return 'selling-tools';
     return '';
   }
 
@@ -13380,7 +14262,7 @@ ${cards}
 
     if (typeof input === 'string') {
       const value = input.trim().toLowerCase();
-      if (SITE_SHORTCUTS.some(item => item.id === value || item.site === value)) return value === 'auctionninja' ? 'auctionninja' : value;
+      if (SITE_SHORTCUTS.some(item => item.id === value || item.site === value) || value === 'selling-tools') return value === 'auctionninja' ? 'auctionninja' : value;
       if (value === 'catalog' || value === 'live' || value === 'hibid-live') return 'hibid';
       if (value === 'auction-search' || value === 'followed-items' || value === 'items-won' || value === 'bid-history') return 'auctionninja';
       if (value === 'aar-auction-list' || value === 'aar-auction-catalog') return 'aar';
@@ -13411,7 +14293,7 @@ ${cards}
 
   function getSiteShortcuts(currentLocationOrMode = null, route = {}) {
     const currentId = getCurrentSiteShortcutId(currentLocationOrMode, route);
-    return SITE_SHORTCUTS.map(item => ({
+    const auctionRows = SITE_SHORTCUTS.map(item => ({
       id: item.id,
       label: item.label,
       site: item.site,
@@ -13419,6 +14301,29 @@ ${cards}
       url: item.url,
       help: item.help,
       current: item.id === currentId
+    }));
+    return auctionRows.concat({
+      id: 'selling-tools',
+      label: 'Selling Tools',
+      site: 'selling-tools',
+      modeHint: 'eBay / Facebook',
+      url: '',
+      help: 'Open eBay and Facebook Marketplace selling workflows.',
+      current: currentId === 'selling-tools',
+      children: SELLING_TOOL_SHORTCUTS.map(item => ({ ...item }))
+    });
+  }
+
+  function getSellingToolShortcuts(currentLocationOrMode = null, route = {}) {
+    const resolved = currentLocationOrMode?.route
+      ? currentLocationOrMode.route
+      : (route?.kind ? route : (currentLocationOrMode && typeof currentLocationOrMode !== 'string' && currentLocationOrMode.kind ? currentLocationOrMode : null));
+    const currentKind = String(resolved?.kind || '').toLowerCase();
+    return SELLING_TOOL_SHORTCUTS.map(item => ({
+      ...item,
+      current: (item.site === 'ebay' && currentKind.includes(`ebay-${item.id.replace(/^ebay-/, '')}`))
+        || (item.id === 'facebook-selling' && currentKind === 'fliptracker-facebook')
+        || (item.id === 'facebook-create' && currentKind.includes('facebook-create'))
     }));
   }
 
@@ -13438,18 +14343,37 @@ ${cards}
     const active = meta[mode] || meta.catalog;
     const shortcuts = getSiteShortcuts(mode, route);
     const shortcutDisabled = busy ? ' disabled aria-disabled="true"' : '';
-    const shortcutRows = shortcuts.map(item => `
+    const shortcutRows = shortcuts.map(item => {
+      if (item.id === 'selling-tools') {
+        const childRows = (item.children || []).map(child => `
+            <button type="button" class="hiba-shortcut hiba-selling-shortcut${child.current ? ' active' : ''}" data-site-shortcut-url="${escapeHtml(child.url)}" data-site-shortcut-id="${escapeHtml(child.id)}"${child.current ? ' aria-current="page"' : ''}${helpAttrs(child.help)}${shortcutDisabled}>
+              <span>${escapeHtmlText(child.label)}</span>
+              <small>${escapeHtmlText(child.modeHint)}</small>
+            </button>
+        `).join('');
+        return `
+          <button id="flipperaddon-selling-tools-toggle" type="button" class="hiba-shortcut${item.current ? ' active' : ''}" aria-expanded="false" aria-controls="flipperaddon-selling-tools-menu"${item.current ? ' aria-current="page"' : ''}${helpAttrs(item.help)}${shortcutDisabled}>
+            <span>${escapeHtmlText(item.label)}</span>
+            <small>${escapeHtmlText(item.modeHint)}</small>
+          </button>
+          <div id="flipperaddon-selling-tools-menu" class="hiba-selling-menu" role="menu" aria-label="Selling tools" hidden>
+            ${childRows}
+          </div>
+        `;
+      }
+      return `
         <button type="button" class="hiba-shortcut${item.current ? ' active' : ''}" data-site-shortcut-url="${escapeHtml(item.url)}" data-site-shortcut-id="${escapeHtml(item.id)}"${item.current ? ' aria-current="page"' : ''}${helpAttrs(item.help)}${shortcutDisabled}>
           <span>${escapeHtmlText(item.label)}</span>
           <small>${escapeHtmlText(item.modeHint)}</small>
         </button>
-    `).join('');
+      `;
+    }).join('');
     return `
       <div class="hiba-tabs hiba-site-switcher" aria-label="FlipperAddon site switcher">
         <button id="flipperaddon-site-switcher-toggle" type="button" class="hiba-tab hiba-switcher-toggle active" aria-expanded="false" aria-controls="flipperaddon-site-switcher-menu"${helpAttrs(active.help)}>
           ${hibaIcon(active.icon)}<span>${active.label}</span>${hibaIcon('chevron')}
         </button>
-        <div id="flipperaddon-site-switcher-menu" class="hiba-site-menu" role="menu" aria-label="Auction site shortcuts" hidden>
+        <div id="flipperaddon-site-switcher-menu" class="hiba-site-menu" role="menu" aria-label="Site shortcuts" hidden>
           ${shortcutRows}
         </div>
       </div>
@@ -13649,6 +14573,25 @@ ${cards}
   }
 
   function renderAuctionNinjaSection(debugEnabled, route = {}) {
+    if (route?.kind === 'item-detail') {
+      return `
+        <section id="auctionninja-catalog-mode" class="hiba-section" data-module="auctionninja" data-page-kind="item-detail">
+          <div class="hiba-section-head">
+            <div>
+              <div class="hiba-kicker">AuctionNinja</div>
+              <strong>Item Detail Export</strong>
+            </div>
+            <span class="hiba-chip neutral">single item</span>
+          </div>
+          <div class="hiba-actions">
+            ${actionButton('auctionninja-catalog-copy-llm', 'file', 'Copy Item LLM', 'primary', '', 'Copy this item detail with its description, photos, and resale-analysis instructions.')}
+            ${actionButton('auctionninja-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy this AuctionNinja item as normalized JSON.')}
+          </div>
+          ${renderDebugActions(debugEnabled)}
+        </section>
+      `;
+    }
+
     if (route?.kind === 'category-search') {
       return `
         <section id="auctionninja-category-mode" class="hiba-section" data-module="auctionninja" data-page-kind="category-search">
@@ -13756,27 +14699,20 @@ ${cards}
   function renderFlipTrackerSection(debugEnabled, route = {}) {
     if (route?.kind === 'fliptracker-ebay-bulk') return renderEbayBulkSellSection(debugEnabled);
     const ebayLifecycle = String(route?.kind || '').startsWith('fliptracker-ebay-');
-    const ebayActive = route?.kind === 'fliptracker-ebay-active';
     const facebookCreate = route?.kind === 'fliptracker-facebook-create';
     const facebookPublished = route?.kind === 'fliptracker-facebook-published';
     const pageKind = ebayLifecyclePageKind(route);
     if (facebookCreate || facebookPublished) {
-      const pending = getPendingCrosslist();
       return `
         <section id="fliptracker-listing-export-mode" class="hiba-section" data-module="fliptracker">
           <div class="hiba-section-head">
             <div>
-              <div class="hiba-kicker">Facebook cross-list</div>
-              <strong>${facebookCreate ? 'Marketplace Draft' : 'Published Listing'}</strong>
+              <div class="hiba-kicker">Facebook Marketplace</div>
+              <strong>${facebookCreate ? 'Listing Form' : 'Listing Detail'}</strong>
             </div>
-            <span class="hiba-chip neutral">human review</span>
+            <span class="hiba-chip neutral">read only</span>
           </div>
-          <div class="hiba-actions">
-            ${facebookCreate ? actionButton('fliptracker-crosslist-fill', 'upload', 'Open + Fill Next', 'primary', '', 'Keep the current draft open, then open and fill the next queued eBay listing in one click. Publish remains manual.') : ''}
-            ${facebookPublished ? actionButton('fliptracker-crosslist-confirm-published', 'check', 'Confirm Published', 'success', '', 'Link this Facebook listing to the pending eBay cross-list record.') : ''}
-            ${actionButton('fliptracker-lifecycle-connect', 'shield', 'Connect', 'secondary', '', 'Save the local Flip Tracker bridge token in Tampermonkey storage.')}
-          </div>
-          <div id="fliptracker-listing-status" class="hiba-meta">${pending ? `Pending eBay item ${escapeHtml(pending.item_id || '')}: ${escapeHtml(pending.title || '')}` : 'No draft is currently pending in this browser.'}</div>
+          <div id="fliptracker-listing-status" class="hiba-meta">FlipperAddon does not change Marketplace listing forms or listing records.</div>
           ${renderDebugActions(debugEnabled)}
         </section>
       `;
@@ -13793,36 +14729,11 @@ ${cards}
           </div>
           <span class="hiba-chip neutral">${ebayLifecycle ? 'JSON' : 'HTML'}</span>
         </div>
-        ${ebayActive ? `<label class="hiba-field-label" for="fliptracker-crosslist-item">Facebook draft source</label>
-          <select id="fliptracker-crosslist-item" class="hiba-select" aria-label="Facebook draft source"></select>
-          <label class="hiba-field-label" for="fliptracker-crosslist-image-mode">Photo source</label>
-          <select id="fliptracker-crosslist-image-mode" class="hiba-select" aria-label="Facebook photo source">
-            <option value="verified-original"${getCrosslistImageMode() === CROSSLIST_IMAGE_MODE_VERIFIED ? ' selected' : ''}>Verified archive (default)</option>
-            <option value="facebook-optimized"${getCrosslistImageMode() === CROSSLIST_IMAGE_MODE_OPTIMIZED ? ' selected' : ''}>2048px optimized (experimental)</option>
-          </select>
-          <div id="fliptracker-crosslist-photo-status" class="hiba-meta">Bridge verifies the full gallery; Facebook uploads at most 10 photos.</div>
-          <label class="hiba-field-label" for="fliptracker-crosslist-location">Facebook location</label>
-          <input id="fliptracker-crosslist-location" class="hiba-input" value="${escapeHtml(getCrosslistLocation())}" aria-label="Facebook location">
-          <div class="hiba-actions">
-            ${actionButton('fliptracker-crosslist-queue', 'upload', 'Create Facebook Draft', 'success', '', 'Read the selected eBay listing, queue it, open Facebook, and begin filling the draft. Publishing remains manual.')}
-            ${actionButton('fliptracker-lifecycle-sync-page', 'radio', 'Update Tracker', 'secondary', '', 'Send the current Seller Hub page to Flip Tracker.')}
-          </div>
-          <details class="hiba-details">
-            <summary>Advanced sync tools</summary>
-            <div class="hiba-actions">
-              ${actionButton('fliptracker-crosslist-queue-all', 'scan', 'Refresh Draft Queue', 'secondary', '', 'Refresh queued Facebook drafts from every active eBay listing.')}
-              ${actionButton('fliptracker-lifecycle-sync-all', 'scan', 'Sync All eBay', 'secondary', '', 'Collect active, ended, sold-order, and transaction pages.')}
-              ${actionButton('fliptracker-lifecycle-connect', 'shield', 'Connect', 'secondary', '', 'Save the local Flip Tracker bridge token in Tampermonkey storage.')}
-              ${actionButton('fliptracker-listing-download', 'download', 'Download JSON', 'secondary', '', 'Download the current eBay export.')}
-            </div>
-          </details>` : `<div class="hiba-actions">
+        <div class="hiba-actions">
           ${actionButton('fliptracker-listing-scan', 'scan', ebayLifecycle ? 'Scan Page' : 'Scan Listings', 'primary', '', 'Read the current selling page without changing the account.')}
           ${actionButton('fliptracker-listing-copy', 'copy', ebayLifecycle ? 'Copy JSON' : 'Copy HTML', 'secondary', '', 'Copy the current FlipTracker export.')}
           ${actionButton('fliptracker-listing-download', 'download', 'Download', 'success', '', 'Download the current FlipTracker export.')}
-          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-page', 'radio', 'Update Tracker', 'success', '', 'Send this page to Flip Tracker.') : ''}
-          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-sync-all', 'scan', 'Sync All eBay', 'primary', '', 'Collect all supported eBay lifecycle pages.') : ''}
-          ${ebayLifecycle ? actionButton('fliptracker-lifecycle-connect', 'shield', 'Connect', 'secondary', '', 'Save the local Flip Tracker bridge token in Tampermonkey storage.') : ''}
-        </div>`}
+        </div>
         ${renderDebugActions(debugEnabled)}
         <div id="fliptracker-listing-status" class="hiba-meta">Waiting to scan.</div>
       </section>
@@ -13881,6 +14792,9 @@ ${cards}
           </div>
           ${renderModeTabs(mode, route, busy)}
           ${renderActiveSection(mode, debugEnabled, route)}
+          <div id="flipperaddon-partial-export" class="hiba-actions" hidden>
+            ${actionButton('flipperaddon-copy-verified-partial', 'copy', 'Copy Verified Partial', 'secondary', '', 'Copy only the records that were verified, with an audit describing every missing or failed record.')}
+          </div>
           <div id="flipperaddon-toast" class="hiba-toast" role="status" aria-live="polite"></div>
         </div>
       </div>
@@ -13912,6 +14826,9 @@ ${cards}
         #${PANEL_ID} .hiba-switcher-toggle span { min-width:0; flex:1; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         #${PANEL_ID} .hiba-site-menu[hidden] { display:none !important; }
         #${PANEL_ID} .hiba-site-menu { display:grid; gap:4px; padding:2px; }
+        #${PANEL_ID} .hiba-selling-menu[hidden] { display:none !important; }
+        #${PANEL_ID} .hiba-selling-menu { display:grid; gap:4px; margin:0 0 2px 12px; padding:5px 0 5px 8px; border-left:2px solid rgba(96,165,250,.28); }
+        #${PANEL_ID} .hiba-selling-shortcut { background:rgba(2,6,23,.76); }
         #${PANEL_ID} .hiba-shortcut { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px; width:100%; border:1px solid rgba(148,163,184,.16); border-radius:8px; padding:7px 8px; color:#dbeafe; background:rgba(15,23,42,.82); font-weight:850; text-align:left; cursor:pointer; }
         #${PANEL_ID} .hiba-shortcut:hover { border-color:rgba(96,165,250,.42); background:rgba(30,41,59,.92); }
         #${PANEL_ID} .hiba-shortcut.active { color:#ecfeff; background:rgba(14,116,144,.36); border-color:rgba(103,232,249,.36); }
@@ -14095,10 +15012,14 @@ ${cards}
     const liveMode = activeMode === 'live';
     const listingExportMode = activeMode === 'fliptracker';
     const ebayBulkSellMode = listingExportMode && activeRoute?.kind === 'fliptracker-ebay-bulk';
-    const ebayLifecycleMode = listingExportMode && String(activeRoute?.kind || '').startsWith('fliptracker-ebay-');
+    const ebayLifecycleMode = listingExportMode
+      && String(activeRoute?.kind || '').startsWith('fliptracker-ebay-')
+      && activeRoute?.kind !== 'fliptracker-ebay-bulk';
     const facebookCrosslistMode = listingExportMode && String(activeRoute?.kind || '').startsWith('fliptracker-facebook-');
     const facebookCreateMode = activeRoute?.kind === 'fliptracker-facebook-create';
     const facebookPublishedMode = activeRoute?.kind === 'fliptracker-facebook-published';
+    const facebookSellingMode = activeRoute?.kind === 'fliptracker-facebook';
+    const accountMutationWorkflowsEnabled = false;
     const auctionNinjaMode = activeMode === 'auctionninja';
     const aarMode = activeMode === 'aar';
     const govDealsMode = activeMode === 'govdeals';
@@ -14106,6 +15027,7 @@ ${cards}
     const auctionNinjaAccountMode = auctionNinjaKind === 'followed-items' || auctionNinjaKind === 'items-won' || auctionNinjaKind === 'bid-history';
     const auctionNinjaAuctionSearchMode = auctionNinjaKind === 'auction-search';
     const auctionNinjaCategoryMode = auctionNinjaKind === 'category-search';
+    const auctionNinjaItemMode = auctionNinjaKind === 'item-detail';
     const aarKind = aarMode ? (activeRoute?.kind || '') : '';
     const govDealsKind = govDealsMode ? (activeRoute?.kind || '') : '';
     const currentActiveRoute = () => resolveAssistantMode().route || activeRoute || {};
@@ -14163,8 +15085,12 @@ ${cards}
     const govDealsAssetCopyJsonButton = panel.querySelector('#govdeals-asset-copy-json');
     const govDealsAssetCopyLlmButton = panel.querySelector('#govdeals-asset-copy-llm');
     const scraperStopButton = panel.querySelector('#hibid-scraper-stop');
+    const verifiedPartialWrap = panel.querySelector('#flipperaddon-partial-export');
+    const verifiedPartialButton = panel.querySelector('#flipperaddon-copy-verified-partial');
     const siteSwitcherToggle = panel.querySelector('#flipperaddon-site-switcher-toggle');
     const siteSwitcherMenu = panel.querySelector('#flipperaddon-site-switcher-menu');
+    const sellingToolsToggle = panel.querySelector('#flipperaddon-selling-tools-toggle');
+    const sellingToolsMenu = panel.querySelector('#flipperaddon-selling-tools-menu');
     const state = {
       stop: false,
       stale: false,
@@ -14177,6 +15103,26 @@ ${cards}
       partialCatalogResult: null,
       partialCatalogMode: '',
       hibidDiagnostic: null,
+      verifiedPartial: null,
+    };
+    const stageVerifiedPartial = (result, coverage, format = 'json', context = {}) => {
+      const rows = result ? primaryScraperRows(result) : [];
+      const eligible = Boolean(
+        result
+        && coverage
+        && rows.length
+        && coverage.complete !== true
+        && coverage.routeMatches !== false
+      );
+      state.verifiedPartial = eligible ? { result, coverage, format, context } : null;
+      if (verifiedPartialWrap) verifiedPartialWrap.hidden = !state.verifiedPartial;
+      if (verifiedPartialButton) {
+        const count = state.verifiedPartial ? rows.length : 0;
+        verifiedPartialButton.disabled = !state.verifiedPartial;
+        const label = verifiedPartialButton.querySelector?.('span');
+        if (label) label.textContent = state.verifiedPartial ? `Copy Verified Partial ${count}` : 'Copy Verified Partial';
+      }
+      if (state.verifiedPartial) debugEvent('partial-export.ready', { format, count: rows.length, coverage });
     };
     const panelMatchesCatalogPath = () => {
       if (activeMode !== 'catalog') return false;
@@ -14206,8 +15152,19 @@ ${cards}
       const nextOpen = Boolean(open) && !state.busy;
       siteSwitcherMenu.hidden = !nextOpen;
       siteSwitcherToggle.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+      if (!nextOpen && sellingToolsMenu && sellingToolsToggle) {
+        sellingToolsMenu.hidden = true;
+        sellingToolsToggle.setAttribute('aria-expanded', 'false');
+      }
       debug('site switcher toggled', { open: nextOpen });
       debugEvent('ui.site-switcher', { open: nextOpen });
+    };
+    const setSellingToolsOpen = (open) => {
+      if (!sellingToolsMenu || !sellingToolsToggle) return;
+      const nextOpen = Boolean(open) && !state.busy && siteSwitcherMenu?.hidden === false;
+      sellingToolsMenu.hidden = !nextOpen;
+      sellingToolsToggle.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+      debugEvent('ui.selling-tools', { open: nextOpen });
     };
     setActiveModeTab(panel, activeMode);
     const setScrapingBusy = (busy) => {
@@ -14217,6 +15174,10 @@ ${cards}
         shortcut.disabled = state.busy;
         shortcut.setAttribute('aria-disabled', state.busy ? 'true' : 'false');
       });
+      if (sellingToolsToggle) {
+        sellingToolsToggle.disabled = state.busy;
+        sellingToolsToggle.setAttribute('aria-disabled', state.busy ? 'true' : 'false');
+      }
       if (state.busy) setSiteSwitcherOpen(false);
       if (!state.busy) {
         const chip = panel.querySelector('#hiba-session-chip');
@@ -14331,6 +15292,71 @@ ${cards}
       return rows;
     };
 
+    const collectListingsForExport = async () => {
+      stageVerifiedPartial(null, null);
+      if (facebookSellingMode) {
+        const result = await collectFacebookMarketplaceListings(document, {
+          shouldStop: () => state.stop,
+          onProgress: status
+        });
+        renderListingExport(result.items || []);
+        const readiness = assessExportReadiness(result, 'fliptracker', currentActiveRoute(), { locationLike: location });
+        if (!readiness.ok) stageVerifiedPartial(result, readiness.coverage, 'json', { sourceUrl: location.href });
+        return { rows: result.items || [], result, readiness };
+      }
+      if (ebayLifecycleMode) {
+        const route = currentActiveRoute();
+        const pageKind = ebayLifecyclePageKind(route);
+        const routeFingerprint = genericRouteFingerprint(route, location);
+        const rewind = await rewindEbayLifecycleDomToFirstPage(document, { signal: state.abortController?.signal });
+        if (!rewind.ok) throw new Error(rewind.error || 'Could not reach the first eBay page.');
+        const envelope = await collectPaginatedEbayLifecycleEnvelope(pageKind, location.href, {
+          initialHtml: rewind.html || document.documentElement?.outerHTML || '',
+          signal: state.abortController?.signal,
+          advancePage: ({ signal }) => advanceEbayLifecycleDomPage(document, { signal })
+        });
+        const currentFingerprint = genericRouteFingerprint(currentActiveRoute(), location);
+        envelope.routeFingerprint = routeFingerprint;
+        envelope.coverage = {
+          proofTier: 'pagination-exact',
+          strategy: 'ebay-seller-hub-pagination',
+          routeFingerprint,
+          currentFingerprint,
+          routeMatches: routeFingerprint === currentFingerprint,
+          enumeratedIds: (envelope.records || []).map(row => scraperStableIdentity(row, 'ebay')).filter(Boolean),
+          failedPages: envelope.completeness?.complete === false ? [{ reason: envelope.completeness.reason || 'incomplete' }] : []
+        };
+        renderLifecycleExport(envelope);
+        const readiness = assessExportReadiness(envelope, 'fliptracker', currentActiveRoute(), { locationLike: location });
+        if (!readiness.ok) stageVerifiedPartial(envelope, readiness.coverage, 'json', { sourceUrl: location.href });
+        return { rows: envelope.records || [], result: envelope, readiness };
+      }
+      const rows = scanListingsForExport();
+      const context = ebayBulkSellMode ? getEbayBulkSellContext(location, document) : { source: rows[0]?.source || '', pageKind: 'fliptracker', url: location.href };
+      const expectedTotal = ebayBulkSellMode && context.selectedCount !== null && context.selectedCount !== undefined
+        && Number.isFinite(Number(context.selectedCount)) ? Number(context.selectedCount) : null;
+      const result = {
+        source: ebayBulkSellMode ? 'ebay-bulk-dom' : 'fliptracker-dom',
+        context,
+        items: rows,
+        listings: rows,
+        expectedTotal,
+        incomplete: expectedTotal === null || rows.length !== expectedTotal,
+        routeFingerprint: genericRouteFingerprint(currentActiveRoute(), location),
+        coverage: {
+          proofTier: expectedTotal === null ? 'unproven' : 'pagination-exact',
+          strategy: 'server-rendered-bulk-grid',
+          routeFingerprint: genericRouteFingerprint(currentActiveRoute(), location),
+          routeMatches: true,
+          enumeratedIds: rows.map(row => scraperStableIdentity(row, 'ebay')).filter(Boolean),
+          failedPages: []
+        }
+      };
+      const readiness = assessExportReadiness(result, 'fliptracker', currentActiveRoute(), { locationLike: location });
+      if (!readiness.ok) stageVerifiedPartial(result, readiness.coverage, 'json', { sourceUrl: location.href });
+      return { rows, result, readiness };
+    };
+
     panel.querySelectorAll('[data-mode-tab]').forEach(tab => {
       tab.addEventListener('click', () => {
         const mode = tab.dataset.modeTab;
@@ -14350,6 +15376,12 @@ ${cards}
       if (state.busy) return;
       setSiteSwitcherOpen(siteSwitcherMenu?.hidden !== false);
     });
+    sellingToolsToggle?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.busy) return;
+      setSellingToolsOpen(sellingToolsMenu?.hidden !== false);
+    });
     panel.querySelectorAll('[data-site-shortcut-url]').forEach(shortcut => {
       shortcut.addEventListener('click', (event) => {
         event.preventDefault();
@@ -14362,6 +15394,14 @@ ${cards}
           url
         });
         setSiteSwitcherOpen(false);
+        if (shortcut.dataset.siteShortcutId === 'ebay-bulk'
+          && /^\/sh\/lst\/active\/?$/i.test(String(location.pathname || ''))) {
+          const bulkLink = findEbayBulkEditLink(document);
+          if (bulkLink) {
+            bulkLink.click();
+            return;
+          }
+        }
         window.location.assign(url);
       });
     });
@@ -14379,6 +15419,27 @@ ${cards}
       document.removeEventListener('keydown', closeSiteSwitcherOnEscape);
       state.abortController?.abort();
     }, { once: true });
+
+    if (activeRoute?.kind === 'fliptracker-ebay-active' && String(location.hash || '') === '#flipperaddon-bulk-edit') {
+      let attempts = 0;
+      const openBulkEditor = () => {
+        if (!panelIsCurrent() || state.busy) return;
+        const bulkLink = findEbayBulkEditLink(document);
+        if (bulkLink) {
+          debugEvent('ebay.bulk.navigation', { outcome: 'link-found', attempts });
+          bulkLink.click();
+          return;
+        }
+        attempts += 1;
+        if (attempts < 20) {
+          window.setTimeout(openBulkEditor, 500);
+        } else {
+          debugEvent('ebay.bulk.navigation', { outcome: 'link-not-found', attempts });
+          status('Seller Hub loaded, but eBay did not expose its Edit all listings link.');
+        }
+      };
+      window.setTimeout(openBulkEditor, 300);
+    }
 
     const pendingCatalogCopy = () => readSharedCatalogCopyIntent();
     const clearPendingCatalogCopy = () => clearSharedCatalogCopyIntent();
@@ -14420,12 +15481,72 @@ ${cards}
       status('Stopped.');
       debug('scraper stop requested');
     });
+    verifiedPartialButton?.addEventListener('click', async () => {
+      const partial = state.verifiedPartial;
+      if (!partial) {
+        status('No verified partial is available. Run the export again.');
+        return;
+      }
+      const activeRoute = currentActiveRoute();
+      const currentFingerprint = genericRouteFingerprint(activeRoute, typeof location !== 'undefined' ? location : null);
+      const startFingerprint = String(partial.coverage?.routeFingerprint || '');
+      if (partial.coverage?.routeMatches === false || (startFingerprint && currentFingerprint && startFingerprint !== currentFingerprint)) {
+        debugEvent('partial-export.rejected', {
+          reason: 'route-fingerprint-changed',
+          startFingerprint,
+          currentFingerprint
+        });
+        stageVerifiedPartial(null, null);
+        status('Partial copy cancelled because the page or filters changed.');
+        return;
+      }
+      const rows = primaryScraperRows(partial.result);
+      if (!rows.length) {
+        stageVerifiedPartial(null, null);
+        status('No verified records are available to copy.');
+        return;
+      }
+      const payload = buildVerifiedPartialPayload(
+        partial.result,
+        { ...partial.coverage, currentFingerprint, routeMatches: true },
+        partial.format,
+        partial.context
+      );
+      const copied = await writeClipboard(payload).catch(() => false);
+      let downloaded = false;
+      if (!copied) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const ext = partial.format === 'llm' ? 'txt' : 'json';
+        try {
+          downloadTextFile(
+            `flipperaddon-verified-partial-${stamp}.${ext}`,
+            payload,
+            partial.format === 'llm' ? 'text/plain;charset=utf-8' : 'application/json;charset=utf-8'
+          );
+          downloaded = true;
+        } catch (error) {
+          debugEvent('partial-export.download.failure', { error: String(error?.message || error) });
+        }
+      }
+      debugEvent('partial-export.result', {
+        format: partial.format,
+        count: rows.length,
+        expectedTotal: partial.coverage?.expectedTotal ?? null,
+        copied,
+        downloaded
+      });
+      status(copied
+        ? `Copied audited partial ${partial.format === 'llm' ? 'LLM brief' : 'JSON'} for ${rows.length} record(s).`
+        : (downloaded
+          ? `Downloaded audited partial for ${rows.length} record(s).`
+          : 'Partial export built, but copy and download both failed.'));
+    });
 
     if (listingExportMode) {
       status(facebookCreateMode
-        ? 'Ready to fill one queued eBay listing. Publish remains manual.'
+        ? 'Facebook listing form detected. FlipperAddon remains read only.'
         : (facebookPublishedMode
-          ? 'Confirm only after this is the Facebook listing you just published.'
+          ? 'Facebook listing detail detected. FlipperAddon remains read only.'
           : (ebayLifecycleMode ? 'Ready to collect eBay lifecycle facts for FlipTracker.' : 'Ready to export active listings for FlipTracker.')));
       if (!facebookCrosslistMode) {
       window.setTimeout(() => {
@@ -14459,6 +15580,11 @@ ${cards}
         renderAuctionNinjaLots(visibleSales, context);
         status(`AuctionNinja auction search ready. Visible ${visibleSales.length}${context.totalSales ? `/${context.totalSales}` : ''} sale(s).`);
         debug('auctionninja auction-search mode ready', { route: activeRoute, visibleSales: visibleSales.length, context });
+      } else if (auctionNinjaItemMode) {
+        const item = extractAuctionNinjaItemDetail(document, location);
+        renderAuctionNinjaLots(item ? [item] : [], { source: 'AuctionNinja', pageKind: 'item-detail', productId: activeRoute.productId || '', url: location.href });
+        status(item ? 'AuctionNinja item detail ready.' : 'AuctionNinja item detail not found.');
+        debug('auctionninja item mode ready', { route: activeRoute, found: Boolean(item) });
       } else {
         const context = extractAuctionNinjaSaleContext();
         const range = parseAuctionNinjaCatalogRange(textOf(document.body || document.documentElement));
@@ -14532,14 +15658,21 @@ ${cards}
       });
     }
 
-    listingExportScanButton?.addEventListener('click', () => {
+    listingExportScanButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      setScrapingBusy(true);
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
       try {
-        const rows = scanListingsForExport();
-        status(ebayLifecycleMode
-          ? `Scanned ${rows.length} ${state.lifecycleEnvelope?.page_kind || 'eBay'} record(s).`
-          : `Scanned ${rows.length} active listing card(s).`);
+        const collected = await collectListingsForExport();
+        status(collected.readiness.ok
+          ? `Verified ${collected.rows.length} ${ebayLifecycleMode ? (state.lifecycleEnvelope?.page_kind || 'eBay') : 'listing'} record(s).`
+          : `Scan incomplete (${collected.readiness.reason}); normal export is blocked.`);
       } catch (error) {
         status(`Scan failed: ${error?.message || error}`);
+      } finally {
+        state.abortController = null;
+        setScrapingBusy(false);
       }
     });
     const validateListingRowsForCurrentRoute = (rows) => {
@@ -14562,40 +15695,80 @@ ${cards}
     };
 
     listingExportCopyButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      setScrapingBusy(true);
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
+      let collected;
       try {
-        scanListingsForExport();
+        collected = await collectListingsForExport();
       } catch (error) {
         status(`Copy blocked: ${error?.message || error}`);
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (!collected.readiness.ok) {
+        status(`Normal copy blocked (${collected.readiness.reason}); only an audited partial is available.`);
+        state.abortController = null;
+        setScrapingBusy(false);
         return;
       }
       if (ebayLifecycleMode) {
         if (!canExportEbayLifecycleEnvelope(state.lifecycleEnvelope)) {
           status(`Nothing to copy: ${state.lifecycleEnvelope?.completeness?.reason || 'no complete snapshot or records'}`);
+          state.abortController = null;
+          setScrapingBusy(false);
           return;
         }
         const safeEnvelope = prepareEbayLifecycleEnvelopeForExport(state.lifecycleEnvelope);
         const copied = await writeClipboard(JSON.stringify(safeEnvelope, null, 2)).catch(() => false);
         status(copied ? `Copied ${state.listingRows.length} eBay lifecycle record(s).` : 'Clipboard write failed. Use Download instead.');
+        state.abortController = null;
+        setScrapingBusy(false);
         return;
       }
       if (!state.listingRows.length) {
         status('Nothing to copy yet. Scroll/load listings and scan again.');
+        state.abortController = null;
+        setScrapingBusy(false);
         return;
       }
-      if (!validateListingRowsForCurrentRoute(state.listingRows)) return;
+      if (!validateListingRowsForCurrentRoute(state.listingRows)) {
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
       const copied = await writeClipboard(currentListingExportHtml()).catch(() => false);
       status(copied ? `Copied FlipTracker export HTML for ${state.listingRows.length} listing(s).` : 'Clipboard write failed. Use Download Export HTML instead.');
+      state.abortController = null;
+      setScrapingBusy(false);
     });
-    listingExportDownloadButton?.addEventListener('click', () => {
+    listingExportDownloadButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      setScrapingBusy(true);
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
+      let collected;
       try {
-        scanListingsForExport();
+        collected = await collectListingsForExport();
       } catch (error) {
         status(`Download blocked: ${error?.message || error}`);
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (!collected.readiness.ok) {
+        status(`Normal download blocked (${collected.readiness.reason}); only an audited partial is available.`);
+        state.abortController = null;
+        setScrapingBusy(false);
         return;
       }
       if (ebayLifecycleMode) {
         if (!canExportEbayLifecycleEnvelope(state.lifecycleEnvelope)) {
           status(`Nothing to download: ${state.lifecycleEnvelope?.completeness?.reason || 'no complete snapshot or records'}`);
+          state.abortController = null;
+          setScrapingBusy(false);
           return;
         }
         try {
@@ -14604,33 +15777,49 @@ ${cards}
         } catch (error) {
           status(`Download failed: ${error?.message || error}`);
         }
+        state.abortController = null;
+        setScrapingBusy(false);
         return;
       }
       if (!state.listingRows.length) {
         status('Nothing to download yet. Scroll/load listings and scan again.');
+        state.abortController = null;
+        setScrapingBusy(false);
         return;
       }
-      if (!validateListingRowsForCurrentRoute(state.listingRows)) return;
+      if (!validateListingRowsForCurrentRoute(state.listingRows)) {
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
       const source = state.listingRows[0]?.source === 'eBay' ? 'ebay' : 'facebook';
       const filename = `FlipTracker-listings-${source}-${safeTimestamp()}.html`;
       downloadTextFile(filename, currentListingExportHtml());
       status(`Downloaded ${filename}. Put it in ImportInbox, then use FlipTracker import.`);
+      state.abortController = null;
+      setScrapingBusy(false);
     });
 
     const copyEbayBulkSell = async (kind) => {
       if (!ebayBulkSellMode || state.busy) return;
       setScrapingBusy(true);
       try {
-        scanListingsForExport();
+        const collected = await collectListingsForExport();
+        if (!collected.readiness.ok) {
+          status(`eBay bulk copy blocked (${collected.readiness.reason}); only an audited partial is available.`);
+          return;
+        }
         if (!state.listingRows.length) {
           status('No eBay bulk listing rows found.');
           return;
         }
         if (!validateListingRowsForCurrentRoute(state.listingRows)) return;
         const context = getEbayBulkSellContext(location, document);
+        const safeContext = sanitizeEbayLifecycleValue(context);
+        const safeRows = sanitizeEbayLifecycleValue(state.listingRows);
         const payload = kind === 'llm'
-          ? buildEbayBulkSellLlmBrief(state.listingRows, context)
-          : JSON.stringify({ context, listings: state.listingRows }, null, 2);
+          ? buildEbayBulkSellLlmBrief(safeRows, safeContext)
+          : JSON.stringify({ context: safeContext, listings: safeRows }, null, 2);
         const copied = await writeClipboard(payload).catch(() => false);
         status(copied
           ? `Copied eBay ${kind === 'llm' ? 'LLM brief' : 'JSON'} for ${state.listingRows.length} listing(s).`
@@ -14985,7 +16174,7 @@ ${cards}
       await fillNextCrosslistDraft();
     });
 
-    if (facebookAutoSaveResetRequested(location)) {
+    if (accountMutationWorkflowsEnabled && facebookAutoSaveResetRequested(location)) {
       resetFacebookAutoSaveBatch();
       try {
         const cleanUrl = new URL(location.href);
@@ -14998,11 +16187,11 @@ ${cards}
     }
 
     const pendingFacebookAutoSave = getFacebookPendingDraft();
-    if (pendingFacebookAutoSave?.item_id) {
+    if (accountMutationWorkflowsEnabled && pendingFacebookAutoSave?.item_id) {
       window.setTimeout(() => resumeFacebookAutoSaveAfterSave(), 700);
     }
 
-    else if (facebookCreateMode && facebookAutofillRequested(location)) {
+    else if (accountMutationWorkflowsEnabled && facebookCreateMode && facebookAutofillRequested(location)) {
       const requestedItemId = facebookAutofillItemId(location);
       const autoSave = facebookAutoSaveRequested(location) || facebookAutoSaveBatchActive();
       if (autoSave) setFacebookAutoSaveBatchActive(true);
@@ -15022,7 +16211,7 @@ ${cards}
       }, 1200);
     }
 
-    else if (facebookCreateMode && facebookAutoSaveBatchActive()) {
+    else if (accountMutationWorkflowsEnabled && facebookCreateMode && facebookAutoSaveBatchActive()) {
       window.setTimeout(() => {
         if (panelIsCurrent() && !state.busy && !facebookDraftHasContent(document)) {
           fillNextCrosslistDraft('', { autoSave: true });
@@ -15142,6 +16331,7 @@ ${cards}
 
     const scrapeAuctionNinjaForUi = async (mode) => {
       if (state.busy) return null;
+      stageVerifiedPartial(null, null);
       setScrapingBusy(true);
       state.stop = false;
       [
@@ -15162,23 +16352,29 @@ ${cards}
           ? (mode === 'llm' ? `Reading AuctionNinja ${accountLabel} for LLM brief...` : `Reading AuctionNinja ${accountLabel}...`)
           : (auctionNinjaAuctionSearchMode
             ? (mode === 'llm' ? 'Scraping AuctionNinja auctions for LLM brief...' : 'Scraping AuctionNinja auctions...')
-            : (mode === 'llm' ? 'Scraping AuctionNinja catalog for LLM brief...' : 'Scraping AuctionNinja catalog...')));
+            : (auctionNinjaItemMode
+              ? (mode === 'llm' ? 'Reading AuctionNinja item for LLM brief...' : 'Reading AuctionNinja item...')
+              : (mode === 'llm' ? 'Scraping AuctionNinja catalog for LLM brief...' : 'Scraping AuctionNinja catalog...'))));
         const result = auctionNinjaAccountMode
           ? await scrapeAuctionNinjaAccountItems(auctionNinjaKind, status, () => state.stop)
           : (auctionNinjaAuctionSearchMode
             ? await scrapeAuctionNinjaAuctionSearchSales(status, () => state.stop)
             : (auctionNinjaCategoryMode
               ? await scrapeAuctionNinjaCategoryItems(status, () => state.stop)
-              : await scrapeAuctionNinjaCatalogLots(status, () => state.stop)));
-        const validation = validateScraperExportAgainstRoute(result, 'auctionninja', activeRoute);
-        if (!validation.ok) {
+              : (auctionNinjaItemMode
+                ? await scrapeAuctionNinjaItemDetail(status, () => state.stop)
+                : await scrapeAuctionNinjaCatalogLots(status, () => state.stop))));
+        const readiness = assessExportReadiness(result, 'auctionninja', currentActiveRoute(), { locationLike: location });
+        if (!readiness.ok) {
+          stageVerifiedPartial(result, readiness.coverage, mode, { sourceUrl: location.href });
           debug('auctionninja export blocked by route guard', {
-            reason: validation.reason,
-            route: activeRoute,
+            reason: readiness.reason,
+            route: currentActiveRoute(),
             context: result?.context || null,
-            source: result?.source || 'unknown'
+            source: result?.source || 'unknown',
+            coverage: readiness.coverage
           });
-          status('Blocked stale AuctionNinja export; current page does not match scraped rows.');
+          status(`Blocked incomplete AuctionNinja export (${readiness.reason}).`);
           return null;
         }
         const rows = result.items || result.lots || [];
@@ -15313,6 +16509,7 @@ ${cards}
 
     const scrapeAarForUi = async (mode) => {
       if (state.busy) return null;
+      stageVerifiedPartial(null, null);
       setScrapingBusy(true);
       state.stop = false;
       [
@@ -15340,15 +16537,17 @@ ${cards}
             ? await scrapeAarCatalogLots(status, () => state.stop)
             : await scrapeAarAuctionCards(status, () => state.stop));
         result.context = { ...(result.context || {}), researchSettings: settings };
-        const validation = validateScraperExportAgainstRoute(result, 'aar', activeRoute);
-        if (!validation.ok) {
+        const readiness = assessExportReadiness(result, 'aar', currentActiveRoute(), { locationLike: location });
+        if (!readiness.ok) {
+          stageVerifiedPartial(result, readiness.coverage, mode, { sourceUrl: location.href });
           debug('aar export blocked by route guard', {
-            reason: validation.reason,
-            route: activeRoute,
+            reason: readiness.reason,
+            route: currentActiveRoute(),
             context: result?.context || null,
-            source: result?.source || 'unknown'
+            source: result?.source || 'unknown',
+            coverage: readiness.coverage
           });
-          status('Blocked stale AAR export; current page does not match scraped rows.');
+          status(`Blocked incomplete AAR export (${readiness.reason}).`);
           return null;
         }
         const rows = result.lots || result.sales || result.items || [];
@@ -15452,6 +16651,7 @@ ${cards}
 
     const scrapeGovDealsForUi = async (mode) => {
       if (state.busy) return null;
+      stageVerifiedPartial(null, null);
       setScrapingBusy(true);
       state.stop = false;
       govDealsButtons.forEach(button => {
@@ -15463,15 +16663,17 @@ ${cards}
         status(mode === 'llm' ? `Scraping GovDeals ${label} for LLM brief...` : `Scraping GovDeals ${label}...`);
         const result = await scrapeGovDealsListings(status, () => state.stop);
         result.context = { ...(result.context || {}), researchSettings: settings };
-        const validation = validateScraperExportAgainstRoute(result, 'govdeals', activeRoute);
-        if (!validation.ok) {
+        const readiness = assessExportReadiness(result, 'govdeals', currentActiveRoute(), { locationLike: location });
+        if (!readiness.ok) {
+          stageVerifiedPartial(result, readiness.coverage, mode, { sourceUrl: location.href });
           debug('govdeals export blocked by route guard', {
-            reason: validation.reason,
-            route: activeRoute,
+            reason: readiness.reason,
+            route: currentActiveRoute(),
             context: result?.context || null,
-            source: result?.source || 'unknown'
+            source: result?.source || 'unknown',
+            coverage: readiness.coverage
           });
-          status('Blocked stale GovDeals export; current page does not match scraped rows.');
+          status(`Blocked incomplete GovDeals export (${readiness.reason}).`);
           return null;
         }
         const rows = result.listings || result.items || [];

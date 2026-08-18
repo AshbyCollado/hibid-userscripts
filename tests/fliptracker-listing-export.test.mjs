@@ -251,7 +251,10 @@ test('panel markup exposes modern drawer shell and stable controls', () => {
   assert.match(html, /id="fliptracker-listing-download"/);
   assert.match(html, /id="flipperaddon-site-switcher-toggle"/);
   assert.match(html, /id="flipperaddon-site-switcher-menu"/);
-  assert.doesNotMatch(html, /ebay\.com|facebook\.com\/marketplace/i);
+  assert.match(html, /id="flipperaddon-selling-tools-toggle"/);
+  assert.match(html, /id="flipperaddon-selling-tools-menu"/);
+  assert.match(html, /data-site-shortcut-id="ebay-active"/);
+  assert.match(html, /data-site-shortcut-id="facebook-selling"/);
   assert.doesNotMatch(html, /id="hibid-bid-load"/);
   assert.doesNotMatch(html, /id="hibid-live-copy-llm"/);
   assert.doesNotMatch(html, /id="hibid-bid-results"/);
@@ -259,7 +262,7 @@ test('panel markup exposes modern drawer shell and stable controls', () => {
   assert.match(html, /id="flipperaddon-toast"/);
 });
 
-test('eBay lifecycle panel exposes page and all-page sync actions', () => {
+test('eBay lifecycle panel exposes read-only scrape and export actions', () => {
   const core = loadCore();
   const html = core.buildPanelHtml({
     mode: 'fliptracker',
@@ -267,10 +270,13 @@ test('eBay lifecycle panel exposes page and all-page sync actions', () => {
     route: { kind: 'fliptracker-ebay-sold', source: 'ebay' },
   });
   assert.match(html, /eBay Sold Orders/);
-  assert.match(html, /id="fliptracker-lifecycle-sync-page"/);
-  assert.match(html, /id="fliptracker-lifecycle-sync-all"/);
-  assert.match(html, /id="fliptracker-lifecycle-connect"/);
+  assert.match(html, /id="fliptracker-listing-scan"/);
+  assert.match(html, /id="fliptracker-listing-copy"/);
+  assert.match(html, /id="fliptracker-listing-download"/);
   assert.match(html, /Copy JSON/);
+  assert.doesNotMatch(html, /id="fliptracker-lifecycle-sync-page"/);
+  assert.doesNotMatch(html, /id="fliptracker-lifecycle-sync-all"/);
+  assert.doesNotMatch(html, /id="fliptracker-lifecycle-connect"/);
 });
 
 test('parses Facebook Marketplace manager listing cards for FlipTracker export', () => {

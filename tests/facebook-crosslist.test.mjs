@@ -424,7 +424,7 @@ test('resolves dedicated Facebook draft and published routes', () => {
 });
 
 
-test('renders cross-list controls only on their matching workflow pages', () => {
+test('renders scraper-only controls and keeps Facebook mutation actions absent', () => {
   const core = loadCore();
   const ebayHtml = core.buildPanelHtml({
     mode: 'fliptracker',
@@ -434,16 +434,17 @@ test('renders cross-list controls only on their matching workflow pages', () => 
     mode: 'fliptracker',
     route: { kind: 'fliptracker-facebook-create', source: 'facebook' },
   });
-  assert.match(ebayHtml, /Create Facebook Draft/);
-  assert.match(ebayHtml, /Advanced sync tools/);
-  assert.match(ebayHtml, /Facebook draft source/);
-  assert.match(ebayHtml, /Verified archive \(default\)/);
-  assert.match(ebayHtml, /2048px optimized \(experimental\)/);
-  assert.match(ebayHtml, /Facebook uploads at most 10 photos/);
-  assert.doesNotMatch(ebayHtml, />Scan Page</);
-  assert.doesNotMatch(ebayHtml, />Copy JSON</);
+  assert.match(ebayHtml, />Scan Page</);
+  assert.match(ebayHtml, />Copy JSON</);
+  assert.match(ebayHtml, />Download</);
+  assert.match(ebayHtml, /Selling Tools/);
+  assert.doesNotMatch(ebayHtml, /Create Facebook Draft/);
+  assert.doesNotMatch(ebayHtml, /Advanced sync tools/);
   assert.doesNotMatch(ebayHtml, /Open \+ Fill Next/);
-  assert.match(facebookHtml, /Open \+ Fill Next/);
+  assert.match(facebookHtml, /read only/);
+  assert.match(facebookHtml, /does not change Marketplace listing forms/);
+  assert.doesNotMatch(facebookHtml, /Open \+ Fill Next/);
+  assert.doesNotMatch(facebookHtml, /Save draft|Publish|Auto-fill/i);
   assert.doesNotMatch(facebookHtml, /Sync All eBay/);
 });
 

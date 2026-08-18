@@ -1,516 +1,279 @@
 # FlipperAddon Brain
 
-Living issue tracker and architecture notes for `hibid-bid-assistant.user.js`.
+Living architecture and release contract for `hibid-bid-assistant.user.js`.
 
-## Current Product
+## Current State
 
-- Name: `FlipperAddon by ALOS`.
-- Active hosted install: `hibid-bid-assistant.user.js`.
+- Product: `FlipperAddon by ALOS`.
+- Single hosted install: `hibid-bid-assistant.user.js`.
 - Raw install/update URL: `https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js`.
-- Current version: `0.8.18`.
-- UI: small bottom-right minimized launcher plus compact dark drawer. It starts minimized every mount.
-- Principle: only the module for the current page exposes controls.
-- Current product stance: scraper/export first. No active UI path clicks bids, writes bid fields, confirms modals, or manages max-plan bidding.
+- Hosted baseline when this plan was approved: `v0.8.18`.
+- Approved direction: scraper/export only, network-first where a first-party read endpoint can be proven.
+- This document records the target contract. It does not claim that every site gate or browser acceptance check has passed.
+- Gate order: HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, Facebook.
+- Each site gate owns discovery, sanitized fixtures, implementation, adversarial tests, Chrome proof, Waterfox proof, documentation, version bump, commit, push, and installed-instance update.
 
-## Active Goal: Keep Catalog Exports Attached to the Live Page
+## Product Boundary
 
-- Goal: ship one FlipperAddon build on `main`; do not maintain a second installed userscript.
-- Release version: `0.8.18`.
-- Integration contract: retain the latest main-branch HiBid/AuctionNinja/AAR/GovDeals and eBay bulk-sell exports while adding active/ended/sold/transaction lifecycle sync, Best Offer policy evidence, and the reviewed eBay-to-Facebook draft queue.
-- Safety: queue and fill Facebook drafts for human review, but never click Publish.
-- Verification gate: syntax, the complete userscript suite, cross-list bridge tests, authenticated Waterfox route detection, all active eBay records captured, and queue duplicate protection.
-- 2026-07-25 release repair: cross-list photos now come only from the eBay item's Product JSON-LD gallery, with OpenGraph limited to a primary-photo fallback. Page-wide `i.ebayimg.com` scraping was removed because it admitted sponsored/recommendation images that were not part of the seller's listing.
-- 2026-07-25 workflow repair: Facebook `Open + Fill Next` keeps the current unsaved draft open, opens a fresh Marketplace create tab, and fills the next queued listing automatically. eBay Active now exposes `Refresh All FB Drafts`, which posts the complete active lifecycle snapshot to Flip Tracker and refreshes the durable cross-list queue without reopening Published records.
-- 2026-07-25 automated evidence: the complete userscript suite passes `150/150`; a contamination fixture proves unrelated recommendation images are rejected; one-shot next-draft behavior and full-queue controls are covered.
+Allowed:
 
-## Foundation: eBay Ended Listings State Sync
+- Read the active supported route, visible canonical DOM, and proven first-party read responses.
+- Follow deterministic read-only pagination or bounded detail enrichment.
+- Copy/download JSON, LLM briefs, audited partials, and sanitized diagnostics.
+- Stop an active scrape and navigate to a supported site.
 
-- Tracking: GitHub issue `#5`; command-center epic `AshbyCollado/marketplace-command-center#68`.
-- Branch: `codex/ebay-ended-sync`.
-- Review PR: `AshbyCollado/hibid-userscripts#6`; command-center PR: `AshbyCollado/marketplace-command-center#69`.
-- Exact source: `https://www.ebay.com/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS&source=filterbar&action=search`.
-- Truth contract: the ended table is listing-state evidence only. It may update status, ended date, end reason, quantity, views, and watchers; it cannot create Sales, fees, refunds, or payouts.
-- Source ownership: `/mys/sold` owns sold order lines and quantities; `/mes/transactionlist?sh=true` owns fees, refunds, and payout facts.
-- Matching order: exact eBay item ID, exact normalized URL, exact custom label/SKU or unique deterministic inventory match, then manual candidate review.
-- Gemini contract: Gemini may rank sanitized candidate SKUs only when deterministic matching is ambiguous. It cannot auto-link, auto-merge, or invent financial values.
-- UX: `Update Tracker` sends the current lifecycle page; `Sync All eBay` covers Active, Ended, Sold Orders, and Transactions.
-- Review contract: an ended row marked Sold without linked sold-order evidence remains `Manual Review`.
-- Automated evidence: userscript suite `124/124`; syntax check passed; command-center suite `275 passed`.
-- Authenticated evidence: the exact Seller Hub ended URL rendered 60 results and the first page exposed 50 unique 12-digit item IDs in a stable 15-column grid. The table included state, price snapshot, quantity, traffic, bids, end time, format, duration, and custom label with zero buyer PII.
-- End-to-end evidence: the loopback bridge stored the first ended envelope once and classified replay as duplicate; the importer emitted `Reconcile eBay Ended Listing`; isolated Excel verification proved exact update, ambiguous review, idempotence, asking-price preservation, and no Sales row from ended-state evidence.
-- Recursive release gate: all implementation and verification gates passed on the feature branch; the canonical `0.7.71` release integrates this work into `main` with explicit owner approval.
+Not allowed:
 
-## Foundation: eBay-to-Facebook Marketplace Draft Assistant
+- Bid, offer, register, watch/unwatch, check out, pay, publish, fill a listing/draft form, or change an account.
+- Invoke bid, checkout, payment, publishing, or account-mutation endpoints.
+- Export buyer PII, credentials, cookies, authorization/CSRF values, account tokens, private messages, or typed form values.
 
-- Tracking: GitHub issue `#3`; command-center epic `AshbyCollado/marketplace-command-center#62`.
-- Branch: `codex/facebook-crosslist`.
-- Source truth: eBay item ID plus current listing evidence. A selected active eBay listing is enriched from its public item page before it can enter the cross-list queue.
-- Delivery: use the existing token-authenticated loopback service at `127.0.0.1:8468`; no Facebook credentials or cookies leave the browser.
-- Draft contract: title, price, clean description, condition, category evidence, item specifics, quantity, and full-resolution image URLs/files. Missing required facts remain visible review warnings.
-- Duplicate contract: one durable cross-list record per eBay item ID. Unchanged evidence is a no-op; changed evidence updates the existing queued draft; Published cannot return to Queued without an explicit reset.
-- Photo provenance contract: only Product JSON-LD gallery images belong to the listing. OpenGraph may supply one primary-image fallback; generic page image URLs, sponsored modules, related products, and recommendation carousels are never draft evidence.
-- Facebook contract: on `/marketplace/create/item`, fetch one queued draft, upload photos, fill semantic form controls, commit location through Facebook's autocomplete when Facebook exposes that control, otherwise keep the draft reviewable with an explicit preview-location warning, and stop before Publish. FlipperAddon does not click Publish in v1.
-- Safety: no cookie export, stealth-driver modification, buyer PII, unattended bulk posting, or hidden retries. Every browser mismatch is shown to the user and recorded as Failed/Review.
-- Recursive release gate: item-detail fixtures, cross-list schema and transition tests, Facebook form fixture tests, live eBay enrichment, one authenticated Facebook draft, duplicate replay proof, green `npm test`, brain evidence, and pushed branch.
-- 2026-07-18 live evidence: eBay item `336694211286` produced one stable queue record; replay returned duplicate/no-op; rebased `v0.7.49` filled Facebook with the exact title, whole-dollar price, description, five source photos, `Electronics & computers`, and `Used - Good`; it preserved Facebook's already-selected Carteret location, enabled the `Next` review step, reported zero adapter errors, and did not click Publish. Screenshot: `C:\tmp\ft022-crosslist-live-20260718\facebook-draft-review-enabled-not-published.png`.
-- Verification: the current `0.7.78` suite passes `150/150`; the command-center artifact suite previously passed `273/273`; `node --check hibid-bid-assistant.user.js` passed. The strict live verifier treats a disabled `Next` button as a failure and captures invalid-control diagnostics.
-- Operator documentation: `README.md` now covers one-time bridge/token setup, the eBay Active to Facebook draft workflow, duplicate rules, confirmation, and recovery. The command-center runbook is `docs/ft022-ebay-facebook-crosslist-runbook.md`.
-- Release status: integrated into canonical `main` for `0.7.71` with explicit owner approval; no separate installed add-on is supported.
+Legacy bid or cross-list draft helpers may still exist while the rewrite is in progress, but they are outside the approved active product contract and must not be exposed by supported route UI.
 
-## Completed Foundation: eBay Lifecycle Sync
+## Shared Route Manifest
 
-- Tracking: GitHub issue `#1`; Flip Tracker integration is `AshbyCollado/marketplace-command-center#43`.
-- Branch: `codex/ebay-lifecycle-sync`.
-- Contract: `fliptracker.ebay.lifecycle.v1` carries active listings, sold order lines, and seller transactions with completeness metadata.
-- Privacy: never export buyer names, usernames, email addresses, shipping addresses, or messages.
-- Delivery: post sanitized JSON to the token-authenticated loopback bridge at `127.0.0.1:8468`; download the same JSON when the bridge is unavailable.
-- Truth ownership: FlipperAddon extracts page facts only. Flip Tracker owns matching/reconciliation. Gemini may rank sanitized inventory candidates but cannot invent prices or auto-link records.
-- Release gate: dedicated route/parser/privacy tests plus live authenticated verification on `/mys/active`, `/mys/sold`, and `/mes/transactionlist?sh=true` before the userscript version is merged to `main`.
-- Implementation status (2026-07-15): dedicated collectors, completeness checks, recursive PII sanitization, stable lifecycle identities, token-authenticated bridge delivery, download fallback, and guided `Sync All eBay` recovery are implemented and live-verified on the branch.
-- Automated evidence: `npm test` passes `100/100`; `node --check hibid-bid-assistant.user.js` and `git diff --check` pass.
-- Authenticated release evidence: Active parsed `19/19`, Sold parsed `5/5`, and Transactions parsed `15/15`; each envelope was complete, identities were unique, and recursive unsafe-field checks found zero buyer PII fields. The live loopback bridge accepted all three envelopes and marked changed-timestamp replays as duplicates.
+Every supported route resolves to one manifest record with:
 
-## Module Map
+- site, page kind, canonical path, stable route identifiers, and normalized filters;
+- allowed read endpoints and blocked mutation/account route families;
+- stable item identity and authoritative total source, when one exists;
+- pagination and safe enrichment rules;
+- required proof tier and completeness checks;
+- same-tab navigation target;
+- sanitized diagnostic fields.
 
-- `catalog`: HiBid catalog/category/lot/OUTBID watchlist and AJ Willner auction pages.
-  - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Past account routes `/account/pastbidsm` and `/account/pastwatchlist` add one inline `Copy Auction` button beside each `View Catalog` row. The action is scoped to the selected auction's saved account lots on the current page only; it enriches those lot URLs in the browser context with lead, Group - Category, full description fields, and all available image URLs. It never crawls unrelated account rows or clicks bid/watch/account controls.
-  - Past-auction exports use a non-blocking dialog with Copy JSON, Copy LLM Brief, Stop, and Close. Partial detail failures remain in the payload audit rather than being treated as no-value evidence.
-- `live`: HiBid `/livecatalog/...` pages.
-  - Controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
-- `fliptracker`: eBay and Facebook active selling pages.
-  - Controls: Scan Page/Listings, Copy JSON/HTML, Download, Update Tracker, Sync All eBay, token connection, cross-list actions where supported, and debug controls only when enabled.
-  - eBay `/bulksell`: Scan Listings, Copy JSON, Copy LLM Brief, Copy HTML, Download; the DOM row export preserves title, image, price, quantity, format, duration, shipping, handling, condition, category, recommendations, field values, and raw row text.
-- `auctionninja`: AuctionNinja sale research and account export pages.
-  - Sale catalog controls: Copy LLM Brief, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Auction search controls: Copy Auctions LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Followed-items controls: Copy Watchlist LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Items-won controls: Copy Won Items LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Bid-history controls: Copy Bid History LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Category controls: Copy Category LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Safety: research/export only; no bid clicks, no bid-field writes, no checkout/invoice/payment/account actions.
-- `aar`: AAR Auctions calendar and catalog export pages.
-  - Auction calendar controls: Copy Auctions LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Catalog controls: Copy Catalog LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Single-item controls: Copy Item LLM, Copy JSON, Stop while scraping on `Search.do?auctionId=...&itemId=...`; the parent auction total does not make a single-item export incomplete.
-  - Research settings: shared collapsed editor persisted under `flipperaddon-research-settings-v2` and mirrored to the legacy AAR key. It covers origin/ZIP, radius, sales-tax assumption, vehicle/logistics profile, and research notes; defaults are `Edison, NJ 08817`, `100` miles, `6.625%`, and `CT200h sedan`.
-  - Safety: research/export only; no bid, register, payment, invoice, login, or account actions.
-- `govdeals`: GovDeals seller, search/new-listings filter, and asset export pages.
-  - Seller controls: Copy Seller LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - New-listings controls: Copy Listings LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Asset controls: Copy Asset LLM, Copy JSON, Stop while scraping, debug controls only when enabled.
-  - Distance context: reuses the shared persisted research settings and preserves GovDeals URL zipcode/miles filters. The editor is available directly on GovDeals, not only AAR.
-  - Safety: research/export only; no bid, offer, cart, checkout, payment, registration, login, invoice, or account actions.
-- `unsupported`: do not mount.
+The route fingerprint is the canonical path plus stable route IDs and sorted filters. Any route or filter change during collection invalidates the run.
 
-## Route Map
+| Site | Supported route families | Required source/proof |
+| --- | --- | --- |
+| HiBid | `/catalog/*`, `/livecatalog/*`, global/state/category `/lots*`, dedicated watchlist/current-bids/past-auction account pages | Exact API IDs and totals for public pages; scoped canonical DOM for personalized account pages. |
+| AJ Willner | `bid.ajwillnerauctions.com/ui/auctions/*` | Exact first-party API IDs/total, with bounded detail hydration. |
+| AuctionNinja | Sale details, product, category, auction search, followed items, items won, and bid history | Deterministic server-rendered pagination and canonical product/sale identities. |
+| AAR Auctions | `/auctions/`, `/servlet/Search.do?auctionId=*`, optional `itemId` | Deterministic server-rendered pagination keyed to auction/item IDs. |
+| GovDeals | Seller, filtered search/new-listings, and asset pages | Proven search API only after safe request construction; otherwise canonical DOM with settled-bottom audit. |
+| eBay | Seller Hub Active, Bulk Sell handoff, Ended, Sold, and Transactions | Deterministic Seller Hub pagination with stable listing/order/transaction identities. |
+| Facebook | Marketplace selling listings | Canonical listing IDs with deterministic virtual-scroll settled-bottom audit. |
 
-Mount without waiting for lot tiles on:
+Unsupported login, registration, billing, payment, checkout, bid/offer, account-settings, and mutation routes must not expose scraper actions.
 
-- `https://hibid.com/lots*`
-- `https://hibid.com/*/lots*`, including `/newjersey/lots/40196/computers-and-electronics`
-- `https://hibid.com/catalog/*`
-- `https://hibid.com/livecatalog/*`
-- `https://hibid.com/lot/*`
-- `https://hibid.com/*/lot/*`
-- `https://hibid.com/account/watchlist*`, including state-prefixed `/newjersey/account/watchlist`
-- `https://hibid.com/account/currentbids?status=WINNING`, including state-prefixed routes
-- `https://hibid.com/account/currentbids?status=OUTBID`, including state-prefixed routes
-- `https://hibid.com/account/pastbidsm`
-- `https://hibid.com/account/pastwatchlist`
-- State-prefixed variants such as `https://hibid.com/newjersey/account/pastwatchlist`
-- `https://*.hibid.com/catalog/*`
-- `https://*.hibid.com/lot/*`
-- `https://*.hibid.com/account/watchlist?status=OUTBID`
-- `https://bid.ajwillnerauctions.com/ui/auctions/*`
-- `https://www.ebay.com/sh/lst*`
-- `https://www.ebay.com/mys/*`
-- `https://www.ebay.com/bulksell*`
-- `https://www.facebook.com/marketplace/you/*`
-- `https://www.facebook.com/marketplace/profile/*`
-- `https://www.auctionninja.com/auctions*`
-- `https://www.auctionninja.com/{state}/{city}/{zip}*`, including `/nj/carteret/07008?miles=50&an=`
-- `https://www.auctionninja.com/followed-items*`
-- `https://www.auctionninja.com/items-won*`
-- `https://www.auctionninja.com/bid-history*`
-- `https://www.auctionninja.com/category/{slug}*`, including `/category/electronics?miles=30&zip=07008`
-- `https://www.auctionninja.com/*/sales/details/*.html*`
-- `https://www.auctionninja.com/*/product/*.html*`
-- `https://aarauctions.com/auctions*`
-- `https://aarauctions.com/servlet/Search.do?auctionId=*`
-- `https://www.govdeals.com/en/{seller}`
-- `https://www.govdeals.com/en/search*`
-- `https://www.govdeals.com/en/search/filters*`
-- `https://www.govdeals.com/en/new-listings/filters*`
-- `https://www.govdeals.com/en/asset/{assetId}/{accountId}`
-- `https://www.govdeals.com/asset/{assetId}/{accountId}`
+## Proof Hierarchy
 
-Do not mount on generic HiBid account/help/search pages unless a resolver case is added and tested.
-Do not mount on AuctionNinja billing, payment, card, checkout, invoice, profile/settings, support, login/logout, or generic account pages.
-Do not mount on AAR login, register, account, payment, invoice, checkout, or bid routes.
-Do not mount on GovDeals login, register, account, cart, checkout, payment, invoice, bid, or offer routes.
+Use the strongest available tier:
 
-## Scraper Flow
+1. **`api-exact`**
+   - Enumerate an authoritative total and exact stable IDs.
+   - Hydrate only the enumerated IDs.
+   - Require expected total = unique enumerated IDs = unique hydrated IDs.
+2. **`pagination-exact`**
+   - Follow deterministic server-rendered pages/ranges.
+   - Require contiguous page/range coverage, stable identities, and exact advertised count.
+3. **`dom-bottom-settled`**
+   - Use only when no authoritative total or safe deterministic pagination exists.
+   - Collect canonical IDs while scrolling until the bottom and multiple settle cycles are observed.
+   - Record the lack of an authoritative API total explicitly.
+
+Never certify a result by trimming excess rows, using broad embedded state, counting generic card descendants, parsing document-wide text, or replacing the page's filtered scope with a broad catalog/search connection.
+
+Normal export fails closed on:
+
+- duplicate, missing, or unexpected IDs;
+- missing hydration records;
+- failed/short pages after bounded retries;
+- total drift or noncontiguous ranges;
+- route or filter fingerprint changes;
+- stale embedded state or cross-page/cross-site records;
+- an unproven fallback claiming completeness.
+
+## Audited Partial Export
+
+After bounded retries, a normal copy remains blocked. The user may explicitly choose an audited partial matching the requested JSON or LLM format.
+
+Minimum audit fields:
+
+```json
+{
+  "complete": false,
+  "proofTier": "api-exact | pagination-exact | dom-bottom-settled | unproven",
+  "expectedCount": null,
+  "copiedCount": 0,
+  "uniqueIdCount": 0,
+  "missingIds": [],
+  "unexpectedIds": [],
+  "duplicateIds": [],
+  "failedPages": [],
+  "failedBatches": [],
+  "filters": {},
+  "sourceUrl": "",
+  "routeFingerprint": "",
+  "stopReason": ""
+}
+```
+
+A partial is invalidated if the route or filters change. It must never use a success label or a complete payload shape without the audit.
+
+## Site Contracts
 
 ### HiBid
 
-1. Freeze the requested scope:
-   - Resolve the active HiBid route and build a fingerprint from the canonical path, auction/category ID, and sorted filters.
-   - Preserve `q`, ZIP, miles, shipping, country, repeated status values, sort, and archive/filter state. Abort exact copy if the fingerprint changes during collection.
-2. Enumerate stable event-item IDs:
-   - `/catalog/:auctionId` and `/livecatalog/:auctionId` page through same-origin `/graphql` `lotSearch` in batches of 100.
-   - Global, category, state-prefixed, and filtered `/lots/...` pages enumerate only the current result IDs through `https://hibid-api.io/sr/main/v1/search/lot`.
-   - State-prefixed portals read `ROOT_QUERY.currentSite.portalChildren` from the active page's `hibid-state` and send that exact auctioneer-ID scope with `siteType: 2`. Never substitute a guessed geographic state filter; if portal scope cannot be proven, the search total must match the settled visible total or copy remains blocked.
-   - Requests use concurrency three, timeouts, and three bounded attempts. Duplicate IDs and page-total drift are coverage failures.
-3. Hydrate resale evidence:
-   - Hydrate enumerated IDs through same-origin `/graphql` in batches of 100 while preserving enumeration order.
-   - Normalize event-item ID, lot number, lead, description text/HTML, category, all pictures, bids, status/time, quantity, shipping, location, auction context, and buyer premium.
-4. Validate before clipboard writes:
-   - A normal export requires `API total == unique enumerated IDs == unique hydrated IDs`, no missing/unexpected IDs, no failed pages/batches, and an unchanged route fingerprint.
-   - After exhausted retries, normal copy remains blocked. Only `Copy Verified Partial N/M` may export the hydrated subset, wrapped with `complete: false`, missing IDs, failures, filters, URL, and fingerprint.
-   - Debug mode exposes a sanitized API diagnostic. Never include cookies, authorization headers, account tokens, credentials, or account-info responses.
-5. Fallback boundary:
-   - Public catalog/live exports never widen an API failure into broad Apollo entities, generic class selectors, document text, or unrelated connections.
-   - Apollo/DOM evidence may only fill a previously enumerated known event-item ID. The current release prefers an explicit audited partial over speculative filling.
-   - Personalized watchlist/current-bids/past-auction routes keep their dedicated DOM scrapers and do not use the public API enumerator.
-
-Past-account auction export:
-
-- Resolve only `/account/pastbidsm` and `/account/pastwatchlist` (including state-prefixed variants) as past-auction modules; generic account routes remain blocked.
-- Parse `.listing-box-title` blocks and their `/catalog/<auctionId>/...` links, title, map link, location, and date range.
-- Inject one `Copy Auction` button beside each `View Catalog` control. The selected button owns the scope; do not use page-wide `getLotTiles()` as a fallback.
-- Collect only lot cards inside the selected auction group on the current account page. Detail URLs are fetched same-origin with four concurrent workers, an abort signal, and a partial-failure audit.
-- Preserve `lead`, `groupCategory`, structured description fields, full description/raw text, all image URLs, bid/status evidence, source URLs, and account page kind in JSON and LLM payloads.
-- The LLM brief includes the existing mixed/group rule and sold-comps/profit rules plus an explicit no-bidding boundary. Missing descriptions or failed detail pages are evidence gaps, not garbage classifications.
+- Public search enumeration: `https://hibid-api.io/sr/main/v1/search/lot`.
+- Public catalog/live hydration and auction-scoped enumeration: same-origin `https://hibid.com/graphql`.
+- Preserve auction/category IDs, `q`, ZIP, miles, country, shipping, repeated statuses, sort, archive state, and portal scope.
+- Stable identity: event-item ID.
+- Deduplicate only by event-item ID; lot number, title, URL fragments, and tile descendants are not identities.
+- Apollo state or DOM may fill a known enumerated ID only. They may not enumerate broad `Lot:*` entities or unrelated connections.
+- Watchlist, current-bids, past-bids, and past-watchlist retain dedicated, route-scoped account DOM collectors. Public API results must not be substituted for personalized account state.
 
 ### AJ Willner
 
-1. Route/source:
-   - `https://bid.ajwillnerauctions.com/ui/auctions/*` mounts as `catalog` mode with source `ajwillner`, not HiBid.
-   - The compact drawer labels the active module as `AJ Willner` and reuses the same `Copy LLM Brief` / `Copy JSON` controls.
-2. Virtual-list scraper:
-   - The lot grid is virtualized; use `[data-testid="auction-list-scroll"]` first, then `.ReactVirtualized__Grid`, then the largest scrollable `div`.
-   - Visible lot cards are `[data-testid^="list-item-"]`, filtered to exact IDs like `list-item-24887841` so status stripes are not mistaken for cards.
-   - Extract title/lot from `.titleLink h1`, URL from `.titleLink[href]`, description from `.description`, bid from `.bidsLine`, status from the matching `*-status-stripe`, and image from `img`/`srcset`.
-   - Scroll the virtual container with an overlapping capped stride, merge by URL/id/lot, and stop when the parsed `866 items found` style total is reached or the virtual list stops producing new cards.
+- Catalog enumeration endpoint: same-origin `/api/items/search`.
+- Require the API's total, unique item IDs, unchanged auction route, and complete page coverage.
+- Enrich descriptions and photos only through observed, same-origin, read-only item/detail data.
+- A virtualized DOM is a bounded fallback and needs canonical item IDs plus a settled-bottom audit; stopping early is incomplete.
 
 ### AuctionNinja
 
-1. Page mode:
-   - `/auctions` is auction-search triage.
-   - `/{state}/{city}/{zip}` is location/nearby auction-search triage.
-   - `/followed-items` is account followed/watchlist opportunity review.
-   - `/items-won` is account won-items organization.
-   - `/bid-history` is account bid-history review.
-   - `/{seller}/sales/details/{sale}.html` is sale catalog research.
-   - `/{seller}/product/{item}.html` is item detail research.
-2. Sale context:
-   - Extract title, seller, location, shipping/pickup text, special instructions, buyer premium, closing time, canonical URL.
-   - Include sale terms before lots in the LLM brief so profit math sees premium/logistics first.
-3. Catalog cards:
-   - Prefer DOM hooks: `.search-catalog-item-box`, `.search-catalog-item-box-in`, `[id^="MainItmID"]`, `.hot-items-box`.
-   - Normalize lot number, product URL/id, title, image, current bid, bid count when explicit, time left, closed/watched state.
-   - Never retain `Bid Now` as an action or button reference.
-4. Guarded loading:
-   - Parse count text such as `1-40 of 60 items`.
-   - Prefer catalog pagination URLs such as `?Page=2#items`, fetch them in the background, parse with `DOMParser`, and merge lots without taking over the visible tab.
-   - Keep safe page/next control clicks as last-resort fallback only; reject bid, checkout, invoice, payment, account, watch/follow, search, sort, and per-page controls.
-   - Stop with a debug reason when counts drift, no safe next control exists, or max steps are reached.
-5. Account exports:
-   - `/followed-items` reads visible dashboard item rows/cards and exports source, page kind, lot, title, item URL, image, sale title/URL, status, current price text/amount, bid count, time text, location, pickup/shipping hints, and raw text.
-   - `/items-won` reads visible dashboard item rows/cards and exports the same shared fields, using won/price-realized text when present.
-   - `/bid-history` reads visible dashboard bid-history rows/cards and exports the same shared fields plus `yourBidText` / `yourBid` when visible.
-   - Account exports are copy-only; they do not click dashboard controls or mutate watched/won items.
-   - Followed LLM briefs focus on active opportunity review, current bid versus profit threshold, sold comps first, and logistics risk.
-   - Won-items LLM briefs focus on post-win inventory, listing priority, expected resale, pickup/shipping logistics, profitability after buyer premium/tax, and reconciliation.
-   - Bid-history LLM briefs focus on missed opportunities, overbid risk, recurring seller/category signals, and whether past max bids matched sold comps and profit thresholds.
-6. Auction search exports:
-   - Nearby/search pages read whole sale rows, not lots: sale title/URL, seller/URL, image, location, pickup/shipping, closing time, item count, and raw text.
-   - Some AuctionNinja search rows use the sale URL for count-only anchors like `(9)` before or instead of a readable title link; treat those as URL-only and recover the title from line-preserved card text.
-   - Prefer background fetches from discovered `marketplace_ajax.php?Page=...` pagination controls; merge sale rows by URL/title and avoid visible-tab clicks unless future guarded fallback is added.
-   - Auction-search LLM briefs rank whole sales for resale potential before drilling into lot catalogs.
-7. Category exports:
-   - `/category/{slug}` is a product-card discovery route, not a sale catalog or account page. The category module reads `.hot-items-box` cards and product anchors directly from the visible DOM.
-   - Normalize product URL/id, title, image, current/starting price, time left, seller, location, shipping signal, status, watched signal, and raw card text. Preserve URL `zip` and `miles` filters in the context and LLM brief.
-   - Safe same-category `View All Items` / `show=all` links are fetched in the background with `credentials: include`, parsed with `DOMParser`, deduped by product URL/id, and capped/stoppable. Bid, account, checkout, payment, watch/follow, search, and sort links are rejected.
+- Current discovery found deterministic server-rendered pages rather than a reusable listing API.
+- Follow numbered/load-more pagination using advertised ranges such as `1-40 of N`.
+- Stable identity comes from canonical product and sale URLs/IDs.
+- Never trim over-collected rows to make a total appear correct.
+- Sale catalogs, category/search results, followed items, won items, and bid history keep route-specific extractors and account scope.
 
 ### AAR Auctions
 
-1. Page mode:
-   - `/auctions/` is auction-calendar triage.
-   - `/servlet/Search.do?auctionId=...` is auction catalog export.
-2. Auction calendar:
-   - Extract auction ID, title, category, catalog URL, image, closing text, description, register URL, location hint, and a Google Maps search seed from auction cards.
-   - LLM briefs rank whole auctions before drilling into catalogs.
-3. Catalog:
-   - Extract title, auction ID, buyer premium, pickup text, payment text, item location, directions/map seed, and expected total from server-rendered page text.
-   - Extract lot number, title, URL, image, description, high/current bid, minimum next bid, quantity, auction type, closing text, and raw text from visible lot rows.
-   - Discover same-auction safe pagination/search URLs when present; reject bid, register, track, login, payment, invoice, and checkout links.
-4. Distance research:
-   - The addon does not geocode in-page. It persists origin/radius config and includes it in every AAR JSON/LLM export.
-   - AAR LLM briefs include a required `Distance Agent` instruction to verify distance with live map/search results, not assumptions.
-   - Spreadsheet output must include `distance_miles`, `distance_proof_url`, `distance_status`, and `assigned_agent`.
+- Calendar and servlet catalog/item pages are server-rendered.
+- Fingerprint `auctionId`, optional `itemId`, active page, and filters.
+- Treat `itemId` as a one-record scope.
+- Page-size controls are not authoritative totals.
+- Follow deterministic pages only; do not click bid, register, track, login, or payment controls.
 
 ### GovDeals
 
-1. Page mode:
-   - `/en/{seller}` is seller/storefront listing export, for example `/en/rutgers`.
-   - `/en/search?...`, `/en/search/filters?...`, and `/en/new-listings/filters?...` are nearby listing exports and preserve URL `category`, `categoryName`, `zipcode`, and `miles`.
-   - `/en/asset/{assetId}/{accountId}` and `/asset/{assetId}/{accountId}` are direct asset export/enrichment routes.
-2. Listings:
-   - Extract asset ID/account ID, lot number, title, URL, image, seller, category, condition/status, current bid, bid count, close time, location, distance text, pickup/shipping hints, description/specs when visible, and raw text.
-   - Use visible DOM first. If fields are thin and browser fetch/DOMParser is available, fetch same-origin asset detail pages only for missing fields, capped and stoppable.
-3. Briefs:
-   - Reuse the full resale coordinator prompt.
-   - Include GovDeals safety boundary and shared origin/radius settings.
-   - Require live map/search proof before recommending a listing as in range.
-   - Spreadsheet output must include `distance_miles`, `distance_proof_url`, `distance_status`, and `assigned_agent`.
-4. Asset detail DOM fix (`v0.7.44`):
-   - Prefer the item-scoped DOM hooks `h1.product-title`, `#currentBid`, `.numberofbids`, `.product-location`, `.long-description`, `#table-id-0`, `#seller_information`, and `img.lg-object.lg-image`.
-   - Never use the first page image or first `/en/` link as the asset image/seller; those are often global logos/navigation such as AllSurplus and About Us.
-   - Normalized description, specs, seller, location, close time, pickup, and image fields are extracted from the asset section. The broad body is only a fallback for sparse/legacy markup.
-   - Verification targets: `/en/asset/72/6332` and `/en/asset/6816/7529`; expected one-record exports with item photos, correct seller/location, clean close text, and description-only component/spec values.
+- Observed read endpoint: `https://maestro.lqdt1.com/search/list`.
+- Observed variables include filters, location, page, display rows, sort, facets, and account IDs.
+- The request's opaque `sessionId` is sensitive operational state: redact it from diagnostics/fixtures and do not persist or replay it.
+- Until safe browser-context request construction and filtered-total equality are proven, use canonical asset/listing IDs from the DOM and require a settled-bottom audit.
+- Asset detail enrichment is same-origin, bounded, stoppable, and audited.
+- URL ZIP/miles filters and visible active filters must agree; disagreement is filter drift, not a successful export.
 
-5. Filtered `/lots` fix (`v0.7.45`):
-   - Accept HiBid totals formatted as `Showing 1 - 15 of 15 lots`, not only `Showing 1 to 15 of 15 lots`.
-   - Preserve repeated `status` values and location/delivery query filters in visible-page diagnostics.
-   - Accept an Apollo `eventItemIds` connection only when its visible result count and page length confirm the filtered page total; broad mismatched connections remain rejected.
+### eBay
 
-6. Visible-state fix (`v0.7.46`):
-   - Use `innerText` before `textContent` for page-level HiBid totals and no-match detection. HiBid keeps hidden empty-state templates in the DOM on non-empty filtered pages; hidden `No matches found` text must not turn a real result set into `[]`.
+- Supported evidence pages: Seller Hub Active, Ended, Sold, Transactions, and the signed-in Bulk Sell handoff.
+- Current discovery favors deterministic server-rendered Seller Hub pagination over replaying private endpoints.
+- Stable identities are listing ID, order-line identity, or transaction ID according to page kind.
+- Every lifecycle envelope must be complete before normal export. Nonempty does not mean complete.
+- Recursively remove buyer names, usernames, email, addresses, messages, and other buyer PII.
+- Bulk Sell starts from Active and follows eBay's current live `Edit all listings` link. Never store a personal `workspaceId`.
 
-7. Bounded filtered-page recovery (`v0.7.47`):
-   - Carry the visible HiBid expected total into the DOM fallback loader. A page such as `/lots/40198/...?...q=gaming%20pc` must stop when its visible `Total Lots: 14` target is collected instead of continuing through an unbounded dynamic scroll loop.
-   - Same-origin Apollo page fetches have an abort timeout, a total state-scrape budget, and a page cap. A slow or incomplete state response falls back to the live DOM rather than leaving Copy JSON/LLM busy forever.
-   - Every DOM fallback returns a stop reason (`expected-total`, `dom-bottom-no-growth`, `dom-scrape-timeout`, or `user-stop`) for debug diagnostics. Incomplete normal catalog results remain blocked by the route completeness guard.
+### Facebook
 
-## Legacy Max Plan State
+- Supported scope is the seller's Marketplace listing export.
+- Use canonical Marketplace listing IDs and deterministic virtual scrolling until bottom/settle criteria pass.
+- Do not replay private or unstable Facebook GraphQL operations.
+- A visible first screen is a snapshot, not a complete export.
+- Create Listing is a navigation shortcut only; the addon does not fill, save, submit, or publish.
 
-- Old max-plan data remains in storage for compatibility and tests, but scraper-first UI does not render or use max-plan controls.
-- Historical storage keys include `flipperaddon-max-plan-v2:<host>:auction:<id>` and `flipperaddon-max-plan-v2:www.auctionninja.com:auctionninja:sale:<id>`.
-- Migrate from legacy `hibid-bid-assistant-plan-v1` on first read.
+## CDP And HAR Policy
 
-## Debugging
+Chrome DevTools/CDP Network is the discovery authority. Waterfox is the independent installed-userscript acceptance browser.
 
-- Debug boolean key: `flipperaddon-debug-enabled-v1`.
-- Debug log key: `flipperaddon-debug-log-v1`.
-- Prefix: `[FlipperAddon]`.
-- Menu commands:
-  - `Remount FlipperAddon`
-  - `Toggle FlipperAddon Debug Mode`
-  - `Copy FlipperAddon Debug Log`
-  - `Clear FlipperAddon Debug Log`
-  - `Copy HiBid Lots Now`
+Raw CDP/HAR captures stay outside Git. Commit only sanitized endpoint manifests and minimal fixtures needed for tests.
 
-Debug UI and console/log capture are off unless debug mode is enabled.
+Allowed fixture fields:
 
-`v0.8.09` adds the opt-in diagnostic event layer. It records `event:ui.click`, pointer/key/focus/input/change activity, throttled scrolls, DOM mutation batches, route/lifecycle transitions, runtime errors and unhandled rejections, panel/mount/scrape status changes, every clipboard/download method attempt and result, and a `lifecycle.heartbeat` every 60 seconds. The stored ring buffer is capped at 2,000 entries. Field values are never stored; inputs report only control metadata, checked state, and value length. The layer is installed only when the existing debug boolean is active (`#flipperdebug` or the Tampermonkey debug command), and listeners become inert when that boolean is off.
+- endpoint path and operation name;
+- sanitized request variables and filters;
+- totals, stable IDs, page/batch numbers, timings, status, and errors;
+- minimal response shape needed to test normalization and coverage.
 
-`v0.8.10` installs debug Copy/Download/Clear through one delegated panel listener during panel creation, before the rest of `init()` runs. It records binding state, handler entry/exit, action-specific starts, results, and `panel.init.error` with duration and stack summary. Debug exports always refresh the selectable in-panel field. The mount boundary catches initialization exceptions so an inert partial panel is diagnosable instead of silently presented as ready.
+Always remove:
 
-`v0.8.11` treats a visible HiBid catalog total as an export boundary even when the page has no explicit search filter. Broad Apollo connections that exceed that boundary are rejected before copy. When state data is missing, ambiguous, or rejected, the scraper fetches same-origin `apage=1..N` DOM pages and dedupes their lot cards before using the slower virtualized scroll fallback. Detached DOMParser cards are treated as scrape-visible without changing live-page visibility behavior.
+- cookies and authorization headers;
+- CSRF, access, refresh, account, and session tokens;
+- GovDeals `sessionId`;
+- HiBid `GetAccountInfo` responses and other account secrets;
+- buyer PII and private messages;
+- typed field values and unrelated personal data.
 
-## Issue Tracker
+Analytics-only or advertising-only traffic is not scraper evidence. The supplied `hibid.com.har` contained only a Google remarketing request and therefore did not validate HiBid behavior.
 
-- Done on branch for FT-023: resolve the exact Seller Hub `/sh/lst/ended` route and preserve its `status`, `timePeriod`, `source`, and `action` query contract.
-- Done on branch for FT-023: parse stable ended listing IDs, URLs, titles, custom labels, ended dates/times/reasons, price snapshots, format, duration, quantities, traffic, bids, and state without requiring a price.
-- Done on branch for FT-023: add `Update Tracker` and include Ended Listings in `Sync All eBay` completeness/guided-recovery behavior.
-- Safety invariant for FT-023: an ended-page `Sold` label is state evidence only and cannot create a Sale without `/mys/sold` order evidence.
-- Tracking: `AshbyCollado/hibid-userscripts#5` and `AshbyCollado/marketplace-command-center#68`.
-- Passed release gate for FT-023: `124/124` tests and syntax check; authenticated count `60`, first-page IDs `50/50` unique, zero buyer PII; bridge replay dedupe; command-center `275 passed`; isolated workbook verifier and release audit; PR #6 is ready for review and must not merge into raw `main` without explicit approval.
-- Done on branch for FT-014: resolve only `/mys/active`, `/mys/sold`, and `/mes/transactionlist?sh=true` as lifecycle routes instead of mounting on generic `/mys/*` pages.
-- Done on branch for FT-014: parse active listings, multi-line sold orders, signed transactions/refunds/fees, quantities, IDs, dates, URLs, and completeness metadata with stable replay identities.
-- Done on branch for FT-014: sanitize buyer names, usernames, email, phone, address, recipient, contact, and message fields recursively before export.
-- Done on branch for FT-014: add `Sync This Page`, `Sync All eBay`, token connection, loopback POST, offline JSON download, busy-state cleanup, cancellation, and guided incomplete-page follow-up.
-- Passed release gate for FT-014: authenticated live count/route proof succeeded on all three eBay pages; version `0.7.44` is ready for branch review before merging to `main`.
-- Done: rename active script/UI/menu/debug prefix to FlipperAddon by ALOS.
-- Done: keep hosted raw update/download URL unchanged.
-- Done: add active page module resolver.
-- Done: make drawer render catalog/live/FlipTracker modules independently.
-- Done: start drawer minimized on every mount.
-- Done: gate debug UI/logging behind addon debug boolean.
-- Done: add per-auction max-plan storage and legacy migration.
-- Done: add assistant-row Add/Save Plan affordance.
-- Done: include the full auction-resale coordinator prompt in LLM brief.
-- Done: include enriched lot fields in LLM brief JSON.
-- Done: make legacy max-plan migration one-time so old global plans do not leak into future auctions.
-- Done: rebuild/remove the drawer when same-tab navigation changes modules or reaches an unsupported route.
-- Done: replace an old pre-FlipperAddon panel if the renamed script is installed alongside the old script during migration.
-- Done: add AuctionNinja route resolver and safe mount gates.
-- Done: add AuctionNinja sale catalog parser for terms, catalog count, and lot cards.
-- Done: add AuctionNinja drawer module with research-only controls.
-- Done: add AuctionNinja JSON and LLM brief export with sale terms ahead of lot data.
-- Done: add tests for AuctionNinja routes, blocked account pages, range parsing, sale context, lot parsing, and active-mode UI.
-- Done: prior Waterfox verified AuctionNinja sale catalog drawer, copied LLM brief for `106/106` lots, and confirmed page scrolling still works under the drawer.
-- Done: `v0.7.2` scraper-first cleanup removes bid watcher/max-plan UI, result previews, and bulky minimized launcher copy.
-- Done: `v0.7.3` fixes AuctionNinja exports opened mid-catalog so page 1 is backfilled and full sale counts can be copied.
-- Done: `v0.7.4` adds AuctionNinja `/followed-items` and `/items-won` account export modules with JSON and LLM briefs.
-- Done: `v0.7.5` tightens AuctionNinja account card detection after Waterfox showed dashboard tabs being copied as items.
-- Done: `v0.7.6` infers AuctionNinja account titles when product anchors are image-only/empty and avoids treating model years like `1950s` as countdown text.
-- Done: `v0.7.7` adds AuctionNinja `/bid-history` account export and auction-search/nearby-sales export for whole-auction triage.
-- Done: `v0.7.8` fixes AuctionNinja auction-search title selection when cards repeat sale links for image/count/title targets.
-- Done: `v0.7.9` adds explicit AuctionNinja account/search match metadata and a window-load remount retry for account dashboard reliability.
-- Done: `v0.7.10` gives FlipperAddon a unique panel ID so stale enabled assistant copies cannot remove the current UI.
-- Done: `v0.7.11` recovers AuctionNinja auction-search sale titles when the only sale-details anchor text is a count marker such as `(9)`.
-- Done: `v0.7.12` exposes the boot canary on `unsafeWindow` so Selenium/page-context checks can confirm `window.__HIBID_UNIFIED_ASSISTANT_ACTIVE__ === true`.
-- Done: `v0.7.16` adds AAR Auctions calendar/catalog scraper exports with persisted origin/radius research settings and distance-agent LLM briefs.
-- Done: `v0.7.17` adds GovDeals seller, new-listings, and asset exports with safe asset-detail enrichment and distance-aware LLM briefs.
-- Done: `v0.7.18` tightens GovDeals real-grid parsing: browser URL filters, compact card fields, visible result counts, and carousel trimming.
-- Done: `v0.7.32` adds HiBid `/account/currentbids?status=WINNING` and `/account/currentbids?status=OUTBID` as scraper-only account exports, including line-anchored account-card parsing for `Price Realized` / `Won` rows and a DOM-only current-bids path that does not get blocked by catalog expected-count guards, `/ Lot` unit text, or broad catalog state.
-- Done: `v0.7.34` adds GovDeals `/en/search?...` direct query routes, preserves category filters, and updates the GovDeals site switcher shortcut to Consumer Electronics near 07008 within 25 miles.
-- Done: `v0.7.35` constrains the compact drawer to the viewport and scrolls the body so copy buttons cannot fall below the visible screen on GovDeals/Waterfox.
-- Done: `v0.7.36` hooks GovDeals direct-search `.card-search` grids and reports visible-page exports honestly so page-one cards copy instead of being blocked as stale/incomplete.
-- Done: `v0.7.37` points the GovDeals hotlink to the requested location-search route: `/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search`.
-- Done: `v0.7.38` refreshes GovDeals ready-state counts after hydration so the compact drawer does not stay at an early `Visible 0` scan.
-- Done: `v0.7.39` makes AJ Willner catalog exports API-first through `/api/items/search` pages before the old virtual-scroll fallback, trims repeated sale terms from API descriptions, and downloads the export if the browser blocks the clipboard after a completed scrape.
-- Done: `v0.7.40` relabels the AJ Willner module chip from `virtual list` to `api-first` so the UI matches the fast scraper path.
-- Done: `v0.7.41` adds a shared mandatory mixed/group-lot component review rule to every Copy LLM brief and preserves descriptions, image URLs, and raw text on DOM fallback records where the page exposes them.
-- Done: `v0.7.47` bounds HiBid Apollo/DOM fallback work and uses the visible expected lot count to finish filtered pages such as the 40198 gaming-PC search.
-- Done: `v0.7.48` waits for late HiBid state hydration, prefers page-bound `eventItemIds` Apollo connections on unfiltered catalogs, and fails closed when only an ambiguous broad connection is available.
-- Done: `v0.7.49` adds AuctionNinja `/category/{slug}` product-card exports with ZIP/miles context and safe background View All loading.
-- Done: `v0.7.50` uses the category heading's result total, preserves location/sort filters across pagination, rejects unfiltered View All links, and loads every safe category page instead of stopping at eight fetches.
-- Done: `v0.7.51` adds explicit document-idle startup, version/canary diagnostics, a cross-site route smoke matrix, and compact export-guard reasons.
-- Done: `v0.7.52` removes the legacy `#hibid-bid-assistant-panel` on mount so old pre-FlipperAddon installs cannot cover or intercept the current panel.
-- Done: `v0.7.53` raises the bounded HiBid state-pagination window to three minutes so large catalogs such as `1,999` lots can finish all page fetches before the incomplete-export guard rejects a partial result.
-- Done: `v0.7.54` adds stale-panel/version recovery, same-mode SPA route remounting, teardown invalidation for in-flight exports, CSP-friendlier panel styling, and host matches for supported seller-domain variants.
-- Done: `v0.7.55` adds AAR single-item detail exports and prevents filtered HiBid Apollo over-counts from being copied by falling back to visible DOM tiles and rejecting any result above the visible filtered total.
-- Done: `v0.7.56` waits through HiBid Angular hydration before accepting a no-match state and ignores transient empty-state copy when a real lot grid or positive visible total is present.
-- Done: `v0.7.57` waits for HiBid URL/filter normalization to settle before catalog copy and forwards the click to the current remounted panel when the site changes the route during hydration.
-- Done: `v0.7.58` captures catalog copy intent at the document boundary before teardown, then resumes the requested action from the remounted panel after HiBid route normalization.
-- Done: `v0.7.42` recognizes state-prefixed HiBid account watchlist/current-bids routes such as `/newjersey/account/watchlist` and keeps them on the DOM-only account export path.
-- Done: `v0.7.43` makes the minimized launcher show the full `FlipperAddon by ALOS` name, widens it to 228px, and hides the close control until the drawer is expanded.
-- Verified in Waterfox on `v0.7.43`: representative HiBid, AJ Willner, eBay, Facebook, AuctionNinja, AAR, and GovDeals routes mount the expected module controls; the supplied `/livecatalog/752334/the-luxe-edit` target redirects to `/catalog/752334` because that auction is past, so it correctly presents catalog controls after the server redirect.
-- Done: `v0.7.19` tightens GovDeals seller pages: `Search Results` counts, sellerName context, and possessive-title compact card parsing.
-- Pending future: AuctionNinja item-detail enrichment fetches for descriptions when catalog cards are thin.
+Do not run a second DevTools controller against the same Chrome session when the connected integration already provides CDP; competing controllers can create connection contention.
 
-## Verification Checklist
+## Navigation Contract
 
-### eBay to Facebook active-listing refresh (`v0.7.79`)
+Primary auction rows:
 
-- eBay `/mys/active` uses JavaScript pagination buttons whose `data-url` returns page one when fetched directly. Full refresh must rewind the live DOM to page one, click the real Next control, and wait for the listing-ID signature to change.
-- Live evidence on 2026-07-25: `All (45)` rendered `25` records on page 1 and `20` on page 2; page 2 included item `336701097242`.
-- Current active snapshots remain keyed by eBay item ID. Repeating a sync updates `ebay-listing|<item_id>` instead of creating another listing record.
-- Cross-list photos must come only from Product JSON-LD, with OpenGraph as the single-image fallback. Page-wide recommendation and sponsored images are forbidden evidence.
-- `Refresh All FB Drafts` may refresh queued or stale drafted evidence, but it must preserve `Published` records and never publish a Facebook listing.
-- `Open + Fill Next` opens a fresh Marketplace create form when the current draft has content. The next queued record fills automatically and still requires manual review and publication.
+- HiBid: `https://hibid.com/lots`
+- AJ Willner: `https://bid.ajwillnerauctions.com/`
+- AuctionNinja: `https://www.auctionninja.com/auctions`
+- AAR Auctions: `https://aarauctions.com/auctions/`
+- GovDeals: `https://www.govdeals.com/en/search`
 
-### Cross-browser stale-install check (`v0.8.18`)
+`Selling Tools` children:
 
-- The screenshot-era comma message (`Blocked stale catalog export, current page did not match copied lots.`) belongs to an older installed script; it is not present in the current source. The current build uses the semicolon-free reason form and includes the exact guard reason.
-- Confirm the active userscript in each browser profile with all three signals: Tampermonkey script version `0.8.18`, `#flipperaddon-panel[data-flipperaddon-version="0.8.18"]`, and `window.__FLIPPERADDON_VERSION__ === '0.8.18'` when page access exposes the canary.
-- A current build remounts when an existing panel has an older version or a different page URL, and invalidates in-flight export work when that panel is torn down.
-- The first current-script mount removes the old `#hibid-bid-assistant-panel` used by pre-FlipperAddon builds. Seeing two dialogs means stale scripts are still enabled or the current build has not mounted yet.
-- Chrome, Firefox, and Waterfox have separate extension/profile state. A raw GitHub push does not update an already-installed copy until that browser's Tampermonkey update check or raw-URL install is completed.
-- Run the supported route smoke matrix before live copy tests: HiBid catalog/filter/live/account, AJ Willner, AuctionNinja sale/category/account/search, AAR calendar/catalog, GovDeals seller/search/new-listings, eBay, and Facebook.
-- For each active module, verify only its own copy controls are rendered and then perform one JSON or LLM copy. “Page opened” is navigation evidence only; it is not an export pass.
+- eBay Active: `https://www.ebay.com/sh/lst/active`
+- eBay Bulk Sell: Active-page handoff to eBay's current `Edit all listings` target
+- eBay Ended: `https://www.ebay.com/sh/lst/ended`
+- eBay Sold: `https://www.ebay.com/mys/sold`
+- eBay Transactions: `https://www.ebay.com/mes/transactionlist?sh=true`
+- Facebook Selling: `https://www.facebook.com/marketplace/you/selling`
+- Facebook Create Listing: `https://www.facebook.com/marketplace/create/item`
 
-### Export guard diagnostics (`v0.7.69`)
+Use same-tab navigation, disable it while busy, and close menus on selection, Escape, outside click, or minimize. Do not store temporary searches, personal auction IDs, or eBay workspace IDs.
 
-- Catalog copy now maps guard reasons into a compact status message. `catalog-incomplete` means the scraper stopped before proving coverage; `dom-bottom-settled` is the explicit exception for a virtualized HiBid grid that reached the bottom and completed settle cycles even when its header total is stale. `catalog-source-mismatch` means another site/source was mixed into the result; filter-specific reasons identify stale Apollo/DOM data.
-- Debug remains opt-in. When enabled, the ring buffer records version, boot route, current route, source, count, expected total, and rejection reason. When disabled, the user still sees a compact reason toast without a verbose result console.
-- Audit evidence: the current source-level matrix passes all supported HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay, and Facebook route families. The real Waterfox/Tampermonkey profile and an isolated Mozilla Firefox/Tampermonkey profile both showed one enabled `FlipperAddon by ALOS v0.7.66`; the exact AAR item `8573/221770` copied one normalized item in both, the HiBid `q=lebron` page copied `0` with its no-match message, the gaming URL copied `0` because its live DOM had no matching lot cards, and the known non-empty HiBid page copied `8/8`. The full Firefox route matrix mounted every supported module; eBay was sign-in/security gated, so no export was claimed there. On the 2026-07-21 Chrome audit, the browser bridge connected and every explicit route loaded, but the selected Chrome profile had no active Tampermonkey/FlipperAddon install: `#flipperaddon-panel` and the page canary were absent on every route. This is an install-state gap, not a scraper pass; do not claim Chrome runtime verification until Tampermonkey is installed in that Chrome profile and the hosted `v0.7.66` script is added.
-- `v0.7.59` installs a document-level HiBid catalog copy-intent capture hook that survives panel teardown. This handles the early-click window where HiBid normalizes the URL and inserts the replacement panel before its local listeners bind.
-- `v0.7.60` keeps that intent pending through multiple HiBid URL-normalization remounts and only resumes after the current panel and route have remained stable.
-- `v0.7.61` mirrors the pending intent to the page window and tab `sessionStorage`, and listens through both document wrappers. This is the recovery path for Firefox/Waterfox sandbox boundaries where panel-local event state may not survive a redraw.
-- `v0.7.62` makes the document-level capture the active catalog-copy dispatcher instead of relying on a panel-local button listener. The shared pending state remains the fallback across remounts.
-- `v0.7.63` adds a panel-aware resume queue. It waits for the handler registered by the current panel, dispatches once per panel, and retries after a HiBid redraw without duplicating the same panel action.
-- `v0.7.64` accepts same-path HiBid query normalization when checking panel readiness and export validity, preventing a stale URL marker from blocking a current filtered catalog copy.
-- `v0.7.65` waits for active filtered headers to settle before choosing a data source and skips broad document-text fallback when real filtered lot tiles are present. The audit fixture for the New Jersey page showed 8 unique lot URLs; the export must remain 8, not the 11-record contaminated merge.
-- `v0.7.66` treats filtered no-match copy as authoritative after hydration even when a stale broad total remains in the page shell, and uses a deduplicated visible-card count to reconcile stale low filtered headers without widening the export.
-- `v0.7.68` adds a canonical HiBid lot-card pass before broad DOM discovery. On the reproduced New Jersey page, the canonical card set was 16 while broad lot-number seeds produced 17; only the canonical set is exported when it exists. Broad discovery remains the fallback for pages without canonical card containers.
-- `v0.7.70` adds the eBay `/bulksell` module. It reads the live `table.bg-grid` rows without selecting, editing, submitting, or deleting listings, and exposes JSON/LLM copy actions plus the existing HTML/Download export.
-- `v0.8.01` fixes HiBid catalog copy runs that were left showing `Reading HiBid page data...` after the site normalized or redrew the same catalog route. The copy handler now marks the panel as managed during the asynchronous scrape, so the mutation observer preserves that panel instead of invalidating the in-flight result; a real pathname change still discards the result. The Windows test command now expands the test files correctly under `npm test`.
-- `v0.8.02` fixes authenticated HiBid watchlist/current-bid exports being mistaken for an empty catalog. HiBid account cards use `.bid-status-border` and can coexist with a hidden `No matches found` template; the account route now wins that guard, discovers those cards, and prefers their dedicated title node when flattened text would otherwise append status/bid controls to the title. The route matrix covers bare/state-prefixed, `www`, seller-subdomain, catalog, livecatalog, lot, watchlist, and winning/outbid current-bids URLs.
-- `v0.8.03` extends the shared resale brief with mandatory visible eBay Sold/Completed proof, exact/close comp fields, fail-closed UNVERIFIED handling, separate current-bid versus recommended-max profit definitions, decision-column ordering, profit sorting, and workbook visibility/formatting rules. The rough x1.25 math is explicitly screening-only; final workbook calculations use the configured premium and tax rates.
-- `v0.8.04` adds a `#flipperdebug` URL-hash bootstrap for profiles where Tampermonkey does not display `GM_registerMenuCommand` entries. With that hash active, the compact drawer shows `Copy Debug` and `Clear Debug`; removing the hash and reloading returns to the normal debug-off UI. Menu registration also supports the modern `GM.registerMenuCommand` API when available.
-- `v0.8.05` makes `Copy Debug` use browser clipboard and textarea fallbacks before the userscript bridge, always creates a diagnostic payload, and downloads a `.txt` log automatically when clipboard writes fail.
-- `v0.8.06` bounds browser clipboard waits, adds an explicit `Download Debug` action, and reveals a selected in-panel textarea when copy/download cannot complete.
-- `v0.8.07` records document-level debug button clicks, payload size, clipboard API availability, each attempted method, timeout/rejection, and the final export result.
-- `v0.8.08` adds the `GM_download` grant and requests the debug file synchronously at click time, before asynchronous clipboard work can lose browser user activation.
-- `v0.8.09` adds the opt-in structured event recorder and 60-second heartbeat so a debug export can prove the initiating click, panel/remount lifecycle, scrape state, clipboard/download path, errors, and page liveness without logging raw form values.
-- `v0.8.10` repairs debug export binding with early delegated controls, binding diagnostics, initialization error capture, and guaranteed visible-text fallback after each debug action.
-- `v0.8.11` rejects broad HiBid Apollo data when it exceeds the visible catalog total and adds paginated same-origin DOM extraction for catalogs that stall in the virtual grid.
-- `v0.8.18` replaces public HiBid catalog/live enumeration with exact API identities, fixes the catalog-copy resume scheduler's runtime scope, and counts filtered-page visibility by unique canonical `app-lot-tile` IDs so nested card descendants cannot double the page total. Auction catalogs page through same-origin GraphQL; global/category/filter pages enumerate through HiBid's search API and hydrate only those IDs through GraphQL. Coverage compares the exact API total, unique enumerated IDs, unique hydrated IDs, failed pages/batches, total drift, and route fingerprint. Normal copy stays blocked after exhausted retries; the only fallback is an explicit audited verified partial. Personalized account routes retain their dedicated DOM scrapers. Every hosted push must be followed by an update/reinstall in each browser profile being verified.
+## Debug Contract
 
-### 2026-08-17 HiBid API browser evidence (`v0.8.18`)
+Debug remains opt-in through the Tampermonkey command or `#flipperdebug`.
 
-- Chrome loaded the exact published source in the live page for button-level verification. Copy JSON completed with equal API, array, and unique-ID counts: auction `769123` = `245/245`, auction `765261` = `618/618`, and auction `767103` = `287/287`.
-- The exact `gaming pc` filtered URL copied `6/6` IDs, matching the six unique canonical visible `app-lot-tile` IDs: `317786083`, `315884639`, `317878940`, `317429452`, `317135446`, and `317135448`.
-- Rich-field spot checks preserved categories, image arrays, and available descriptions. Description coverage observed in these current API responses was `73/245`, `229/618`, and `51/287`; an empty description means HiBid returned no description for that lot, not that the scraper dropped a populated field.
-- The supplied `hibid.com.har` contains only one Google remarketing request and is not HiBid API evidence.
-- Installed-profile boundary observed after release: Chrome and Waterfox Tampermonkey were still storing `v0.8.15`; Waterfox visibly showed its old panel initialization error. The hosted file was `v0.8.18`, but installed verification remains incomplete until each browser profile updates/reinstalls the raw userscript and then repeats a real Copy action. Never report a locally loaded page build as an installed Tampermonkey update.
+Record:
 
-### Full audit matrix (`v0.7.69`)
+- script version, site/page kind, boot/current URL, and route fingerprint;
+- selected endpoint/proof tier and sanitized variables;
+- enumeration, page, hydration, retry, cancellation, and settle outcomes;
+- expected/copied/unique counts and missing/unexpected/duplicate IDs;
+- validation rejection, partial readiness, clipboard/download result, and caught errors.
 
-- Route coverage verified in tests: HiBid catalog/search/live/account, AJ Willner catalog, AuctionNinja sale/category/account/search, AAR calendar/catalog/item, GovDeals seller/search/new-listings/asset, eBay active listings, and Facebook Marketplace selling.
-- Exact AAR target: `https://aarauctions.com/servlet/Search.do?auctionId=8573&itemId=221770` mounted `aar-item-detail` and copied `1` item with the HPE/Aruba switch title.
-- Exact HiBid filtered recovery target: normalized to the active New Jersey route and copied `8/8` visible lot records; broad text contamination was excluded.
-- Browser boundary: Waterfox/Tampermonkey is the installed live profile. Firefox requires an installed Firefox/Waterfox executable plus its own Tampermonkey profile. Chrome also requires Tampermonkey in the selected Chrome profile; the bridge alone is insufficient. Never mark a browser pass from navigation alone; require the panel version and a completed page-appropriate copy action.
-- Waterfox proof for `v0.8.01`: the hosted raw update page reported hosted `v0.8.01` over installed `v0.8.00`, the Tampermonkey update was applied, the panel remounted minimized as `FlipperAddon v0.8.01`, and the open HiBid catalog `761974` copied `39/39` lots as JSON.
+Never record protected fields listed in the CDP/HAR policy. Keep diagnostics bounded.
 
-- `node --check .\hibid-bid-assistant.user.js`
-- `node --check .\hibid-lot-catalog-scraper.user.js`
-- `npm test`
-- FT-014 authenticated eBay lifecycle checks:
-  - `/mys/active`: parsed listing count matches the visible page count; custom label, price, quantity, traffic, URL, and listing ID are preserved.
-  - `/mys/sold`: every order line is unique by order-line identity; multi-item orders stay separate; no buyer PII exists in the envelope.
-  - `/mes/transactionlist?sh=true`: signed fees/refunds/net values and stable transaction IDs parse; incomplete identities are review-only.
-  - `/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS&source=filterbar&action=search`: parsed listing count matches visible rows; IDs are unique; ended state is non-financial; sold-without-order remains review-only.
-  - `Update Tracker`: current ended evidence reaches the loopback bridge or deterministic download fallback without buyer PII.
-  - `Sync All eBay`: the local bridge accepts complete pages, rejected/background-blocked pages trigger guided follow-up/download, and the drawer always leaves busy state.
-- Waterfox manual checks:
-  - Confirm only the current hosted FlipperAddon script is enabled.
-  - Open `https://hibid.com/newjersey/lots/40196/computers-and-electronics`.
-  - Open the exact filtered recovery target `https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&zip=Carteret,%20NJ%2007008,%20USA&miles=-1&countryname=United%20States&shippingoffered=true&status=OPEN&status=UPCOMING&status=CLOSING_TODAY&s=TIME_LEFT` and confirm Copy JSON/LLM exits busy and returns the API's current six event-item IDs with no extras.
-  - Open `https://hibid.com/livecatalog/752334/the-luxe-edit`.
-  - Open eBay/Facebook active selling pages.
-  - Open `https://www.auctionninja.com/clearinghouseestatesales/sales/details/a-glamorous-upper-west-side-brownstone-with-interiors-by-jonathan-adler-holly-hunt-lorin-marsh-restoration-hardware-arteriors-lighting-and-so-much-more-new-york-ny-referred-shipping-and-delivery-available--17395.html?an=20260709202533`.
-  - Open `https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo`.
-  - Open `https://www.auctionninja.com/items-won?an=hwfmhr2h2qi`.
-  - Open `https://www.auctionninja.com/bid-history?an=sp2i8ac5q0n`.
-  - Open `https://www.auctionninja.com/nj/carteret/07008?miles=50&an=`.
-  - Open `https://aarauctions.com/auctions/`.
-  - Open `https://aarauctions.com/servlet/Search.do?auctionId=8563`.
-  - Open `https://www.govdeals.com/en/rutgers`.
-  - Open `https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25`.
-  - Capture full-window screenshots showing the page and bottom-right launcher/drawer.
-  - Confirm each page exposes only its active module.
-  - Confirm scrolling, filters, lot links, watch buttons, and bid buttons still work when not actively scraping.
-  - For AuctionNinja, confirm sale, followed, and won pages never expose or click bid/checkout/payment/invoice/account mutation actions.
-  - For AAR Auctions, confirm the drawer shows only calendar/catalog copy controls, research settings persist, and bid/register/payment routes do not mount.
-- For GovDeals, confirm seller/new-listings/asset pages expose only copy controls and do not click bid, offer, cart, checkout, payment, login, registration, or account controls.
+## Verification Gates
 
-## Known Pitfalls
+For every site:
 
-- `@match https://hibid.com/*` injects broadly, so `resolveAssistantMode()` and `shouldInitOnLocation()` are the real gates.
-- Waterfox/Tampermonkey Content Script API mode affects injection timing; keep mounting idempotent and callable from menu.
-- Seller subdomains may lack `#hibid-state`; fallback DOM/network-observed behavior matters there.
-- Closed catalog price realized text is auction result data, not an eBay sold comp.
-- AuctionNinja catalogs can change while closing; `1-40 of N` may drift. Treat drift as a debug-visible stop reason, not a silent success.
-- AAR calendar cards are WordPress/Divi HTML, while catalogs are servlet-rendered tables/text; keep route-specific parsers instead of trying to reuse HiBid or AuctionNinja selectors.
-- GovDeals can block simple HTTP clients; verify from the real browser context and prefer in-page DOM/network observation over raw fetch tooling.
-- Do not treat "opened the page" as verification. Verification means observed UI plus route/debug/count evidence.
+1. Capture Chrome CDP request/response evidence or prove deterministic DOM/server pagination.
+2. Commit sanitized fixtures only.
+3. Test zero results, duplicate IDs, missing hydration, short pages, total drift, filter/route changes, cancellation, stale state, contamination, and audited partials.
+4. Run:
 
-## 2026-07-25 eBay to Facebook Draft Hardening (v0.7.84)
+   ```powershell
+   node --check .\hibid-bid-assistant.user.js
+   node --check .\hibid-lot-catalog-scraper.user.js
+   npm test
+   git diff --check
+   ```
 
-- Canonical control surface: `https://www.ebay.com/sh/lst/active`. Seller Hub supplies one stable row per active listing; the exact `/itm/<id>` page supplies the authoritative gallery, condition, category breadcrumb, and seller description.
-- `Create Facebook Draft` is the primary action. It opens Facebook synchronously, reads the selected eBay row plus item detail, queues one idempotent record, and starts autofill without a second confirmation. It never publishes.
-- Full-gallery contract: eBay's visible `Picture X of N` count is preserved as `image_expected_count`. A draft is blocked if fewer than N authoritative eBay-hosted images were recovered. The loopback bridge enforces the same rule so stale or malformed payloads cannot bypass it.
-- Description contract: executable markup, zero-width characters, eBay boilerplate, and compressed specification labels are removed or reformatted before queueing.
-- Category/condition contract: source evidence is required before Facebook opens. The bridge maps conservative Facebook leaf values and leaves warnings reviewable.
-- UI contract: the active page exposes only `Create Facebook Draft` and `Update Tracker` as primary actions; diagnostics and bulk utilities live under `Advanced sync tools`.
-- Security contract: only known eBay image hosts are accepted, buyer PII fields are rejected recursively, duplicate item identities update instead of append, and no automation may click Publish.
-- Verification evidence: the full add-on suite passes `159/159`; bridge tests pass `23/23`; a live process probe confirms duplicate bridge instances cannot bind. A non-publishing Waterfox draft remains the final runtime release gate.
+5. In Chrome, run a real copy, parse the payload, compare authoritative total/item count/unique-ID count, inspect first/middle/final records, and capture full-window evidence.
+6. In Waterfox, update the installed Tampermonkey script, confirm the panel's exact version, run the same route-appropriate copy, inspect the payload, test debug download, and confirm normal page interaction remains usable.
 
-## 2026-07-25 Live eBay Item Evidence Drift (v0.7.85)
+Opening a page proves navigation only. Source-level tests prove code behavior only. Neither substitutes for an installed Waterfox copy/export check.
 
-- Authenticated Waterfox verification confirmed `https://www.ebay.com/sh/lst/active` as the canonical listing selector and exact `/itm/<id>` pages as the enrichment source.
-- Current eBay item HTML may emit unquoted `type=application/ld+json`, including bare Product script tags where `>` immediately follows the MIME type. The JSON-LD scanner now uses a non-consuming delimiter check so both attributed and bare scripts parse.
-- Current condition evidence may appear as `displayLabel=Condition` / `displayValue=...` JSON or an `aria-label` ending in `About this item condition`; both are accepted as source evidence.
-- A regression fixture covers the live Emporio Armani item shape and requires Product price, breadcrumb category, and `Pre-owned - Excellent` condition to survive extraction.
-- Verification evidence: focused Facebook cross-list tests pass `29/29`; the complete add-on suite passes `160/160`. A non-publishing Waterfox draft remains the final runtime release gate.
+## Mandatory Release Rule
 
-## 2026-07-25 Cross-list Data Hygiene (v0.7.86)
+Every version change uses this exact sequence:
 
-- Blank Seller Hub custom-label cells can expose partial table markup when eBay omits the editable value. Custom labels now pass a strict small-text sanitizer before entering lifecycle or cross-list records.
-- Accidental adjacent duplicate words in seller descriptions are collapsed during Facebook cleanup while preserving meaningful short repetitions.
+1. Finish the gate and required checks.
+2. Commit the intended release files.
+3. Push the commit to the hosted branch.
+4. Update or reinstall the raw userscript in the Waterfox profile under test.
+5. Verify the installed panel version and complete a real copy/export.
+6. Record only the evidence actually observed.
+
+A push does not update an installed Tampermonkey copy. Do not mark a release, child goal, or browser gate complete before the installed Waterfox instance is updated and verified. Ship one patch release per completed site gate and update this brain after each gate.
+
+## Known Unverified Areas
+
+- HiBid has strong API evidence, but every new hosted version still requires installed Waterfox acceptance.
+- AJ Willner's `/api/items/search` enumeration is observed; exact hydration/coverage must pass its own gate.
+- AuctionNinja and AAR currently rely on deterministic server-rendered pagination.
+- GovDeals `maestro.lqdt1.com/search/list` is observed, but safe replay with exact active filters is not yet accepted; retain the fail-closed DOM fallback.
+- eBay deterministic Seller Hub pagination needs route-specific completeness and PII tests for each lifecycle page.
+- Facebook needs a canonical-ID settled-bottom implementation; initial visible DOM is not full coverage.
+- Do not convert any of these statements into a browser-pass claim without the required evidence.

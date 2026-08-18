@@ -588,6 +588,68 @@ test('assistant resolves AJ Willner auction pages as source-aware catalog export
   assert.doesNotMatch(html, />HiBid catalog</);
 });
 
+test('assistant route and network manifests cover all seven supported sites', () => {
+  const core = loadCore();
+  const expectedSites = ['hibid', 'ajwillner', 'auctionninja', 'aar', 'govdeals', 'ebay', 'facebook'];
+  const routes = plain(core.getRouteManifest());
+  const endpoints = plain(core.getNetworkEndpointManifest());
+
+  assert.deepEqual(routes.map(entry => entry.site), expectedSites);
+  assert.equal(new Set(routes.map(entry => entry.site)).size, expectedSites.length);
+  assert.deepEqual(Object.keys(endpoints), expectedSites);
+
+  const routeCases = [
+    ['hibid', 'https://hibid.com/catalog/765226/mid-summer-deals', 'catalog'],
+    ['ajwillner', 'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active', 'catalog'],
+    ['auctionninja', 'https://www.auctionninja.com/category/electronics?miles=30&zip=07008', 'category-search'],
+    ['aar', 'https://aarauctions.com/servlet/Search.do?auctionId=8573', 'aar-auction-catalog'],
+    ['govdeals', 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50', 'govdeals-new-listings'],
+    ['ebay', 'https://www.ebay.com/sh/lst/active', 'fliptracker-ebay-active'],
+    ['facebook', 'https://www.facebook.com/marketplace/you/selling', 'fliptracker-facebook'],
+  ];
+
+  routeCases.forEach(([site, href, kind]) => {
+    const manifestEntry = routes.find(entry => entry.site === site);
+    const resolved = core.resolveSiteRoute(new URL(href));
+    assert.ok(manifestEntry, `missing ${site} route manifest`);
+    assert.equal(resolved.supported, true, href);
+    assert.equal(resolved.source, site, href);
+    assert.equal(resolved.kind, kind, href);
+    assert.equal(manifestEntry.routeKinds.includes(kind), true, `${site} manifest omits ${kind}`);
+    assert.equal(typeof manifestEntry.proofPolicy, 'string', `${site} proof policy missing`);
+    assert.ok(manifestEntry.proofPolicy.length > 0, `${site} proof policy empty`);
+  });
+
+  const expectedEnumerators = {
+    hibid: ['POST', 'https://hibid-api.io/sr/main/v1/search/lot'],
+    ajwillner: ['GET', 'https://bid.ajwillnerauctions.com/api/items/search'],
+    auctionninja: ['GET', 'document pagination'],
+    aar: ['GET', 'https://aarauctions.com/servlet/Search.do'],
+    govdeals: ['POST', 'https://maestro.lqdt1.com/search/list'],
+    ebay: ['GET', 'Seller Hub document pagination'],
+    facebook: ['DOM', 'Marketplace selling virtual list'],
+  };
+  Object.entries(expectedEnumerators).forEach(([site, [method, url]]) => {
+    assert.equal(endpoints[site].discovery, 'chrome-cdp', `${site} discovery authority`);
+    assert.equal(endpoints[site].enumerate.method, method, `${site} enumeration method`);
+    assert.equal(endpoints[site].enumerate.url, url, `${site} enumeration endpoint`);
+    assert.ok(Array.isArray(endpoints[site].enumerate.variables), `${site} variables must be sanitized metadata`);
+  });
+
+  const serialized = JSON.stringify(endpoints);
+  assert.doesNotMatch(serialized, /workspaceId|sessionId\"\s*:|authorization|cookie|bearer|164037|07008/i);
+});
+
+test('sanitized network evidence is committed without credentials or account data', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../network-endpoints.sanitized.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.release, '0.8.19');
+  assert.deepEqual(Object.keys(manifest.sites).sort(), ['aar', 'ajwillner', 'auctionninja', 'ebay', 'facebook', 'govdeals', 'hibid']);
+  assert.equal(manifest.policy.rawCapturesCommitted, false);
+  const serialized = JSON.stringify(manifest);
+  assert.doesNotMatch(serialized, /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token)/i);
+  assert.equal(manifest.sites.hibid.sanitizedObservations.every(row => row.expected === row.collected && row.collected === row.unique), true);
+});
+
 test('assistant parses HiBid showing totals and safe next-page controls', () => {
   const core = loadCore();
   const next = makeElement({ text: 'Next >', attrs: { href: '?apage=2' } });
@@ -1661,6 +1723,95 @@ test('assistant blocks AuctionNinja exports from the wrong active page kind', ()
   });
 });
 
+test('assistant proof-tier coverage rejects every non-exact collection shape', () => {
+  const core = loadCore();
+  const route = {
+    supported: true,
+    kind: 'catalog',
+    source: 'ajwillner',
+    host: 'bid.ajwillnerauctions.com',
+    auctionId: '164037',
+  };
+  const loc = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');
+  const fingerprint = core.genericRouteFingerprint(route, loc);
+  const result = (items, expectedTotal, extra = {}) => ({
+    source: 'ajwillner-api',
+    items,
+    expectedTotal,
+    routeFingerprint: fingerprint,
+    coverage: {
+      proofTier: 'api-exact',
+      routeFingerprint: fingerprint,
+      enumeratedIds: extra.enumeratedIds || items.map(item => item.id),
+      ...extra.coverage,
+    },
+    ...extra.result,
+  });
+  const coverage = value => plain(core.buildProofTierCoverage(value, 'catalog', route, {
+    currentFingerprint: fingerprint,
+  }));
+
+  const exact = coverage(result([{ id: 'a' }, { id: 'b' }], 2));
+  assert.equal(exact.proofTier, 'api-exact');
+  assert.equal(exact.complete, true);
+  assert.equal(exact.reason, 'complete');
+  assert.equal(exact.expectedTotal, 2);
+  assert.equal(exact.collectedCount, 2);
+  assert.equal(exact.uniqueIdentityCount, 2);
+
+  const undercount = coverage(result([{ id: 'a' }], 2, { enumeratedIds: ['a', 'b'] }));
+  assert.equal(undercount.complete, false);
+  assert.equal(undercount.reason, 'count-mismatch');
+  assert.deepEqual(undercount.missingIds, ['b']);
+
+  const overcount = coverage(result([{ id: 'a' }, { id: 'b' }, { id: 'c' }], 2, { enumeratedIds: ['a', 'b'] }));
+  assert.equal(overcount.complete, false);
+  assert.equal(overcount.reason, 'count-mismatch');
+  assert.deepEqual(overcount.unexpectedIds, ['c']);
+
+  const duplicates = coverage(result([{ id: 'a' }, { id: 'a' }], 2, { enumeratedIds: ['a'] }));
+  assert.equal(duplicates.complete, false);
+  assert.equal(duplicates.reason, 'duplicate-identities');
+  assert.deepEqual(duplicates.duplicateIds, ['a']);
+
+  const zero = coverage(result([], 0, { enumeratedIds: [] }));
+  assert.equal(zero.complete, true);
+  assert.equal(zero.expectedTotal, 0);
+  assert.equal(zero.collectedCount, 0);
+  assert.equal(zero.uniqueIdentityCount, 0);
+
+  const drifted = plain(core.buildProofTierCoverage(result([{ id: 'a' }], 1), 'catalog', route, {
+    currentFingerprint: `${fingerprint}|changed-filter`,
+  }));
+  assert.equal(drifted.complete, false);
+  assert.equal(drifted.reason, 'route-fingerprint-changed');
+  assert.equal(drifted.routeMatches, false);
+
+  const unproven = plain(core.buildProofTierCoverage({
+    source: 'facebook-dom',
+    items: [{ listingId: '1234567890' }],
+  }, 'fliptracker', {
+    supported: true,
+    kind: 'fliptracker-facebook',
+    source: 'facebook',
+  }));
+  assert.equal(unproven.proofTier, 'unproven');
+  assert.equal(unproven.complete, false);
+  assert.match(unproven.reason, /expected-total-unknown|proof-unavailable/);
+
+  const settledDom = plain(core.buildProofTierCoverage({
+    source: 'facebook-dom',
+    items: [{ listingId: '1234567890' }],
+    coverage: { proofTier: 'dom-bottom-settled', settledBottom: true },
+  }, 'fliptracker', {
+    supported: true,
+    kind: 'fliptracker-facebook',
+    source: 'facebook',
+  }));
+  assert.equal(settledDom.proofTier, 'dom-bottom-settled');
+  assert.equal(settledDom.complete, true);
+});
+
 test('assistant supports HiBid winning and outbid current-bids exports only', () => {
   const core = loadCore();
   const bareWatchlist = core.resolveAssistantMode(new URL('https://hibid.com/account/watchlist'));
@@ -2337,27 +2488,52 @@ test('assistant is branded as FlipperAddon by ALOS with FlipperAddon menu comman
   ]);
 });
 
-test('assistant site shortcuts expose fixed auction links only', () => {
+test('assistant site shortcuts preserve five auction rows and add seven nested selling tools', () => {
   const core = loadCore();
   const shortcuts = core.getSiteShortcuts(new URL('https://www.govdeals.com/en/rutgers'));
+  const auctionRows = shortcuts.filter(item => item.id !== 'selling-tools');
+  const sellingTools = shortcuts.find(item => item.id === 'selling-tools');
 
-  assert.deepEqual(plain(shortcuts.map(item => item.id)), [
+  assert.deepEqual(plain(auctionRows.map(item => item.id)), [
     'hibid',
     'ajwillner',
     'auctionninja',
     'aar',
     'govdeals',
   ]);
-  assert.deepEqual(plain(shortcuts.map(item => item.url)), [
+  assert.deepEqual(plain(auctionRows.map(item => item.url)), [
     'https://hibid.com/lots',
-    'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active',
-    'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=',
+    'https://bid.ajwillnerauctions.com/',
+    'https://www.auctionninja.com/auctions',
     'https://aarauctions.com/auctions/',
-    'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search',
+    'https://www.govdeals.com/en/search',
   ]);
-  assert.equal(shortcuts.find(item => item.id === 'govdeals').current, true);
+  assert.equal(auctionRows.length, 5);
+  assert.equal(auctionRows.find(item => item.id === 'govdeals').current, true);
   assert.equal(shortcuts.filter(item => item.current).length, 1);
-  assert.equal(shortcuts.some(item => /ebay|facebook|marketplace/i.test(`${item.id} ${item.label} ${item.site} ${item.url}`)), false);
+  assert.equal(auctionRows.some(item => /ebay|facebook|marketplace/i.test(`${item.id} ${item.label} ${item.site} ${item.url}`)), false);
+  assert.ok(sellingTools, 'missing Selling Tools row');
+  assert.equal(sellingTools.url, '');
+  assert.deepEqual(plain(sellingTools.children.map(item => item.id)), [
+    'ebay-active',
+    'ebay-bulk',
+    'ebay-ended',
+    'ebay-sold',
+    'ebay-transactions',
+    'facebook-selling',
+    'facebook-create',
+  ]);
+  assert.deepEqual(plain(sellingTools.children.map(item => item.url)), [
+    'https://www.ebay.com/sh/lst/active',
+    'https://www.ebay.com/sh/lst/active#flipperaddon-bulk-edit',
+    'https://www.ebay.com/sh/lst/ended',
+    'https://www.ebay.com/mys/sold',
+    'https://www.ebay.com/mes/transactionlist?sh=true',
+    'https://www.facebook.com/marketplace/you/selling',
+    'https://www.facebook.com/marketplace/create/item',
+  ]);
+  assert.deepEqual(plain(core.getSellingToolShortcuts().map(item => item.id)), plain(sellingTools.children.map(item => item.id)));
+  assert.doesNotMatch(JSON.stringify(shortcuts), /workspaceId|auctionId=|zipcode=|[?&]an=/i);
 
   const ajWillner = core.getSiteShortcuts(new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active'));
   assert.equal(ajWillner.find(item => item.id === 'ajwillner').current, true);
@@ -2380,12 +2556,17 @@ test('assistant panel renders compact site switcher with active and busy states'
 
   assert.match(govDealsHtml, /id="flipperaddon-site-switcher-toggle"/);
   assert.match(govDealsHtml, /id="flipperaddon-site-switcher-menu"/);
+  assert.match(govDealsHtml, /id="flipperaddon-selling-tools-toggle"/);
+  assert.match(govDealsHtml, /id="flipperaddon-selling-tools-menu"/);
   assert.match(govDealsHtml, /data-site-shortcut-url="https:\/\/aarauctions\.com\/auctions\/"/);
   assert.match(govDealsHtml, /data-site-shortcut-id="govdeals"[^>]*aria-current="page"/);
-  assert.doesNotMatch(govDealsHtml, /ebay\.com|facebook\.com\/marketplace/i);
+  assert.equal((govDealsHtml.match(/class="hiba-shortcut hiba-selling-shortcut/g) || []).length, 7);
+  assert.match(govDealsHtml, /data-site-shortcut-id="ebay-active"/);
+  assert.match(govDealsHtml, /data-site-shortcut-id="facebook-create"/);
 
   const disabledShortcutCount = (busyHtml.match(/data-site-shortcut-url="[^"]+"[^>]*disabled/g) || []).length;
-  assert.equal(disabledShortcutCount, 5);
+  assert.equal(disabledShortcutCount, 12);
+  assert.match(busyHtml, /id="flipperaddon-selling-tools-toggle"[^>]*disabled/);
   assert.match(busyHtml, /id="hibid-scraper-stop"/);
 });
 
@@ -2433,6 +2614,75 @@ test('assistant mode resolver activates only the current page module', () => {
     source: 'facebook',
     host: 'www.facebook.com',
     reason: 'Facebook Marketplace listing export route',
+  });
+});
+
+test('assistant classifies both eBay bulk routes outside lifecycle export', () => {
+  const core = loadCore();
+  const routes = [
+    new URL('https://www.ebay.com/bulksell?ru=https%3A%2F%2Fwww.ebay.com%2Fsh%2Flst%2Factive'),
+    new URL('https://www.ebay.com/sh/lst/active/bulkedit?offset=0&limit=2000&sort=listingSKU'),
+  ];
+
+  routes.forEach(loc => {
+    const resolved = core.resolveAssistantMode(loc);
+    assert.equal(resolved.supported, true, loc.href);
+    assert.equal(resolved.mode, 'fliptracker', loc.href);
+    assert.equal(resolved.route.kind, 'fliptracker-ebay-bulk', loc.href);
+    assert.equal(core.ebayLifecyclePageKind(resolved.route), '', loc.href);
+    const html = core.buildPanelHtml({ mode: resolved.mode, route: resolved.route, debugEnabled: false });
+    assert.match(html, /id="ebay-bulk-sell-export-mode"/, loc.href);
+    assert.match(html, /id="ebay-bulk-copy-json"/, loc.href);
+    assert.doesNotMatch(html, /id="fliptracker-lifecycle-sync-page"/, loc.href);
+  });
+});
+
+test('assistant blocks incomplete eBay lifecycle envelopes even when records exist', () => {
+  const core = loadCore();
+  const incomplete = {
+    source: 'eBay',
+    page_kind: 'active',
+    records: [{ record_type: 'active_listing', item_id: '123456789012', title: 'Incomplete listing' }],
+    completeness: {
+      complete: false,
+      expected_count: 59,
+      parsed_count: 1,
+      reason: 'More eBay result pages remain.',
+    },
+  };
+  const complete = {
+    ...incomplete,
+    completeness: { complete: true, expected_count: 1, parsed_count: 1, reason: 'complete' },
+  };
+  const completeZero = {
+    source: 'eBay',
+    page_kind: 'active',
+    records: [],
+    completeness: { complete: true, expected_count: 0, parsed_count: 0, reason: 'complete-empty' },
+  };
+
+  assert.equal(core.canExportEbayLifecycleEnvelope(incomplete), false);
+  assert.equal(core.canExportEbayLifecycleEnvelope(complete), true);
+  assert.equal(core.canExportEbayLifecycleEnvelope(completeZero), true);
+});
+
+test('assistant Facebook panels are scraper-only on every supported Facebook route', () => {
+  const core = loadCore();
+  const routes = [
+    'https://www.facebook.com/marketplace/you/selling',
+    'https://www.facebook.com/marketplace/create/item',
+    'https://www.facebook.com/marketplace/create/',
+    'https://www.facebook.com/marketplace/item/123456789012345/',
+  ];
+
+  routes.forEach(href => {
+    const resolved = core.resolveAssistantMode(new URL(href));
+    assert.equal(resolved.supported, true, href);
+    assert.equal(resolved.mode, 'fliptracker', href);
+    const html = core.buildPanelHtml({ mode: resolved.mode, route: resolved.route, debugEnabled: false });
+    assert.doesNotMatch(html, /id="fliptracker-crosslist-(?:fill|confirm-published|queue|queue-all)"/, href);
+    assert.doesNotMatch(html, />\s*(?:Open \+ Fill Next|Confirm Published|Save Draft|Publish)\s*</i, href);
+    assert.doesNotMatch(html, /id="fliptracker-lifecycle-connect"/, href);
   });
 });
 
@@ -3165,6 +3415,8 @@ Trailer with 6 Current Designs Crosswind Kayaks`,
     url: 'https://www.govdeals.com/en/rutgers',
     locationHint: 'Piscataway, NJ',
     visibleCount: 13,
+    renderedCount: 1,
+    advertisedTotal: 13,
   });
   assert.deepEqual(plain(listings), [
     {
@@ -3271,6 +3523,53 @@ Current Tools Conduit Organizer`,
     pickupText: 'Local Pickup Only',
     status: 'Used/See Description',
   });
+});
+
+test('assistant rejects GovDeals DOM exports that collect one of 44 advertised listings', async () => {
+  const loc = new URL('https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0');
+  const core = loadCore({ location: loc });
+  const assetLink = makeFakeNode({
+    text: 'Current Tools Conduit Organizer',
+    attrs: { href: '/asset/132/25567' },
+  });
+  const card = makeFakeNode({
+    text: `Computers and Electronics
+Current Tools Conduit Organizer
+Seller: Borough of Carteret
+Asset ID 132
+Lot Number 25567-132
+Current Bid: $58.00 USD
+15 Bids
+Ends: Jul 12, 2026 6:00 PM ET
+Location: Carteret, NJ 07008
+Local Pickup Only`,
+    selectors: {
+      'a[href*="/asset/"]': assetLink,
+      'img': makeFakeNode({ attrs: { src: 'https://cdn.govdeals.test/132.jpg' } }),
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Search Results Showing 1 to 1 of 44 Current Tools Conduit Organizer',
+    selectors: {
+      h1: makeFakeNode({ text: 'Search Results' }),
+      article: [card],
+      'a[href*="/asset/"]': assetLink,
+    },
+  });
+  root.title = 'Search Results | GovDeals';
+
+  const result = await core.scrapeGovDealsListings(() => {}, () => false, root);
+  const route = core.resolveSiteRoute(loc);
+  const readiness = plain(core.assessExportReadiness(result, 'govdeals', route, { locationLike: loc }));
+
+  assert.equal(result.context.advertisedTotal, 44);
+  assert.equal(result.expectedTotal, 44);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.incomplete, true);
+  assert.equal(readiness.ok, false);
+  assert.equal(readiness.coverage.expectedTotal, 44);
+  assert.equal(readiness.coverage.collectedCount, 1);
+  assert.match(readiness.reason, /count-mismatch|incomplete/);
 });
 
 test('assistant parses compact GovDeals card text from the real new-listings grid', () => {
@@ -4145,6 +4444,49 @@ Pink Lady Liquidation
       rawText: 'Dumont New Jersey Estate Sale Dumont, NJ Local Pickup Only Begins to close Thu, Jul 16 2026 @ 8:00 PM EDT Pink Lady Liquidation 561 Lots',
     },
   ]);
+});
+
+test('assistant preserves and rejects AuctionNinja overcounts instead of trimming contamination', async () => {
+  const loc = new URL('https://www.auctionninja.com/nj/carteret/07008?miles=50&an=');
+  const core = loadCore({ location: loc });
+  const makeSale = (id, title) => {
+    const link = makeFakeNode({
+      text: title,
+      attrs: { href: `https://www.auctionninja.com/testseller/sales/details/${title.toLowerCase().replace(/\s+/g, '-')}--${id}.html` },
+    });
+    return makeFakeNode({
+      text: `${title}\nCarteret, NJ\nLocal Pickup Only\nBegins to close\nThu, Jul 16 2026 @ 8:00 PM EDT\n10 Lots`,
+      selectors: {
+        'a[href*="/sales/details/"]': link,
+        'a[href]:not([href*="/sales/details/"])': makeFakeNode({
+          text: 'Test Seller',
+          attrs: { href: 'https://www.auctionninja.com/testseller/' },
+        }),
+      },
+    });
+  };
+  const root = makeFakeNode({
+    text: '2 auctions near Carteret, NJ',
+    selectors: {
+      '.auction-item': [
+        makeSale('21001', 'First Auction'),
+        makeSale('21002', 'Second Auction'),
+        makeSale('99999', 'Stale Unrelated Auction'),
+      ],
+    },
+  });
+  root.title = 'Auctions near Carteret, NJ | AuctionNinja';
+
+  const result = await core.scrapeAuctionNinjaAuctionSearchSales(() => {}, () => false, root);
+  const route = core.resolveSiteRoute(loc);
+  const readiness = plain(core.assessExportReadiness(result, 'auctionninja', route, { locationLike: loc }));
+
+  assert.equal(result.expectedTotal, 2);
+  assert.equal(result.items.length, 3, 'unexpected records must remain visible to validation');
+  assert.equal(result.incomplete, true);
+  assert.notEqual(result.stopReason, 'trimmed-to-expected-total');
+  assert.equal(readiness.ok, false);
+  assert.match(readiness.reason, /count-exceeds-expected|count-mismatch|incomplete/);
 });
 
 test('assistant mounts AuctionNinja category pages and preserves location filters', () => {
