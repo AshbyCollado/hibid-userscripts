@@ -710,6 +710,32 @@ test('AuctionNinja sanitized Chrome fixture proves public contracts and labels a
   assert.doesNotMatch(JSON.stringify(fixture), /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token|@gmail|\b\d{3}[-.) ]\d{3}[-. ]\d{4}\b)/i);
 });
 
+test('AAR sanitized Chrome fixture proves exact servlet and settled-calendar coverage', () => {
+  const fixture = JSON.parse(fs.readFileSync(new URL('../fixtures/aar-network.sanitized.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.captureAuthority, 'Chrome DevTools Protocol Network and Runtime inspection');
+  assert.equal(fixture.rawCaptureCommitted, false);
+  assert.equal(fixture.calendar.collected, fixture.calendar.uniqueAuctionIds);
+  assert.equal(fixture.calendar.settledBottom, true);
+  assert.equal(fixture.calendar.stableCycles >= 2, true);
+  fixture.catalogs.forEach(catalog => {
+    assert.equal(catalog.advertisedTotal, catalog.collected);
+    assert.equal(catalog.collected, catalog.uniqueItemIds);
+  });
+  assert.equal(fixture.filteredCatalog.filteredCollected, fixture.filteredCatalog.uniqueItemIds);
+  assert.equal(fixture.detailEvidence.every(row => row.descriptionPresent && row.largeImageCount > 0 && row.responseIdentityMatches), true);
+  assert.equal(fixture.releaseValidation.unfilteredCatalog.expected, fixture.releaseValidation.unfilteredCatalog.copied);
+  assert.equal(fixture.releaseValidation.unfilteredCatalog.copied, fixture.releaseValidation.unfilteredCatalog.uniqueItemIds);
+  assert.equal(fixture.releaseValidation.unfilteredCatalog.detailsRequested, fixture.releaseValidation.unfilteredCatalog.detailsSucceeded);
+  assert.equal(fixture.releaseValidation.filteredCatalog.expected, fixture.releaseValidation.filteredCatalog.copied);
+  assert.equal(fixture.releaseValidation.filteredCatalog.copied, fixture.releaseValidation.filteredCatalog.uniqueItemIds);
+  assert.equal(fixture.releaseValidation.filteredCatalog.broadAuctionTotalIgnored, 80);
+  assert.equal(fixture.releaseValidation.calendar.copied, fixture.releaseValidation.calendar.uniqueAuctionIds);
+  assert.equal(fixture.releaseValidation.historicalItem.identityMatches, true);
+  assert.equal(fixture.releaseValidation.bidderAliasLeakCount, 0);
+  assert.equal(fixture.privacy.bidderAliasesCommitted, false);
+  assert.doesNotMatch(JSON.stringify(fixture), /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token|private-bidder-alias)/i);
+});
+
 test('assistant parses HiBid showing totals and safe next-page controls', () => {
   const core = loadCore();
   const next = makeElement({ text: 'Next >', attrs: { href: '?apage=2' } });
@@ -3615,10 +3641,12 @@ All Items (7)
       source: 'AAR Auctions',
       pageKind: 'aar-auction-catalog',
       auctionId: '8563',
+      itemId: '1',
       lot: '1',
       title: '1994 Jeep Wrangler 4WD',
       url: 'https://aarauctions.com/servlet/Search.do?auctionId=8563&itemId=1',
       image: 'https://aarauctions.com/live/images/auction-8563/jeep.jpg',
+      images: ['https://aarauctions.com/live/images/auction-8563/jeep.jpg'],
       description: 'Runs and drives. Odometer shows 122,000 miles.',
       highBid: '$1,550.00',
       highBidAmount: 1550,
@@ -3628,7 +3656,7 @@ All Items (7)
       quantity: 1,
       auctionType: 'One Lot',
       closingText: 'Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST',
-      rawText: '#1 - 1994 Jeep Wrangler 4WD More Info / Bid Now Closes On: Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST High Bid: $1,550.00 - moose1214 Auction Type: One Lot Quantity: 1 Minimum Next Bid: $1,600.00 More Details Runs and drives. Odometer shows 122,000 miles.',
+      rawText: 'Lot 1 | 1994 Jeep Wrangler 4WD | Runs and drives. Odometer shows 122,000 miles. | High Bid: $1,550.00 | Minimum Next Bid: $1,600.00 | Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST',
     },
   ]);
 });
@@ -3696,6 +3724,269 @@ Duplicate visible row should not create an extra lot.`,
     },
   ]);
   assert.match(lots[0].description, /Runs and drives/);
+  assert.doesNotMatch(lots[0].rawText, /moose1214|bidder42/i);
+});
+
+test('assistant builds deterministic AAR catalog pages and binds active filters', () => {
+  const core = loadCore();
+  const loc = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649&keyword=PowerBlock&categoryName=No%20Category&lotId=1&itemId=223844');
+  const filters = core.extractAarCatalogFilters(loc);
+  assert.deepEqual(plain(filters), {
+    categoryName: 'No Category',
+    keyword: 'PowerBlock',
+    lotId: '1',
+    orderBy: '',
+  });
+  const pageUrl = new URL(core.buildAarCatalogPageUrl(loc, 2, 100, filters));
+  assert.equal(pageUrl.pathname, '/servlet/Search.do');
+  assert.equal(pageUrl.searchParams.get('auctionId'), '8649');
+  assert.equal(pageUrl.searchParams.get('keyword'), 'PowerBlock');
+  assert.equal(pageUrl.searchParams.get('categoryName'), 'No Category');
+  assert.equal(pageUrl.searchParams.get('lotId'), '1');
+  assert.equal(pageUrl.searchParams.get('itemId'), null);
+  assert.equal(pageUrl.searchParams.get('page'), '2');
+  assert.equal(pageUrl.searchParams.get('perPage'), '100');
+  assert.equal(core.aarCatalogResponseMatchesRequest(pageUrl.href, pageUrl.href, filters), true);
+  assert.equal(core.aarCatalogResponseMatchesRequest(
+    'https://aarauctions.com/servlet/Search.do?auctionId=9999&keyword=PowerBlock&categoryName=No%20Category&lotId=1&page=2&perPage=100',
+    pageUrl.href,
+    filters,
+  ), false);
+});
+
+test('assistant normalizes every AAR item photo to its large same-auction URL', () => {
+  const core = loadCore();
+  const root = makeFakeNode({
+    selectors: {
+      'img[src]': [
+        makeFakeNode({ attrs: { src: '/live/images/auction-8649/thumb-364409.0_100.jpeg?v=1' } }),
+        makeFakeNode({ attrs: { src: '/live/images/auction-8649/large-364409.0_101.JPG?v=2' } }),
+        makeFakeNode({ attrs: { src: '/live/images/auction-9999/large-wrong.jpg' } }),
+        makeFakeNode({ attrs: { src: '/assets/logo.png' } }),
+      ],
+    },
+  });
+  assert.deepEqual(plain(core.extractAarItemImages(
+    root,
+    new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649&itemId=223844'),
+  )), [
+    'https://aarauctions.com/live/images/auction-8649/large-364409.0_100.jpeg',
+    'https://aarauctions.com/live/images/auction-8649/large-364409.0_101.JPG',
+  ]);
+});
+
+test('assistant audits AAR calendar uniqueness by canonical auction id', async () => {
+  const core = loadCore();
+  const firstLink = makeFakeNode({
+    text: 'Catalog',
+    attrs: { href: '/servlet/Search.do?auctionId=8565&utm_source=calendar' },
+  });
+  const secondLink = makeFakeNode({
+    text: 'Catalog',
+    attrs: { href: '/servlet/Search.do?auctionId=8565&ref=duplicate' },
+  });
+  const makeCard = (link) => makeFakeNode({
+    text: 'Vehicles Summer Equipment Auction Closing at 7:00 PM Pleasant Valley, NY Catalog',
+    selectors: { 'a[href*="Search.do?auctionId="]': link },
+  });
+  const root = makeFakeNode({
+    text: 'Auction Calendar',
+    selectors: { '.et_pb_column': [makeCard(firstLink), makeCard(secondLink)] },
+  });
+
+  const settled = await core.settleAarAuctionCalendarDom(root, () => {}, () => false);
+
+  assert.equal(settled.items.length, 1);
+  assert.deepEqual(plain(settled.duplicateIds), ['aar-auction:8565']);
+  assert.equal(settled.missingIdentityCount, 0);
+  assert.equal(core.aarAuctionCalendarIdentity(settled.items[0]), 'aar-auction:8565');
+});
+
+test('assistant certifies exact AAR servlet coverage and hydrates item photos', async () => {
+  const location = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649');
+  const lotScript = (lot, itemId, title) => makeFakeNode({
+    text: `var lot${itemId} = new Lot(8649, 0, '${lot}', '${itemId}', '', '${title}. Full catalog description.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0, 'private-bidder-alias', '', 25, 0, 30, 0, 0, '25.00', '0.00', '30.00', '0.00', '0.00', 1, 2, 3, 1784159400, 1784159430, '07:15 PM', '07:15 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`,
+  });
+  const catalogDoc = makeFakeNode({
+    text: 'All Items (2)',
+    selectors: {
+      'script': [lotScript('1', '223844', 'PowerBlock Elite EXP'), lotScript('2', '223845', 'Hydraulic Adapter Kit')],
+    },
+  });
+  const detailDoc = (lot, itemId, title, image) => makeFakeNode({
+    text: 'All Items (2)',
+    selectors: {
+      'script': [lotScript(lot, itemId, title)],
+      'img[src]': [makeFakeNode({ attrs: { src: image } })],
+    },
+  });
+  const documents = new Map([
+    ['catalog', catalogDoc],
+    ['detail-223844', detailDoc('1', '223844', 'PowerBlock Elite EXP', '/live/images/auction-8649/thumb-1.jpg?v=1')],
+    ['detail-223845', detailDoc('2', '223845', 'Hydraulic Adapter Kit', '/live/images/auction-8649/thumb-2.jpg?v=2')],
+  ]);
+  class FixtureDomParser {
+    parseFromString(value) { return documents.get(String(value)) || null; }
+  }
+  const requested = [];
+  const fetch = async (url) => {
+    const parsed = new URL(url);
+    requested.push(parsed.href);
+    const itemId = parsed.searchParams.get('itemId');
+    return {
+      ok: true,
+      status: 200,
+      url: parsed.href,
+      async text() { return itemId ? `detail-${itemId}` : 'catalog'; },
+    };
+  };
+  const core = loadCore({ location, fetch, DOMParser: FixtureDomParser });
+  const result = await core.scrapeAarCatalogLots(() => {}, () => false, catalogDoc);
+
+  assert.equal(result.source, 'aar-servlet');
+  assert.equal(result.incomplete, false);
+  assert.equal(result.expectedTotal, 2);
+  assert.equal(result.items.length, 2);
+  assert.equal(new Set(result.items.map(item => item.itemId)).size, 2);
+  assert.equal(result.coverage.proofTier, 'pagination-exact');
+  assert.equal(result.coverage.enrichment.requested, 2);
+  assert.equal(result.coverage.enrichment.succeeded, 2);
+  assert.deepEqual(plain(result.items.map(item => item.images[0])), [
+    'https://aarauctions.com/live/images/auction-8649/large-1.jpg',
+    'https://aarauctions.com/live/images/auction-8649/large-2.jpg',
+  ]);
+  assert.equal(requested.filter(url => /perPage=100/.test(url)).length, 1);
+  assert.equal(requested.filter(url => /itemId=/.test(url)).length, 2);
+  assert.doesNotMatch(JSON.stringify(result.items), /private-bidder-alias/);
+  assert.deepEqual(plain(core.assessExportReadiness(result, 'aar', {
+    source: 'aar', kind: 'aar-auction-catalog', auctionId: '8649',
+  }, { locationLike: location })), {
+    ok: true,
+    reason: 'complete',
+    coverage: plain(core.buildProofTierCoverage(result, 'aar', {
+      source: 'aar', kind: 'aar-auction-catalog', auctionId: '8649',
+    }, { locationLike: location })),
+    routeValidation: { ok: true },
+  });
+});
+
+test('assistant certifies filtered AAR results by deterministic exhaustion instead of the broad auction total', async () => {
+  const location = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649&keyword=PowerBlock');
+  const lotScript = makeFakeNode({
+    text: `var lot223844 = new Lot(8649, 0, '1', '223844', '', 'PowerBlock Elite EXP. Full description.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0, 'private-bidder-alias', '', 25, 0, 30, 0, 0, '25.00', '0.00', '30.00', '0.00', '0.00', 1, 2, 3, 1784159400, 1784159430, '07:15 PM', '07:15 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`,
+  });
+  const catalogDoc = makeFakeNode({ text: 'All Items (80)', selectors: { script: [lotScript] } });
+  const detailDoc = makeFakeNode({
+    text: 'PowerBlock Elite EXP. Full item detail.',
+    selectors: {
+      script: [lotScript],
+      'img[src]': [makeFakeNode({ attrs: { src: '/live/images/auction-8649/thumb-1.jpg?v=1' } })],
+    },
+  });
+  class FixtureDomParser {
+    parseFromString(value) { return String(value).startsWith('detail-') ? detailDoc : catalogDoc; }
+  }
+  const fetch = async (url) => {
+    const parsed = new URL(url);
+    return {
+      ok: true,
+      status: 200,
+      url: parsed.href,
+      async text() { return parsed.searchParams.has('itemId') ? 'detail-223844' : 'catalog'; },
+    };
+  };
+  const core = loadCore({ location, fetch, DOMParser: FixtureDomParser });
+  const result = await core.scrapeAarCatalogLots(() => {}, () => false, catalogDoc);
+
+  assert.equal(result.context.advertisedAuctionTotal, 80);
+  assert.equal(result.context.filtered, true);
+  assert.equal(result.expectedTotal, 1);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].itemId, '223844');
+  assert.equal(result.incomplete, false);
+  assert.equal(result.stopReason, 'deterministic-pagination-exhausted');
+  assert.equal(result.coverage.proofTier, 'pagination-exact');
+  assert.deepEqual(plain(result.coverage.observedTotals), []);
+  assert.doesNotMatch(JSON.stringify(result.items), /private-bidder-alias/);
+});
+
+test('assistant follows an advertised AAR next page even when a filtered page is short', async () => {
+  const location = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649&keyword=PowerBlock');
+  const lotScript = (lot, itemId, title) => makeFakeNode({
+    text: `var lot${itemId} = new Lot(8649, 0, '${lot}', '${itemId}', '', '${title}. Full description.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0, 'private-bidder-alias', '', 25, 0, 30, 0, 0, '25.00', '0.00', '30.00', '0.00', '0.00', 1, 2, 3, 1784159400, 1784159430, '07:15 PM', '07:15 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`,
+  });
+  const nextLink = makeFakeNode({
+    text: 'Next',
+    attrs: { href: '/servlet/Search.do?auctionId=8649&keyword=PowerBlock&page=2&perPage=100' },
+  });
+  const pageOne = makeFakeNode({
+    text: 'All Items (80)',
+    selectors: {
+      script: [lotScript('1', '223844', 'PowerBlock Elite EXP')],
+      'a[href*="Search.do"]': [nextLink],
+    },
+  });
+  const pageTwo = makeFakeNode({
+    text: 'All Items (80)',
+    selectors: { script: [lotScript('2', '223845', 'PowerBlock Stand')], 'a[href*="Search.do"]': [] },
+  });
+  const detailDocs = new Map([
+    ['223844', makeFakeNode({ text: 'PowerBlock Elite EXP detail', selectors: { script: [lotScript('1', '223844', 'PowerBlock Elite EXP')] } })],
+    ['223845', makeFakeNode({ text: 'PowerBlock Stand detail', selectors: { script: [lotScript('2', '223845', 'PowerBlock Stand')] } })],
+  ]);
+  class FixtureDomParser {
+    parseFromString(value) {
+      const key = String(value);
+      if (key.startsWith('detail-')) return detailDocs.get(key.slice(7));
+      return key === 'page-2' ? pageTwo : pageOne;
+    }
+  }
+  const fetch = async (url) => {
+    const parsed = new URL(url);
+    const itemId = parsed.searchParams.get('itemId');
+    const page = parsed.searchParams.get('page');
+    return {
+      ok: true,
+      status: 200,
+      url: parsed.href,
+      async text() { return itemId ? `detail-${itemId}` : (page === '2' ? 'page-2' : 'page-1'); },
+    };
+  };
+  const core = loadCore({ location, fetch, DOMParser: FixtureDomParser });
+  const result = await core.scrapeAarCatalogLots(() => {}, () => false, pageOne);
+
+  assert.equal(result.expectedTotal, 2);
+  assert.equal(result.items.length, 2);
+  assert.equal(result.coverage.pageAudits.length, 2);
+  assert.equal(result.coverage.pageAudits[0].hasHigherPage, true);
+  assert.equal(result.incomplete, false);
+  assert.equal(result.coverage.proofTier, 'pagination-exact');
+});
+
+test('assistant fails closed when AAR item hydration redirects to another item', async () => {
+  const location = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649');
+  const script = makeFakeNode({
+    text: `var lot223844 = new Lot(8649, 0, '1', '223844', '', 'PowerBlock Elite EXP. Full description.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0, 'alias', '', 25, 0, 30, 0, 0, '25.00', '0.00', '30.00', '0.00', '0.00', 1, 2, 3, 1784159400, 1784159430, '07:15 PM', '07:15 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`,
+  });
+  const catalogDoc = makeFakeNode({ text: 'All Items (1)', selectors: { script: [script] } });
+  class FixtureDomParser { parseFromString() { return catalogDoc; } }
+  const fetch = async (url) => {
+    const parsed = new URL(url);
+    const isDetail = parsed.searchParams.has('itemId');
+    return {
+      ok: true,
+      status: 200,
+      url: isDetail
+        ? 'https://aarauctions.com/servlet/Search.do?auctionId=8649&itemId=999999'
+        : parsed.href,
+      async text() { return 'fixture'; },
+    };
+  };
+  const core = loadCore({ location, fetch, DOMParser: FixtureDomParser });
+  const result = await core.scrapeAarCatalogLots(() => {}, () => false, catalogDoc);
+  assert.equal(result.incomplete, true);
+  assert.equal(result.stopReason, 'detail-enrichment-incomplete');
+  assert.deepEqual(plain(result.coverage.failedBatches), [{ id: '223844', reason: 'detail-identity-mismatch' }]);
 });
 
 test('assistant persists AAR research settings and builds distance-aware briefs', () => {

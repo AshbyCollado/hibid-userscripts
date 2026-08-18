@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "release": "0.8.23",
+  "release": "0.8.24",
   "policy": {
     "discoveryAuthority": "Chrome DevTools Protocol Network",
     "acceptanceBrowser": "Waterfox with installed Tampermonkey release",
@@ -84,9 +84,28 @@
       "note": "Sale catalog and category pages expose no reusable listing JSON API; exact server-rendered pagination is authoritative."
     },
     "aar": {
-      "enumerate": { "method": "GET", "url": "https://aarauctions.com/servlet/Search.do", "filters": ["auctionId", "itemId", "page"] },
-      "stableId": "auctionId:itemId",
-      "proof": "auction-scoped advertised total equals collected count equals unique item count"
+      "calendar": {
+        "method": "GET",
+        "url": "https://aarauctions.com/auctions/",
+        "response": "server-rendered text/html",
+        "stableId": "auctionId from canonical catalog URL",
+        "proof": "canonical auction identities remain stable after a settled-bottom audit"
+      },
+      "enumerate": {
+        "method": "GET",
+        "url": "https://aarauctions.com/servlet/Search.do",
+        "filters": ["auctionId", "categoryName", "keyword", "lotId", "orderBy", "page", "perPage"],
+        "pageSize": 100,
+        "response": "server-rendered text/html with one new Lot(...) record per item"
+      },
+      "enrich": {
+        "method": "GET",
+        "url": "https://aarauctions.com/servlet/Search.do?auctionId={auctionId}&itemId={itemId}",
+        "fields": ["full description", "all large item photos", "current bid", "minimum next bid", "quantity", "closing time"]
+      },
+      "stableId": "itemId scoped to auctionId",
+      "proof": "unfiltered advertised total or deterministic filtered pagination exhaustion equals collected count equals unique itemId count; every item detail response must preserve auctionId and itemId",
+      "privacy": "bidder aliases from embedded Lot records are discarded before export"
     },
     "govdeals": {
       "enumerate": { "method": "POST", "url": "https://maestro.lqdt1.com/search/list", "filters": ["categoryIds", "searchText", "page", "displayRows", "sortField", "sortOrder", "facetsFilter", "accountIds"] },

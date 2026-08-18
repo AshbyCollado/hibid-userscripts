@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.23
+// @version      0.8.24
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -66,7 +66,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.23';
+  const SCRIPT_VERSION = '0.8.24';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -6696,10 +6696,17 @@ ${cards}
     extractAuctionNinjaCategoryContext,
     extractAuctionNinjaCategoryItems,
     hasAuctionNinjaExplicitEmptyState,
+    extractAarCatalogFilters,
+    hasActiveAarCatalogFilters,
+    buildAarCatalogPageUrl,
+    aarCatalogResponseMatchesRequest,
+    aarAuctionCalendarIdentity,
+    extractAarItemImages,
     extractAarAuctionCards,
     extractAarCatalogContext,
     extractAarCatalogLots,
     extractAarItemDetail,
+    mergeAarItemDetail,
     extractAarItemContext,
     extractGovDealsSellerContext,
     extractGovDealsSearchContext,
@@ -6725,6 +6732,8 @@ ${cards}
     scrapeAuctionNinjaCategoryItems,
     scrapeAarAuctionCards,
     scrapeAarCatalogLots,
+    enrichAarCatalogLots,
+    settleAarAuctionCalendarDom,
     scrapeAarItemDetail,
     scrapeGovDealsListings,
     buildAuctionNinjaLlmBrief,
@@ -9503,6 +9512,91 @@ ${cards}
     }
   }
 
+  function extractAarCatalogFilters(loc = (typeof location !== 'undefined' ? location : null), root = null) {
+    let url;
+    try {
+      url = urlFromLocationLike(loc || 'https://aarauctions.com/servlet/Search.do');
+    } catch {
+      url = new URL('https://aarauctions.com/servlet/Search.do');
+    }
+    const allowed = ['categoryName', 'keyword', 'lotId', 'orderBy'];
+    const filters = {};
+    allowed.forEach(key => {
+      const fromUrl = url.searchParams.get(key);
+      const control = root?.querySelector?.(`[name="${key}"]`);
+      const value = fromUrl !== null ? fromUrl : (control?.value ?? control?.getAttribute?.('value') ?? '');
+      filters[key] = String(value || '').trim();
+    });
+    return filters;
+  }
+
+  function hasActiveAarCatalogFilters(filters = {}) {
+    return ['categoryName', 'keyword', 'lotId', 'orderBy'].some(key => String(filters?.[key] || '').trim() !== '');
+  }
+
+  function buildAarCatalogPageUrl(loc, page = 1, perPage = 100, filters = null) {
+    const source = urlFromLocationLike(loc || 'https://aarauctions.com/servlet/Search.do');
+    const auctionId = source.searchParams.get('auctionId') || '';
+    const next = new URL('/servlet/Search.do', source.origin);
+    next.searchParams.set('auctionId', auctionId);
+    const activeFilters = filters || extractAarCatalogFilters(source);
+    ['categoryName', 'keyword', 'lotId', 'orderBy'].forEach(key => {
+      const value = String(activeFilters?.[key] || '').trim();
+      if (value) next.searchParams.set(key, value);
+    });
+    next.searchParams.set('page', String(Math.max(1, Number(page) || 1)));
+    next.searchParams.set('perPage', String(Math.max(1, Math.min(100, Number(perPage) || 100))));
+    return next.href;
+  }
+
+  function aarCatalogResponseMatchesRequest(responseUrl, requestUrl, filters = {}) {
+    try {
+      const response = new URL(responseUrl, requestUrl);
+      const request = new URL(requestUrl);
+      if (!isAarAuctionsHost(response.hostname) || !/^\/servlet\/Search\.do$/i.test(response.pathname)) return false;
+      if (response.searchParams.get('auctionId') !== request.searchParams.get('auctionId')) return false;
+      return ['categoryName', 'keyword', 'lotId', 'orderBy'].every(key => {
+        const expected = String(filters?.[key] || '').trim();
+        return String(response.searchParams.get(key) || '').trim() === expected;
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  function normalizeAarItemImageUrl(value, base, auctionId = '') {
+    const absolute = absoluteUrl(value, base);
+    if (!absolute) return '';
+    try {
+      const url = new URL(absolute);
+      if (!isAarAuctionsHost(url.hostname)) return '';
+      if (!/\/live\/images\/auction-\d+\/(?:large|thumb)-/i.test(url.pathname)) return '';
+      if (auctionId && !url.pathname.includes(`/auction-${auctionId}/`)) return '';
+      url.pathname = url.pathname.replace(/\/thumb-/i, '/large-');
+      url.search = '';
+      url.hash = '';
+      return url.href;
+    } catch {
+      return '';
+    }
+  }
+
+  function extractAarItemImages(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
+    const auctionId = loc ? getAarAuctionId(loc) : '';
+    return uniqueNonEmpty(Array.from(root?.querySelectorAll?.('img[src], img[data-src], source[srcset], a[href*="/live/images/"]') || [])
+      .flatMap(node => [
+        node.currentSrc,
+        node.src,
+        node.getAttribute?.('src'),
+        node.getAttribute?.('data-src'),
+        node.getAttribute?.('href'),
+        ...String(node.getAttribute?.('srcset') || '').split(',').map(part => part.trim().split(/\s+/)[0])
+      ])
+      .map(value => normalizeAarItemImageUrl(value, base, auctionId))
+      .filter(Boolean));
+  }
+
   function buildAarMapSearchUrl(locationText, settings = getAarResearchSettings()) {
     const locationLabel = String(locationText || '').trim();
     if (!locationLabel) return '';
@@ -9648,6 +9742,8 @@ ${cards}
   function extractAarCatalogContext(root = document, loc = (typeof location !== 'undefined' ? location : null), settings = getAarResearchSettings()) {
     const raw = rawTextOf(root?.body || root?.documentElement || root);
     const flat = textOf(root?.body || root?.documentElement || root);
+    const filters = extractAarCatalogFilters(loc, root);
+    const filtered = hasActiveAarCatalogFilters(filters);
     const locationMatch = raw.match(/Items\s+located\s+at\s*:?\s*([^\n.]+)/i);
     let locationText = locationMatch?.[1]?.trim() || parseAarLocationHint(raw);
     if (locationText.includes(':')) locationText = locationText.split(':').pop().trim();
@@ -9666,7 +9762,10 @@ ${cards}
       location: locationText,
       directionsUrl: pickFirstHref(root, ['a[href*="maps"]', 'a[href*="google.com/maps"]'], loc?.href || 'https://aarauctions.com/'),
       mapSearchUrl: buildAarMapSearchUrl(locationText, settings),
-      expectedTotal: expectedMatch ? Number(expectedMatch[1].replace(/,/g, '')) : null,
+      expectedTotal: !filtered && expectedMatch ? Number(expectedMatch[1].replace(/,/g, '')) : null,
+      advertisedAuctionTotal: expectedMatch ? Number(expectedMatch[1].replace(/,/g, '')) : null,
+      filters,
+      filtered,
       generatedAt: new Date().toISOString()
     };
   }
@@ -9782,10 +9881,12 @@ ${cards}
           source: 'AAR Auctions',
           pageKind: 'aar-auction-catalog',
           auctionId,
+          itemId,
           lot,
           title,
           url: absoluteUrl(`/servlet/Search.do?auctionId=${encodeURIComponent(auctionId)}&itemId=${encodeURIComponent(itemId)}`, base),
           image: '',
+          images: [],
           description,
           highBid: moneyLabelFromAarScriptArgs(args[24], args[19]),
           highBidAmount,
@@ -9795,7 +9896,14 @@ ${cards}
           quantity: numberFromAarScriptArg(args[15]),
           auctionType: decodeAarScriptArg(args[14]),
           closingText: [decodeAarScriptArg(args[34]), decodeAarScriptArg(args[35])].filter(Boolean).join(' - '),
-          rawText: textOf(script)
+          rawText: [
+            `Lot ${lot}`,
+            title,
+            description,
+            moneyLabelFromAarScriptArgs(args[24], args[19]) ? `High Bid: ${moneyLabelFromAarScriptArgs(args[24], args[19])}` : '',
+            moneyLabelFromAarScriptArgs(args[26], args[21]) ? `Minimum Next Bid: ${moneyLabelFromAarScriptArgs(args[26], args[21])}` : '',
+            [decodeAarScriptArg(args[34]), decodeAarScriptArg(args[35])].filter(Boolean).join(' - ')
+          ].filter(Boolean).join(' | ')
         });
       });
     });
@@ -9822,8 +9930,10 @@ ${cards}
       const rawText = textOf(row);
       const lot = rawText.match(/#\s*([A-Za-z0-9.-]+)\s*[-–]/)?.[1] || '';
       const title = rawText.match(/#\s*[A-Za-z0-9.-]+\s*[-–]\s*([\s\S]*?)(?=\s+(?:More Info|Closes On|High Bid|Auction Type|Quantity|Minimum Next Bid|Login to Bid|$))/i)?.[1]?.trim() || '';
-      const link = row.querySelector?.('a[href*="itemId"], a[href*="ItemId"], a[href*="Search.do"]');
+      const link = row.querySelector?.('a[href*="itemId"], a[href*="ItemId"]');
       const url = absoluteUrl(controlHref(link), base);
+      const itemId = firstMatch(url, [/[?&]itemId=([^&]+)/i]) || '';
+      if (!itemId) return;
       const highBid = rawText.match(/\bHigh Bid:\s*(\$[\d,]+(?:\.\d{2})?)/i)?.[1] || '';
       const nextBid = rawText.match(/\bMinimum Next Bid:\s*(\$[\d,]+(?:\.\d{2})?)/i)?.[1] || '';
       const quantityText = rawText.match(/\bQuantity:\s*([\d,]+)/i)?.[1] || '';
@@ -9833,10 +9943,12 @@ ${cards}
         source: 'AAR Auctions',
         pageKind: 'aar-auction-catalog',
         auctionId,
+        itemId,
         lot,
         title,
         url,
         image: pickFirstImage(row, base),
+        images: uniqueNonEmpty([pickFirstImage(row, base)]),
         description,
         highBid,
         highBidAmount: moneyFromText(highBid),
@@ -9846,7 +9958,14 @@ ${cards}
         quantity: quantityText ? Number(quantityText.replace(/,/g, '')) : null,
         auctionType: rawText.match(/\bAuction Type:\s*([\s\S]*?)(?=\s+Quantity:|\s+Minimum Next Bid:|$)/i)?.[1]?.trim() || '',
         closingText,
-        rawText
+        rawText: [
+          lot ? `Lot ${lot}` : '',
+          title,
+          description,
+          highBid ? `High Bid: ${highBid}` : '',
+          nextBid ? `Minimum Next Bid: ${nextBid}` : '',
+          closingText
+        ].filter(Boolean).join(' | ')
       });
     });
 
@@ -9869,12 +9988,98 @@ ${cards}
       }
     }) || (lots.length === 1 ? lots[0] : null);
     if (!match) return null;
+    const parsedItemId = String(match.itemId || String(match.url || '').match(/[?&]itemId=([^&]+)/i)?.[1] || '').trim();
+    if (itemId && parsedItemId && parsedItemId !== String(itemId)) return null;
+    const images = extractAarItemImages(root, loc);
     return {
       ...match,
       pageKind: 'aar-item-detail',
-      itemId: itemId || String(match.url || '').match(/[?&]itemId=([^&]+)/i)?.[1] || '',
-      image: match.image || pickFirstImage(root, base)
+      itemId: itemId || parsedItemId,
+      image: images[0] || match.image || pickFirstImage(root, base),
+      images: uniqueNonEmpty([...images, ...(match.images || []), match.image]),
+      detailEnriched: true,
+      detailSource: 'same-origin-aar-item-document'
     };
+  }
+
+  function mergeAarItemDetail(item, detail) {
+    if (!detail) return item;
+    const merged = { ...item };
+    const fillKeys = [
+      'lot', 'title', 'description', 'highBid', 'highBidAmount', 'currentBid',
+      'nextBid', 'nextBidAmount', 'quantity', 'auctionType', 'closingText'
+    ];
+    fillKeys.forEach(key => {
+      if ((merged[key] === '' || merged[key] === null || merged[key] === undefined)
+        && detail[key] !== '' && detail[key] !== null && detail[key] !== undefined) {
+        merged[key] = detail[key];
+      }
+    });
+    if (detail.description && detail.description.length >= String(item.description || '').length) {
+      merged.description = detail.description;
+    }
+    merged.itemId = String(item.itemId || detail.itemId || '').trim();
+    merged.images = uniqueNonEmpty([...(item.images || []), ...(detail.images || []), item.image, detail.image]);
+    merged.image = merged.images[0] || item.image || detail.image || '';
+    merged.detailEnriched = true;
+    merged.detailSource = 'same-origin-aar-item-document';
+    return merged;
+  }
+
+  async function enrichAarCatalogLots(items, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const out = Array.isArray(items) ? items.slice() : [];
+    const queue = out.map((item, index) => ({ item, index })).filter(({ item }) => item?.url && item?.itemId);
+    const audit = { requested: queue.length, succeeded: 0, failed: [], stopped: false };
+    const concurrency = Math.max(1, Math.min(4, Number(options.concurrency || 4)));
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queue.length && !shouldStop()) {
+        const entry = queue[cursor++];
+        const identity = String(entry.item.itemId || '').trim();
+        const fetched = await fetchHtmlDocumentWithRetries(
+          entry.item.url,
+          'aar.detail',
+          shouldStop,
+          { maxAttempts: 3, timeoutMs: options.timeoutMs || 20000 }
+        );
+        if (!fetched.document) {
+          audit.failed.push({ id: identity, reason: fetched.error || 'detail-fetch-failed' });
+          continue;
+        }
+        let responseLoc;
+        try {
+          responseLoc = new URL(fetched.responseUrl || entry.item.url);
+        } catch {
+          audit.failed.push({ id: identity, reason: 'detail-response-url-invalid' });
+          continue;
+        }
+        const responseRoute = resolveAarAuctionsPage(responseLoc);
+        if (responseRoute.kind !== 'aar-item-detail'
+          || String(responseRoute.auctionId || '') !== String(entry.item.auctionId || '')
+          || String(responseRoute.itemId || '') !== identity) {
+          audit.failed.push({ id: identity, reason: 'detail-identity-mismatch' });
+          continue;
+        }
+        let detail = null;
+        try {
+          detail = extractAarItemDetail(fetched.document, responseLoc);
+        } catch (error) {
+          audit.failed.push({ id: identity, reason: `detail-parse:${String(error?.message || error)}` });
+          continue;
+        }
+        if (!detail || String(detail.itemId || '') !== identity) {
+          audit.failed.push({ id: identity, reason: 'detail-identity-mismatch' });
+          continue;
+        }
+        out[entry.index] = mergeAarItemDetail(entry.item, detail);
+        audit.succeeded += 1;
+        onProgress(`Enriched ${audit.succeeded}/${audit.requested} AAR lot(s).`);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, () => worker()));
+    audit.stopped = shouldStop();
+    out.audit = audit;
+    return out;
   }
 
   function extractAarItemContext(root = document, loc = (typeof location !== 'undefined' ? location : null), settings = getAarResearchSettings()) {
@@ -9901,6 +10106,11 @@ ${cards}
     return target;
   }
 
+  function aarAuctionCalendarIdentity(item) {
+    const auctionId = String(item?.auctionId || extractAarAuctionIdFromUrl(item?.url || '') || '').trim();
+    return auctionId ? `aar-auction:${auctionId}` : '';
+  }
+
   function findAarCatalogPageUrls(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
     const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
     const auctionId = loc ? getAarAuctionId(loc) : extractAarAuctionIdFromUrl(base);
@@ -9924,135 +10134,294 @@ ${cards}
     return Array.from(pages.values());
   }
 
+  async function settleAarAuctionCalendarDom(root = document, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const settings = getAarResearchSettings();
+    const itemsById = new Map();
+    const duplicateIds = new Set();
+    const missingIdentityKeys = new Set();
+    const addVisible = () => {
+      const snapshotIds = new Set();
+      extractAarAuctionCards(root, loc, settings).forEach(item => {
+        const id = aarAuctionCalendarIdentity(item);
+        if (!id) {
+          missingIdentityKeys.add(String(item?.url || item?.title || 'unknown-calendar-row'));
+          return;
+        }
+        if (snapshotIds.has(id)) duplicateIds.add(id);
+        snapshotIds.add(id);
+        if (!itemsById.has(id)) itemsById.set(id, item);
+      });
+    };
+    addVisible();
+    const canScroll = root === (typeof document !== 'undefined' ? document : null)
+      && typeof globalThis.scrollTo === 'function'
+      && typeof globalThis.innerHeight === 'number'
+      && root?.documentElement;
+    if (!canScroll) {
+      return {
+        items: Array.from(itemsById.values()),
+        settledBottom: false,
+        reachedBottom: false,
+        stableCycles: 0,
+        attempts: 0,
+        duplicateIds: Array.from(duplicateIds),
+        missingIdentityCount: missingIdentityKeys.size,
+        reason: 'bottom-audit-unavailable'
+      };
+    }
+    const originalY = Number(globalThis.scrollY || 0);
+    const maxAttempts = Math.max(3, Math.min(12, Number(options.maxAttempts || 8)));
+    const waitMs = Math.max(100, Number(options.waitMs || 450));
+    let previousCount = itemsById.size;
+    let stableCycles = 0;
+    let reachedBottom = false;
+    let attempts = 0;
+    try {
+      for (attempts = 1; attempts <= maxAttempts && !shouldStop(); attempts += 1) {
+        globalThis.scrollTo(0, root.documentElement.scrollHeight || root.body?.scrollHeight || 0);
+        await wait(waitMs);
+        addVisible();
+        const count = itemsById.size;
+        stableCycles = count === previousCount ? stableCycles + 1 : 0;
+        previousCount = count;
+        const height = Number(root.documentElement.scrollHeight || root.body?.scrollHeight || 0);
+        reachedBottom = Math.ceil(Number(globalThis.scrollY || 0) + Number(globalThis.innerHeight || 0)) >= height - 2;
+        onProgress(`Checking AAR calendar coverage... ${count} auction(s).`);
+        if (reachedBottom && stableCycles >= 2) break;
+      }
+    } finally {
+      globalThis.scrollTo(0, originalY);
+    }
+    const settledBottom = !shouldStop() && reachedBottom && stableCycles >= 2;
+    return {
+      items: Array.from(itemsById.values()),
+      settledBottom,
+      reachedBottom,
+      stableCycles,
+      attempts,
+      duplicateIds: Array.from(duplicateIds),
+      missingIdentityCount: missingIdentityKeys.size,
+      reason: shouldStop() ? 'stopped-by-user' : (settledBottom ? 'dom-bottom-settled' : 'calendar-not-settled')
+    };
+  }
+
   async function scrapeAarAuctionCards(onProgress = () => {}, shouldStop = () => false, root = document) {
     const loc = typeof location !== 'undefined' ? location : null;
     const route = loc ? resolveAarAuctionsPage(loc) : { kind: 'aar-auction-list', source: 'aar' };
     const routeFingerprint = genericRouteFingerprint({ ...route, source: 'aar' }, loc);
     const settings = getAarResearchSettings();
-    const sales = extractAarAuctionCards(root, loc, settings);
+    const startedAt = Date.now();
+    const settled = await settleAarAuctionCalendarDom(root, onProgress, shouldStop);
+    const sales = settled.items;
     const context = {
       source: 'AAR Auctions',
       pageKind: 'aar-auction-list',
       title: String(root?.title || '').replace(/\s*\|\s*Absolute Auctions.*$/i, '').trim() || 'AAR Auction Calendar',
       url: loc?.href || '',
       researchSettings: settings,
+      expectedTotal: settled.settledBottom ? sales.length : null,
       generatedAt: new Date().toISOString()
     };
     onProgress(`Read ${sales.length} AAR auction card(s).`);
-    debug('aar auction list scrape finished', { count: sales.length, settings });
     const stopped = shouldStop();
-    const identities = sales.map(item => scraperStableIdentity(item, 'aar'));
-    const incomplete = stopped || identities.some(id => !id);
+    const identities = sales.map(aarAuctionCalendarIdentity);
+    const duplicateIds = Array.from(new Set(settled.duplicateIds || []));
+    const currentRoute = typeof location !== 'undefined' ? resolveAarAuctionsPage(location) : route;
+    const currentFingerprint = genericRouteFingerprint({ ...currentRoute, source: 'aar' }, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const incomplete = stopped
+      || !routeMatches
+      || !settled.settledBottom
+      || identities.some(id => !id)
+      || Number(settled.missingIdentityCount || 0) > 0
+      || duplicateIds.length > 0;
+    const stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (duplicateIds.length
+          ? 'duplicate-identities'
+          : (Number(settled.missingIdentityCount || 0) > 0 ? 'missing-identities' : settled.reason)));
+    debugEvent('aar.calendar.coverage', {
+      count: sales.length,
+      stopReason,
+        routeMatches,
+        settledBottom: settled.settledBottom,
+        stableCycles: settled.stableCycles,
+        attempts: settled.attempts,
+        duplicateIds,
+        missingIdentityCount: Number(settled.missingIdentityCount || 0)
+    });
     return {
-      source: 'aar-dom',
+      source: 'aar-calendar-dom',
       items: sales,
       sales,
-      expectedTotal: sales.length,
+      expectedTotal: settled.settledBottom ? sales.length : null,
       context,
       stopped,
       incomplete,
-      stopReason: stopped ? 'stopped-by-user' : (incomplete ? 'missing-stable-identities' : 'server-rendered-calendar-complete'),
+      stopReason,
       routeFingerprint,
       coverage: {
-        proofTier: 'scoped-current-page',
-        strategy: 'server-rendered-calendar-dom',
+        proofTier: settled.settledBottom ? 'dom-bottom-settled' : 'unproven',
+        strategy: 'server-rendered-calendar-settled-bottom',
         routeFingerprint,
-        routeMatches: true,
+        currentFingerprint,
+        routeMatches,
         enumeratedIds: identities.filter(Boolean),
-        reachedBottom: true,
-        failedPages: []
+        duplicateIds,
+        missingIdentityCount: Number(settled.missingIdentityCount || 0),
+        reachedBottom: settled.reachedBottom,
+        settledBottom: settled.settledBottom,
+        stableCycles: settled.stableCycles,
+        failedPages: [],
+        durationMs: Date.now() - startedAt
       }
     };
   }
 
   async function scrapeAarCatalogLots(onProgress = () => {}, shouldStop = () => false, root = document) {
-    const lotsByKey = new Map();
     const loc = typeof location !== 'undefined' ? location : null;
     const route = loc ? resolveAarAuctionsPage(loc) : { kind: 'aar-auction-catalog', source: 'aar' };
     const startedAt = Date.now();
     const routeFingerprint = genericRouteFingerprint({ ...route, source: 'aar' }, loc);
-    let context = extractAarCatalogContext(root, loc);
-    let stopReason = '';
-    let steps = 0;
+    const filters = extractAarCatalogFilters(loc, root);
+    const filtered = hasActiveAarCatalogFilters(filters);
+    let context = { ...extractAarCatalogContext(root, loc), filters, filtered };
+    const lotsByKey = new Map();
     const duplicateIds = new Set();
     const failedPages = [];
+    const pageAudits = [];
     const observedTotals = new Set();
-    if (Number.isFinite(Number(context.expectedTotal))) observedTotals.add(Number(context.expectedTotal));
-    mergeAarLots(lotsByKey, extractAarCatalogLots(root, loc), duplicateIds);
-    const queued = findAarCatalogPageUrls(root, loc);
-    const seenUrls = new Set(queued);
-    debug('aar catalog scrape start', { count: lotsByKey.size, context, queued: queued.length });
-
-    while (queued.length && !shouldStop()) {
-      if (steps >= 100) {
-        stopReason = 'max-fetch-steps';
+    const hasExpectedTotal = context.expectedTotal !== null
+      && context.expectedTotal !== undefined
+      && context.expectedTotal !== ''
+      && Number.isFinite(Number(context.expectedTotal));
+    let expectedTotal = hasExpectedTotal ? Number(context.expectedTotal) : null;
+    if (expectedTotal !== null) observedTotals.add(expectedTotal);
+    let steps = 0;
+    let page = 1;
+    let enumerationComplete = false;
+    let enumerationReason = '';
+    while (page <= 100 && !shouldStop()) {
+      const currentRouteDuring = typeof location !== 'undefined' ? resolveAarAuctionsPage(location) : route;
+      const fingerprintDuring = genericRouteFingerprint({ ...currentRouteDuring, source: 'aar' }, typeof location !== 'undefined' ? location : loc);
+      if (routeFingerprint !== fingerprintDuring) {
+        enumerationReason = 'route-fingerprint-changed';
         break;
       }
-      if (context.expectedTotal !== null && lotsByKey.size === context.expectedTotal) {
-        stopReason = 'expected-total-reached';
-        break;
-      }
-      if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') {
-        stopReason = 'fetch-unavailable';
-        break;
-      }
-      const url = queued.shift();
+      const requestedUrl = buildAarCatalogPageUrl(loc, page, 100, filters);
       steps += 1;
-      onProgress(`Fetching AAR catalog page ${steps}...`);
-      let pageDoc = null;
-      let lastError = '';
-      for (let attempt = 1; attempt <= 3 && !pageDoc && !shouldStop(); attempt += 1) {
-        const controller = typeof AbortController === 'function' ? new AbortController() : null;
-        const timer = controller ? globalThis.setTimeout(() => controller.abort(), 20000) : null;
-        try {
-          debugEvent('aar.pagination.request', { step: steps, attempt, url: new URL(url).pathname });
-          const response = await fetch(url, { credentials: 'include', cache: 'no-store', signal: controller?.signal });
-          if (!response?.ok) throw new Error(`HTTP ${response?.status || 'unknown'}`);
-          pageDoc = parseAuctionNinjaHtmlDocument(await response.text());
-          if (!pageDoc) throw new Error('fetch-parse-failed');
-        } catch (error) {
-          lastError = String(error?.message || error);
-          pageDoc = null;
-          debugEvent('aar.pagination.retry', { step: steps, attempt, error: lastError });
-        } finally {
-          if (timer) globalThis.clearTimeout(timer);
-        }
+      onProgress(`Fetching AAR catalog page ${page}...`);
+      const fetched = await fetchHtmlDocumentWithRetries(
+        requestedUrl,
+        'aar.pagination',
+        shouldStop,
+        { maxAttempts: 3, timeoutMs: 20000 }
+      );
+      if (!fetched.document) {
+        failedPages.push({ page, url: requestedUrl, error: fetched.error || 'fetch-failed' });
+        enumerationReason = fetched.error || 'fetch-failed';
+        break;
       }
-      if (!pageDoc) {
-        failedPages.push({ url: String(url).replace(/([?&](?:token|session|auth)[^=]*)=[^&]*/gi, '$1=[redacted]'), error: lastError || 'fetch-failed' });
-        continue;
+      const responseUrl = String(fetched.responseUrl || requestedUrl);
+      if (!aarCatalogResponseMatchesRequest(responseUrl, requestedUrl, filters)) {
+        failedPages.push({ page, url: requestedUrl, responseUrl, error: 'response-route-or-filter-mismatch' });
+        enumerationReason = 'response-route-or-filter-mismatch';
+        break;
       }
-      const pageLoc = new URL(url);
-      mergeAarLots(lotsByKey, extractAarCatalogLots(pageDoc, pageLoc), duplicateIds);
-      const pageContext = extractAarCatalogContext(pageDoc, pageLoc);
-      if (Number.isFinite(Number(pageContext.expectedTotal))) observedTotals.add(Number(pageContext.expectedTotal));
-      context = { ...context, expectedTotal: context.expectedTotal ?? pageContext.expectedTotal };
-      findAarCatalogPageUrls(pageDoc, pageLoc).forEach(pageUrl => {
-        if (!seenUrls.has(pageUrl)) {
-          seenUrls.add(pageUrl);
-          queued.push(pageUrl);
-        }
+      const pageLoc = new URL(responseUrl);
+      const pageRoute = resolveAarAuctionsPage(pageLoc);
+      if (pageRoute.kind !== 'aar-auction-catalog' || String(pageRoute.auctionId || '') !== String(route.auctionId || '')) {
+        failedPages.push({ page, url: requestedUrl, responseUrl, error: 'response-auction-mismatch' });
+        enumerationReason = 'response-auction-mismatch';
+        break;
+      }
+      const pageContext = extractAarCatalogContext(fetched.document, pageLoc);
+      const hasAdvertisedTotal = pageContext.advertisedAuctionTotal !== null
+        && pageContext.advertisedAuctionTotal !== undefined
+        && pageContext.advertisedAuctionTotal !== ''
+        && Number.isFinite(Number(pageContext.advertisedAuctionTotal));
+      const advertisedTotal = hasAdvertisedTotal ? Number(pageContext.advertisedAuctionTotal) : null;
+      if (!filtered && advertisedTotal !== null) {
+        observedTotals.add(advertisedTotal);
+        expectedTotal = expectedTotal ?? advertisedTotal;
+      }
+      const pageLots = extractAarCatalogLots(fetched.document, pageLoc);
+      const before = lotsByKey.size;
+      mergeAarLots(lotsByKey, pageLots, duplicateIds);
+      const pageLinks = findAarCatalogPageUrls(fetched.document, pageLoc);
+      const hasHigherPage = pageLinks.some(url => Number(new URL(url).searchParams.get('page') || 1) > page);
+      pageAudits.push({
+        page,
+        requestedUrl,
+        responseUrl,
+        count: pageLots.length,
+        added: lotsByKey.size - before,
+        ids: pageLots.map(item => scraperStableIdentity(item, 'aar')).filter(Boolean),
+        advertisedTotal,
+        hasHigherPage
       });
+      debugEvent('aar.pagination.page', {
+        page,
+        count: pageLots.length,
+        added: lotsByKey.size - before,
+        uniqueCount: lotsByKey.size,
+        expectedTotal,
+        filtered,
+        hasHigherPage
+      });
+      if (expectedTotal !== null) {
+        if (lotsByKey.size === expectedTotal) {
+          enumerationComplete = true;
+          enumerationReason = 'verified-total-reached';
+          break;
+        }
+        if (lotsByKey.size > expectedTotal) {
+          enumerationReason = 'count-exceeds-total';
+          break;
+        }
+        if (!pageLots.length || !hasHigherPage) {
+          enumerationReason = 'catalog-ended-before-total';
+          break;
+        }
+      } else if (!hasHigherPage) {
+        expectedTotal = lotsByKey.size;
+        enumerationComplete = true;
+        enumerationReason = 'deterministic-pagination-exhausted';
+        break;
+      }
+      page += 1;
     }
+    if (!enumerationReason && page > 100) enumerationReason = 'max-fetch-steps';
 
+    let lots = Array.from(lotsByKey.values()).sort((a, b) => String(a.lot || '').localeCompare(String(b.lot || ''), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+    let enrichmentAudit = { requested: 0, succeeded: 0, failed: [], stopped: false };
+    if (lots.length && !shouldStop()) {
+      const enriched = await enrichAarCatalogLots(lots, onProgress, shouldStop, { concurrency: 4, timeoutMs: 20000 });
+      enrichmentAudit = enriched.audit || enrichmentAudit;
+      lots = Array.from(enriched);
+    }
     const stopped = shouldStop();
     const currentRoute = typeof location !== 'undefined' ? resolveAarAuctionsPage(location) : route;
     const currentFingerprint = genericRouteFingerprint({ ...currentRoute, source: 'aar' }, typeof location !== 'undefined' ? location : loc);
     const routeMatches = routeFingerprint === currentFingerprint;
-    const lots = Array.from(lotsByKey.values()).sort((a, b) => String(a.lot || '').localeCompare(String(b.lot || ''), undefined, {
-      numeric: true,
-      sensitivity: 'base'
-    }));
-    const expectedTotal = Number.isFinite(Number(context.expectedTotal)) ? Number(context.expectedTotal) : null;
     const totalDrift = observedTotals.size > 1;
+    const enrichmentComplete = enrichmentAudit.requested === enrichmentAudit.succeeded && enrichmentAudit.failed.length === 0;
     const incomplete = stopped
       || !routeMatches
+      || !enumerationComplete
       || expectedTotal === null
       || lots.length !== expectedTotal
       || duplicateIds.size > 0
       || failedPages.length > 0
-      || totalDrift;
-    stopReason = stopped
+      || totalDrift
+      || !enrichmentComplete;
+    const stopReason = stopped
       ? 'stopped-by-user'
       : (!routeMatches
         ? 'route-fingerprint-changed'
@@ -10062,22 +10431,37 @@ ${cards}
             ? 'total-drift'
             : (duplicateIds.size
               ? 'duplicate-identities'
-              : (expectedTotal === null ? 'authoritative-total-unavailable' : (lots.length === expectedTotal ? 'verified-total-reached' : 'count-mismatch'))))));
+              : (!enumerationComplete
+                ? (enumerationReason || 'pagination-incomplete')
+                : (!enrichmentComplete
+                  ? 'detail-enrichment-incomplete'
+                  : (expectedTotal === null ? 'authoritative-total-unavailable' : (lots.length === expectedTotal ? enumerationReason : 'count-mismatch'))))))));
+    context = {
+      ...context,
+      expectedTotal,
+      filters,
+      filtered,
+      visibleLots: lots.length
+    };
     const coverage = {
-      proofTier: expectedTotal === null ? 'unproven' : 'pagination-exact',
-      strategy: 'aar-servlet-pagination',
+      proofTier: enumerationComplete && expectedTotal !== null ? 'pagination-exact' : 'unproven',
+      strategy: 'aar-servlet-perpage100-plus-item-enrichment',
       routeFingerprint,
       currentFingerprint,
       routeMatches,
       enumeratedIds: lots.map(item => scraperStableIdentity(item, 'aar')).filter(Boolean),
       duplicateIds: Array.from(duplicateIds),
       failedPages,
+      failedBatches: enrichmentAudit.failed,
       observedTotals: Array.from(observedTotals),
+      filters,
+      pageAudits,
+      enrichment: enrichmentAudit,
       durationMs: Date.now() - startedAt
     };
     debugEvent('aar.coverage', { lots: lots.length, expectedTotal, stopReason, steps, coverage });
     return {
-      source: 'aar-dom',
+      source: 'aar-servlet',
       items: lots,
       lots,
       expectedTotal,
@@ -10089,7 +10473,8 @@ ${cards}
       routeFingerprint,
       durationMs: coverage.durationMs,
       coverage,
-      failedPages
+      failedPages,
+      audit: { pages: pageAudits, enrichment: enrichmentAudit }
     };
   }
 
@@ -12218,8 +12603,10 @@ ${cards}
       },
       aar: {
         discovery: 'chrome-cdp',
-        enumerate: { method: 'GET', url: 'https://aarauctions.com/servlet/Search.do', variables: ['auctionId', 'itemId', 'page'] },
-        note: 'Catalog data is server-rendered; scope every page to the active auctionId.'
+        calendar: { method: 'GET', url: 'https://aarauctions.com/auctions/', variables: ['canonical auctionId'] },
+        enumerate: { method: 'GET', url: 'https://aarauctions.com/servlet/Search.do', variables: ['auctionId', 'categoryName', 'keyword', 'lotId', 'orderBy', 'page', 'perPage'] },
+        enrich: { method: 'GET', url: 'https://aarauctions.com/servlet/Search.do?auctionId={auctionId}&itemId={itemId}', variables: ['auctionId', 'itemId'] },
+        note: 'Catalogs use deterministic perPage=100 servlet documents plus identity-checked item detail hydration; calendars require a settled-bottom canonical-ID audit.'
       },
       govdeals: {
         discovery: 'chrome-cdp',

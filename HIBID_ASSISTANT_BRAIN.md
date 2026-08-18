@@ -2,7 +2,7 @@
 
 Living architecture and release contract for `hibid-bid-assistant.user.js`.
 
-Current release candidate: `v0.8.23`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
+Current release candidate: `v0.8.24`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
 
 ## Current State
 
@@ -151,11 +151,13 @@ A partial is invalidated if the route or filters change. It must never use a suc
 
 ### AAR Auctions
 
-- Calendar and servlet catalog/item pages are server-rendered.
-- Fingerprint `auctionId`, optional `itemId`, active page, and filters.
-- Treat `itemId` as a one-record scope.
-- Page-size controls are not authoritative totals.
-- Follow deterministic pages only; do not click bid, register, track, login, or payment controls.
+- The calendar is one server-rendered document. It has no authoritative total, so completeness requires canonical auction IDs to remain stable for two cycles after the real page bottom is reached. Chrome observed 56/56 unique auction IDs on 2026-08-18.
+- Catalog enumeration uses same-origin `/servlet/Search.do` with `auctionId`, active `categoryName`/`keyword`/`lotId`/`orderBy`, `page`, and `perPage=100`. Do not use `itemId` while enumerating.
+- Unfiltered catalogs require equality with `All Items (N)`. Filtered catalogs do not borrow that broad total; they require deterministic pagination exhaustion and a short/no-next final page.
+- Embedded `new Lot(...)` records provide stable `itemId`, lot number, full description, current/minimum bid, quantity, and closing data. Bidder aliases in those arguments are discarded.
+- Enrich every enumerated item through the same-origin `Search.do?auctionId=...&itemId=...` document with concurrency four, three retries, and Stop support. The final response must preserve both IDs. Normalize every auction photo to its large same-auction URL.
+- Chrome proved current catalog `8649` at 80/80 unique item IDs and historical sample catalog `8573` at 41/41. First/middle/final detail records all contained descriptions and multiple large images.
+- Treat a direct `itemId` route as a one-record scope. Follow read-only deterministic pages only; never click bid, register, track, login, or payment controls.
 
 ### GovDeals
 
