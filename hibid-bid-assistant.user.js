@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.21
+// @version      0.8.22
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -66,7 +66,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.21';
+  const SCRIPT_VERSION = '0.8.22';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -4430,7 +4430,7 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
     const items = result?.items || result?.lots || [];
     if (!visibleState) return { ok: true };
     if (isHibidAccountExportRoute(route)) return { ok: true };
-    const trustedApiCoverage = /^hibid-(?:graphql|search)-api$/i.test(String(result?.source || ''))
+    const trustedApiCoverage = /^(?:hibid-(?:graphql|search)-api|ajwillner-api)$/i.test(String(result?.source || ''))
       && result?.coverage?.complete === true
       && result?.coverage?.routeMatches !== false;
     if (trustedApiCoverage) return { ok: true };
@@ -4925,6 +4925,9 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
         if (rowAuctionIds.length && rowAuctionIds.some(auctionId => auctionId !== expectedAuctionId)) {
           return { ok: false, reason: 'catalog-auction-id-mismatch' };
         }
+      }
+      if (result?.coverage?.complete !== true || result?.coverage?.routeMatches === false) {
+        return { ok: false, reason: 'catalog-incomplete' };
       }
     } else if (routeSource === 'hibid' || !routeSource) {
       if (looksAjWillner || looksOtherAuctionSource) return { ok: false, reason: 'catalog-source-mismatch' };
@@ -6683,8 +6686,11 @@ ${cards}
     getAjWillnerScrollStepSize,
     getAjWillnerExpectedTotal,
     extractAjWillnerVisibleListings,
+    normalizeAjWillnerAuctionContext,
     normalizeAjWillnerApiItem,
+    ajWillnerAuctionApiUrl,
     ajWillnerSearchApiUrl,
+    fetchAjWillnerAuctionContext,
     scrapeAjWillnerApiListings,
     scrapeAjWillnerListings,
     scrapeAuctionNinjaCatalogLots,
@@ -7136,10 +7142,57 @@ ${cards}
       .replace(/\bAll Items Sold AS-IS[\s\S]*$/i, ''));
   }
 
+  function pickAjWillnerApiImages(item = {}) {
+    return uniqueNonEmpty((Array.isArray(item.images) ? item.images : []).map(image => (
+      image?.xl || image?.lg || image?.original || image?.sm || image?.xs || image?.url || ''
+    )));
+  }
+
   function pickAjWillnerApiImage(item = {}) {
-    const image = Array.isArray(item.images) ? item.images[0] : null;
-    if (!image) return '';
-    return image.lg || image.sm || image.xs || image.xl || image.original || image.url || '';
+    return pickAjWillnerApiImages(item)[0] || '';
+  }
+
+  function formatAjWillnerLocation(value = {}) {
+    if (typeof value === 'string') return cleanGovDealsText(value);
+    return [value?.street, value?.city, value?.state, value?.zip, value?.country]
+      .map(part => String(part || '').trim())
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  function normalizeAjWillnerAuctionContext(auction = {}, loc = location) {
+    const auctionId = String(auction.id || getAjWillnerAuctionId(loc) || '');
+    const description = cleanGovDealsText(stripHtml(
+      auction.simple_description || auction.formatted_simple_description || auction.description || ''
+    ));
+    const terms = cleanGovDealsText(stripHtml(auction.terms || ''));
+    const premiumMatch = `${description} ${terms}`.match(/buyer(?:'s|s)?\s+premium[^\d]{0,30}(\d+(?:\.\d+)?)\s*%/i);
+    const optionalNumber = value => value === null || value === undefined || value === ''
+      ? null
+      : (Number.isFinite(Number(value)) ? Number(value) : null);
+    return {
+      source: 'ajwillner',
+      pageKind: 'catalog',
+      auctionId,
+      auctionTitle: String(auction.name || '').trim(),
+      catalogUrl: loc?.href || '',
+      location: formatAjWillnerLocation(auction.location || auction.contact_location_object || auction.contact_location || ''),
+      description,
+      terms,
+      buyerPremium: premiumMatch ? `${premiumMatch[1]}%` : '',
+      startsAt: auction.starts_at || '',
+      scheduledEndTime: auction.scheduled_end_time || '',
+      status: String(auction.status || '').replace(/_/g, ' '),
+      publishedItemsCount: optionalNumber(auction.published_items_count),
+      itemsCount: optionalNumber(auction.items_count),
+      categoryCounts: Array.isArray(auction.category_counts)
+        ? auction.category_counts.map(entry => ({
+            id: entry?.id ?? entry?.category_id ?? '',
+            name: entry?.name || entry?.category || '',
+            count: Number(entry?.count) || 0
+          }))
+        : []
+    };
   }
 
   function ajWillnerMoneyText(label, value, currencySymbol = '$') {
@@ -7161,15 +7214,35 @@ ${cards}
     const url = absoluteUrl(`/ui/auctions/${auctionId}/${item.id}`, loc?.href || 'https://bid.ajwillnerauctions.com/');
     const title = String(item.name || item.displayed_name || item.name_with_prefix || '').trim();
     const description = cleanAjWillnerApiDescription(item);
+    const descriptionHtml = String(item.description || item.formatted_simple_description || '').trim();
+    const images = pickAjWillnerApiImages(item);
+    const subCategories = (Array.isArray(item.sub_categories) ? item.sub_categories : [])
+      .map(entry => typeof entry === 'string' ? entry : (entry?.name || entry?.label || ''))
+      .map(value => String(value || '').trim())
+      .filter(Boolean);
+    const categoryPath = uniqueNonEmpty([item.main_category, ...subCategories]);
+    const estimateLowRaw = item.bidding_configuration?.low_estimate;
+    const estimateHighRaw = item.bidding_configuration?.high_estimate;
+    const estimateLow = estimateLowRaw === null || estimateLowRaw === undefined || estimateLowRaw === ''
+      ? null
+      : Number(estimateLowRaw);
+    const estimateHigh = estimateHighRaw === null || estimateHighRaw === undefined || estimateHighRaw === ''
+      ? null
+      : Number(estimateHighRaw);
+    const buyerPremiumRaw = item.custom_buyers_premium_amount;
     if (!item.id || !title) return null;
     return {
       source: 'ajwillner',
       id: String(item.id),
+      auctionId: String(auctionId || ''),
       lot: String(item.lot_identifier || item.simple_id || item.sequence || item.id || '').replace(/^#\s*/, ''),
       title,
       url,
-      image: pickAjWillnerApiImage(item),
+      image: images[0] || '',
+      images,
+      imageCount: images.length,
       description,
+      descriptionHtml,
       highBid: Number.isFinite(highAmount) ? ajWillnerMoneyText('High bid', highAmount, currencySymbol) : '',
       highBidAmount: Number.isFinite(highAmount) ? highAmount : null,
       currentPrice: Number.isFinite(highAmount) ? highAmount : null,
@@ -7186,7 +7259,15 @@ ${cards}
       watched: false,
       quantity: Number(item.quantity) || null,
       category: item.main_category || '',
+      categoryPath,
+      location: formatAjWillnerLocation(item.location_str || item.location || ''),
       startAmount: Number(item.start_amount ?? item.bidding_configuration?.start_amount) || null,
+      estimateLow: Number.isFinite(estimateLow) ? estimateLow : null,
+      estimateHigh: Number.isFinite(estimateHigh) ? estimateHigh : null,
+      buyerPremiumAmount: buyerPremiumRaw !== null && buyerPremiumRaw !== undefined && buyerPremiumRaw !== ''
+        && Number.isFinite(Number(buyerPremiumRaw))
+        ? Number(buyerPremiumRaw)
+        : null,
       auctionTitle: item.auction_name || '',
       scheduledEndTime: item.scheduled_end_time || item.actual_end_time || '',
       rawText: cleanGovDealsText([
@@ -7197,6 +7278,63 @@ ${cards}
         statusText
       ].filter(Boolean).join(' '))
     };
+  }
+
+  function ajWillnerAuctionApiUrl(loc = location) {
+    const auctionId = getAjWillnerAuctionId(loc);
+    return absoluteUrl(
+      `/api/auctions/${auctionId}?page=active&include_items_data=false&include_documents=true`,
+      loc?.href || 'https://bid.ajwillnerauctions.com/'
+    );
+  }
+
+  async function fetchAjWillnerAuctionContext(loc = location, options = {}) {
+    const href = ajWillnerAuctionApiUrl(loc);
+    const retries = Math.max(1, Math.min(3, Number(options.retries) || 3));
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 20000);
+    const fetchImpl = options.fetchImpl || fetch;
+    const errors = [];
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      if (options.shouldStop?.()) throw new Error('AJ Willner auction context request stopped');
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      let stopPollId = null;
+      const pollForStop = () => {
+        if (!controller || !options.shouldStop) return;
+        if (options.shouldStop()) controller.abort();
+        else stopPollId = setTimeout(pollForStop, 100);
+      };
+      pollForStop();
+      try {
+        debugEvent('ajwillner.api.bootstrap.start', { attempt, endpoint: debugHref(href) });
+        const response = await fetchImpl(href, {
+          credentials: 'include',
+          cache: 'no-store',
+          ...(controller ? { signal: controller.signal } : {})
+        });
+        if (!response?.ok) throw Object.assign(new Error(`HTTP ${response?.status || 0}`), { status: Number(response?.status) || 0 });
+        const data = await response.json();
+        const context = normalizeAjWillnerAuctionContext(data, loc);
+        debugEvent('ajwillner.api.bootstrap.success', {
+          attempt,
+          auctionId: context.auctionId,
+          publishedItemsCount: context.publishedItemsCount
+        });
+        return { href, data, context, attempts: attempt, errors };
+      } catch (error) {
+        const status = Number(error?.status) || 0;
+        errors.push({ attempt, status, message: String(error?.message || error) });
+        debugEvent('ajwillner.api.bootstrap.failure', { attempt, status, error: String(error?.message || error) });
+        if (attempt >= retries || (status >= 400 && status < 500 && ![408, 429].includes(status))) {
+          throw Object.assign(new Error(`AJ Willner auction context failed: ${error?.message || error}`), { errors, status });
+        }
+        await wait(250 * attempt * attempt);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        if (stopPollId) clearTimeout(stopPollId);
+      }
+    }
+    throw new Error('AJ Willner auction context failed');
   }
 
   function ajWillnerSearchApiUrl(loc = location, page = 1, perPage = 200) {
@@ -7227,6 +7365,13 @@ ${cards}
       if (options.shouldStop?.()) throw new Error('AJ Willner API request stopped');
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      let stopPollId = null;
+      const pollForStop = () => {
+        if (!controller || !options.shouldStop) return;
+        if (options.shouldStop()) controller.abort();
+        else stopPollId = setTimeout(pollForStop, 100);
+      };
+      pollForStop();
       try {
         debugEvent('ajwillner.api.request.start', { page, attempt, endpoint: debugHref(href) });
         const response = await fetchImpl(href, {
@@ -7248,6 +7393,7 @@ ${cards}
         await wait(250 * attempt * attempt);
       } finally {
         if (timeoutId) clearTimeout(timeoutId);
+        if (stopPollId) clearTimeout(stopPollId);
       }
     }
     throw new Error(`AJ Willner API page ${page} failed`);
@@ -7261,6 +7407,17 @@ ${cards}
     const route = resolveAjWillnerPage(loc);
     const routeFingerprint = genericRouteFingerprint(route, loc);
     const pageFailures = [];
+    const params = new URLSearchParams(loc?.search || '');
+    const category = params.get('category') || 'All';
+    const subCategory = params.get('subCategory') || params.get('sub_category') || 'Active';
+    const query = params.get('q') || params.get('query') || params.get('search') || '';
+    const hasNarrowingFilters = !/^all$/i.test(category)
+      || !/^active$/i.test(subCategory)
+      || Boolean(query.trim());
+    const bootstrapPromise = fetchAjWillnerAuctionContext(loc, { shouldStop }).catch(error => ({
+      error: String(error?.message || error),
+      context: null
+    }));
     const retryShortPage = async (page, pageSize, expectedCount = null) => {
       let result = await fetchAjWillnerSearchPage(loc, page, pageSize, { shouldStop });
       let attempts = 1;
@@ -7280,7 +7437,10 @@ ${cards}
     };
     status('Reading AJ Willner API page 1...');
     let first = await fetchAjWillnerSearchPage(loc, 1, perPage, { shouldStop });
-    const rawTotal = Number(first.data?.total);
+    const rawTotalValue = first.data?.total;
+    const rawTotal = rawTotalValue === null || rawTotalValue === undefined || rawTotalValue === ''
+      ? Number.NaN
+      : Number(rawTotalValue);
     const hasApiTotal = Number.isFinite(rawTotal) && rawTotal >= 0;
     const total = hasApiTotal ? rawTotal : 0;
     const pageSize = Number(first.data?.per_page) || perPage;
@@ -7311,7 +7471,9 @@ ${cards}
     pages
       .sort((a, b) => (Number(a.data?.page) || 0) - (Number(b.data?.page) || 0))
       .forEach(page => {
-        if (Number.isFinite(Number(page.data?.total))) observedTotals.add(Number(page.data.total));
+        const pageTotalValue = page.data?.total;
+        if (pageTotalValue !== null && pageTotalValue !== undefined && pageTotalValue !== ''
+          && Number.isFinite(Number(pageTotalValue))) observedTotals.add(Number(pageTotalValue));
         (page.data?.items || []).forEach(item => {
           const normalized = normalizeAjWillnerApiItem(item, loc);
           if (!normalized?.id) return;
@@ -7323,16 +7485,33 @@ ${cards}
       numeric: true,
       sensitivity: 'base'
     }));
-    const expectedTotal = hasApiTotal ? total : (items.length || getAjWillnerExpectedTotal(root, findAjWillnerScrollContainer(root)));
+    const bootstrap = await bootstrapPromise;
+    const auctionContext = bootstrap?.context || null;
+    const bootstrapTotalValue = auctionContext?.publishedItemsCount ?? auctionContext?.itemsCount;
+    const bootstrapTotal = bootstrapTotalValue === null || bootstrapTotalValue === undefined || bootstrapTotalValue === ''
+      ? Number.NaN
+      : Number(bootstrapTotalValue);
+    const hasBootstrapTotal = Number.isFinite(bootstrapTotal) && bootstrapTotal >= 0;
+    const expectedTotal = hasApiTotal
+      ? total
+      : (hasBootstrapTotal && !hasNarrowingFilters
+        ? bootstrapTotal
+        : (items.length || getAjWillnerExpectedTotal(root, findAjWillnerScrollContainer(root))));
     const stopped = !!shouldStop();
     const currentLocation = typeof location !== 'undefined' ? location : loc;
     const currentFingerprint = genericRouteFingerprint(resolveAjWillnerPage(currentLocation), currentLocation);
     const routeMatches = routeFingerprint === currentFingerprint;
     const totalDrift = observedTotals.size > 1 || (observedTotals.size === 1 && !observedTotals.has(total));
+    const bootstrapTotalMismatch = !hasNarrowingFilters
+      && hasApiTotal
+      && hasBootstrapTotal
+      && bootstrapTotal !== total;
     const incomplete = stopped
       || !routeMatches
+      || !hasApiTotal
       || pageFailures.length > 0
       || totalDrift
+      || bootstrapTotalMismatch
       || duplicateIds.size > 0
       || (Number.isFinite(expectedTotal) && items.length !== expectedTotal);
     const coverage = {
@@ -7343,14 +7522,21 @@ ${cards}
         ? 'stopped'
         : (!routeMatches
           ? 'route-fingerprint-changed'
-          : (pageFailures.length
+          : (!hasApiTotal
+            ? 'authoritative-total-unavailable'
+            : (pageFailures.length
             ? 'failed-pages'
             : (totalDrift
               ? 'total-drift'
-              : (duplicateIds.size ? 'duplicate-identities' : (items.length === expectedTotal ? 'api-complete' : 'count-mismatch'))))),
+              : (bootstrapTotalMismatch
+                ? 'bootstrap-total-mismatch'
+                : (duplicateIds.size ? 'duplicate-identities' : (items.length === expectedTotal ? 'api-complete' : 'count-mismatch'))))))),
       routeFingerprint,
       routeMatches,
       expectedTotal,
+      bootstrapExpectedTotal: hasBootstrapTotal ? bootstrapTotal : null,
+      bootstrapError: bootstrap?.error || '',
+      hasNarrowingFilters,
       enumeratedIds: items.map(item => String(item.id)),
       duplicateIds: Array.from(duplicateIds),
       failedPages: pageFailures,
@@ -7378,10 +7564,12 @@ ${cards}
       failedPages: pageFailures,
       durationMs: Date.now() - startedAt,
       context: {
+        ...(auctionContext || {}),
         source: 'ajwillner',
         pageKind: 'catalog',
         auctionId,
         url: loc?.href || '',
+        activeFilters: { category, subCategory, query },
         generatedAt: new Date().toISOString()
       },
       pageSteps: totalPages
@@ -7416,15 +7604,52 @@ ${cards}
 
     if (!scrollContainer) {
       const items = Array.from(itemsMap.values());
-      debug('AJ Willner scrape no scroll container', { count: items.length, expectedTotal });
+      const route = resolveAjWillnerPage(loc);
+      const routeFingerprint = genericRouteFingerprint(route, loc);
+      const currentLocation = typeof location !== 'undefined' ? location : loc;
+      const routeMatches = routeFingerprint === genericRouteFingerprint(resolveAjWillnerPage(currentLocation), currentLocation);
+      const identities = items.map(item => String(item.id || '')).filter(Boolean);
+      const duplicateIds = identities.filter((id, index) => identities.indexOf(id) !== index);
+      const stopped = !!shouldStop();
+      const hasExpectedTotal = expectedTotal !== null
+        && expectedTotal !== undefined
+        && expectedTotal !== ''
+        && Number.isFinite(Number(expectedTotal));
+      const incomplete = stopped
+        || !routeMatches
+        || !hasExpectedTotal
+        || items.length !== Number(expectedTotal)
+        || identities.length !== items.length
+        || duplicateIds.length > 0;
+      debug('AJ Willner scrape no scroll container', { count: items.length, expectedTotal, incomplete });
       return {
         source: 'ajwillner-visible-dom',
         items,
         lots: items,
         expectedTotal,
-        stopped: !!shouldStop(),
-        incomplete: Boolean(expectedTotal && items.length < expectedTotal),
-        stopReason: 'no scroll container'
+        stopped,
+        incomplete,
+        stopReason: incomplete ? 'unproven-visible-dom' : 'complete-visible-dom',
+        routeFingerprint,
+        context: {
+          source: 'ajwillner',
+          pageKind: 'catalog',
+          auctionId: getAjWillnerAuctionId(loc),
+          url: loc?.href || ''
+        },
+        coverage: {
+          strategy: 'ajwillner-visible-dom',
+          proofTier: 'dom-bottom-settled',
+          complete: !incomplete,
+          reason: incomplete ? 'unproven-visible-dom' : 'complete-visible-dom',
+          routeFingerprint,
+          routeMatches,
+          reachedBottom: true,
+          expectedTotal: hasExpectedTotal ? Number(expectedTotal) : null,
+          enumeratedIds: identities,
+          duplicateIds: uniqueNonEmpty(duplicateIds),
+          failedPages: []
+        }
       };
     }
 
@@ -11167,7 +11392,7 @@ ${cards}
       ajwillner: {
         discovery: 'chrome-cdp',
         bootstrap: { method: 'GET', url: 'https://bid.ajwillnerauctions.com/api/auctions/{auctionId}', variables: ['page', 'include_items_data', 'include_documents'] },
-        enumerate: { method: 'GET', url: 'https://bid.ajwillnerauctions.com/api/items/search', variables: ['auction_id', 'page', 'per_page', 'category', 'sub_category', 'query'] }
+        enumerate: { method: 'GET', url: 'https://bid.ajwillnerauctions.com/api/items/search', variables: ['auction_id', 'page', 'per_page', 'category', 'sub_category', 'query', 'exact_category_match'] }
       },
       auctionninja: {
         discovery: 'chrome-cdp',
@@ -11551,7 +11776,17 @@ ${cards}
       title: lot.title,
       url: lot.url || '',
       image: lot.image || '',
+      images: Array.isArray(lot.images) ? lot.images : (lot.image ? [lot.image] : []),
+      imageCount: lot.imageCount ?? lot.pictureCount ?? null,
       description: lot.description || '',
+      descriptionHtml: lot.descriptionHtml || '',
+      category: lot.category || '',
+      categoryPath: Array.isArray(lot.categoryPath) ? lot.categoryPath : [],
+      quantity: lot.quantity ?? null,
+      location: lot.location || '',
+      scheduledEndTime: lot.scheduledEndTime || '',
+      estimateLow: lot.estimateLow ?? null,
+      estimateHigh: lot.estimateHigh ?? null,
       highBid: lot.highBid || '',
       highBidAmount: lot.highBidAmount ?? null,
       currentPrice: lot.currentPrice ?? null,
@@ -11567,7 +11802,7 @@ ${cards}
       isWinning: Boolean(lot.isWinning),
       isOutbid: Boolean(lot.isOutbid),
       watched: Boolean(lot.watched),
-      pictureCount: lot.pictureCount ?? null,
+      pictureCount: lot.pictureCount ?? lot.imageCount ?? null,
       auctionTitle: lot.auctionTitle || '',
       buyerPremium: lot.buyerPremium || '',
       rawText: lot.rawText || ''
@@ -16828,6 +17063,7 @@ ${cards}
     const clearCatalogPartial = () => {
       state.partialCatalogResult = null;
       state.partialCatalogMode = '';
+      stageVerifiedPartial(null, null);
       if (catalogCopyPartialButton) {
         catalogCopyPartialButton.hidden = true;
         catalogCopyPartialButton.setAttribute('aria-hidden', 'true');
@@ -16840,6 +17076,26 @@ ${cards}
       if (!lots.length || result?.coverage?.complete || result?.coverage?.routeMatches === false) {
         clearCatalogPartial();
         return false;
+      }
+      const route = currentActiveRoute();
+      if (isAjWillnerRoute(route)) {
+        const currentFingerprint = genericRouteFingerprint(route, typeof location !== 'undefined' ? location : result?.context?.url);
+        const coverage = buildProofTierCoverage(result, 'catalog', route, {
+          site: 'ajwillner',
+          currentFingerprint,
+          locationLike: typeof location !== 'undefined' ? location : result?.context?.url
+        });
+        stageVerifiedPartial(result, coverage, mode, {
+          sourceUrl: typeof location !== 'undefined' ? location.href : (result?.context?.url || ''),
+          site: 'ajwillner'
+        });
+        debugEvent('ajwillner.partial.ready', {
+          mode,
+          count: lots.length,
+          expectedTotal: coverage.expectedTotal,
+          reason: coverage.reason
+        });
+        return Boolean(state.verifiedPartial);
       }
       state.partialCatalogResult = result;
       state.partialCatalogMode = mode;
@@ -16959,7 +17215,7 @@ ${cards}
           return;
         }
         const payload = mode === 'llm'
-          ? buildLlmAuctionBrief(lots, catalogAuctionContext())
+          ? buildLlmAuctionBrief(lots, { ...catalogAuctionContext(), ...(result.context || {}) })
           : JSON.stringify(lots, null, 2);
         if (!panelIsCurrent()) {
           debug('catalog clipboard write skipped after panel or route changed');

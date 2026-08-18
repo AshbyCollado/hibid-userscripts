@@ -2,7 +2,7 @@
 
 Hosted Tampermonkey userscript for auction and resale scraping/export workflows across HiBid, AJ Willner, AuctionNinja, AAR Auctions, GovDeals, eBay Seller Hub, and Facebook Marketplace.
 
-Current release candidate: `v0.8.21`. The Cross-Site Network-First Reliability work below is the approved implementation contract. A route is not considered browser-verified until its own Chrome discovery and installed Waterfox acceptance checks have passed.
+Current release candidate: `v0.8.22`. The Cross-Site Network-First Reliability work below is the approved implementation contract. A route is not considered browser-verified until its own Chrome discovery and installed Waterfox acceptance checks have passed.
 
 ## Install
 
@@ -35,7 +35,7 @@ After bounded retries, the only permitted fallback is an audited partial export.
 | Site | Supported read scope | Primary source and proof |
 | --- | --- | --- |
 | HiBid | Public catalog, live catalog, global/category/filtered lots; dedicated watchlist/current-bids/past-auction account exports | Enumerate through `https://hibid-api.io/sr/main/v1/search/lot` or same-origin `https://hibid.com/graphql`, then GraphQL-hydrate exact event-item IDs. Account routes keep their scoped canonical-DOM collectors. |
-| AJ Willner | Auction catalog pages under `bid.ajwillnerauctions.com` | Enumerate through same-origin `/api/items/search`, validate API total and stable item IDs, then hydrate descriptions/photos only from proven first-party detail data. |
+| AJ Willner | Auction catalog pages under `bid.ajwillnerauctions.com` | Enumerate through same-origin `/api/items/search`, validate API total and stable item IDs, and preserve the complete description and image arrays already returned by that endpoint. A lean `/api/auctions/{id}` request supplies public catalog context. |
 | AuctionNinja | Sale catalogs, category/search pages, followed items, won items, and bid history | Deterministic server-rendered pagination with canonical product/sale identities and exact visible range/total validation. |
 | AAR Auctions | Auction calendar, auction catalog, and single-item servlet pages | Deterministic server-rendered pagination keyed by `auctionId` and optional `itemId`; page-size values are not treated as totals. |
 | GovDeals | Seller, filtered search/new-listings, and asset pages | Observed endpoint `https://maestro.lqdt1.com/search/list`. Its opaque `sessionId` is always redacted; until safe request construction and total equality are proven, use canonical DOM with an audited settled-bottom fallback. |

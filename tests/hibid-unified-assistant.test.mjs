@@ -597,6 +597,9 @@ test('assistant resolves AJ Willner auction pages as source-aware catalog export
   const html = core.buildPanelHtml({ mode: 'catalog', route: mode.route, debugEnabled: false });
   assert.match(html, /AJ Willner/);
   assert.match(html, /AJ Willner Catalog Export/);
+  assert.match(html, /id="flipperaddon-partial-export"/);
+  assert.match(html, /id="flipperaddon-copy-verified-partial"/);
+  assert.doesNotMatch(html, /id="hibid-catalog-copy-partial"/);
   assert.doesNotMatch(html, />HiBid catalog</);
 });
 
@@ -662,6 +665,22 @@ test('sanitized network evidence is committed without credentials or account dat
   const serialized = JSON.stringify(manifest);
   assert.doesNotMatch(serialized, /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token)/i);
   assert.equal(manifest.sites.hibid.sanitizedObservations.every(row => row.expected === row.collected && row.collected === row.unique), true);
+});
+
+test('AJ Willner sanitized Chrome fixture proves exact coverage and rich records', () => {
+  const fixture = JSON.parse(fs.readFileSync(new URL('../fixtures/ajwillner-network.sanitized.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.discovery, 'Chrome DevTools Protocol Network');
+  assert.equal(fixture.rawCaptureCommitted, false);
+  assert.deepEqual(fixture.unfilteredCoverage.pageCounts, [200, 200, 200, 200, 68]);
+  assert.equal(fixture.unfilteredCoverage.expected, 868);
+  assert.equal(fixture.unfilteredCoverage.collected, 868);
+  assert.equal(fixture.unfilteredCoverage.uniqueStableIds, 868);
+  assert.equal(fixture.unfilteredCoverage.duplicateStableIds, 0);
+  assert.equal(fixture.unfilteredCoverage.recordsWithDescriptions, 868);
+  assert.equal(fixture.unfilteredCoverage.recordsWithImages, 868);
+  assert.equal(fixture.filteredCoverage.expected, fixture.filteredCoverage.collected);
+  assert.equal(fixture.filteredCoverage.collected, fixture.filteredCoverage.uniqueStableIds);
+  assert.doesNotMatch(JSON.stringify(fixture), /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token|contact_email|contact_phone)/i);
 });
 
 test('assistant parses HiBid showing totals and safe next-page controls', () => {
@@ -840,6 +859,43 @@ test('assistant builds AJ Willner API search URLs from the active page filters',
   assert.equal(filteredApi.searchParams.get('per_page'), '50');
 });
 
+test('assistant normalizes only public AJ Willner auction context fields', () => {
+  const core = loadCore();
+  const loc = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');
+  const context = core.normalizeAjWillnerAuctionContext({
+    id: 164037,
+    name: 'Willow Furniture & Design',
+    simple_description: '<p>Showroom inventory. Buyer\'s premium is 15%.</p>',
+    terms: '<p>All items sold as-is.</p>',
+    location: { street: '230 Route 117 Bypass', city: 'Bedford Hills', state: 'NY', zip: '10507', country: 'US' },
+    published_items_count: 868,
+    items_count: 868,
+    scheduled_end_time: '2026-07-14T15:00:00Z',
+    status: 'complete',
+    contact_email: 'must-not-export@example.test',
+    contact_phone: '555-0100',
+  }, loc);
+
+  assert.deepEqual(plain(context), {
+    source: 'ajwillner',
+    pageKind: 'catalog',
+    auctionId: '164037',
+    auctionTitle: 'Willow Furniture & Design',
+    catalogUrl: loc.href,
+    location: '230 Route 117 Bypass, Bedford Hills, NY, 10507, US',
+    description: "Showroom inventory. Buyer's premium is 15%.",
+    terms: 'All items sold as-is.',
+    buyerPremium: '15%',
+    startsAt: '',
+    scheduledEndTime: '2026-07-14T15:00:00Z',
+    status: 'complete',
+    publishedItemsCount: 868,
+    itemsCount: 868,
+    categoryCounts: [],
+  });
+  assert.doesNotMatch(JSON.stringify(context), /must-not-export|555-0100/);
+});
+
 test('assistant normalizes AJ Willner API lots with compact descriptions', () => {
   const core = loadCore();
   const item = {
@@ -851,7 +907,10 @@ test('assistant normalizes AJ Willner API lots with compact descriptions', () =>
     name_with_prefix: '#32 Rowe "Moore" Upholstered Sofa',
     description: '<p>Quantity: 1</p><p>Dimensions: 93W x 40D x 33H</p><strong>Terms of Sale</strong><p>Everything repeats forever.</p>',
     description_without_html: 'Quantity: 1 Dimensions: 93W x 40D x 33H Terms of Sale Everything repeats forever.',
-    images: [{ lg: 'https://images.example.test/sofa-large.jpg', sm: 'https://images.example.test/sofa-small.jpg' }],
+    images: [
+      { lg: 'https://images.example.test/sofa-large.jpg', sm: 'https://images.example.test/sofa-small.jpg' },
+      { xl: 'https://images.example.test/sofa-detail.jpg' },
+    ],
     api_bidding_state: {
       high: { amount: 650 },
       ask_amount: 700,
@@ -859,8 +918,12 @@ test('assistant normalizes AJ Willner API lots with compact descriptions', () =>
     },
     status: 'accepting_bids',
     main_category: 'Sofas',
+    sub_categories: [{ name: 'Upholstered' }],
+    location: { city: 'Bedford Hills', state: 'NY', zip: '10507' },
     quantity: 1,
     start_amount: 500,
+    bidding_configuration: { start_amount: 500, low_estimate: 1200, high_estimate: 1800 },
+    custom_buyers_premium_amount: 15,
     scheduled_end_time: '2026-07-17T23:00:00Z',
     currency_symbol: '$',
   };
@@ -870,11 +933,15 @@ test('assistant normalizes AJ Willner API lots with compact descriptions', () =>
   assert.deepEqual(plain(lot), {
     source: 'ajwillner',
     id: '24887841',
+    auctionId: '164037',
     lot: '32',
     title: 'Rowe "Moore" Upholstered Sofa',
     url: 'https://bid.ajwillnerauctions.com/ui/auctions/164037/24887841',
     image: 'https://images.example.test/sofa-large.jpg',
+    images: ['https://images.example.test/sofa-large.jpg', 'https://images.example.test/sofa-detail.jpg'],
+    imageCount: 2,
     description: 'Quantity: 1 Dimensions: 93W x 40D x 33H',
+    descriptionHtml: '<p>Quantity: 1</p><p>Dimensions: 93W x 40D x 33H</p><strong>Terms of Sale</strong><p>Everything repeats forever.</p>',
     highBid: 'High bid $650',
     highBidAmount: 650,
     currentPrice: 650,
@@ -891,7 +958,12 @@ test('assistant normalizes AJ Willner API lots with compact descriptions', () =>
     watched: false,
     quantity: 1,
     category: 'Sofas',
+    categoryPath: ['Sofas', 'Upholstered'],
+    location: 'Bedford Hills, NY, 10507',
     startAmount: 500,
+    estimateLow: 1200,
+    estimateHigh: 1800,
+    buyerPremiumAmount: 15,
     auctionTitle: 'Overstock Product Liquidation NJ W27',
     scheduledEndTime: '2026-07-17T23:00:00Z',
     rawText: '#32 Rowe "Moore" Upholstered Sofa Quantity: 1 Dimensions: 93W x 40D x 33H High bid $650 7 Bids accepting bids',
@@ -904,6 +976,20 @@ test('assistant scrapes AJ Willner through paged API before virtual scrolling', 
     fetch: async (href) => {
       const url = new URL(href);
       requests.push(url);
+      if (url.pathname === '/api/auctions/164037') {
+        assert.equal(url.searchParams.get('include_items_data'), 'false');
+        return {
+          ok: true,
+          json: async () => ({
+            id: 164037,
+            name: 'Willow Furniture & Design',
+            published_items_count: 2,
+            items_count: 2,
+            location: { city: 'Bedford Hills', state: 'NY', zip: '10507' },
+            simple_description: 'Showroom inventory',
+          }),
+        };
+      }
       const page = Number(url.searchParams.get('page'));
       assert.equal(url.pathname, '/api/items/search');
       assert.equal(url.searchParams.get('auction_id'), '164037');
@@ -952,13 +1038,220 @@ test('assistant scrapes AJ Willner through paged API before virtual scrolling', 
   assert.equal(result.items.length, 2);
   assert.equal(result.incomplete, false);
   assert.equal(result.stopReason, 'api-complete');
+  assert.equal(result.coverage.proofTier, 'api-exact');
+  assert.equal(result.coverage.bootstrapExpectedTotal, 2);
+  assert.equal(result.context.auctionTitle, 'Willow Furniture & Design');
+  assert.equal(result.context.location, 'Bedford Hills, NY, 10507');
   assert.equal(result.pageSteps, 2);
   assert.deepEqual(plain(result.items.map(item => item.lot)), ['1', '2']);
   assert.deepEqual(plain(result.items.map(item => item.title)), ['First lot', 'Second lot']);
   assert.equal(result.items[1].description, 'Second description');
-  assert.deepEqual(plain(requests.map(url => url.searchParams.get('page'))), ['1', '2']);
+  assert.deepEqual(plain(requests.filter(url => url.pathname === '/api/items/search').map(url => url.searchParams.get('page'))), ['1', '2']);
   assert.ok(statuses.some(message => /AJ Willner API page 1/i.test(message)));
   assert.ok(statuses.some(message => /AJ Willner API page 2\/2/i.test(message)));
+});
+
+test('assistant rejects AJ Willner unfiltered API totals that disagree with auction bootstrap', async () => {
+  const core = loadCore({
+    fetch: async (href) => {
+      const url = new URL(href);
+      if (url.pathname.startsWith('/api/auctions/')) {
+        return { ok: true, json: async () => ({ id: 164037, name: 'Mismatch Auction', published_items_count: 2, items_count: 2 }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          total: 1,
+          per_page: 200,
+          page: 1,
+          items: [{ id: '1', auction_id: '164037', lot_identifier: '1', name: 'Only API lot', description_without_html: 'Complete description' }],
+        }),
+      };
+    },
+  });
+  const result = await core.scrapeAjWillnerApiListings(
+    () => {},
+    () => false,
+    makeFakeNode({ text: '2 items found in Active' }),
+    new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+  );
+
+  assert.equal(result.incomplete, true);
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.stopReason, 'bootstrap-total-mismatch');
+  assert.equal(result.coverage.expectedTotal, 1);
+  assert.equal(result.coverage.bootstrapExpectedTotal, 2);
+});
+
+test('assistant never certifies AJ Willner API data without an authoritative search total', async () => {
+  const core = loadCore({
+    fetch: async (href) => {
+      const url = new URL(href);
+      if (url.pathname.startsWith('/api/auctions/')) {
+        return { ok: true, json: async () => ({ id: 164037, name: 'No-total Auction', published_items_count: 1 }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          page: 1,
+          per_page: 200,
+          items: [{ id: '1', auction_id: '164037', lot_identifier: '1', name: 'Unproven lot', description_without_html: 'Description' }],
+        }),
+      };
+    },
+  });
+  const route = { kind: 'catalog', source: 'ajwillner', auctionId: '164037' };
+  const result = await core.scrapeAjWillnerApiListings(
+    () => {},
+    () => false,
+    makeFakeNode({ text: '1 item found in Active' }),
+    new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+  );
+
+  assert.equal(result.incomplete, true);
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.stopReason, 'authoritative-total-unavailable');
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', route)), {
+    ok: false,
+    reason: 'catalog-incomplete',
+  });
+});
+
+test('assistant aborts an in-flight AJ Willner request when Stop is pressed', async () => {
+  let stopped = false;
+  let aborted = 0;
+  const core = loadCore({
+    fetch: async (_href, options = {}) => new Promise((resolve, reject) => {
+      options.signal?.addEventListener('abort', () => {
+        aborted += 1;
+        reject(new Error('aborted'));
+      }, { once: true });
+    }),
+  });
+  setTimeout(() => { stopped = true; }, 20);
+
+  await assert.rejects(
+    core.scrapeAjWillnerApiListings(
+      () => {},
+      () => stopped,
+      makeFakeNode({ text: '868 items found in Active' }),
+      new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+    ),
+    /stopped|aborted/i
+  );
+  assert.ok(aborted >= 1);
+});
+
+test('assistant retries an HTTP-200 short AJ Willner page before certifying coverage', async () => {
+  let searchCalls = 0;
+  const core = loadCore({
+    fetch: async (href) => {
+      const url = new URL(href);
+      if (url.pathname.startsWith('/api/auctions/')) {
+        return { ok: true, json: async () => ({ id: 164037, published_items_count: 2, items_count: 2 }) };
+      }
+      searchCalls += 1;
+      const complete = searchCalls > 1;
+      return {
+        ok: true,
+        json: async () => ({
+          total: 2,
+          page: 1,
+          per_page: 200,
+          items: [
+            { id: '1', auction_id: '164037', lot_identifier: '1', name: 'First', description_without_html: 'First description' },
+            ...(complete ? [{ id: '2', auction_id: '164037', lot_identifier: '2', name: 'Second', description_without_html: 'Second description' }] : []),
+          ],
+        }),
+      };
+    },
+  });
+  const result = await core.scrapeAjWillnerApiListings(
+    () => {},
+    () => false,
+    makeFakeNode({ text: '2 items found in Active' }),
+    new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+  );
+
+  assert.equal(searchCalls, 2);
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.items.length, 2);
+});
+
+test('assistant rejects duplicate AJ Willner IDs and route drift', async () => {
+  const activeLocation = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');
+  let searchReturned = false;
+  const core = loadCore({
+    location: activeLocation,
+    fetch: async (href) => {
+      const url = new URL(href);
+      if (url.pathname.startsWith('/api/auctions/')) {
+        return { ok: true, json: async () => ({ id: 164037, published_items_count: 2, items_count: 2 }) };
+      }
+      const payload = {
+        total: 2,
+        page: 1,
+        per_page: 200,
+        items: [
+          { id: 'same', auction_id: '164037', lot_identifier: '1', name: 'First duplicate', description_without_html: 'First description' },
+          { id: 'same', auction_id: '164037', lot_identifier: '2', name: 'Second duplicate', description_without_html: 'Second description' },
+        ],
+      };
+      if (!searchReturned) {
+        searchReturned = true;
+        activeLocation.searchParams.set('q', 'changed-during-scrape');
+      }
+      return { ok: true, json: async () => payload };
+    },
+  });
+  const result = await core.scrapeAjWillnerApiListings(
+    () => {},
+    () => false,
+    makeFakeNode({ text: '2 items found in Active' }),
+    activeLocation
+  );
+
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.coverage.routeMatches, false);
+  assert.deepEqual(plain(result.coverage.duplicateIds), ['same']);
+  assert.equal(result.stopReason, 'route-fingerprint-changed');
+});
+
+test('assistant rejects an unproven AJ Willner DOM card after API failure', async () => {
+  const link = makeFakeNode({ text: '#1 \u2022 Unproven chair', attrs: { href: '/ui/auctions/164037/1001' } });
+  const title = makeFakeNode({ text: '#1 \u2022 Unproven chair' });
+  const card = makeFakeNode({
+    text: '#1 \u2022 Unproven chair High bid $10',
+    attrs: { 'data-testid': 'list-item-1001' },
+    selectors: {
+      '.titleLink[href]': link,
+      '.titleLink h1': title,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Auction listings',
+    selectors: { '[data-testid^="list-item-"]': [card] },
+  });
+  const core = loadCore({
+    fetch: async () => ({ ok: false, status: 400, json: async () => ({}) }),
+  });
+  const route = { kind: 'catalog', source: 'ajwillner', auctionId: '164037' };
+  const result = await core.scrapeAjWillnerListings(
+    () => {},
+    () => false,
+    root,
+    new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+  );
+
+  assert.equal(result.source, 'ajwillner-visible-dom');
+  assert.equal(result.items.length, 1);
+  assert.equal(result.incomplete, true);
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.stopReason, 'unproven-visible-dom');
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', route)), {
+    ok: false,
+    reason: 'catalog-incomplete',
+  });
 });
 
 test('assistant uses an overlapping AJ Willner virtual-scroll stride', () => {
@@ -3017,6 +3310,10 @@ test('LLM auction brief includes the advanced resale coordinator prompt and full
       title: '$499 NEW! MONSTER GI30 PRO HIGH POWER 2000W BLUETOOTH',
       url: 'https://hibid.com/lot/307763539/4432i',
       image: 'https://cdn.example.test/4432i.jpg',
+      images: ['https://cdn.example.test/4432i.jpg', 'https://cdn.example.test/4432i-detail.jpg'],
+      imageCount: 2,
+      category: 'Consumer Electronics',
+      categoryPath: ['Computers & Electronics', 'Consumer Electronics'],
       highBidAmount: 165,
       nextBidAmount: 170,
       bidCountNumber: 28,
@@ -3059,6 +3356,8 @@ test('LLM auction brief includes the advanced resale coordinator prompt and full
   assert.match(brief, /Factory sealed speaker/);
   assert.match(brief, /https:\/\/hibid\.com\/lot\/307763539\/4432i/);
   assert.match(brief, /https:\/\/cdn\.example\.test\/4432i\.jpg/);
+  assert.match(brief, /https:\/\/cdn\.example\.test\/4432i-detail\.jpg/);
+  assert.match(brief, /"category": "Consumer Electronics"/);
   assert.match(brief, /"buyerPremium": "15%"/);
 });
 

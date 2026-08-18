@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "release": "0.8.21",
+  "release": "0.8.22",
   "policy": {
     "discoveryAuthority": "Chrome DevTools Protocol Network",
     "acceptanceBrowser": "Waterfox with installed Tampermonkey release",
@@ -39,9 +39,15 @@
     },
     "ajwillner": {
       "bootstrap": { "method": "GET", "url": "https://bid.ajwillnerauctions.com/api/auctions/{auctionId}" },
-      "enumerate": { "method": "GET", "url": "https://bid.ajwillnerauctions.com/api/items/search", "filters": ["auction_id", "page", "per_page", "category", "sub_category", "query"] },
+      "enumerate": { "method": "GET", "url": "https://bid.ajwillnerauctions.com/api/items/search", "filters": ["auction_id", "page", "per_page", "category", "sub_category", "query", "exact_category_match"] },
       "stableId": "item id",
-      "proof": "API total equals collected count equals unique item-id count"
+      "proof": "API total equals collected count equals unique item-id count",
+      "recordEvidence": "Search records include full description fields and all image variants; no detail-page crawl is required.",
+      "sanitizedObservations": [
+        { "auctionScope": "single catalog", "expected": 868, "collected": 868, "unique": 868, "pageCounts": [200, 200, 200, 200, 68] },
+        { "filter": "query token", "expected": 26, "collected": 26, "unique": 26 },
+        { "recordsWithDescriptions": 868, "recordsWithImages": 868, "totalImages": 4052 }
+      ]
     },
     "auctionninja": {
       "enumerate": { "method": "GET", "url": "server-rendered document pagination", "filters": ["Page", "srt", "miles", "zip"] },

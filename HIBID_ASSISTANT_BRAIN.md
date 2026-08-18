@@ -2,7 +2,7 @@
 
 Living architecture and release contract for `hibid-bid-assistant.user.js`.
 
-Current release candidate: `v0.8.21`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
+Current release candidate: `v0.8.22`. Clipboard success requires a resolved Tampermonkey promise or callback, or a successful browser copy fallback; never treat a fire-and-forget clipboard call as proof.
 
 ## Current State
 
@@ -286,7 +286,7 @@ A push does not update an installed Tampermonkey copy. Do not mark a release, ch
 ## Known Unverified Areas
 
 - HiBid passed this gate at `v0.8.21`; every later hosted version still requires a fresh installed Waterfox acceptance before claiming parity.
-- AJ Willner's `/api/items/search` enumeration is observed; exact hydration/coverage must pass its own gate.
+- AJ Willner Chrome discovery is exact at `868/868` unique IDs across `200/200/200/200/68`, with all 868 records carrying descriptions and images; installed Waterfox copy acceptance remains required before its gate is closed.
 - AuctionNinja and AAR currently rely on deterministic server-rendered pagination.
 - GovDeals `maestro.lqdt1.com/search/list` is observed, but safe replay with exact active filters is not yet accepted; retain the fail-closed DOM fallback.
 - eBay deterministic Seller Hub pagination needs route-specific completeness and PII tests for each lifecycle page.
