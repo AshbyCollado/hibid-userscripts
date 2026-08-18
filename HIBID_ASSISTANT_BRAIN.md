@@ -432,6 +432,14 @@ Debug UI and console/log capture are off unless debug mode is enabled.
 - `v0.8.11` rejects broad HiBid Apollo data when it exceeds the visible catalog total and adds paginated same-origin DOM extraction for catalogs that stall in the virtual grid.
 - `v0.8.18` replaces public HiBid catalog/live enumeration with exact API identities, fixes the catalog-copy resume scheduler's runtime scope, and counts filtered-page visibility by unique canonical `app-lot-tile` IDs so nested card descendants cannot double the page total. Auction catalogs page through same-origin GraphQL; global/category/filter pages enumerate through HiBid's search API and hydrate only those IDs through GraphQL. Coverage compares the exact API total, unique enumerated IDs, unique hydrated IDs, failed pages/batches, total drift, and route fingerprint. Normal copy stays blocked after exhausted retries; the only fallback is an explicit audited verified partial. Personalized account routes retain their dedicated DOM scrapers. Every hosted push must be followed by an update/reinstall in each browser profile being verified.
 
+### 2026-08-17 HiBid API browser evidence (`v0.8.18`)
+
+- Chrome loaded the exact published source in the live page for button-level verification. Copy JSON completed with equal API, array, and unique-ID counts: auction `769123` = `245/245`, auction `765261` = `618/618`, and auction `767103` = `287/287`.
+- The exact `gaming pc` filtered URL copied `6/6` IDs, matching the six unique canonical visible `app-lot-tile` IDs: `317786083`, `315884639`, `317878940`, `317429452`, `317135446`, and `317135448`.
+- Rich-field spot checks preserved categories, image arrays, and available descriptions. Description coverage observed in these current API responses was `73/245`, `229/618`, and `51/287`; an empty description means HiBid returned no description for that lot, not that the scraper dropped a populated field.
+- The supplied `hibid.com.har` contains only one Google remarketing request and is not HiBid API evidence.
+- Installed-profile boundary observed after release: Chrome and Waterfox Tampermonkey were still storing `v0.8.15`; Waterfox visibly showed its old panel initialization error. The hosted file was `v0.8.18`, but installed verification remains incomplete until each browser profile updates/reinstalls the raw userscript and then repeats a real Copy action. Never report a locally loaded page build as an installed Tampermonkey update.
+
 ### Full audit matrix (`v0.7.69`)
 
 - Route coverage verified in tests: HiBid catalog/search/live/account, AJ Willner catalog, AuctionNinja sale/category/account/search, AAR calendar/catalog/item, GovDeals seller/search/new-listings/asset, eBay active listings, and Facebook Marketplace selling.
