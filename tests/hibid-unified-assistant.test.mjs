@@ -1234,6 +1234,45 @@ test('assistant accepts HiBid lots pages whose filtered Apollo key is eventItemI
   assert.equal(result.items.length, 15);
 });
 
+test('assistant counts filtered HiBid cards by canonical event-item ID instead of nested card descendants', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc');
+  const ownerDocument = { defaultView: null };
+  const canonicalTiles = Array.from({ length: 6 }, (_value, index) => ({
+    id: `lot-${500 + index}`,
+    ownerDocument,
+    textContent: `Lot ${index + 1} | Gaming PC ${index + 1}`,
+    querySelector(selector) {
+      if (String(selector).includes('a[href*="/lot/"]')) {
+        return { getAttribute: () => `/lot/${500 + index}/gaming-pc-${index + 1}` };
+      }
+      return null;
+    },
+  }));
+  const nestedCards = Array.from({ length: 6 }, (_value, index) => ({
+    id: '',
+    ownerDocument,
+    textContent: `Lot ${index + 1}`,
+    querySelector(selector) {
+      if (String(selector).includes('lot-number')) return { textContent: `Lot ${index + 1}` };
+      return null;
+    },
+  }));
+  const root = {
+    body: { textContent: 'Results for gaming pc Showing 1 to 6 of 6 lots' },
+    documentElement: { textContent: 'Results for gaming pc Showing 1 to 6 of 6 lots' },
+    querySelectorAll(selector) {
+      if (selector === 'app-lot-tile[id^="lot-"]') return canonicalTiles;
+      return [...canonicalTiles, ...nestedCards];
+    },
+  };
+
+  const visibleState = core.extractHibidVisiblePageState(root, loc);
+
+  assert.equal(visibleState.visibleLotCount, 6);
+  assert.equal(visibleState.expectedTotal, 6);
+});
+
 test('assistant preserves nested Apollo text fields instead of dropping real HiBid lots', () => {
   const core = loadCore();
   const loc = new URL('https://hibid.com/lots/40198?q=nested');

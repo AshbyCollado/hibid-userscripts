@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FlipperAddon by ALOS
 // @namespace    http://tampermonkey.net/
-// @version      0.8.17
+// @version      0.8.18
 // @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
 // @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
@@ -66,7 +66,7 @@
   const PANEL_ID = 'flipperaddon-panel';
   const APP_NAME = 'FlipperAddon by ALOS';
   const APP_SHORT_NAME = 'FlipperAddon';
-  const SCRIPT_VERSION = '0.8.17';
+  const SCRIPT_VERSION = '0.8.18';
   const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
   const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
   const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
@@ -1224,6 +1224,12 @@ Be skeptical, but do not be lazy. The mission is to avoid missing profitable dea
   }
 
   function getVisibleHibidLotCount(root = document) {
+    const canonicalTiles = Array.from(root?.querySelectorAll?.('app-lot-tile[id^="lot-"]') || [])
+      .filter(tile => isVisible(tile));
+    if (canonicalTiles.length) {
+      return new Set(canonicalTiles.map(tile => String(tile.id || '').replace(/^lot-/i, '')).filter(Boolean)).size;
+    }
+
     const selectors = [
       'app-lot-tile',
       'app-lot-card',
