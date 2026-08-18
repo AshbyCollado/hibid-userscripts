@@ -271,9 +271,21 @@ Every version change uses this exact sequence:
 
 A push does not update an installed Tampermonkey copy. Do not mark a release, child goal, or browser gate complete before the installed Waterfox instance is updated and verified. Ship one patch release per completed site gate and update this brain after each gate.
 
+## Acceptance Log
+
+### HiBid - accepted 2026-08-18
+
+- Chrome CDP/API evidence: auction catalogs resolved to exact stable-ID sets of `245/245`, `618/618`, and `287/287`; the last page also contained an unrelated `1105`-lot Apollo connection that was rejected.
+- Filtered search evidence: six requested IDs produced `6/6`; a no-match filtered route produced `0/0` and did not widen to stale catalog state.
+- Public catalog/live routes use auction-scoped GraphQL enumeration/hydration; global/category/filtered routes enumerate exact IDs through `hibid-api.io` before GraphQL hydration.
+- Installed Waterfox `v0.8.21` account-watchlist proof: visible total `74`, copied JSON rows `74`, unique event-item IDs `74`, missing stable IDs `0`.
+- Installed Chrome `v0.8.21` account-watchlist proof: visible total `74`, copied JSON rows `74`, unique event-item IDs `74`, missing stable IDs `0`.
+- `226/226` automated tests passed, including duplicate IDs, reused auction-local lot numbers, short pages, missing hydration, stale state, filter drift, route changes, retries, cancellation, zero results, and audited partials.
+- Raw account payloads and CDP traffic were not committed. Only sanitized endpoint/count evidence belongs in Git.
+
 ## Known Unverified Areas
 
-- HiBid has strong API evidence, but every new hosted version still requires installed Waterfox acceptance.
+- HiBid passed this gate at `v0.8.21`; every later hosted version still requires a fresh installed Waterfox acceptance before claiming parity.
 - AJ Willner's `/api/items/search` enumeration is observed; exact hydration/coverage must pass its own gate.
 - AuctionNinja and AAR currently rely on deterministic server-rendered pagination.
 - GovDeals `maestro.lqdt1.com/search/list` is observed, but safe replay with exact active filters is not yet accepted; retain the fail-closed DOM fallback.
