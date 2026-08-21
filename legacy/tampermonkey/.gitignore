@@ -1,0 +1,8 @@
+archive/
+.codex-evidence/
+
+# Raw browser captures can contain cookies, tokens, or account data.
+*.har
+*.har.gz
+*.cdp.json
+network-captures/

@@ -1,8 +1,22 @@
+node_modules/
+dist/
+artifacts/
+coverage/
+.cache/
+
+# Generated evidence and personal analysis outputs.
 archive/
 .codex-evidence/
+outputs/
+tmp_auction_images/
+tmp_category_review/
+tmp_govdeals_review/
 
 # Raw browser captures can contain cookies, tokens, or account data.
 *.har
 *.har.gz
 *.cdp.json
 network-captures/
+
+# The reference ZIP is authoritative; bundled dependencies are not tracked.
+reference-build/**/node_modules/
