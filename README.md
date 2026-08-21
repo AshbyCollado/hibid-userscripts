@@ -42,6 +42,15 @@ verdict ideas are adapted from Diego Magalhaes's MIT-licensed
 `976913421c3fd23b48cc8ca4cde78cb9528f97d3`. Flippah ports maintained logic to
 TypeScript and intentionally excludes the donor's page-rewrite behavior.
 
+## Watchlist reliability
+
+Flippah `v0.3.1` reads `/account/watchlist` through HiBid's same-origin,
+read-only `WatchListSearch` GraphQL operation. The API total, unique stable IDs,
+and normalized record count must agree before copy is enabled. A changing
+watchlist is retried as a fresh snapshot, and 51+ lots are no longer truncated
+by a 50-row visible page. Authentication stays inside the browser request;
+tokens and account identity are never copied into records or diagnostics.
+
 ## Commands
 
 ```powershell

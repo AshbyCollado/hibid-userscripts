@@ -12,6 +12,7 @@ import type { HiBidPageState } from '../core/types.js';
 export const HIBID_SEARCH_ENDPOINT = 'https://hibid-api.io/sr/main/v1/search/lot';
 export const HIBID_GRAPHQL_ENDPOINT = 'https://hibid.com/graphql';
 export const HIBID_LOT_SEARCH_OPERATION = 'FlippahLotSearch';
+export const HIBID_WATCHLIST_SEARCH_OPERATION = 'FlippahWatchListSearch';
 export const HIBID_PAGE_SIZE = 100;
 export const HIBID_CONCURRENCY = 3;
 export const HIBID_RETRIES = 3;
@@ -77,6 +78,58 @@ export const HIBID_LOT_SEARCH_QUERY = `
             eventCity eventState eventZip eventDateBegin eventDateEnd eventDateInfo
             checkoutDateInfo previewDateInfo currencyAbbreviation lotCount
             auctioneer { id name address city state postalCode country }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const HIBID_WATCHLIST_SEARCH_QUERY = `
+  query FlippahWatchListSearch(
+    $pageNumber: Int!,
+    $pageLength: Int!,
+    $isArchived: Boolean = false,
+    $groupByAuction: Boolean = true,
+    $hideClosedLots: Boolean = false,
+    $auctionId: Int = 0,
+    $buyerLotStatusGroup: BuyerLotStatusGroup = ALL,
+    $sortOrder: BuyerEventItemSortOrder = SALES_ORDER,
+    $monthRange: AltBidPastBidsRange = THREE_MONTHS,
+    $sortDirection: SortDirection = ASC
+  ) {
+    watchList(
+      input: {
+        isArchived: $isArchived,
+        groupByAuction: $groupByAuction,
+        hideClosedLots: $hideClosedLots,
+        auctionId: $auctionId,
+        buyerLotStatusGroup: $buyerLotStatusGroup,
+        sortOrder: $sortOrder,
+        monthRange: $monthRange
+      },
+      pageNumber: $pageNumber,
+      pageLength: $pageLength,
+      sortDirection: $sortDirection
+    ) {
+      pagedResults {
+        pageLength pageNumber totalCount filteredCount
+        results {
+          id itemId lotNumber lead description estimate quantity saleOrder
+          ringNumber shippingOffered pictureCount bidAmount
+          featuredPicture { description fullSizeLocation hdThumbnailLocation thumbnailLocation width height }
+          pictures { description fullSizeLocation hdThumbnailLocation thumbnailLocation width height }
+          category { id categoryName fullCategory description uRLPath }
+          lotState {
+            bidCount highBid minBid buyerBidStatus buyerHighBid isArchived
+            isClosed isLive isNotYetLive isOnLiveCatalog isWatching
+            priceRealized priceRealizedMessage productStatus productUrl status
+            timeLeft timeLeftSeconds timeLeftTitle watchNotes
+          }
+          auction {
+            id eventName description buyerPremium buyerPremiumRate eventAddress
+            eventCity eventState eventZip eventDateBegin eventDateEnd eventDateInfo
+            checkoutDateInfo previewDateInfo currencyAbbreviation lotCount
           }
         }
       }
@@ -532,6 +585,103 @@ export function mergeHibidVisibleWithHydrated(visible: HiBidLotRecord, hydrated:
     currentBid: keepVisibleRealized ? visible.currentBid : hydrated.currentBid,
     status: hydrated.status || visible.status,
   };
+}
+
+export interface HiBidWatchlistVariables {
+  pageNumber: number;
+  pageLength: number;
+  isArchived: false;
+  groupByAuction: true;
+  hideClosedLots: false;
+  auctionId: 0;
+  buyerLotStatusGroup: 'ALL';
+  sortOrder: 'SALES_ORDER';
+  monthRange: 'THREE_MONTHS';
+  sortDirection: 'ASC';
+}
+
+export function buildHibidWatchlistVariables(pageNumber = 1, pageLength = HIBID_PAGE_SIZE): HiBidWatchlistVariables {
+  return {
+    pageNumber: Math.max(1, Math.trunc(pageNumber)),
+    pageLength: Math.max(1, Math.min(HIBID_PAGE_SIZE, Math.trunc(pageLength) || HIBID_PAGE_SIZE)),
+    isArchived: false,
+    groupByAuction: true,
+    hideClosedLots: false,
+    auctionId: 0,
+    buyerLotStatusGroup: 'ALL',
+    sortOrder: 'SALES_ORDER',
+    monthRange: 'THREE_MONTHS',
+    sortDirection: 'ASC'
+  };
+}
+
+function parseWatchlistPage(json: unknown, requestedPage: number): PageResult {
+  const paged = (json as any)?.data?.watchList?.pagedResults;
+  if (!paged || !Array.isArray(paged.results)) throw new Error('HiBid GraphQL response did not contain watchList results');
+  return {
+    page: numberOrNull(paged.pageNumber) ?? requestedPage,
+    total: numberOrNull(paged.filteredCount) ?? numberOrNull(paged.totalCount),
+    ids: paged.results.map(idFrom).filter(Boolean),
+    records: paged.results
+  };
+}
+
+export async function scrapeHibidWatchlist(
+  request: (body: unknown, options?: { signal?: AbortSignal }) => Promise<unknown>,
+  route: HiBidRoute,
+  locationLike: LocationLike | URL | string,
+  options: { retries?: number; signal?: AbortSignal; onProgress?: (message: string) => void } = {}
+): Promise<HiBidScrapeResult> {
+  const retries = options.retries || HIBID_RETRIES;
+  const sourceUrl = toUrl(locationLike).href;
+  const fingerprint = routeFingerprint(route, locationLike);
+  let last: HiBidScrapeResult | null = null;
+
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    if (options.signal?.aborted) throw new Error('HiBid scrape cancelled');
+    const fetchWatchPage = async (page: number): Promise<PageResult> => parseWatchlistPage(await retryPost(request, {
+      operationName: HIBID_WATCHLIST_SEARCH_OPERATION,
+      variables: buildHibidWatchlistVariables(page),
+      query: HIBID_WATCHLIST_SEARCH_QUERY
+    }, retries, options.signal), page);
+    const first = await fetchWatchPage(1);
+    const expectedTotal = first.total ?? first.ids.length;
+    const pageCount = Math.max(1, Math.ceil(expectedTotal / HIBID_PAGE_SIZE));
+    const pages = [first, ...(await mapConcurrent(
+      Array.from({ length: Math.max(0, pageCount - 1) }, (_, index) => index + 2),
+      HIBID_CONCURRENCY,
+      async (page) => {
+        const result = await fetchWatchPage(page);
+        options.onProgress?.(`HiBid watchlist page ${page}/${pageCount}`);
+        return result;
+      }
+    ))];
+    const totalDrift = pages.filter((page) => page.total !== null && page.total !== expectedTotal)
+      .map((page) => ({ page: page.page, observed: page.total, expected: expectedTotal }));
+    const rawRecords = pages.flatMap((page) => page.records);
+    const enumeratedIds = pages.flatMap((page) => page.ids);
+    const items = rawRecords.map((raw) => normalizeHibidLot(raw, { route, sourceUrl }))
+      .filter((item): item is HiBidLotRecord => Boolean(item));
+    const coverage = validateHibidApiCoverage({
+      enumeratedIds,
+      hydratedItems: items,
+      expectedTotal,
+      totalDrift,
+      startFingerprint: fingerprint,
+      endFingerprint: routeFingerprint(route, locationLike),
+      stopped: options.signal?.aborted
+    });
+    last = {
+      source: 'hibid-watchlist-api', route, sourceUrl, fingerprint,
+      expectedTotal, enumeratedIds, items, coverage,
+      pageStats: pages.map((page) => ({ page: page.page, total: page.total, count: page.ids.length })),
+      hydrationStats: [{ source: 'watchList', requested: enumeratedIds.length, returned: items.length }],
+      errors: totalDrift.map((item) => `watchlist total changed on page ${item.page}: ${item.observed}/${item.expected}`)
+    };
+    if (coverage.complete) return last;
+    options.onProgress?.(`HiBid watchlist changed during capture; retry ${attempt}/${retries}`);
+  }
+  return last!;
 }
 
 export async function hydrateHibidLots(

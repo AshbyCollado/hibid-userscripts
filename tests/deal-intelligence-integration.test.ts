@@ -3,10 +3,10 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
 
-test('v0.3.0 browser packages permit only the fixed Amazon.com retail provider', async () => {
+test('v0.3.1 browser packages permit only the fixed Amazon.com retail provider', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.3.0');
+  assert.equal(chrome.version, '0.3.1');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.some((value: string) => /bestbuy|amazon\.ca/i.test(value)), false);
   assert.deepEqual(chrome.host_permissions, waterfox.host_permissions);

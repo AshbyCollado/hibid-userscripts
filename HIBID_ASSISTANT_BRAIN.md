@@ -186,3 +186,22 @@ ignored by Git.
   the installed Current Page, Watchlist, rerun, clear-cache, copy, retry, and
   reconnect interactions still require a manual acceptance pass before the
   release can be called complete.
+
+## v0.3.1 watchlist API correction
+
+- `/account/watchlist` uses HiBid's first-party `WatchListSearch` GraphQL
+  operation with 100-lot pages instead of attempting to fetch Angular account
+  pagination as static HTML.
+- Coverage requires the operation's filtered total, unique `Lot.id` count, and
+  normalized record count to agree. Full records already include description,
+  category, pictures, bids, status, shipping, auction terms, and optional watch
+  notes, so separate per-lot detail requests are unnecessary for this route.
+- If the watchlist changes while pages are collected, Flippah retries the whole
+  snapshot up to three times. This handles the observed `51 -> 50` transition
+  without exporting stale coverage or reporting an API enumeration mismatch.
+- The background replaces the incoming query with its own fixed read-only
+  document and validates page variables. Cookies remain same-origin browser
+  state; account tokens, bidder identity, and `GetAccountInfo` are never
+  requested or included in diagnostics.
+- Regression coverage includes 51 API lots behind a 50-row visible page and a
+  changing 51-to-50 snapshot. The complete suite is 69/69.

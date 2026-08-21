@@ -1,4 +1,4 @@
-import { HIBID_GRAPHQL_ENDPOINT, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, HIBID_SEARCH_ENDPOINT } from '../hibid/api.js';
+import { HIBID_GRAPHQL_ENDPOINT, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, HIBID_SEARCH_ENDPOINT, HIBID_WATCHLIST_SEARCH_OPERATION, HIBID_WATCHLIST_SEARCH_QUERY } from '../hibid/api.js';
 import { failure, isEnvelope, payloadBytes, success, type MessageEnvelope } from '../core/messages.js';
 import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, putRecordBatch } from '../core/job-db.js';
 import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.js';
@@ -197,6 +197,14 @@ function validateHydrationBody(body: any): void {
   }
 }
 
+function validateWatchlistBody(body: any): void {
+  if (!body || typeof body !== 'object' || !body.variables || typeof body.variables !== 'object') throw new Error('Malformed HiBid watchlist request');
+  if (String(body.operationName || '') !== HIBID_WATCHLIST_SEARCH_OPERATION) throw new Error('Unknown HiBid watchlist operation');
+  const { pageNumber, pageLength } = body.variables;
+  if (!Number.isInteger(pageNumber) || pageNumber < 1) throw new Error('Invalid HiBid watchlist page');
+  if (!Number.isInteger(pageLength) || pageLength < 1 || pageLength > 100) throw new Error('Invalid HiBid watchlist page size');
+}
+
 async function postJson(url: string, body: unknown, credentials: RequestCredentials): Promise<unknown> {
   if (payloadBytes(body) > MAX_REQUEST_BYTES) throw new Error('HiBid request is too large');
   const controller = new AbortController();
@@ -271,6 +279,14 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       const senderUrl = new URL(sender.url || sender.tab?.url || HIBID_GRAPHQL_ENDPOINT);
       const endpoint = new URL('/graphql', senderUrl.origin).href;
       return postJson(endpoint, { ...incoming, query: HIBID_LOT_SEARCH_QUERY }, 'include');
+    }
+    case 'flippah:network.account-watchlist': {
+      ensureHiBidSender(sender);
+      const incoming = (message.payload as any)?.body;
+      validateWatchlistBody(incoming);
+      const senderUrl = new URL(sender.url || sender.tab?.url || HIBID_GRAPHQL_ENDPOINT);
+      const endpoint = new URL('/graphql', senderUrl.origin).href;
+      return postJson(endpoint, { ...incoming, query: HIBID_WATCHLIST_SEARCH_QUERY }, 'include');
     }
     case 'flippah:retail.lookup':
       ensureHiBidSender(sender);

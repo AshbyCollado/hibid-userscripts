@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { HiBidTransport } from '../src/core/types.js';
 import { resolveHiBidRoute } from '../src/core/route.js';
-import { buildHibidSearchRequest, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, mergeHibidVisibleWithHydrated, normalizeHibidLot, scrapeHibidApiCatalog, validateHibidApiCoverage } from '../src/hibid/api.js';
+import { buildHibidSearchRequest, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, HIBID_WATCHLIST_SEARCH_OPERATION, HIBID_WATCHLIST_SEARCH_QUERY, mergeHibidVisibleWithHydrated, normalizeHibidLot, scrapeHibidApiCatalog, scrapeHibidWatchlist, validateHibidApiCoverage } from '../src/hibid/api.js';
 
 test('GraphQL operation name matches the operation declared by the query', () => {
   assert.match(HIBID_LOT_SEARCH_QUERY, new RegExp(`\\bquery\\s+${HIBID_LOT_SEARCH_OPERATION}\\b`));
+  assert.match(HIBID_WATCHLIST_SEARCH_QUERY, new RegExp(`\\bquery\\s+${HIBID_WATCHLIST_SEARCH_OPERATION}\\b`));
 });
 
 test('closed lots prefer a nonzero realized price over HiBid highBid zero', () => {
@@ -48,6 +49,45 @@ function graphqlPage(total: number, page: number, pageSize = 100) {
   const count = Math.max(0, Math.min(pageSize, total - start + 1));
   return { data: { lotSearch: { pagedResults: { pageNumber: page, pageLength: pageSize, totalCount: total, filteredCount: total, results: Array.from({ length: count }, (_, index) => lot(start + index)) } } } };
 }
+
+function watchlistPage(total: number, page: number, pageSize = 100, returnedTotal = total) {
+  const start = (page - 1) * pageSize + 1;
+  const count = Math.max(0, Math.min(pageSize, returnedTotal - start + 1));
+  return { data: { watchList: { pagedResults: { pageNumber: page, pageLength: pageSize, totalCount: total, filteredCount: total, results: Array.from({ length: count }, (_, index) => lot(start + index)) } } } };
+}
+
+test('watchlist API exports all 51 lots even when the visible page was limited to 50', async () => {
+  const url = 'https://hibid.com/account/watchlist';
+  const route = resolveHiBidRoute(url);
+  const result = await scrapeHibidWatchlist(async (body: any) => {
+    assert.equal(body.operationName, HIBID_WATCHLIST_SEARCH_OPERATION);
+    assert.equal(body.variables.pageLength, 100);
+    return watchlistPage(51, body.variables.pageNumber, body.variables.pageLength);
+  }, route, url);
+  assert.equal(result.source, 'hibid-watchlist-api');
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.expectedTotal, 51);
+  assert.equal(result.items.length, 51);
+  assert.equal(new Set(result.items.map((item) => item.id)).size, 51);
+  assert.equal(result.items[0]?.description, 'Description 1');
+  assert.equal(result.items[0]?.images.length, 2);
+});
+
+test('watchlist API retries a changing 51-to-50 snapshot instead of exporting stale coverage', async () => {
+  const url = 'https://hibid.com/account/watchlist';
+  const route = resolveHiBidRoute(url);
+  let calls = 0;
+  const result = await scrapeHibidWatchlist(async (body: any) => {
+    calls += 1;
+    return calls === 1
+      ? watchlistPage(51, body.variables.pageNumber, body.variables.pageLength, 50)
+      : watchlistPage(50, body.variables.pageNumber, body.variables.pageLength);
+  }, route, url);
+  assert.ok(calls >= 2);
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.expectedTotal, 50);
+  assert.equal(result.items.length, 50);
+});
 
 for (const total of [245, 618, 287]) {
   test(`API-first catalog proves ${total}/${total} unique records`, async () => {
