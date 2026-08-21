@@ -151,6 +151,14 @@ test('generated manifests preserve baseline content UI and split background runt
   const pkg = JSON.parse(await readFile('package.json', 'utf8'));
   assert.equal(chrome.version, pkg.version);
   assert.equal(waterfox.version, pkg.version);
+  assert.equal(chrome.name, 'Flippah by ALOS');
+  assert.equal(chrome.short_name, 'Flippah');
+  assert.equal(chrome.author, 'ALOS');
+  assert.equal(chrome.action.default_title, 'Open Flippah by ALOS');
+  assert.match(chrome.description, /smarter flips/i);
+  for (const size of [16, 32, 48, 128]) {
+    assert.ok((await readFile(`dist/chrome/icons/icon-${size}.png`)).byteLength > 0);
+  }
   assert.equal(chrome.background.service_worker, 'background.js');
   assert.deepEqual(waterfox.background.scripts, ['background.js']);
   assert.ok(chrome.content_scripts[0].js.includes('legacy-content.js'));

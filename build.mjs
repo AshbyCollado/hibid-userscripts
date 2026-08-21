@@ -15,16 +15,18 @@ const referenceResources = referenceManifest.web_accessible_resources?.[0]?.reso
 
 const commonManifest = {
   manifest_version: 3,
-  name: 'Flippah - true cost, comps & HiBid research',
+  name: 'Flippah by ALOS',
   short_name: 'Flippah',
   version,
-  description: 'Flippah preserves true-cost tools and adds verified HiBid catalog and account exports.',
+  description: 'Auction research, true-cost analysis, watchlists, and verified HiBid exports for smarter flips.',
+  author: 'ALOS',
+  homepage_url: 'https://github.com/AshbyCollado/hibid-userscripts',
   permissions: ['storage', 'alarms', 'notifications', 'tabs', 'activeTab', 'downloads', 'clipboardWrite'],
   host_permissions: ['https://hibid.com/*', 'https://*.hibid.com/*', 'https://hibid-api.io/*'],
   action: {
     default_icon: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' },
     default_popup: 'popup/index.html',
-    default_title: 'Open Flippah'
+    default_title: 'Open Flippah by ALOS'
   },
   icons: {
     16: 'icons/icon-16.png',
@@ -51,7 +53,10 @@ for (const target of targets) {
   await mkdir(path.join(outdir, 'popup'), { recursive: true });
   await mkdir(path.join(outdir, 'options'), { recursive: true });
   await cp(path.join(reference, 'assets'), path.join(outdir, 'assets'), { recursive: true });
-  await cp(path.join(reference, 'icons'), path.join(outdir, 'icons'), { recursive: true });
+  await cp(path.join(root, 'assets', 'icons'), path.join(outdir, 'icons'), {
+    recursive: true,
+    filter: (entry) => path.basename(entry) !== 'flippah-source.png'
+  });
   await cp(path.join(root, 'src', 'popup', 'index.html'), path.join(outdir, 'popup', 'index.html'));
   await cp(path.join(root, 'src', 'popup', 'popup.css'), path.join(outdir, 'popup', 'popup.css'));
   await cp(path.join(root, 'src', 'options', 'index.html'), path.join(outdir, 'options', 'index.html'));

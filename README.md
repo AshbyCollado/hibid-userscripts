@@ -1,4 +1,4 @@
-# Flippah
+# Flippah by ALOS
 
 Flippah is a read-only browser extension for HiBid research. It preserves the
 true-cost calculator, eBay research links, watchlist, notes, and alerts from the
@@ -15,6 +15,7 @@ in-page calculator remains limited to individual lot pages.
 - `dist/chrome/` - generated Chrome package
 - `dist/waterfox/` - generated Waterfox package
 - `reference-build/flippah-v0.1.0/` - supplied working extension baseline
+- `assets/icons/` - Flippah by ALOS brand icon source and generated browser sizes
 - `legacy/tampermonkey/` - previous userscript implementation and fixtures
 
 ## Commands

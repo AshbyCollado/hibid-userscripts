@@ -111,7 +111,7 @@ function debugHtml(): string {
 }
 
 function shell(body: string): string {
-  return `<div class="shell"><header class="topbar"><span class="brand">Flippah</span><span class="version">v${escapeHtml(chrome.runtime.getManifest().version)}</span><button id="settings" class="icon-button" title="Open Flippah settings" aria-label="Open settings">⚙</button></header><nav class="tabs" aria-label="Flippah sections"><button class="tab" data-tab="current" aria-selected="${selectedTab === 'current'}">Current Page</button><button class="tab" data-tab="watchlist" aria-selected="${selectedTab === 'watchlist'}">Watchlist</button></nav>${body}</div>`;
+  return `<div class="shell"><header class="topbar"><span class="brand">Flippah by ALOS</span><span class="version">v${escapeHtml(chrome.runtime.getManifest().version)}</span><button id="settings" class="icon-button" title="Open Flippah settings" aria-label="Open settings">⚙</button></header><nav class="tabs" aria-label="Flippah sections"><button class="tab" data-tab="current" aria-selected="${selectedTab === 'current'}">Current Page</button><button class="tab" data-tab="watchlist" aria-selected="${selectedTab === 'watchlist'}">Watchlist</button></nav>${body}</div>`;
 }
 
 async function render(): Promise<void> {
