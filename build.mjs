@@ -1,6 +1,7 @@
 import { build } from 'esbuild';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { patchLegacyEbayQueryModule, patchLegacyHibidPageModule } from './scripts/legacy-ebay-query.mjs';
 
 const root = process.cwd();
 const reference = path.join(root, 'reference-build', 'flippah-v0.1.0');
@@ -22,7 +23,7 @@ const commonManifest = {
   author: 'ALOS',
   homepage_url: 'https://github.com/AshbyCollado/hibid-userscripts',
   permissions: ['storage', 'alarms', 'notifications', 'tabs', 'activeTab', 'downloads', 'clipboardWrite'],
-  host_permissions: ['https://hibid.com/*', 'https://*.hibid.com/*', 'https://hibid-api.io/*'],
+  host_permissions: ['https://hibid.com/*', 'https://*.hibid.com/*', 'https://hibid-api.io/*', 'https://www.amazon.com/*'],
   action: {
     default_icon: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' },
     default_popup: 'popup/index.html',
@@ -95,6 +96,14 @@ for (const target of targets) {
       setup(buildApi) {
         buildApi.onResolve({ filter: /taxRates-B3rE_xel\.js$/ }, () => ({
           path: path.join(root, 'src', 'legacy', 'tax-rates-compat.ts')
+        }));
+        buildApi.onLoad({ filter: /index\.ts-BuCXDImd\.js$/ }, async ({ path: modulePath }) => ({
+          contents: patchLegacyEbayQueryModule(await readFile(modulePath, 'utf8')),
+          loader: 'js'
+        }));
+        buildApi.onLoad({ filter: /parseLotPage-B-8HdUYU\.js$/ }, async ({ path: modulePath }) => ({
+          contents: patchLegacyHibidPageModule(await readFile(modulePath, 'utf8')),
+          loader: 'js'
         }));
       }
     }]

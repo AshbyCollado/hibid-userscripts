@@ -3,10 +3,29 @@ import { failure, isEnvelope, payloadBytes, success, type MessageEnvelope } from
 import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, putRecordBatch } from '../core/job-db.js';
 import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.js';
 import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
+import { clearRetailCache, getRetailCache, putRetailCache, RETAIL_MATCHING_EPOCH } from '../core/retail-db.js';
+import { detectProductKind, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity } from '../intelligence/us-deal-intelligence.js';
+import { isAmazonChallengeHtml, joinInflight, RETAIL_BATCH_DELAY_MS, RETAIL_BATCH_SIZE, retailCacheTtl, retailIdentityCacheKey } from '../intelligence/retail-policy.js';
 
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
 const WATCH_REFRESH_ALARM = 'flippah:watch-refresh';
+const AMAZON_BODY_LIMIT = 2_000_000;
+const amazonInflight = new Map<string, Promise<RetailLookupResult>>();
+let retailBlockedUntil = 0;
+let retailDrainTimer: ReturnType<typeof setTimeout> | null = null;
+const retailQueue: Array<{ identity: ProductIdentity; resolve: (value: RetailLookupResult) => void; reject: (error: unknown) => void }> = [];
+
+type RetailLookupStatus = 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'low_confidence';
+interface RetailLookupResult {
+  status: RetailLookupStatus;
+  query: string;
+  match: ReturnType<typeof matchAmazonCandidates>;
+  candidates: ReturnType<typeof parseAmazonCandidates>;
+  fetchedAt: number;
+  cached: boolean;
+  message: string;
+}
 
 function localGet(): Promise<Record<string, any>> {
   return new Promise((resolve, reject) => chrome.storage.local.get(null, (value) => {
@@ -58,6 +77,109 @@ function ensureHiBidSender(sender: chrome.runtime.MessageSender): void {
   if (!sender.tab || sender.frameId !== 0) throw new Error('HiBid operation rejected outside the top page frame');
   const url = new URL(sender.url || sender.tab.url || 'https://invalid.invalid');
   if (!/(^|\.)hibid\.com$/i.test(url.hostname)) throw new Error('HiBid operation rejected for this host');
+}
+
+function retailQuery(value: unknown): string {
+  const query = String(value || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  if (query.length < 2) throw new Error('Amazon search query is too short');
+  return query;
+}
+
+function validateRetailIdentity(value: unknown): ProductIdentity {
+  if (!value || typeof value !== 'object') throw new Error('Malformed retail identity');
+  const source = value as ProductIdentity;
+  const query = retailQuery(source.query);
+  const clean = (item: unknown, max: number) => String(item || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const identity: ProductIdentity = {
+    name: clean(source.name, 300), query, brand: clean(source.brand, 80),
+    model: source.model ? clean(source.model, 60) : null,
+    model2: source.model2 ? clean(source.model2, 60) : null,
+    kind: detectProductKind(source.name),
+    capacities: Array.isArray(source.capacities) ? source.capacities.slice(0, 8).map((item) => clean(item, 30)) : [],
+    tokens: Array.isArray(source.tokens) ? source.tokens.slice(0, 20).map((item) => clean(item, 40)) : []
+  };
+  if (Number.isFinite(Number(source.statedRetail)) && Number(source.statedRetail) > 0) identity.statedRetail = Number(source.statedRetail);
+  return identity;
+}
+
+async function readResponseText(response: Response): Promise<string> {
+  if (!/text\/html|application\/xhtml\+xml/i.test(response.headers.get('content-type') || '')) throw new Error('Amazon.com returned a non-HTML response');
+  if (!response.body) return (await response.text()).slice(0, AMAZON_BODY_LIMIT);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  while (true) {
+    const part = await reader.read();
+    if (part.done) break;
+    length += part.value.byteLength;
+    if (length > AMAZON_BODY_LIMIT) { await reader.cancel(); throw new Error('Amazon.com response exceeded the safe size limit'); }
+    chunks.push(part.value);
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(bytes);
+}
+
+async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupResult> {
+  const query = retailQuery(identity.query);
+  const cacheKey = retailIdentityCacheKey(identity, RETAIL_MATCHING_EPOCH);
+  const cached = await getRetailCache<RetailLookupResult>(cacheKey);
+  if (cached) return { ...cached, cached: true };
+  if (Date.now() < retailBlockedUntil) return { status: 'blocked', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, message: 'Amazon lookup is cooling down after a challenge' };
+  return joinInflight(amazonInflight, cacheKey, async (): Promise<RetailLookupResult> => {
+    const url = new URL('https://www.amazon.com/s');
+    url.searchParams.set('k', query);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const response = await fetch(url.href, {
+        method: 'GET', credentials: 'omit', cache: 'no-store', redirect: 'follow', referrerPolicy: 'no-referrer',
+        headers: { accept: 'text/html,application/xhtml+xml' }, signal: controller.signal
+      });
+      const finalUrl = new URL(response.url || url.href);
+      if (!/(^|\.)amazon\.com$/i.test(finalUrl.hostname)) throw new Error('Amazon lookup redirected outside Amazon.com');
+      if (response.status === 429 || response.status === 503) {
+        retailBlockedUntil = Date.now() + 5 * 60 * 1000;
+        return { status: 'rate_limited', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, message: `Amazon.com returned HTTP ${response.status}` };
+      }
+      if (!response.ok) throw new Error(`Amazon.com returned HTTP ${response.status}`);
+      const html = await readResponseText(response);
+      if (isAmazonChallengeHtml(html)) {
+        retailBlockedUntil = Date.now() + 5 * 60 * 1000;
+        const blocked: RetailLookupResult = { status: 'blocked', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, message: 'Amazon.com returned a challenge page' };
+        await putRetailCache(cacheKey, blocked, retailCacheTtl(blocked.status));
+        return blocked;
+      }
+      const candidates = parseAmazonCandidates(html).slice(0, 30);
+      const match = matchAmazonCandidates(candidates, identity);
+      const status: RetailLookupStatus = match ? (match.score >= 3 ? 'matched' : 'low_confidence') : 'no_match';
+      const result: RetailLookupResult = { status, query, match, candidates: candidates.slice(0, 8), fetchedAt: Date.now(), cached: false, message: match ? `Matched ${match.candidate.title}` : 'No conservative Amazon.com match' };
+      await putRetailCache(cacheKey, result, retailCacheTtl(result.status));
+      return result;
+    } catch (error) {
+      return { status: 'network_error', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, message: error instanceof Error ? error.message : String(error) };
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+}
+
+function scheduleRetailDrain(): void {
+  if (retailDrainTimer !== null) return;
+  retailDrainTimer = setTimeout(() => {
+    retailDrainTimer = null;
+    const batch = retailQueue.splice(0, RETAIL_BATCH_SIZE);
+    for (const item of batch) lookupAmazonNow(item.identity).then(item.resolve, item.reject);
+    if (retailQueue.length) retailDrainTimer = setTimeout(() => { retailDrainTimer = null; scheduleRetailDrain(); }, RETAIL_BATCH_DELAY_MS);
+  }, retailQueue.length > RETAIL_BATCH_SIZE ? RETAIL_BATCH_DELAY_MS : 0);
+}
+
+function queueRetailLookup(identity: ProductIdentity): Promise<RetailLookupResult> {
+  return new Promise((resolve, reject) => {
+    retailQueue.push({ identity, resolve, reject });
+    scheduleRetailDrain();
+  });
 }
 
 function validateSearchBody(body: any): void {
@@ -150,6 +272,14 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       const endpoint = new URL('/graphql', senderUrl.origin).href;
       return postJson(endpoint, { ...incoming, query: HIBID_LOT_SEARCH_QUERY }, 'include');
     }
+    case 'flippah:retail.lookup':
+      ensureHiBidSender(sender);
+      return queueRetailLookup(validateRetailIdentity((message.payload as any)?.identity));
+    case 'flippah:retail.cache.clear':
+      ensureHiBidSender(sender);
+      await clearRetailCache();
+      retailBlockedUntil = 0;
+      return { cleared: true };
     case 'flippah:job.put': {
       ensureHiBidSender(sender);
       const job = (message.payload as any)?.job as ScrapeJobSummary;

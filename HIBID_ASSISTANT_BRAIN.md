@@ -20,6 +20,12 @@ implemented.
   and opt-in debug settings.
 - `src/hibid/api.ts` is the authoritative public catalog/search pipeline.
 - `src/hibid/dom.ts` contains dedicated lot and personalized account parsers.
+- `src/intelligence/` contains the US product, condition, Amazon matching,
+  all-in, indicator, batching, and verdict logic adapted from the attributed
+  `hibid-enhancer-suite` revision recorded under `vendor/`.
+- `src/content/deal-intelligence.ts` owns extension-only lot-panel, catalog, and
+  active-account annotations. It shares the existing route observer and never
+  rewrites HiBid-owned content.
 
 ## HiBid data rules
 
@@ -124,3 +130,59 @@ last so an update remains coherent.
 
 Screenshots are local release artifacts under `artifacts/` and are intentionally
 ignored by Git.
+
+## v0.3.0 US deal intelligence
+
+- USD and `en-US` only; Amazon.com, US CamelCamelCamel, and eBay Sold links.
+- CAD lots remain unconverted and receive no USD comparison.
+- Product identity is title-authoritative; structured description fields may
+  enrich brand/model data, but long marketing prose cannot replace the title.
+  Queries preserve models such as `TX-SR304`, `NT-USB+`, capacities,
+  punctuation, and parenthesized model IDs.
+- Automatic Amazon matches require an exact model or a credible matching brand,
+  plus a matching product kind for model-less items. Generic overlap such as
+  `4K`, `smart`, or `wireless` is never enough. Low-confidence evidence cannot
+  provide a retail value or account verdict; a user-selected ASIN is the only
+  explicit override. Matching epoch `2` invalidates pre-fix cache entries.
+- Structured condition answers take precedence over question-label words.
+  Warnings remain visible while research stays available.
+- Mixed/group lots require component review. Multi-unit lots require a saved
+  confirmed quantity before automatic retail comparison.
+- Catalog work runs all-in first, then background-owned Amazon lookups in
+  batches of six with 350 ms pacing, duplicate joining, 12-hour cache, bounded
+  responses, challenge cooldown, and stale-route rejection.
+- Amazon and eBay indicators are independent. Current Bids and active Watchlist
+  use eBay net first and Amazon retail only as a fallback. Past pages remain
+  export/history only.
+- Donor page cleanup, auction-card duplication, notice relocation, image
+  resizing, fading, and full-page rewriting are explicitly forbidden.
+
+## v0.3.0 Chrome acceptance evidence
+
+- Stable unpacked source: `C:\Users\ashby\Documents\lotlens-local`; the
+  installed content script reports `data-flippah-content-version="0.3.0"`.
+- Detail lot `317882346` mounts the original calculator plus US Deal
+  Intelligence, Amazon/eBay evidence, Auction Terms, and Fee Evidence while
+  preserving the native Bid control. Its title-authoritative query is
+  `Magcubic Projector`; an unrelated Samsung monitor is no longer accepted.
+  Amazon HTTP 503 currently produces a visible rate-limit state and no value.
+- Catalog `769459`: 100 canonical tiles, 100 Flippah indicator strips, 100
+  all-in annotations, 100 native Bid controls, and zero hidden tiles.
+- Filtered desktop search (`q=gaming pc` plus shipping/status filters): seven
+  canonical tiles, seven indicator strips, seven all-in annotations, seven
+  native Bid controls, and zero hidden tiles.
+- Signed-in Watchlist: 51 canonical tiles and 51 indicator strips; 35 active
+  Bid controls, ten native Watch/Unwatch controls, and zero hidden tiles.
+  Active account rows display additive OPEN/CLOSED verdict badges.
+- Winning and Outbid routes both inject `v0.3.0`; the signed-in account had no
+  rows during acceptance, so populated verdict behavior is fixture-proven but
+  not live-data-proven in this run.
+- The complete TypeScript/build/test suite passes 64 tests. Chrome and Waterfox
+  MV3 packages both build; installed Waterfox acceptance remains intentionally
+  deferred by the release plan.
+- Chrome blocks automation from claiming extension-internal popup URLs. Popup
+  markup, command wiring, polling, fingerprint-reset logic, active-tab fallback,
+  and copy/diagnostic guards have source-level assertions and helper tests, but
+  the installed Current Page, Watchlist, rerun, clear-cache, copy, retry, and
+  reconnect interactions still require a manual acceptance pass before the
+  release can be called complete.

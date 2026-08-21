@@ -468,7 +468,11 @@ export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; so
   const descriptionHtml = String(lot.description ?? '').trim();
   const description = descriptionText(descriptionHtml);
   const images = imageUrls(lot);
-  const currentBid = amount(state.highBid ?? state.priceRealized ?? state.price ?? lot.bidAmount);
+  const highBid = amount(state.highBid);
+  const priceRealized = amount(state.priceRealized);
+  const currentBid = priceRealized !== null && priceRealized > 0
+    ? priceRealized
+    : (highBid ?? amount(state.price ?? lot.bidAmount));
   const nextBid = amount(state.minBid ?? state.nextBid);
   const categoryRecords = [
     ...(Array.isArray(lot.category) ? lot.category : [lot.category]),
@@ -513,6 +517,20 @@ export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; so
     rawText: [lotNumber, title, description, text(state.status)].filter(Boolean).join(' | ').slice(0, 12000),
     descriptionFields: descriptionFields(description),
     extractionAudit: { source: 'graphql', stableId: id, hasDescription: Boolean(description), imageCount: images.length }
+  };
+}
+
+export function mergeHibidVisibleWithHydrated(visible: HiBidLotRecord, hydrated: HiBidLotRecord): HiBidLotRecord {
+  const visibleRealized = /\bPrice\s+Realized\b/i.test(visible.rawText) || /^Closed$/i.test(visible.status);
+  const keepVisibleRealized = visibleRealized
+    && (hydrated.currentBid === null || hydrated.currentBid === 0)
+    && visible.currentBid !== null
+    && visible.currentBid > 0;
+  return {
+    ...visible,
+    ...hydrated,
+    currentBid: keepVisibleRealized ? visible.currentBid : hydrated.currentBid,
+    status: hydrated.status || visible.status,
   };
 }
 

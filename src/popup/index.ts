@@ -101,7 +101,12 @@ function currentHtml(): string {
   const terminalFailure = Boolean(job && ['failed', 'stale', 'stopped'].includes(job.phase));
   const canStart = !busy() && !terminalFailure && (!(context.route.kind === 'pastbids' || context.route.kind === 'pastwatchlist') || Boolean(selectedGroupId));
   const complete = jobMatchesSelection() && job?.phase === 'completed';
-  return `<section class="panel"><div class="card"><div class="eyebrow">HiBid ${escapeHtml(routeLabel())}</div><h1>${escapeHtml(context.title || 'Current HiBid page')}</h1><p class="route">${escapeHtml(new URL(context.url).pathname + new URL(context.url).search)}</p>${groupSelect}<div class="status ${statusClass()}"><span class="dot"></span><span>${escapeHtml(job?.message || (context.noMatches ? 'No matching lots' : 'Ready to scan'))}</span></div>${busy() || job?.phase === 'completed' ? `<div class="progress"><i style="width:${percent}%"></i></div>` : ''}<div class="actions"><button id="copy-llm" class="button primary" ${!canStart && !complete ? 'disabled' : ''}>Copy LLM Brief</button><button id="copy-json" class="button" ${!canStart && !complete ? 'disabled' : ''}>Copy JSON</button>${busy() ? '<button id="stop" class="button danger">Stop</button>' : ''}${job?.phase === 'failed' || job?.phase === 'stale' || job?.phase === 'stopped' ? '<button id="retry" class="button">Retry</button>' : ''}</div><div class="toast">${escapeHtml(toast)}</div>${debugHtml()}</div></section>`;
+  const analysis = context.analysis;
+  const analysisPercent = analysis.total > 0 ? Math.min(100, Math.round(analysis.analyzed / analysis.total * 100)) : 0;
+  const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid'].includes(context.route.kind)
+    ? `<div class="analysis"><div class="analysis-head"><strong>US Deal Intelligence</strong><span>${escapeHtml(analysis.message || 'Ready')}</span></div>${analysis.phase === 'scanning' || analysis.phase === 'retail' ? `<div class="progress"><i style="width:${analysisPercent}%"></i></div>` : ''}<div class="analysis-counts"><span>${analysis.analyzed}/${analysis.total || 0} analyzed</span><span>${analysis.retailMatched} Amazon matches</span>${analysis.mixedLots ? `<span>${analysis.mixedLots} mixed review</span>` : ''}</div><div class="actions compact"><button id="rerun-analysis" class="button" ${analysis.phase === 'scanning' || analysis.phase === 'retail' ? 'disabled' : ''}>Re-run Analysis</button><button id="clear-retail-cache" class="button">Clear Retail Cache</button></div></div>`
+    : '';
+  return `<section class="panel"><div class="card"><div class="eyebrow">HiBid ${escapeHtml(routeLabel())}</div><h1>${escapeHtml(context.title || 'Current HiBid page')}</h1><p class="route">${escapeHtml(new URL(context.url).pathname + new URL(context.url).search)}</p>${analysisHtml}${groupSelect}<div class="status ${statusClass()}"><span class="dot"></span><span>${escapeHtml(job?.message || (context.noMatches ? 'No matching lots' : 'Ready to scan'))}</span></div>${busy() || job?.phase === 'completed' ? `<div class="progress"><i style="width:${percent}%"></i></div>` : ''}<div class="actions"><button id="copy-llm" class="button primary" ${!canStart && !complete ? 'disabled' : ''}>Copy LLM Brief</button><button id="copy-json" class="button" ${!canStart && !complete ? 'disabled' : ''}>Copy JSON</button>${busy() ? '<button id="stop" class="button danger">Stop</button>' : ''}${job?.phase === 'failed' || job?.phase === 'stale' || job?.phase === 'stopped' ? '<button id="retry" class="button">Retry</button>' : ''}</div><div class="toast">${escapeHtml(toast)}</div>${debugHtml()}</div></section>`;
 }
 
 function debugHtml(): string {
@@ -142,12 +147,26 @@ function bind(): void {
   app.querySelector('#copy-llm')?.addEventListener('click', () => void copyOrStart('llm'));
   app.querySelector('#stop')?.addEventListener('click', () => void command('flippah:job.stop'));
   app.querySelector('#retry')?.addEventListener('click', () => void command('flippah:job.retry'));
+  app.querySelector('#rerun-analysis')?.addEventListener('click', () => void analysisCommand('flippah:analysis.rerun', 'Analysis restarted'));
+  app.querySelector('#clear-retail-cache')?.addEventListener('click', () => void analysisCommand('flippah:analysis.clear-cache', 'Retail cache cleared; analysis restarted'));
   app.querySelector('#copy-debug')?.addEventListener('click', () => void copyDiagnostic(false));
   app.querySelector('#download-debug')?.addEventListener('click', () => void copyDiagnostic(true));
   app.querySelector('#export-watchlist')?.addEventListener('click', () => void exportWatchlist());
   app.querySelectorAll<HTMLButtonElement>('.remove-watch').forEach((button) => button.addEventListener('click', async () => {
     await legacyMessage({ kind: 'watch:remove', lotId: button.dataset.lotId }); await render();
   }));
+}
+
+async function analysisCommand(type: string, message: string): Promise<void> {
+  if (currentTabId === null) return;
+  try {
+    await tabMessage(currentTabId, type, {});
+    toast = message;
+    await updateContextFromTab();
+  } catch (error) {
+    toast = error instanceof Error ? error.message : String(error);
+  }
+  await render();
 }
 
 async function command(type: string): Promise<void> {

@@ -2,7 +2,8 @@
 
 Flippah is a read-only browser extension for HiBid research. It preserves the
 true-cost calculator, eBay research links, watchlist, notes, and alerts from the
-working `v0.1.0` extension while adding exact, auditable catalog exports.
+working `v0.1.0` extension while adding exact, auditable catalog exports and
+US deal intelligence for Amazon.com and saved eBay resale estimates.
 
 The extension is built from one TypeScript source tree into separate Chrome and
 Waterfox packages. HiBid scraping is available from the toolbar popup; the
@@ -17,6 +18,29 @@ in-page calculator remains limited to individual lot pages.
 - `reference-build/flippah-v0.1.0/` - supplied working extension baseline
 - `assets/icons/` - Flippah by ALOS brand icon source and generated browser sizes
 - `legacy/tampermonkey/` - previous userscript implementation and fixtures
+- `vendor/hibid-enhancer-suite/` - MIT license and revision attribution for the
+  parsing and retail-matching logic adapted into Flippah
+
+## US deal intelligence
+
+Flippah `v0.3.0` adds title-authoritative product identity with structured
+description enrichment and condition parsing, Amazon.com retail evidence,
+saved eBay resale indicators, mixed-lot and quantity
+review gates, and compact Current Bids/Watchlist verdicts. Catalog annotations
+are additive: Flippah does not hide, move, fade, shrink, relabel, or replace
+HiBid-owned content or controls. Genuine CAD lots remain CAD and receive no USD
+comparison.
+
+Cold Amazon lookups are centrally bounded to batches of six with 350 ms pacing,
+in-flight request joining, a 12-hour epoch-aware cache, response-size limits,
+and challenge/rate-limit cooldowns. Only normalized quote evidence returns to
+the page; raw Amazon HTML remains inside the background runtime.
+
+The product extraction, condition assessment, matching, cache behavior, and
+verdict ideas are adapted from Diego Magalhaes's MIT-licensed
+[hibid-enhancer-suite](https://github.com/dgomesbr/hibid-enhancer-suite), revision
+`976913421c3fd23b48cc8ca4cde78cb9528f97d3`. Flippah ports maintained logic to
+TypeScript and intentionally excludes the donor's page-rewrite behavior.
 
 ## Commands
 

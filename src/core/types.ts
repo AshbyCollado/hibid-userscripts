@@ -186,4 +186,20 @@ export interface PageContext {
   noMatches: boolean;
   auctionGroups: PastAuctionGroup[];
   job: ScrapeJobSummary | null;
+  analysis: DealAnalysisSummary;
+}
+
+export type DealAnalysisPhase = 'idle' | 'scanning' | 'retail' | 'complete' | 'cancelled' | 'error' | 'unsupported-currency';
+
+export interface DealAnalysisSummary {
+  phase: DealAnalysisPhase;
+  routeFingerprint: string;
+  total: number;
+  analyzed: number;
+  retailMatched: number;
+  retailUnmatched: number;
+  mixedLots: number;
+  quantityReview: number;
+  message: string;
+  updatedAt: number;
 }

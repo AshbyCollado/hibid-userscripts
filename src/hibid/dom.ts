@@ -183,7 +183,9 @@ export function extractHibidLotDetail(root: Document | Element, locationLike: Lo
   const descriptionNode = canonicalLotDescription(root, lotInfo);
   const description = clean(descriptionNode?.textContent) || clean(fields.Description);
   const images = canonicalImages(root, sourceUrl);
-  const bidText = raw.match(/(?:High|Current)\s+Bid\s*:?\s*\$?\s*[\d,.]+/i)?.[0] || '';
+  const bidText = raw.match(/(?:High|Current)\s+Bid\s*:?\s*\$?\s*[\d,.]+/i)?.[0]
+    || raw.match(/Price\s+Realized\s*:?\s*\$?\s*[\d,.]+/i)?.[0]
+    || '';
   const nextText = raw.match(/(?:Minimum Next Bid|Bid)\s*:?\s*\$?\s*[\d,.]+/i)?.[0] || '';
   const category = fields['Group - Category'] || '';
   return {
@@ -192,7 +194,7 @@ export function extractHibidLotDetail(root: Document | Element, locationLike: Lo
     description, descriptionHtml: descriptionNode?.innerHTML || '', category,
     categories: category ? [category] : [], currentBid: money(bidText), nextBid: money(nextText),
     bidCount: Number(raw.match(/(\d+)\s+Bids?/i)?.[1] || '') || null,
-    status: /\bWon\b/i.test(raw) ? 'Won' : (/\bOutbid\b/i.test(raw) ? 'Outbid' : ''),
+    status: /\bWon\b/i.test(raw) ? 'Won' : (/\bOutbid\b/i.test(raw) ? 'Outbid' : (/\bBidding Closed\b/i.test(raw) ? 'Closed' : '')),
     timeLeft: clean(raw.match(/\b(?:\d+d\s*)?(?:\d+h\s*)?\d+m(?:\s*\d+s)?\b/i)?.[0]),
     quantity: Number(fields.Quantity || '') || null, shippingOffered: /shipping offered|will ship/i.test(raw),
     auctionId: sourceUrl.match(/auction(?:Id)?[=/](\d+)/i)?.[1] || '', auctionTitle: '',

@@ -6,6 +6,7 @@ import type { HiBidLotRecord, HiBidRoute, PageContext, PastAuctionGroup, ScrapeJ
 import type { HiBidTransport } from '../core/types.js';
 import { extractAccountLots, extractHiBidPageState, extractHiBidPortalSearchContext, extractHibidLotDetail, extractPastAuctionGroups, extractPastAuctionGroupState } from '../hibid/dom.js';
 import { scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js';
+import { DealIntelligenceController } from './deal-intelligence.js';
 
 document.documentElement.dataset.flippahContentVersion = chrome.runtime.getManifest().version;
 
@@ -20,6 +21,11 @@ const transport: HiBidTransport = {
   searchLots: (body, options) => abortableRuntime('flippah:network.search', { body }, options?.signal),
   hydrateLots: (body, options) => abortableRuntime('flippah:network.hydrate', { body }, options?.signal)
 };
+const dealIntelligence = new DealIntelligenceController(() => {
+  let route = resolveHiBidRoute(location.href);
+  if (route.supported && route.statePrefix && route.kind === 'search') route = { ...route, ...extractHiBidPortalSearchContext(document) };
+  return route;
+}, transport);
 
 function abortableRuntime<T>(type: string, payload: unknown, signal?: AbortSignal): Promise<T> {
   if (signal?.aborted) return Promise.reject(new Error('HiBid scrape cancelled'));
@@ -236,7 +242,8 @@ function pageContext(): PageContext {
     fingerprint: routeFingerprint(route, location.href), visibleExpectedTotal: state.visibleExpectedTotal,
     noMatches: state.noMatches,
     auctionGroups: route.kind === 'pastbids' || route.kind === 'pastwatchlist' ? extractPastAuctionGroups(document, location.href) : [],
-    job: activeJob?.fingerprint === routeFingerprint(route, location.href) ? activeJob : null
+    job: activeJob?.fingerprint === routeFingerprint(route, location.href) ? activeJob : null,
+    analysis: dealIntelligence.summary()
   };
 }
 
@@ -268,6 +275,14 @@ async function handleMessage(message: MessageEnvelope): Promise<unknown> {
     }
     return activeJob;
   }
+  if (message.type === 'flippah:analysis.rerun') {
+    await dealIntelligence.rerun();
+    return dealIntelligence.summary();
+  }
+  if (message.type === 'flippah:analysis.clear-cache') {
+    await dealIntelligence.clearCache();
+    return dealIntelligence.summary();
+  }
   throw new Error('Unknown page command');
 }
 
@@ -294,9 +309,14 @@ function handleLocationChange(): void {
     activeJob = null;
     selectedGroup = undefined;
   }
+  dealIntelligence.handleLocationChange();
 }
 
-new MutationObserver(handleLocationChange).observe(document.documentElement, { childList: true, subtree: true });
+new MutationObserver((mutations) => {
+  handleLocationChange();
+  dealIntelligence.handleMutations(mutations);
+}).observe(document.documentElement, { childList: true, subtree: true });
 window.addEventListener('popstate', handleLocationChange);
 window.addEventListener('hashchange', handleLocationChange);
 window.setInterval(handleLocationChange, 500);
+dealIntelligence.start();

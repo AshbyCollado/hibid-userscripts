@@ -16,4 +16,5 @@ textarea { min-height: 110px; resize: vertical; }
 .actions { display: flex; align-items: center; gap: 12px; }
 button { border: 1px solid #1557d6; border-radius: 6px; background: #1557d6; color: #fff; cursor: pointer; font: inherit; font-weight: 800; padding: 10px 16px; }
 #status { color: #237448; font-weight: 700; }
+.hint { color: #68758a; font-size: 13px; margin: 12px 0 0; }
 @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }

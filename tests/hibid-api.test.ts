@@ -2,10 +2,27 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { HiBidTransport } from '../src/core/types.js';
 import { resolveHiBidRoute } from '../src/core/route.js';
-import { buildHibidSearchRequest, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, scrapeHibidApiCatalog, validateHibidApiCoverage } from '../src/hibid/api.js';
+import { buildHibidSearchRequest, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, mergeHibidVisibleWithHydrated, normalizeHibidLot, scrapeHibidApiCatalog, validateHibidApiCoverage } from '../src/hibid/api.js';
 
 test('GraphQL operation name matches the operation declared by the query', () => {
   assert.match(HIBID_LOT_SEARCH_QUERY, new RegExp(`\\bquery\\s+${HIBID_LOT_SEARCH_OPERATION}\\b`));
+});
+
+test('closed lots prefer a nonzero realized price over HiBid highBid zero', () => {
+  const route = resolveHiBidRoute('https://hibid.com/lot/317880392/example');
+  const record = normalizeHibidLot({
+    eventItemId: 317880392,
+    lotNumber: '9m',
+    lead: 'Samsung TV',
+    lotState: { highBid: 0, priceRealized: 365, status: 'CLOSED' }
+  }, { route, sourceUrl: 'https://hibid.com/lot/317880392/example' });
+  assert.equal(record?.currentBid, 365);
+});
+
+test('hydration cannot overwrite a visible realized price with zero', () => {
+  const visible = { id: '1', currentBid: 365, status: 'Closed', rawText: 'Price Realized: 365.00 USD' } as any;
+  const hydrated = { id: '1', currentBid: 0, status: 'CLOSED', rawText: '1 | Samsung TV | CLOSED' } as any;
+  assert.equal(mergeHibidVisibleWithHydrated(visible, hydrated).currentBid, 365);
 });
 
 function lot(id: number) {
