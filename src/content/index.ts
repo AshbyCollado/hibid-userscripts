@@ -5,7 +5,7 @@ import { resolveHiBidRoute, routeFingerprint } from '../core/route.js';
 import type { HiBidLotRecord, HiBidRoute, PageContext, PastAuctionGroup, ScrapeJobSummary } from '../core/types.js';
 import type { HiBidTransport } from '../core/types.js';
 import { extractAccountLots, extractHiBidPageState, extractHiBidPortalSearchContext, extractHibidLotDetail, extractPastAuctionGroups, extractPastAuctionGroupState } from '../hibid/dom.js';
-import { scrapeHibidApiCatalog, scrapeHibidWatchlist, validateHibidApiCoverage } from '../hibid/api.js';
+import { scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js';
 import { DealIntelligenceController } from './deal-intelligence.js';
 
 document.documentElement.dataset.flippahContentVersion = chrome.runtime.getManifest().version;
@@ -174,20 +174,24 @@ async function runJob(route: HiBidRoute): Promise<void> {
       const lot = extractHibidLotDetail(document, location.href);
       items = lot ? [lot] : [];
       coverage = validateHibidApiCoverage({ enumeratedIds: lot ? [lot.id] : [], hydratedItems: items, expectedTotal: 1, startFingerprint, endFingerprint: routeFingerprint(resolveHiBidRoute(location.href), location.href) });
-    } else if (route.kind === 'watchlist') {
-      await saveJob({ phase: 'enumerating', message: 'Reading exact HiBid watchlist IDs' });
-      const result = await scrapeHibidWatchlist(
-        (body, requestOptions) => abortableRuntime('flippah:network.account-watchlist', { body }, requestOptions?.signal),
-        route,
-        location.href,
-        { signal, onProgress: (message) => { void saveJob({ message }); } }
-      );
-      items = result.items;
-      coverage = result.coverage;
-      failures = result.errors;
-    } else if (['currentbids-winning', 'currentbids-outbid', 'pastbids', 'pastwatchlist'].includes(route.kind)) {
+    } else if (['watchlist', 'currentbids-winning', 'currentbids-outbid', 'pastbids', 'pastwatchlist'].includes(route.kind)) {
       await saveJob({ phase: 'enumerating', message: 'Reading saved HiBid lots' });
-      const account = await readAccountPages(route, signal);
+      let account = await readAccountPages(route, signal);
+      if (route.kind === 'watchlist') {
+        for (let attempt = 1; attempt < 3 && account.expected !== null && account.items.length !== account.expected && !signal.aborted; attempt += 1) {
+          await saveJob({
+            phase: 'enumerating',
+            expectedTotal: account.expected,
+            enumeratedCount: account.items.length,
+            message: `Watchlist changed during capture; refreshing snapshot ${attempt}/2`
+          });
+          const refresh = [...document.querySelectorAll<HTMLButtonElement | HTMLAnchorElement>('button, a')]
+            .find((element) => /^refresh$/i.test(element.textContent?.trim() || '') && !element.closest('[data-flippah-root]'));
+          refresh?.click();
+          await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+          account = await readAccountPages(route, signal);
+        }
+      }
       failures = account.failures;
       await saveJob({ phase: 'hydrating', expectedTotal: account.expected, enumeratedCount: account.items.length, message: 'Reading lot descriptions' });
       const enriched = await enrichAccountLots(account.items, signal);

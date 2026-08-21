@@ -44,12 +44,12 @@ TypeScript and intentionally excludes the donor's page-rewrite behavior.
 
 ## Watchlist reliability
 
-Flippah `v0.3.1` reads `/account/watchlist` through HiBid's same-origin,
-read-only `WatchListSearch` GraphQL operation. The API total, unique stable IDs,
-and normalized record count must agree before copy is enabled. A changing
-watchlist is retried as a fresh snapshot, and 51+ lots are no longer truncated
-by a 50-row visible page. Authentication stays inside the browser request;
-tokens and account identity are never copied into records or diagnostics.
+Flippah `v0.3.2` reads `/account/watchlist` through its dedicated account-page
+DOM parser. HiBid requires private buyer authorization for `WatchListSearch`,
+so personalized data is never requested from an extension-origin GraphQL call.
+If the displayed total and stable lot count drift while a lot closes, Flippah
+uses HiBid's safe Refresh control and retries the snapshot before validation.
+Account tokens and account identity are never read or copied into diagnostics.
 
 ## Commands
 

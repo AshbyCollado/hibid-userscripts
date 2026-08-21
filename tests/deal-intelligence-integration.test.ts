@@ -3,13 +3,20 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
 
-test('v0.3.1 browser packages permit only the fixed Amazon.com retail provider', async () => {
+test('v0.3.2 browser packages permit only the fixed Amazon.com retail provider', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.3.1');
+  assert.equal(chrome.version, '0.3.2');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.some((value: string) => /bestbuy|amazon\.ca/i.test(value)), false);
   assert.deepEqual(chrome.host_permissions, waterfox.host_permissions);
+});
+
+test('personalized watchlist exports use the account DOM and never extension-origin GraphQL', async () => {
+  const content = await readFile('src/content/index.ts', 'utf8');
+  assert.match(content, /\['watchlist', 'currentbids-winning'/);
+  assert.match(content, /Watchlist changed during capture; refreshing snapshot/);
+  assert.doesNotMatch(content, /abortableRuntime\('flippah:network\.account-watchlist'/);
 });
 
 test('retail transport returns normalized lookups and never exposes raw HTML or cache writes to content', async () => {

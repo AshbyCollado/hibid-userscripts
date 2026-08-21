@@ -205,3 +205,19 @@ ignored by Git.
   requested or included in diagnostics.
 - Regression coverage includes 51 API lots behind a 50-row visible page and a
   changing 51-to-50 snapshot. The complete suite is 69/69.
+
+## v0.3.2 authenticated watchlist correction
+
+- Chrome acceptance showed that HiBid returns HTTP 401 when its private
+  `WatchListSearch` buyer query originates from the extension background, even
+  with browser credentials enabled. The public API-first catalog path is not
+  affected.
+- `/account/watchlist` now follows the same dedicated canonical DOM boundary as
+  the other personalized account pages. It does not inspect or export account
+  tokens and does not use broad Apollo state.
+- If a watchlist item closes during capture and the visible total disagrees
+  with stable extracted lot IDs, Flippah safely invokes HiBid's Refresh control
+  and retries the full snapshot twice before failing closed.
+- Release acceptance must run the real toolbar `Copy JSON` action on the signed-
+  in watchlist and parse the clipboard payload; a successful page load alone is
+  not acceptance.
