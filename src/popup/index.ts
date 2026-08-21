@@ -12,6 +12,7 @@ let job: ScrapeJobSummary | null = null;
 let selectedTab: 'current' | 'watchlist' = 'current';
 let selectedGroupId = '';
 let toast = '';
+let toastFromRefreshError = false;
 let pendingCopy: 'json' | 'llm' | null = null;
 let pollTimer: number | null = null;
 let countdownTimer: number | null = null;
@@ -72,7 +73,8 @@ async function loadMatchingJob(): Promise<ScrapeJobSummary | null> {
   if (past && !selectedGroupId) return null;
   const scopeId = past ? selectedGroupId : null;
   if (jobMatchesContextAndScope(context.job, context, selectedGroupId)) return context.job;
-  return getJobForFingerprint(currentTabId, context.fingerprint, scopeId);
+  const stored = await getJobForFingerprint(currentTabId, context.fingerprint, scopeId);
+  return jobMatchesContextAndScope(stored, context, selectedGroupId) ? stored : null;
 }
 
 function routeLabel(): string {
@@ -179,6 +181,7 @@ async function copyCompleted(format: 'json' | 'llm'): Promise<void> {
 
 async function copyOrStart(format: 'json' | 'llm'): Promise<void> {
   try {
+    await updateContextFromTab();
     if (jobMatchesSelection() && job?.phase === 'completed') await copyCompleted(format);
     else if (job && ['failed', 'stale', 'stopped'].includes(job.phase)) throw new Error('Retry this scrape before exporting');
     else {
@@ -193,6 +196,7 @@ async function copyOrStart(format: 'json' | 'llm'): Promise<void> {
 async function copyDiagnostic(download: boolean): Promise<void> {
   if (!job) return;
   const diagnostic = await getDiagnostic(job.jobId);
+  if (!diagnostic) throw new Error('No diagnostic is stored for this scrape; run or retry it with this version first');
   if (download) await runtimeMessage('flippah:diagnostic.download', { diagnostic });
   else await copyText(JSON.stringify(diagnostic, null, 2));
   toast = download ? 'Diagnostic downloaded' : 'Diagnostic copied';
@@ -213,14 +217,28 @@ function startPolling(): void {
   pollTimer = window.setInterval(() => void refreshContext(), 800);
 }
 
+async function updateContextFromTab(): Promise<void> {
+  if (currentTabId === null) return;
+  const previousFingerprint = context?.fingerprint;
+  const nextContext = await tabMessage<PageContext>(currentTabId, 'flippah:page.get-context', {});
+  if (previousFingerprint && previousFingerprint !== nextContext.fingerprint) {
+    toast = '';
+    pendingCopy = null;
+    selectedGroupId = '';
+  }
+  context = nextContext;
+  job = await loadMatchingJob();
+}
+
 async function refreshContext(): Promise<void> {
   if (currentTabId === null) return;
   try {
-    context = await tabMessage<PageContext>(currentTabId, 'flippah:page.get-context', {});
-    job = await loadMatchingJob();
+    await updateContextFromTab();
+    if (toastFromRefreshError) {
+      toast = '';
+      toastFromRefreshError = false;
+    }
     if (job && ['completed', 'failed', 'stopped', 'stale'].includes(job.phase)) {
-      if (pollTimer !== null) window.clearInterval(pollTimer);
-      pollTimer = null;
       if (job.phase === 'completed' && pendingCopy) {
         const format = pendingCopy; pendingCopy = null;
         await copyCompleted(format);
@@ -229,6 +247,7 @@ async function refreshContext(): Promise<void> {
     await render();
   } catch (error) {
     toast = error instanceof Error ? error.message : String(error);
+    toastFromRefreshError = true;
     await render();
   }
 }
@@ -244,12 +263,12 @@ async function init(): Promise<void> {
       document.documentElement.dataset.debug = String(settings.debugMode || new URL(context.url).hash === '#flipperdebug');
       selectedGroupId = '';
       job = await loadMatchingJob();
-      if (busy()) startPolling();
     } catch (error) {
       toast = error instanceof Error ? error.message : String(error);
       context = null;
     }
   }
+  startPolling();
   await render();
 }
 

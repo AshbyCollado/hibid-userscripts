@@ -28,7 +28,23 @@ test('past auction groups stay isolated to the selected account auction', () => 
   const selected = extractAccountLots(dom.window.document, route, dom.window.location.href, groups[0]);
   assert.deepEqual(selected.map((item) => item.id), ['6']);
   assert.equal(extractAccountLots(dom.window.document, route, dom.window.location.href).length, 0);
-  assert.deepEqual(extractPastAuctionGroupState(dom.window.document, groups[0]!), { found: true, expectedTotal: null, visibleCount: 1 });
+  assert.deepEqual(extractPastAuctionGroupState(dom.window.document, groups[0]!), { found: true, expectedTotal: 1, visibleCount: 1 });
+});
+
+test('past auction groups follow HiBid watched-header sibling boundaries', () => {
+  const html = `<div id="lot-tiles-1" class="lot-tiles md-tiles">
+    <app-watched-auction-header><div><div class="listing-box-title"><a href="/catalog/111/a"><strong>Auction A</strong></a><a href="https://maps.google.com/maps?q=Cambridge,+MA">Cambridge, MA</a></div></div></app-watched-auction-header>
+    <app-lot-tile id="lot-101"><a href="/lot/101/first">Lot 1 | First</a></app-lot-tile>
+    <app-lot-tile id="lot-102"><a href="/lot/102/second">Lot 2 | Second</a></app-lot-tile>
+    <app-watched-auction-header><div><div class="listing-box-title"><a href="/catalog/222/b"><strong>Auction B</strong></a></div></div></app-watched-auction-header>
+    <app-lot-tile id="lot-201"><a href="/lot/201/other">Lot 3 | Other</a></app-lot-tile>
+  </div>`;
+  const dom = new JSDOM(html, { url: 'https://hibid.com/account/pastwatchlist' });
+  const groups = extractPastAuctionGroups(dom.window.document, dom.window.location.href);
+  const route = resolveHiBidRoute(dom.window.location.href);
+  const selected = extractAccountLots(dom.window.document, route, dom.window.location.href, groups[0]);
+  assert.deepEqual(selected.map((item) => item.id), ['101', '102']);
+  assert.deepEqual(extractPastAuctionGroupState(dom.window.document, groups[0]!), { found: true, expectedTotal: 2, visibleCount: 2 });
 });
 
 test('lot detail includes lead, category, structured fields, description, and all images', () => {
@@ -88,6 +104,19 @@ test('LLM brief carries complete-only audit and mandatory resale rules', () => {
   assert.equal(payload.audit.complete, true);
 });
 
+test('private HiBid watch notes are exported only when enabled', () => {
+  const url = 'https://hibid.com/account/watchlist';
+  const route = resolveHiBidRoute(url);
+  const fingerprint = routeFingerprint(route, url);
+  const context: PageContext = { supported: true, url, title: 'Watchlist', route, fingerprint, visibleExpectedTotal: 1, noMatches: false, auctionGroups: [], job: null };
+  const job: ScrapeJobSummary = { jobId: 'notes', schemaVersion: 1, tabId: 1, sourceUrl: url, fingerprint, routeKind: 'watchlist', scopeId: null, phase: 'completed', revision: 1, expectedTotal: 1, enumeratedCount: 1, hydratedCount: 1, message: 'done', errorCode: '', startedAt: 1, updatedAt: 2, completedAt: 2 };
+  const item: any = { id: '1', eventItemId: '1', title: 'Lot', watchNotes: 'private lead note' };
+  const hidden = buildHibidExportPayload(context, job, [item], DEFAULT_SETTINGS);
+  const included = buildHibidExportPayload(context, job, [item], { ...DEFAULT_SETTINGS, includePrivateWatchNotes: true });
+  assert.equal(hidden.items[0]?.watchNotes, undefined);
+  assert.equal(included.items[0]?.watchNotes, 'private lead note');
+});
+
 test('completed jobs are isolated by route fingerprint and selected past-auction scope', () => {
   const url = 'https://hibid.com/account/pastwatchlist';
   const route = resolveHiBidRoute(url);
@@ -97,6 +126,16 @@ test('completed jobs are isolated by route fingerprint and selected past-auction
   assert.equal(jobMatchesContextAndScope(job, context, '765226'), true);
   assert.equal(jobMatchesContextAndScope(job, context, '999999'), false);
   assert.equal(jobMatchesContextAndScope({ ...job, fingerprint: 'stale' }, context, '765226'), false);
+});
+
+test('a completed public scrape is not reused after the visible total changes', () => {
+  const url = 'https://hibid.com/lots/40198/computers?q=gaming%20pc';
+  const route = resolveHiBidRoute(url);
+  const fingerprint = routeFingerprint(route, url);
+  const context: PageContext = { supported: true, url, title: 'Gaming PCs', route, fingerprint, visibleExpectedTotal: 7, noMatches: false, auctionGroups: [], job: null };
+  const completed: ScrapeJobSummary = { jobId: 'old', schemaVersion: 1, tabId: 4, sourceUrl: url, fingerprint, routeKind: 'search', scopeId: null, phase: 'completed', revision: 4, expectedTotal: 5, enumeratedCount: 5, hydratedCount: 5, message: 'done', errorCode: '', startedAt: 1, updatedAt: 2, completedAt: 2 };
+  assert.equal(jobMatchesContextAndScope(completed, context), false);
+  assert.equal(jobMatchesContextAndScope({ ...completed, expectedTotal: 7, enumeratedCount: 7, hydratedCount: 7 }, context), true);
 });
 
 test('older asynchronous job checkpoints cannot overwrite a newer terminal revision', () => {
@@ -109,12 +148,16 @@ test('older asynchronous job checkpoints cannot overwrite a newer terminal revis
 test('generated manifests preserve baseline content UI and split background runtimes', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.2.0');
+  const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+  assert.equal(chrome.version, pkg.version);
+  assert.equal(waterfox.version, pkg.version);
   assert.equal(chrome.background.service_worker, 'background.js');
   assert.deepEqual(waterfox.background.scripts, ['background.js']);
   assert.ok(chrome.content_scripts[0].js.includes('legacy-content.js'));
   assert.ok(chrome.content_scripts[0].js.includes('content.js'));
   assert.equal(chrome.action.default_popup, 'popup/index.html');
+  assert.equal(chrome.options_page, 'options/index.html');
+  await readFile(`dist/chrome/${chrome.options_page}`, 'utf8');
 });
 
 test('popup is toolbar-based with Current Page and Watchlist and no page overlay panel', async () => {
@@ -122,5 +165,9 @@ test('popup is toolbar-based with Current Page and Watchlist and no page overlay
   const content = await readFile('src/content/index.ts', 'utf8');
   assert.match(popup, /Current Page/);
   assert.match(popup, /Watchlist/);
+  assert.match(popup, /await updateContextFromTab\(\);/);
+  assert.match(popup, /startPolling\(\);/);
+  assert.match(popup, /toastFromRefreshError/);
+  assert.match(popup, /previousFingerprint !== nextContext\.fingerprint/);
   assert.doesNotMatch(content, /appendChild\([^)]*panel|flipperaddon-panel/);
 });

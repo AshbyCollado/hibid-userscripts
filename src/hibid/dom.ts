@@ -223,6 +223,17 @@ function groupContainer(root: Document | Element, group: PastAuctionGroup): Elem
     return href.includes(`/catalog/${escapedId}/`) || href.endsWith(`/catalog/${escapedId}`);
   });
   if (!header) return null;
+  const watchedHeader = header.closest('app-watched-auction-header');
+  if (watchedHeader?.parentElement) {
+    const scope = watchedHeader.ownerDocument.createElement('div');
+    let node: Element | null = watchedHeader;
+    while (node) {
+      if (node !== watchedHeader && node.matches('app-watched-auction-header')) break;
+      scope.append(node.cloneNode(true));
+      node = node.nextElementSibling;
+    }
+    return scope;
+  }
   return header.closest('.listing-box, [class*="auction-listing"], section') || header.parentElement;
 }
 
@@ -237,7 +248,7 @@ export function extractPastAuctionGroupState(
   const visibleCount = new Set([...container.querySelectorAll('app-lot-tile[id^="lot-"], [data-event-item-id], .bid-status-border[id^="lot-"]')]
     .map((node) => node.id.replace(/^lot-/, '') || node.getAttribute('data-event-item-id') || '')
     .filter(Boolean)).size;
-  return { found: true, expectedTotal: range ? Number(range[3]) : null, visibleCount };
+  return { found: true, expectedTotal: range ? Number(range[3]) : visibleCount, visibleCount };
 }
 
 export function extractAccountLots(

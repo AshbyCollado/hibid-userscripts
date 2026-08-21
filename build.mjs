@@ -5,6 +5,8 @@ import path from 'node:path';
 const root = process.cwd();
 const reference = path.join(root, 'reference-build', 'flippah-v0.1.0');
 const targets = ['chrome', 'waterfox'];
+const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+const version = String(packageJson.version);
 
 await rm(path.join(root, 'dist'), { recursive: true, force: true });
 
@@ -15,7 +17,7 @@ const commonManifest = {
   manifest_version: 3,
   name: 'Flippah - true cost, comps & HiBid research',
   short_name: 'Flippah',
-  version: '0.2.0',
+  version,
   description: 'Flippah preserves true-cost tools and adds verified HiBid catalog and account exports.',
   permissions: ['storage', 'alarms', 'notifications', 'tabs', 'activeTab', 'downloads', 'clipboardWrite'],
   host_permissions: ['https://hibid.com/*', 'https://*.hibid.com/*', 'https://hibid-api.io/*'],
@@ -127,4 +129,4 @@ for (const target of targets) {
   await writeFile(path.join(outdir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 }
 
-console.log('Built Flippah v0.2.0 for Chrome and Waterfox.');
+console.log(`Built Flippah v${version} for Chrome and Waterfox.`);

@@ -78,3 +78,10 @@ test('settings preserve calculator keys and add durable research defaults', () =
   assert.equal(settings.radiusMiles, 50);
   assert.equal(settings.customInstructions, 'Be strict.');
 });
+
+test('blank nullable numeric settings remain unset instead of becoming zero', () => {
+  const settings = normalizeSettings({ taxPctOverride: null, ebayFeePct: '', radiusMiles: null });
+  assert.equal(settings.taxPctOverride, null);
+  assert.equal(settings.ebayFeePct, DEFAULT_SETTINGS.ebayFeePct);
+  assert.equal(settings.radiusMiles, DEFAULT_SETTINGS.radiusMiles);
+});

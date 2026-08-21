@@ -1,4 +1,5 @@
 import { runtimeMessage } from '../core/browser.js';
+import { buildScrapeDiagnostic } from '../core/diagnostics.js';
 import { failure, isEnvelope, success, type MessageEnvelope } from '../core/messages.js';
 import { resolveHiBidRoute, routeFingerprint } from '../core/route.js';
 import type { HiBidLotRecord, HiBidRoute, PageContext, PastAuctionGroup, ScrapeJobSummary } from '../core/types.js';
@@ -200,6 +201,10 @@ async function runJob(route: HiBidRoute): Promise<void> {
     if (!coverage.complete) throw Object.assign(new Error(`Coverage failed: ${coverage.reason} (${coverage.uniqueHydratedCount}/${coverage.expectedCount ?? '?'})`), { coverage, failures });
     await checkpointRecords(activeJob.jobId, items);
     await saveJob({ phase: 'completed', expectedTotal: items.length, enumeratedCount: items.length, hydratedCount: items.length, message: `Ready to copy ${items.length} lot${items.length === 1 ? '' : 's'}`, completedAt: Date.now() });
+    await runtimeMessage('flippah:diagnostic.store', {
+      jobId: activeJob.jobId,
+      diagnostic: buildScrapeDiagnostic({ job: activeJob, coverage, failures })
+    });
   } catch (error: any) {
     if (signal.aborted) return;
     const diagnostic = {
@@ -256,6 +261,10 @@ async function handleMessage(message: MessageEnvelope): Promise<unknown> {
       await saveJob({ phase: 'stopping', message: 'Stopping' });
       controller?.abort();
       await saveJob({ phase: 'stopped', message: 'Stopped', errorCode: 'user-stop', completedAt: Date.now() });
+      await runtimeMessage('flippah:diagnostic.store', {
+        jobId: activeJob.jobId,
+        diagnostic: buildScrapeDiagnostic({ job: activeJob })
+      });
     }
     return activeJob;
   }
@@ -276,7 +285,11 @@ function handleLocationChange(): void {
   lastHref = location.href;
   if (activeJob && !['completed', 'failed', 'stopped', 'stale'].includes(activeJob.phase)) {
     controller?.abort();
-    void saveJob({ phase: 'stale', message: 'Page changed during scrape', errorCode: 'route-fingerprint-changed', completedAt: Date.now() });
+    void saveJob({ phase: 'stale', message: 'Page changed during scrape', errorCode: 'route-fingerprint-changed', completedAt: Date.now() })
+      .then(() => activeJob && runtimeMessage('flippah:diagnostic.store', {
+        jobId: activeJob.jobId,
+        diagnostic: buildScrapeDiagnostic({ job: activeJob })
+      }));
   } else {
     activeJob = null;
     selectedGroup = undefined;

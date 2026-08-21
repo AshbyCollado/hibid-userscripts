@@ -7,7 +7,11 @@ export function jobMatchesContextAndScope(
 ): boolean {
   if (!job || !context || job.fingerprint !== context.fingerprint) return false;
   const isPast = context.route.kind === 'pastbids' || context.route.kind === 'pastwatchlist';
-  return isPast ? Boolean(selectedGroupId) && job.scopeId === selectedGroupId : job.scopeId === null;
+  if (isPast) return Boolean(selectedGroupId) && job.scopeId === selectedGroupId;
+  if (job.scopeId !== null) return false;
+  const pageTotal = context.visibleExpectedTotal;
+  if (job.phase === 'completed' && pageTotal !== null && job.expectedTotal !== pageTotal) return false;
+  return true;
 }
 
 export function chooseNewestJob(existing: ScrapeJobSummary | null, incoming: ScrapeJobSummary): ScrapeJobSummary {

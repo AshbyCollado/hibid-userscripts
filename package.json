@@ -1,12 +1,13 @@
 {
   "name": "flippah-extension",
-  "version": "0.2.0",
+  "version": "0.2.6",
   "private": true,
   "type": "module",
   "description": "Flippah browser extension source and HiBid scraper core.",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "npm run typecheck && node build.mjs",
+    "install:chrome": "npm run build && node scripts/install-local.mjs",
     "test": "npm run build && tsx --test tests/*.test.ts",
     "test:legacy": "node --test legacy/tampermonkey/tests/*.test.mjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true}); require('fs').rmSync('dist-test',{recursive:true,force:true})\""

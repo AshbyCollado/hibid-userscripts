@@ -43,8 +43,9 @@ descriptions are not lot descriptions.
 
 ## Browser release gate
 
-Every release must be built once and accepted independently in Chrome and
-Waterfox. Closing and reopening the toolbar popup during a catalog scrape must
+Chrome is the active release gate. Waterfox output continues to build from the
+same source but its browser acceptance is deferred until the Chrome product is
+stable. Closing and reopening the toolbar popup during a catalog scrape must
 reconnect to the persisted job. Copy JSON, parse it outside the extension, and
 assert expected count equals item count equals unique ID count. Inspect first,
 middle, and final records for category, description, and image fields.
@@ -54,16 +55,72 @@ build, package, or opened page alone is not proof that the installed browser is
 current. Record the displayed version and real export evidence before marking a
 release complete.
 
-## v0.2.0 acceptance evidence
+Chrome must load a stable unpacked directory. Run
+`npm run install:chrome -- --target "C:\\Users\\ashby\\Documents\\lotlens-local"`
+and load that directory once. Never point the installed extension at
+`dist/chrome`, because the build replaces `dist` and can make the popup disappear
+mid-update. The installer copies runtime files first and writes the manifest
+last so an update remains coherent.
 
-- Chrome: catalog `765226` completed `497/497` with 497 unique IDs; a five-result
-  filtered search completed `5/5`; the `q=lebron` no-match page completed `0/0`.
-- Waterfox: the same catalog completed `497/497` after the popup was closed and
-  reopened; first/middle/final records included descriptions and images.
-- Single-lot DOM regression: lot `311206926` exports its category and image
-  without consent-banner CSS or the auction-level description.
-- Full modern and legacy test suites plus Waterfox manifest lint are required
-  before packaging and push.
+## v0.2.4 reliability changes
+
+- HiBid GraphQL categories may be arrays; normalization reads `fullCategory`,
+  category name, and parent names without dropping the category.
+- Private HiBid watch notes are normalized but exported only when the explicit
+  include-private-notes setting is enabled.
+- Blank nullable numeric settings remain unset instead of being coerced to zero.
+- Ending alerts persist their 15-minute and 2-minute notification flags before
+  displaying a notification so background restarts do not repeat the same alert.
+- The build derives manifest versions from `package.json`, and the stable Chrome
+  installer prevents transient missing popup files during an update.
+- Completed jobs are invalidated when the current visible total changes, and
+  the toolbar popup continuously re-reads the active route while open. Every
+  copy action performs a fresh route/context check before using stored data.
+- A transient content-script reconnect error is cleared as soon as polling
+  successfully reads the new route, so navigation cannot leave a stale error
+  beside an otherwise ready scraper.
+- Route fingerprint changes also clear prior copy toasts, pending copy intent,
+  and past-auction selection before the new page can render.
+
+## v0.2.5 diagnostic export repair
+
+- Every completed, stopped, or stale scrape now persists a sanitized diagnostic
+  record, not only failed jobs.
+- `Copy Diagnostic` and `Download Diagnostic` fail visibly when no record exists;
+  they never report success after copying literal `null`.
+
+## v0.2.6 past-auction group boundary repair
+
+- Personalized past-auction pages render each auction header and its lots as
+  siblings inside `#lot-tiles-1`. Selected exports now copy only the sibling
+  range between that header and the next `app-watched-auction-header`.
+- The current selected group count is its completeness total; unrelated account
+  pagination and neighboring auction groups remain outside the export scope.
+
+## v0.2.6 Chrome acceptance evidence
+
+- Installed source: `C:\Users\ashby\Documents\lotlens-local`, extension ID
+  `dpgcddpffcogaodnoildpgdbjfabmdkn`; both the extensions card and toolbar popup
+  visibly reported `v0.2.6`.
+- Filtered `gaming pc` search: `7/7` unique IDs, seven images/categories, and five
+  populated descriptions. Copied-payload SHA-256:
+  `53b18ec157994014d3a3bd0fa3c10a304a59fe54389ddae32c987d01bb65b532`.
+- Catalog `765226`: `497/497` unique IDs with descriptions, categories, and images
+  on all 497 records. Copied-payload SHA-256:
+  `6b8d605e2461d003d016700388c46302d4eebfe477a0cb84ce4a11921426faf1`.
+- Signed-in watchlist: `40/40` unique IDs, all with images/categories and 32 with
+  populated descriptions. Copied-payload SHA-256:
+  `9176dc94659373d8a6bc1394c4637a9c1056e5afabca6a32325a91eb77b3ee5b`.
+- Past Watch List selected only `Be Biopharma - Cambridge, MA`: `3/3` unique IDs
+  (`313088791`, `314173058`, `314173064`) with canonical URLs, categories, images,
+  and full description HTML; the following auction was excluded.
+- The `q=lebron` no-match page completed `0/0`; a single-lot regression for lot
+  `311206926` exports category and image without consent or auction-level text.
+- Copy Diagnostic parsed as completed `497/497` with no missing or duplicate IDs,
+  and Download Diagnostic created a real local JSON file. Stop, Retry, popup
+  reconnect, watchlist CSV, calculator, eBay sold search, options, and debug mode
+  were also exercised in the installed Chrome build.
+- Modern and legacy suites plus `git diff --check` remain required before push.
 
 Screenshots are local release artifacts under `artifacts/` and are intentionally
 ignored by Git.

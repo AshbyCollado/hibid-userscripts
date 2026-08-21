@@ -470,8 +470,14 @@ export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; so
   const images = imageUrls(lot);
   const currentBid = amount(state.highBid ?? state.priceRealized ?? state.price ?? lot.bidAmount);
   const nextBid = amount(state.minBid ?? state.nextBid);
-  const categories = [lot.category, ...(Array.isArray(lot.categories) ? lot.categories : [])]
-    .flatMap((value) => value && typeof value === 'object' ? [value.name, value.categoryName, value.fullCategory] : [value])
+  const categoryRecords = [
+    ...(Array.isArray(lot.category) ? lot.category : [lot.category]),
+    ...(Array.isArray(lot.categories) ? lot.categories : [lot.categories])
+  ];
+  const categories = categoryRecords
+    .flatMap((value) => value && typeof value === 'object'
+      ? [value.fullCategory, value.categoryName, value.name]
+      : [value])
     .map(text).filter(Boolean);
   const lotNumber = text(lot.lotNumber ?? lot.saleOrder ?? id);
   const title = text(lot.lead ?? lot.title ?? lot.name ?? `Lot ${lotNumber}`);
@@ -503,6 +509,7 @@ export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; so
     auctionTitle: text(auction.eventName ?? auction.title),
     location: [auction.eventAddress, auction.eventCity, auction.eventState, auction.eventZip].map(text).filter(Boolean).join(', '),
     buyerPremium: text(auction.buyerPremium ?? auction.buyerPremiumRate),
+    watchNotes: text(state.watchNotes ?? lot.watchNotes),
     rawText: [lotNumber, title, description, text(state.status)].filter(Boolean).join(' | ').slice(0, 12000),
     descriptionFields: descriptionFields(description),
     extractionAudit: { source: 'graphql', stableId: id, hasDescription: Boolean(description), imageCount: images.length }

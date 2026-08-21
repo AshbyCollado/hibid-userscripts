@@ -23,23 +23,28 @@ in-page calculator remains limited to individual lot pages.
 npm install
 npm test
 npm run build
+npm run install:chrome -- --target "C:\\Users\\ashby\\Documents\\lotlens-local"
 ```
 
-Load `dist/chrome` through `chrome://extensions` or `dist/waterfox` through
-Waterfox's temporary add-on page during development.
+Load the stable install directory, such as `C:\\Users\\ashby\\Documents\\lotlens-local`,
+through Chrome's extensions page. Do not load `dist/chrome` as the persistent
+installed copy: each build replaces `dist`, which can leave Chrome pointing at
+files that briefly do not exist. `dist/waterfox` remains the generated Waterfox
+development package.
 
-## Release gate
+## Current release gate
 
 A source build is not a finished release. After every build that changes the
-extension, refresh the installed Chrome and Waterfox copies, confirm the popup
-shows the intended version, run a real HiBid export, and parse the copied JSON.
+extension, update the stable installed Chrome copy, confirm the popup shows the
+intended version, run real HiBid exports, and parse the copied JSON.
 For pages with an authoritative API total, `expectedCount`, item count, and
 unique `eventItemId` count must match before the release is accepted.
 
-The packaged builds are written to:
+Waterfox output is built from the same source, but Waterfox browser acceptance
+is deferred until the Chrome product is stable.
 
-- `dist/flippah-chrome-v0.2.0.zip`
-- `dist/flippah-waterfox-v0.2.0.zip`
+Generated unpacked builds are written to `dist/chrome` and `dist/waterfox`.
+Release archives must be created explicitly after browser acceptance.
 
 Flippah processes HiBid page and API data locally. It does not transmit or
 sell browsing, auction, watchlist, or research data. Diagnostics are sanitized

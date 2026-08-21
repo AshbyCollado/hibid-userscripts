@@ -1,6 +1,7 @@
 import { HIBID_GRAPHQL_ENDPOINT, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, HIBID_SEARCH_ENDPOINT } from '../hibid/api.js';
 import { failure, isEnvelope, payloadBytes, success, type MessageEnvelope } from '../core/messages.js';
 import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, putRecordBatch } from '../core/job-db.js';
+import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.js';
 import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
 
 const MAX_REQUEST_BYTES = 180_000;
@@ -208,10 +209,7 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 async function scheduleWatchAlarms(lot: any): Promise<void> {
-  const endsAt = Number(lot?.endsAt);
-  if (!Number.isFinite(endsAt) || endsAt <= Date.now()) return;
-  for (const [suffix, minutes] of [['15m', 15], ['2m', 2]] as const) {
-    const when = Math.max(Date.now() + 1000, endsAt - minutes * 60_000);
+  for (const { suffix, when } of endingAlarmSpecs(lot)) {
     await chrome.alarms.create(`flippah:ending:${String(lot.lotId)}:${suffix}`, { when });
   }
 }
@@ -308,13 +306,18 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (!match) return;
   void localGet().then((state) => {
     const lotId = match[1]!;
+    const suffix = match[2] as '15m' | '2m';
     const lot = state.watchlist?.[lotId];
     if (!lot) return;
-    chrome.notifications.create(alarm.name, {
-      type: 'basic',
-      iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
-      title: `${match[2] === '15m' ? '15 minutes' : '2 minutes'} remaining`,
-      message: String(lot.title || `Lot ${lotId}`)
+    const nextLot = markEndingAlertNotified(lot, suffix);
+    if (!nextLot) return;
+    void localSet({ watchlist: { ...state.watchlist, [lotId]: nextLot } }).then(() => {
+      chrome.notifications.create(alarm.name, {
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
+        title: `${suffix === '15m' ? '15 minutes' : '2 minutes'} remaining`,
+        message: String(lot.title || `Lot ${lotId}`)
+      });
     });
   });
 });

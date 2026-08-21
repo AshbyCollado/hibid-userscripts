@@ -17,8 +17,11 @@ function lot(id: number) {
     description: `<p>Description ${id}</p>`,
     featuredPicture: { fullSizeLocation: `https://cdn.example/${id}.jpg` },
     pictures: [{ fullSizeLocation: `https://cdn.example/${id}-2.jpg` }],
-    category: { categoryName: 'Computers', fullCategory: 'Electronics - Computers' },
-    lotState: { highBid: id, minBid: id + 1, bidCount: 2, productUrl: `/lot/${id}/lot-${id}`, status: 'OPEN' },
+    category: [
+      { categoryName: 'Desktop / All-in-Ones', fullCategory: 'Computers & Electronics - Computers - Desktop / All-in-Ones' },
+      { categoryName: 'Computers', fullCategory: 'Computers & Electronics - Computers' }
+    ],
+    lotState: { highBid: id, minBid: id + 1, bidCount: 2, productUrl: `/lot/${id}/lot-${id}`, status: 'OPEN', watchNotes: `Private note ${id}` },
     auction: { id: 765226, eventName: 'Test Auction', eventCity: 'Paterson', eventState: 'NJ', buyerPremiumRate: 15 }
   };
 }
@@ -41,6 +44,9 @@ for (const total of [245, 618, 287]) {
     assert.equal(result.items.length, total);
     assert.equal(new Set(result.items.map((item) => item.eventItemId)).size, total);
     assert.equal(result.items[0]?.description, 'Description 1');
+    assert.equal(result.items[0]?.watchNotes, 'Private note 1');
+    assert.equal(result.items[0]?.category, 'Computers & Electronics - Computers - Desktop / All-in-Ones');
+    assert.ok(result.items[0]?.categories.includes('Computers & Electronics - Computers'));
     assert.equal(result.items.at(-1)?.images.length, 2);
   });
 }
