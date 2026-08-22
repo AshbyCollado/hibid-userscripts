@@ -423,3 +423,8 @@ ignored by Git.
 - Amazon search cards sometimes omit package count, dimensions, or variant text that exists on the exact product page.
 - When a strong candidate is rejected solely for those hard attributes, Flippah fetches at most two same-origin Amazon detail pages, adds product-title/spec/variation evidence, and reevaluates conservatively.
 - Brand, model, product-kind, accessory, used, and sponsored rejections never trigger this fallback; wrong products stay blocked.
+
+## v0.3.32 attribute-only enrichment gate
+
+- The first detail-enrichment gate incorrectly required positive evidence that the evaluator intentionally does not populate after a hard rejection.
+- Eligibility now depends solely on every rejection being `attribute-missing` or `attribute-conflict`; any brand, model, kind, accessory, overlap, used, or sponsored problem still blocks detail requests.

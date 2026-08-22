@@ -397,10 +397,8 @@ async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupR
       const candidates = provider.snapshot.candidates
         .map((candidate) => ({ candidate, evaluation: evaluateRetailCandidate(candidate.matchText || candidate.title, identity) }))
         .filter(({ candidate, evaluation }) => !candidate.sponsored && !candidate.used && candidate.price != null
-          && evaluation.matchedEvidence.length >= 2
           && evaluation.rejectionReasons.length > 0
           && evaluation.rejectionReasons.every((reason) => /^attribute-(?:missing|conflict):/.test(reason)))
-        .sort((left, right) => right.evaluation.matchedEvidence.length - left.evaluation.matchedEvidence.length)
         .slice(0, 2);
       if (candidates.length) {
         const enrichedByAsin = new Map<string, ReturnType<typeof enrichAmazonCandidateFromDetail>>();
