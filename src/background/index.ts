@@ -3,20 +3,20 @@ import { failure, isEnvelope, payloadBytes, success, type MessageEnvelope } from
 import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, putRecordBatch } from '../core/job-db.js';
 import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.js';
 import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
-import { clearRetailCache, getRetailCache, putRetailCache, RETAIL_MATCHING_EPOCH } from '../core/retail-db.js';
-import { detectProductKind, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity } from '../intelligence/us-deal-intelligence.js';
-import { isAmazonChallengeHtml, joinInflight, RETAIL_BATCH_DELAY_MS, RETAIL_BATCH_SIZE, retailCacheTtl, retailIdentityCacheKey } from '../intelligence/retail-policy.js';
+import { clearRetailCache, findRetailCacheByQuery, getRetailCache, putRetailCache } from '../core/retail-db.js';
+import { detectProductKind, evaluateRetailCandidate, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
+import { isAmazonChallengeHtml, joinInflight, RETAIL_BATCH_DELAY_MS, RETAIL_BATCH_SIZE, retailCacheTtl, retailProviderCacheKey } from '../intelligence/retail-policy.js';
 
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
 const WATCH_REFRESH_ALARM = 'flippah:watch-refresh';
 const AMAZON_BODY_LIMIT = 2_000_000;
-const amazonInflight = new Map<string, Promise<RetailLookupResult>>();
+const amazonInflight = new Map<string, Promise<RetailProviderSnapshot>>();
 let retailBlockedUntil = 0;
 let retailDrainTimer: ReturnType<typeof setTimeout> | null = null;
 const retailQueue: Array<{ identity: ProductIdentity; resolve: (value: RetailLookupResult) => void; reject: (error: unknown) => void }> = [];
 
-type RetailLookupStatus = 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'low_confidence';
+type RetailLookupStatus = 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'parse_error' | 'low_confidence';
 interface RetailLookupResult {
   status: RetailLookupStatus;
   query: string;
@@ -24,6 +24,15 @@ interface RetailLookupResult {
   candidates: ReturnType<typeof parseAmazonCandidates>;
   fetchedAt: number;
   cached: boolean;
+  message: string;
+  candidateAudit?: Array<Pick<RetailCandidateEvaluation, 'accepted' | 'score' | 'rejectionReasons' | 'matchedEvidence'> & { asin: string; title: string }>;
+}
+
+interface RetailProviderSnapshot {
+  status: 'ok' | 'no_results' | 'blocked' | 'rate_limited' | 'parse_error';
+  query: string;
+  candidates: ReturnType<typeof parseAmazonCandidates>;
+  fetchedAt: number;
   message: string;
 }
 
@@ -90,12 +99,15 @@ function validateRetailIdentity(value: unknown): ProductIdentity {
   const source = value as ProductIdentity;
   const query = retailQuery(source.query);
   const clean = (item: unknown, max: number) => String(item || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const discriminators = extractProductDiscriminators(clean(source.name, 300));
+  if (source.model || discriminators.gpuModels.length || discriminators.cpuModels.length) discriminators.seriesSignatures = [];
   const identity: ProductIdentity = {
     name: clean(source.name, 300), query, brand: clean(source.brand, 80),
     model: source.model ? clean(source.model, 60) : null,
     model2: source.model2 ? clean(source.model2, 60) : null,
     kind: detectProductKind(source.name),
     capacities: Array.isArray(source.capacities) ? source.capacities.slice(0, 8).map((item) => clean(item, 30)) : [],
+    discriminators,
     tokens: Array.isArray(source.tokens) ? source.tokens.slice(0, 20).map((item) => clean(item, 40)) : []
   };
   if (Number.isFinite(Number(source.statedRetail)) && Number(source.statedRetail) > 0) identity.statedRetail = Number(source.statedRetail);
@@ -121,13 +133,53 @@ async function readResponseText(response: Response): Promise<string> {
   return new TextDecoder().decode(bytes);
 }
 
-async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupResult> {
-  const query = retailQuery(identity.query);
-  const cacheKey = retailIdentityCacheKey(identity, RETAIL_MATCHING_EPOCH);
-  const cached = await getRetailCache<RetailLookupResult>(cacheKey);
-  if (cached) return { ...cached, cached: true };
-  if (Date.now() < retailBlockedUntil) return { status: 'blocked', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, message: 'Amazon lookup is cooling down after a challenge' };
-  return joinInflight(amazonInflight, cacheKey, async (): Promise<RetailLookupResult> => {
+function uniqueCandidates(candidates: ReturnType<typeof parseAmazonCandidates>): ReturnType<typeof parseAmazonCandidates> {
+  return [...new Map(candidates.map((candidate) => [candidate.asin, candidate])).values()];
+}
+
+function evaluateProviderSnapshot(identity: ProductIdentity, snapshot: RetailProviderSnapshot, cached: boolean): RetailLookupResult {
+  if (snapshot.status !== 'ok') {
+    const status: RetailLookupStatus = snapshot.status === 'no_results' ? 'no_match' : snapshot.status;
+    return { status, query: snapshot.query, match: null, candidates: snapshot.candidates.slice(0, 8), fetchedAt: snapshot.fetchedAt, cached, message: snapshot.message };
+  }
+  const candidateAudit = snapshot.candidates.slice(0, 8).map((candidate) => ({
+    asin: candidate.asin,
+    title: candidate.title,
+    ...evaluateRetailCandidate(candidate.title, identity),
+  }));
+  const match = matchAmazonCandidates(snapshot.candidates, identity);
+  const status: RetailLookupStatus = match ? (match.score >= 3 ? 'matched' : 'low_confidence') : 'no_match';
+  const topRejection = candidateAudit.find((entry) => entry.rejectionReasons.length)?.rejectionReasons[0];
+  return {
+    status,
+    query: snapshot.query,
+    match,
+    candidates: snapshot.candidates.slice(0, 8),
+    candidateAudit,
+    fetchedAt: snapshot.fetchedAt,
+    cached,
+    message: match ? `Matched ${match.candidate.title}` : `No conservative Amazon.com match${topRejection ? ` (${topRejection})` : ''}`,
+  };
+}
+
+async function providerSnapshot(query: string): Promise<{ snapshot: RetailProviderSnapshot; cached: boolean }> {
+  const providerKey = retailProviderCacheKey(query);
+  const cached = await getRetailCache<RetailProviderSnapshot>(providerKey);
+  if (cached && (cached.status === 'ok' || cached.status === 'no_results')) return { snapshot: cached, cached: true };
+
+  const legacy = await findRetailCacheByQuery<RetailLookupResult>(query);
+  if (legacy && (legacy.match?.candidate || legacy.candidates.length)) {
+    const candidates = uniqueCandidates([...(legacy.match?.candidate ? [legacy.match.candidate] : []), ...legacy.candidates]);
+    const migrated: RetailProviderSnapshot = { status: 'ok', query, candidates, fetchedAt: legacy.fetchedAt, message: 'Revalidated cached Amazon.com evidence' };
+    await putRetailCache(providerKey, migrated, retailCacheTtl('matched'));
+    return { snapshot: migrated, cached: true };
+  }
+  if (cached) return { snapshot: cached, cached: true };
+
+  if (Date.now() < retailBlockedUntil) {
+    return { snapshot: { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), message: 'Amazon lookup is cooling down after a challenge' }, cached: false };
+  }
+  const snapshot = await joinInflight(amazonInflight, providerKey, async (): Promise<RetailProviderSnapshot> => {
     const url = new URL('https://www.amazon.com/s');
     url.searchParams.set('k', query);
     const controller = new AbortController();
@@ -141,28 +193,42 @@ async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupR
       if (!/(^|\.)amazon\.com$/i.test(finalUrl.hostname)) throw new Error('Amazon lookup redirected outside Amazon.com');
       if (response.status === 429 || response.status === 503) {
         retailBlockedUntil = Date.now() + 5 * 60 * 1000;
-        return { status: 'rate_limited', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, message: `Amazon.com returned HTTP ${response.status}` };
+        return { status: 'rate_limited', query, candidates: [], fetchedAt: Date.now(), message: `Amazon.com returned HTTP ${response.status}` };
       }
       if (!response.ok) throw new Error(`Amazon.com returned HTTP ${response.status}`);
       const html = await readResponseText(response);
       if (isAmazonChallengeHtml(html)) {
         retailBlockedUntil = Date.now() + 5 * 60 * 1000;
-        const blocked: RetailLookupResult = { status: 'blocked', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, message: 'Amazon.com returned a challenge page' };
-        await putRetailCache(cacheKey, blocked, retailCacheTtl(blocked.status));
+        const blocked: RetailProviderSnapshot = { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), message: 'Amazon.com returned a challenge page' };
+        await putRetailCache(providerKey, blocked, retailCacheTtl(blocked.status));
         return blocked;
       }
       const candidates = parseAmazonCandidates(html).slice(0, 30);
-      const match = matchAmazonCandidates(candidates, identity);
-      const status: RetailLookupStatus = match ? (match.score >= 3 ? 'matched' : 'low_confidence') : 'no_match';
-      const result: RetailLookupResult = { status, query, match, candidates: candidates.slice(0, 8), fetchedAt: Date.now(), cached: false, message: match ? `Matched ${match.candidate.title}` : 'No conservative Amazon.com match' };
-      await putRetailCache(cacheKey, result, retailCacheTtl(result.status));
+      const explicitNoResults = /(?:did not match any products|no results for|try checking your spelling)/i.test(html);
+      const status: RetailProviderSnapshot['status'] = candidates.length ? 'ok' : explicitNoResults ? 'no_results' : 'parse_error';
+      const result: RetailProviderSnapshot = {
+        status, query, candidates, fetchedAt: Date.now(),
+        message: status === 'ok' ? `Parsed ${candidates.length} Amazon.com candidate(s)` : status === 'no_results' ? 'Amazon.com returned no product results' : 'Amazon.com results could not be parsed; no no-match decision was made',
+      };
+      await putRetailCache(providerKey, result, retailCacheTtl(status === 'ok' ? 'matched' : status));
       return result;
     } catch (error) {
-      return { status: 'network_error', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, message: error instanceof Error ? error.message : String(error) };
+      throw error;
     } finally {
       clearTimeout(timer);
     }
   });
+  return { snapshot, cached: false };
+}
+
+async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupResult> {
+  const query = retailQuery(identity.query);
+  try {
+    const provider = await providerSnapshot(query);
+    return evaluateProviderSnapshot(identity, provider.snapshot, provider.cached);
+  } catch (error) {
+    return { status: 'network_error', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, message: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 function scheduleRetailDrain(): void {

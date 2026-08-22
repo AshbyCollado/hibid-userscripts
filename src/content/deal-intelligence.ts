@@ -9,7 +9,7 @@ import {
   detectComparisonCurrency, detectMixedLot, extractProductIdentity, formatUsd,
   requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
   type AmazonCandidate, type AmazonCandidateMatch, type ConditionAssessment,
-  type ProductIdentity, type RetailIndicator, type UsAllInResult
+  type ProductIdentity, type RetailCandidateEvaluation, type RetailIndicator, type UsAllInResult
 } from '../intelligence/us-deal-intelligence.js';
 
 const LOT_STATE_PREFIX = 'flippahDealLotV1:';
@@ -27,13 +27,14 @@ interface StoredLotState {
 }
 
 interface RetailLookupResult {
-  status: 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'low_confidence';
+  status: 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'parse_error' | 'low_confidence';
   query: string;
   match: AmazonCandidateMatch | null;
   candidates: AmazonCandidate[];
   fetchedAt: number;
   cached: boolean;
   message: string;
+  candidateAudit?: Array<Pick<RetailCandidateEvaluation, 'accepted' | 'score' | 'rejectionReasons' | 'matchedEvidence'> & { asin: string; title: string }>;
 }
 
 interface AnalysisRecord {

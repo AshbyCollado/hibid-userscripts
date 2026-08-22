@@ -44,7 +44,7 @@ TypeScript and intentionally excludes the donor's page-rewrite behavior.
 
 ## Watchlist reliability
 
-Flippah `v0.3.5` reads `/account/watchlist` through its dedicated account-page
+Flippah `v0.3.6` reads `/account/watchlist` through its dedicated account-page
 DOM parser. HiBid requires private buyer authorization for `WatchListSearch`,
 so personalized data is never requested from an extension-origin GraphQL call.
 If the displayed total and stable lot count drift while a lot closes, Flippah
@@ -63,10 +63,17 @@ auction noise. Model-less products keep differentiating specifications such as
 `NT-USB+` is preserved. The legacy calculator and modern intelligence layer are
 locked to the same query corpus in tests.
 
-HiBid inventory labels such as `AV -` are removed before brand detection as
-well as query generation. Console generations and storage capacities are strict
-matching attributes: PS5 research rejects PS4 and controller listings, while an
-8TB drive rejects 4TB and wrong-brand candidates.
+Retail matching uses a reusable product fingerprint rather than per-lot fixes.
+It removes bounded inventory/lot prefixes, normalizes brand families, requires
+the primary product kind, distinguishes accessories from real bundles, and
+fails closed on conflicting capacity, platform, resolution, size, memory type,
+frequency, refresh rate, storage type, network standard, voltage, wattage,
+battery capacity, lens range, edition, or model-series evidence. Every checked
+candidate has explainable match/rejection evidence in the normalized background
+result. Sponsored, used, open-box, and renewed Amazon offers cannot supply the
+new-retail value. Underidentified source lots also fail closed: a model-free
+title needs a credible brand, a recognized product kind, and at least one hard
+attribute before Flippah will display an automatic retail price.
 
 ## Commands
 

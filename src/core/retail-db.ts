@@ -2,7 +2,7 @@ const DB_NAME = 'flippah-retail';
 const DB_VERSION = 1;
 const STORE = 'quotes';
 
-export const RETAIL_MATCHING_EPOCH = 5;
+export const RETAIL_MATCHING_EPOCH = 7;
 
 export interface RetailCacheEntry<T = unknown> {
   key: string;
@@ -36,6 +36,24 @@ export async function getRetailCache<T>(key: string, now = Date.now()): Promise<
     const entry = await requestResult(db.transaction(STORE, 'readonly').objectStore(STORE).get(key)) as RetailCacheEntry<T> | undefined;
     if (!entry || entry.expiresAt <= now) return null;
     return entry.value;
+  } finally {
+    db.close();
+  }
+}
+
+export async function findRetailCacheByQuery<T extends { query?: string; candidates?: unknown[]; match?: unknown }>(query: string, now = Date.now()): Promise<T | null> {
+  const target = query.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!target) return null;
+  const db = await openRetailDb();
+  try {
+    const entries = await requestResult(db.transaction(STORE, 'readonly').objectStore(STORE).getAll()) as RetailCacheEntry<T>[];
+    const matches = entries.filter((entry) => entry.expiresAt > now && String(entry.value?.query || '').replace(/\s+/g, ' ').trim().toLowerCase() === target);
+    matches.sort((left, right) => {
+      const leftEvidence = Number(Boolean(left.value?.match)) + Number(left.value?.candidates?.length || 0);
+      const rightEvidence = Number(Boolean(right.value?.match)) + Number(right.value?.candidates?.length || 0);
+      return rightEvidence - leftEvidence || right.savedAt - left.savedAt;
+    });
+    return matches[0]?.value ?? null;
   } finally {
     db.close();
   }

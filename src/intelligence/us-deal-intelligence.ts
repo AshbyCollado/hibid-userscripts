@@ -26,6 +26,7 @@ export interface ProductIdentity {
   model2: string | null;
   kind: ProductKind | null;
   capacities: string[];
+  discriminators: ProductDiscriminators;
   tokens: string[];
   statedRetail?: number;
 }
@@ -35,13 +36,34 @@ export interface ProductDiscriminators {
   resolutions: string[];
   dimensions: string[];
   platformVariants: string[];
+  memoryTypes: string[];
+  frequencies: string[];
+  refreshRates: string[];
+  storageTypes: string[];
+  networkStandards: string[];
+  voltages: string[];
+  wattages: string[];
+  batteryCapacities: string[];
+  lensRanges: string[];
+  gpuModels: string[];
+  cpuModels: string[];
+  editions: string[];
+  seriesSignatures: string[];
 }
 
 export type ProductKind =
   | 'projector' | 'monitor' | 'television' | 'receiver' | 'headphones'
   | 'microphone' | 'laptop' | 'desktop' | 'tablet' | 'phone' | 'speaker'
   | 'camera' | 'printer' | 'keyboard' | 'mouse' | 'router' | 'vacuum' | 'car-stereo'
-  | 'game-console' | 'storage';
+  | 'game-console' | 'storage' | 'graphics-card' | 'memory' | 'processor' | 'smartwatch'
+  | 'power-tool';
+
+export interface RetailCandidateEvaluation {
+  accepted: boolean;
+  score: number;
+  rejectionReasons: string[];
+  matchedEvidence: string[];
+}
 
 export interface LotAnalysisRecord {
   title?: string | null;
@@ -163,22 +185,27 @@ const NOISE_WORDS = new Set([
 const MODEL_RE = /^[A-Za-z]{1,8}-?\d{1,8}[A-Za-z0-9+.-]*$/;
 const MODEL_ALT_RE = /^[A-Za-z]{1,8}-[A-Za-z0-9+.]{2,14}$/;
 const CAPACITY_RE = /^(?:\d+(?:\.\d+)?\s*[xX]\s*)?\d+(?:\.\d+)?(?:gb|tb|mb|kb)$/i;
-const GENERIC_MODEL_RE = /^(?:n\/?a|none|null|nil|unknown|unspecified|various|assorted|misc(?:ellaneous)?|standard|generic|regular|default|see\s+(?:photos?|pictures?|description)|no\s+model|model|[a-z]\s*-?\s*series|series|multiple)$/i;
+const GENERIC_MODEL_RE = /^(?:n\/?a|none|null|nil|unknown|unspecified|various|assorted|misc(?:ellaneous)?|standard|generic|regular|default|see\s+(?:photos?|pictures?|description)|no\s+model|model|[a-z]\s*-?\s*series|series|multiple|ddr[345](?:l|x)?|wi[\s-]*fi\s*[5-7]e?|bluetooth\s*\d+(?:\.\d+)?|bt\s*\d+(?:\.\d+)?|usb\s*\d+(?:\.\d+)?|hdmi\s*\d+(?:\.\d+)?)$/i;
 const CONDITION_PARTS_RE = /\b(for\s*parts|parts\s*only|salvage|broken|not\s*working|non[\s-]*functional|defective|scrap|damaged\s*beyond)\b/i;
 const CONDITION_GOOD_RE = /\b(brand\s*new|new|sealed|excellent|like\s*new|mint|open\s*box|good|very\s*good)\b/i;
 const POSITIVE_RE = /\b(tested\s*(?:and\s*)?working|works?\s*(?:great|well|fine|perfectly)|fully\s*functional|brand\s*new|sealed|new\s*in\s*box|nib\b)/i;
-const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|charger|adapter|mount|holder|stand|strap|band|bumper|shell|film|dock|lanyard|clip|controller|game|baffle|shield|backplate|back\s*plate|faceplate|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert)s?\b/i;
+const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|charger|adapter|mount|holder|stand|strap|band|bumper|shell|film|dock|lanyard|clip|controller|game|disc\s+drive|baffle|shield|backplate|back\s*plate|faceplate|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert)s?\b/i;
 const ACCESSORY_MARKER_RE = /\b(compatible\s+with|replacement\s+for|designed\s+for|made\s+for|for\s+use\s+with|fits\s+(?:the\s+)?[A-Z0-9])/i;
 const FOR_PRODUCT_VERBS = 'compatible\\s+with|replacement\\s+(?:part\\s+)?for|designed\\s+for|made\\s+for|for\\s+use\\s+with|fits|suitable\\s+for|upgrade\\s+for';
 const TITLE_PREFIX_RE = /^\s*(?:\(?\s*(?:open\s*box|openbox|refurbished|refurb|renewed|used|pre[\s-]?owned)[^-|:]*\)?\s*[-|:]\s*)+/i;
 const USED_RE = /\b(open\s*box|openbox|refurbished|refurb|renewed|pre[\s-]?owned|used|for\s+parts)\b/i;
-const GENERIC_BRAND_RE = /^(?:wireless|smart|portable|professional|digital|electric|electronic|gaming|bluetooth|usb|4k|8k|hd|full|mini|new|vintage|built[\s-]?in|multifunction|automatic|cordless|rechargeable)$/i;
+const GENERIC_BRAND_RE = /^(?:wireless|smart|portable|professional|digital|electric|electronic|gaming|bluetooth|usb|4k|8k|hd|full|mini|new|vintage|built[\s-]?in|multifunction|automatic|cordless|rechargeable|custom|workstation|tower|desktop|computer|system|inch|external|drive|console|receiver|headset|headphones?|monitor|television|tv|camera|printer|speaker|router|vacuum)$/i;
 const RESEARCH_QUERY_NOISE = new Set([
   'nice', 'estate', 'untested', 'working', 'approx', 'approximate',
   'damage', 'damaged', 'read', 'look', 'wow', 'rare',
 ]);
 const PRODUCT_KIND_PATTERNS: Array<[ProductKind, RegExp]> = [
-  ['game-console', /\b(?:playstation\s*[2-6]|ps\s*[2-6]|xbox(?:\s+(?:one|series\s*[sx]))?|nintendo\s+switch|game\s+consoles?)\b/i],
+  ['game-console', /\b(?:(?:playstation\s*[2-6]|ps\s*[2-6]|xbox(?:\s+(?:one|series\s*[sx]))?|nintendo\s+switch)[^,;]{0,35}\b(?:consoles?|systems?)|game\s+consoles?)\b/i],
+  ['graphics-card', /\b(?:graphics|video)\s+cards?\b|\b(?:geforce\s+)?rtx\s*\d{3,4}\b|\bradeon\s+rx\s*\d{3,4}\b/i],
+  ['memory', /\b(?:ram|memory\s+(?:kits?|modules?)|ddr[345])\b/i],
+  ['processor', /\b(?:cpus?|processors?|core\s+i[3579][\s-]*\d{4,5}[a-z]*|ryzen\s+[3579]\s+\d{4}[a-z]*)\b/i],
+  ['smartwatch', /\b(?:smart\s*watches?|apple\s+watch|galaxy\s+watch|pixel\s+watch)\b/i],
+  ['power-tool', /\b(?:impact\s+drivers?|hammer\s+drills?|cordless\s+drills?|circular\s+saws?|reciprocating\s+saws?|angle\s+grinders?|nail\s+guns?)\b/i],
   ['storage', /\b(?:external|portable)\s+(?:hard\s+)?drives?\b|\b(?:hard\s+drives?|ssds?|hdds?)\b/i],
   ['projector', /\bprojectors?\b/i],
   ['monitor', /\b(?:computer\s+)?monitors?\b/i],
@@ -189,7 +216,7 @@ const PRODUCT_KIND_PATTERNS: Array<[ProductKind, RegExp]> = [
   ['laptop', /\b(?:laptops?|notebooks?|macbooks?|chromebooks?)\b/i],
   ['desktop', /\b(?:desktop(?:\s+computers?)?|all[\s-]in[\s-]ones?|computer\s+towers?|gaming\s+pcs?)\b/i],
   ['tablet', /\b(?:tablets?|ipads?)\b/i],
-  ['phone', /\b(?:smartphones?|cell\s+phones?|iphones?)\b/i],
+  ['phone', /\b(?:smartphones?|cell\s+phones?|iphones?|phones?)\b/i],
   ['speaker', /\b(?:speakers?|soundbars?)\b/i],
   ['camera', /\b(?:cameras?|camcorders?)\b/i],
   ['printer', /\b(?:printers?|scanners?)\b/i],
@@ -198,6 +225,16 @@ const PRODUCT_KIND_PATTERNS: Array<[ProductKind, RegExp]> = [
   ['router', /\b(?:routers?|mesh\s+systems?)\b/i],
   ['vacuum', /\b(?:vacuum(?:\s+cleaners?)?|robot\s+vacuums?)\b/i],
   ['car-stereo', /\b(?:car\s+stereos?|carplay\s+(?:stereos?|radios?)|head\s+units?)\b/i],
+];
+
+const BRAND_FAMILIES: ReadonlyArray<readonly [string, RegExp]> = [
+  ['sony', /\b(?:sony|playstation)\b/i],
+  ['microsoft', /\b(?:microsoft|xbox)\b/i],
+  ['apple', /\b(?:apple|iphone|ipad|macbook|airpods)\b/i],
+  ['google', /\b(?:google|pixel)\b/i],
+  ['meta', /\b(?:meta|oculus)\b/i],
+  ['western-digital', /\b(?:western\s+digital|wd)\b/i],
+  ['hewlett-packard', /\b(?:hewlett[\s-]+packard|hp)\b/i],
 ];
 
 function normalise(value: unknown): string {
@@ -210,20 +247,91 @@ function normalise(value: unknown): string {
 }
 
 function stripInventoryPrefix(value: string): string {
-  return value.replace(/^\s*(?:av|inv(?:entory)?|sku)\s*[-:|]\s*/i, '').trim();
+  return value
+    .replace(/^\s*lot\s*#?\s*[a-z0-9-]+\s*[-:|]\s*/i, '')
+    .replace(/^\s*(?:av|inv(?:entory)?|sku|stock|item)\s*(?:#\s*[a-z0-9-]+\s*)?[-:|]\s*/i, '')
+    .replace(/^\s*(?:brand\s+new|new|open\s*box|used|refurbished|renewed)\s*[-:|]\s*/i, '')
+    .trim();
+}
+
+function canonicalResolution(value: string): string {
+  const lower = value.toLowerCase();
+  if (lower === '2160p') return '4k';
+  return lower;
+}
+
+function capacityMagnitude(value: string): number {
+  const match = value.match(/^(\d+(?:\.\d+)?)(tb|gb|mb|kb)$/i);
+  if (!match) return 0;
+  const units: Record<string, number> = { kb: 1, mb: 1024, gb: 1024 ** 2, tb: 1024 ** 3 };
+  return Number(match[1]) * (units[match[2]!.toLowerCase()] || 0);
+}
+
+function normalizeSeriesToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function extractSeriesSignatures(value: string): string[] {
+  const words = normalise(value).toLowerCase().match(/[a-z]+\d+[a-z]*|\d+(?:\.\d+)?[a-z]+|\d+(?:st|nd|rd|th)?|[a-z]+/g) || [];
+  const unitWords = new Set(['inch', 'inches', 'gb', 'tb', 'mb', 'kb', 'hz', 'mhz', 'ghz', 'w', 'watts']);
+  const variants = new Set(['pro', 'max', 'plus', 'ultra', 'mini', 'air', 'lite', 'slim', 'fold', 'flip', 'generation', 'gen']);
+  const signatures: string[] = [];
+  for (let index = 0; index < words.length; index += 1) {
+    const token = words[index]!;
+    const numeric = /^\d+(?:st|nd|rd|th)?$/.test(token) || (/^[a-z]+\d+[a-z]*$/.test(token) && !/^(?:ddr|wifi|bt)\d/i.test(token));
+    if (!numeric) continue;
+    if (unitWords.has(words[index + 1] || '') || /^(?:720p|1080p|1440p|2160p|[458]k)$/.test(token)) continue;
+    const before = words.slice(Math.max(0, index - 2), index).filter((word) => !variants.has(word));
+    const family = before.at(-1);
+    if (!family || family.length < 3) continue;
+    const after: string[] = [];
+    for (const word of words.slice(index + 1, index + 4)) {
+      if (!variants.has(word)) break;
+      after.push(word);
+    }
+    signatures.push([family, token, ...after].map(normalizeSeriesToken).join(':'));
+  }
+  return [...new Set(signatures)];
 }
 
 export function extractProductDiscriminators(value: string | null | undefined): ProductDiscriminators {
   const source = normalise(value).toLowerCase();
   const collect = (pattern: RegExp, normalize: (match: RegExpMatchArray) => string) =>
     [...source.matchAll(pattern)].map(normalize);
-  const capacities = collect(/\b(\d+(?:\.\d+)?)[\s-]*(tb|gb|mb|kb)\b/gi, (match) => `${match[1]}${match[2]}`.toLowerCase());
-  const resolutions = collect(/\b(8k|5k|4k|2160p|1440p|1080p|720p)\b/gi, (match) => String(match[1]).toLowerCase());
+  const allCapacities = collect(/\b(\d+(?:\.\d+)?)[\s-]*(tb|gb|mb|kb)\b/gi, (match) => `${match[1]}${match[2]}`.toLowerCase());
+  const capacities = allCapacities.length ? [allCapacities.sort((left, right) => capacityMagnitude(right) - capacityMagnitude(left))[0]!] : [];
+  const resolutions = collect(/\b(8k|5k|4k|2160p|1440p|1080p|720p)\b/gi, (match) => canonicalResolution(String(match[1])));
   const dimensions = collect(/\b(\d+(?:\.\d+)?)[\s-]*(?:inch(?:es)?|in\.?|\")\b/gi, (match) => `${match[1]}in`);
   const platformVariants = [
     ...collect(/\b(?:playstation|ps)\s*([2-6])\b/gi, (match) => `playstation:${match[1]}`),
     ...collect(/\bxbox\s+(one|series\s*[sx])\b/gi, (match) => `xbox:${String(match[1]).replace(/\s+/g, '')}`),
     ...collect(/\bnintendo\s+switch(?:\s+(2|oled|lite))?\b/gi, (match) => `switch:${match[1] || 'standard'}`),
+  ];
+  const memoryTypes = collect(/\b(ddr[345](?:l|x)?)\b/gi, (match) => String(match[1]).toLowerCase());
+  const frequencies = collect(/\b(\d+(?:\.\d+)?)[\s-]*(mhz|ghz)\b/gi, (match) => `${match[1]}${match[2]}`.toLowerCase());
+  const refreshRates = collect(/\b(\d{2,3})[\s-]*hz\b/gi, (match) => `${match[1]}hz`);
+  const storageTypes = collect(/\b(nvme|ssd|hdd)\b/gi, (match) => String(match[1]).toLowerCase());
+  if (storageTypes.includes('nvme')) storageTypes.push('ssd');
+  const networkStandards = [
+    ...collect(/\bwi[\s-]*fi\s*(5|6e?|7)\b/gi, (match) => `wifi:${match[1]}`),
+    ...collect(/\b(?:bluetooth|bt)\s*(\d+(?:\.\d+)?)\b/gi, (match) => `bluetooth:${match[1]}`),
+  ];
+  const voltages = collect(/\b(\d+(?:\.\d+)?)[\s-]*(?:v|volt(?:s)?)\b/gi, (match) => `${match[1]}v`);
+  const wattages = collect(/\b(\d+(?:\.\d+)?)[\s-]*(?:w|watt(?:s)?)\b/gi, (match) => `${match[1]}w`);
+  const batteryCapacities = collect(/\b(\d+(?:\.\d+)?)[\s-]*(?:ah|amp[\s-]*hours?)\b/gi, (match) => `${match[1]}ah`);
+  const lensRanges = collect(/\b(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?[\s-]*mm\b/gi, (match) => `${match[1]}${match[2] ? `-${match[2]}` : ''}mm`);
+  const gpuModels = [
+    ...collect(/\b(rtx|gtx)\s*(\d{3,4})(?:\s*(ti))?(?:\s*(super))?\b/gi, (match) => `nvidia:${match[1]}:${match[2]}:${[match[3], match[4]].filter(Boolean).join('-') || 'base'}`.toLowerCase()),
+    ...collect(/\bradeon\s+rx\s*(\d{3,4})(?:\s*(xtx|xt))?\b/gi, (match) => `amd:rx:${match[1]}:${match[2] || 'base'}`.toLowerCase()),
+  ];
+  const cpuModels = [
+    ...collect(/\bcore\s+i([3579])[\s-]*(\d{4,5})([a-z]{0,2})\b/gi, (match) => `intel:i${match[1]}:${match[2]}:${match[3] || 'base'}`.toLowerCase()),
+    ...collect(/\bryzen\s+([3579])\s+(\d{4})([a-z]{0,3})\b/gi, (match) => `amd:ryzen${match[1]}:${match[2]}:${match[3] || 'base'}`.toLowerCase()),
+    ...collect(/\bapple\s+m([1-9])(?:\s*(pro|max|ultra))?\b/gi, (match) => `apple:m${match[1]}:${match[2] || 'base'}`.toLowerCase()),
+  ];
+  const editions = [
+    ...collect(/\b(all[\s-]*digital|digital\s+edition|disc\s+edition|disc\s+version)\b/gi, (match) => /digital/i.test(match[1]!) ? 'digital' : 'disc'),
+    ...collect(/\b(oled|lite|slim)\s+(?:edition|model|console)\b/gi, (match) => String(match[1]).toLowerCase()),
   ];
   const unique = (items: string[]) => [...new Set(items)];
   return {
@@ -231,19 +339,43 @@ export function extractProductDiscriminators(value: string | null | undefined): 
     resolutions: unique(resolutions),
     dimensions: unique(dimensions),
     platformVariants: unique(platformVariants),
+    memoryTypes: unique(memoryTypes),
+    frequencies: unique(frequencies),
+    refreshRates: unique(refreshRates),
+    storageTypes: unique(storageTypes),
+    networkStandards: unique(networkStandards),
+    voltages: unique(voltages),
+    wattages: unique(wattages),
+    batteryCapacities: unique(batteryCapacities),
+    lensRanges: unique(lensRanges),
+    gpuModels: unique(gpuModels),
+    cpuModels: unique(cpuModels),
+    editions: unique(editions),
+    seriesSignatures: platformVariants.length ? [] : extractSeriesSignatures(source),
   };
 }
 
-function matchesProductDiscriminators(candidateTitle: string, product: ProductIdentity): { matches: boolean; matchedCount: number; strongFamilyMatch: boolean } {
-  const expected = extractProductDiscriminators(product.name);
+function matchesProductDiscriminators(candidateTitle: string, product: ProductIdentity): { matches: boolean; matchedCount: number; conflicts: string[]; missing: string[] } {
+  const expected = product.discriminators || extractProductDiscriminators(product.name);
   const actual = extractProductDiscriminators(candidateTitle);
-  const groups: Array<keyof ProductDiscriminators> = ['capacities', 'resolutions', 'dimensions', 'platformVariants'];
+  const groups: Array<keyof ProductDiscriminators> = [
+    'capacities', 'resolutions', 'dimensions', 'platformVariants', 'memoryTypes', 'frequencies',
+    'refreshRates', 'storageTypes', 'networkStandards', 'editions', 'seriesSignatures',
+    'voltages', 'wattages', 'batteryCapacities', 'lensRanges', 'gpuModels', 'cpuModels',
+  ];
   let matchedCount = 0;
+  const conflicts: string[] = [];
+  const missing: string[] = [];
   for (const group of groups) {
-    if (!expected[group].every((value) => actual[group].includes(value))) return { matches: false, matchedCount, strongFamilyMatch: false };
-    matchedCount += expected[group].length * (group === 'platformVariants' ? 2 : 1);
+    if (!expected[group].length) continue;
+    const absent = expected[group].filter((value) => !actual[group].includes(value));
+    if (absent.length) {
+      if (actual[group].length) conflicts.push(`${group}:${absent.join(',')}`);
+      else missing.push(`${group}:${absent.join(',')}`);
+    }
+    matchedCount += (expected[group].length - absent.length) * (group === 'platformVariants' || group === 'seriesSignatures' ? 2 : 1);
   }
-  return { matches: true, matchedCount, strongFamilyMatch: expected.platformVariants.length > 0 };
+  return { matches: conflicts.length === 0 && missing.length === 0, matchedCount, conflicts, missing };
 }
 
 export function buildProductResearchQuery(title: string | null | undefined): string {
@@ -443,7 +575,7 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   const source = lead || prose;
   const sections = source.split('|').map((part) => part.trim()).filter(Boolean);
   let named = sections.length > 1
-    ? sections.find((part) => !/^(?:retail|msrp|est\.?|value)?\s*\$?\s*[\d,]+(?:\.\d+)?\s*$/i.test(part)) ?? sections.at(-1) ?? source
+    ? sections.find((part) => !/^lot\s*#?\s*[a-z0-9-]+$/i.test(part) && !/^(?:retail|msrp|est\.?|value)?\s*\$?\s*[\d,]+(?:\.\d+)?\s*$/i.test(part)) ?? sections.at(-1) ?? source
     : source;
   named = named
     .replace(/^\s*(?:retail|msrp|est\.?\s*retail(?:\s*price)?|value)\s*[:\-]?\s*\$?\s*[\d,]+(?:\.\d+)?\s*/i, '')
@@ -458,12 +590,15 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   const statedBrandAppearsInTitle = statedBrand && new RegExp(`\\b${escapeRegExp(statedBrand)}\\b`, 'i').test(name);
   const brand = statedBrand && (!titleBrand || GENERIC_BRAND_RE.test(titleBrand) || statedBrandAppearsInTitle) ? statedBrand : titleBrand;
   const statedModel = (fieldValue(parsed.fields, 'model', 'model #', 'model number', 'mpn') ?? '').trim();
-  const titleModel = tokens.find((token) => MODEL_RE.test(token) && !/^\d+$/.test(token)) ?? tokens.find((token) => MODEL_ALT_RE.test(token));
+  const titleModel = tokens.find((token) => MODEL_RE.test(token) && !/^\d+$/.test(token) && !GENERIC_MODEL_RE.test(token))
+    ?? tokens.find((token) => MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token));
   const model = (looksLikeModel(statedModel) && modelMatches(name, statedModel) ? statedModel : null) || titleModel || (looksLikeModel(statedModel) ? statedModel : null);
   const model2 = tokens.find((token) => token !== model && token.toLowerCase() !== String(model ?? '').toLowerCase() && token.toLowerCase() !== brand.toLowerCase() && MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token)) ?? null;
   const capacities = [...new Set(tokens.filter((token) => CAPACITY_RE.test(token)))];
   const query = buildProductResearchQuery(name);
-  const identity: ProductIdentity = { name, query: query.trim(), brand, model: model || null, model2, kind: detectProductKind(name), capacities, tokens: tokens.slice(0, 12) };
+  const discriminators = extractProductDiscriminators(name);
+  if (model || discriminators.gpuModels.length || discriminators.cpuModels.length) discriminators.seriesSignatures = [];
+  const identity: ProductIdentity = { name, query: query.trim(), brand, model: model || null, model2, kind: detectProductKind(name), capacities, discriminators, tokens: tokens.slice(0, 12) };
   if (record?.statedRetail != null && Number.isFinite(record.statedRetail) && record.statedRetail > 0) identity.statedRetail = record.statedRetail;
   return identity;
 }
@@ -595,20 +730,69 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function canonicalBrandFamily(value: string | null | undefined): string | null {
+  const source = normalise(value);
+  return BRAND_FAMILIES.find(([, pattern]) => pattern.test(source))?.[0] ?? null;
+}
+
+function literalBrandMatches(candidateTitle: string, brand: string): boolean {
+  if (!brand) return false;
+  const phrase = escapeRegExp(brand).replace(/\s+/g, '\\s+');
+  return new RegExp(`(?:^|[^a-z0-9])${phrase}(?:$|[^a-z0-9])`, 'i').test(candidateTitle);
+}
+
+function brandEvidence(candidateTitle: string, product: ProductIdentity): { matches: boolean; expected: boolean; label: string } {
+  const credible = Boolean(product.brand) && !GENERIC_BRAND_RE.test(product.brand) && !CAPACITY_RE.test(product.brand) && /[a-z]/i.test(product.brand);
+  if (!credible) return { matches: false, expected: false, label: '' };
+  const expectedFamily = canonicalBrandFamily(`${product.brand} ${product.name}`);
+  const candidateFamily = canonicalBrandFamily(candidateTitle);
+  if (expectedFamily) return { matches: candidateFamily === expectedFamily, expected: true, label: expectedFamily };
+  return { matches: literalBrandMatches(candidateTitle, product.brand), expected: true, label: product.brand.toLowerCase() };
+}
+
+function productIdentityEvidenceCount(product: ProductIdentity): number {
+  const discriminators = product.discriminators || extractProductDiscriminators(product.name);
+  return Object.values(discriminators).reduce((total, values) => total + values.length, 0);
+}
+
+export function hasSufficientRetailIdentity(product: ProductIdentity): boolean {
+  if (product.model) return true;
+  const brand = brandEvidence(product.name, product);
+  return brand.expected && brand.matches && Boolean(product.kind) && productIdentityEvidenceCount(product) > 0;
+}
+
+function primaryKindIndex(title: string, kind: ProductKind | null): number {
+  if (!kind) return -1;
+  const pattern = PRODUCT_KIND_PATTERNS.find(([candidate]) => candidate === kind)?.[1];
+  return pattern?.exec(title)?.index ?? -1;
+}
+
 export function isAccessoryListing(title: string | null | undefined, product: ProductIdentity): boolean {
   const candidateTitle = String(title ?? '');
+  const noun = ACCESSORY_NOUN_RE.exec(candidateTitle);
+  if (!noun || ACCESSORY_NOUN_RE.test(product.name)) return false;
   const identity = [product.brand, product.model, product.model2].filter(Boolean).map((value) => escapeRegExp(String(value)).replace(/[-\s]/g, '[-\\s]?')).join('|');
   if (identity) {
     const forProduct = new RegExp(`\\b(?:${FOR_PRODUCT_VERBS})\\s+(?:the\\s+)?[^,;.]{0,40}?(?:${identity})`, 'i');
     if (forProduct.test(candidateTitle)) return true;
   }
-  const noun = ACCESSORY_NOUN_RE.exec(candidateTitle);
-  if (!noun) return false;
   if (ACCESSORY_MARKER_RE.test(candidateTitle)) return true;
+  const marker = /\b(?:for|compatible\s+with|replacement\s+for|designed\s+for|made\s+for|fits)\b/i.exec(candidateTitle);
+  const sourceAttributes = product.discriminators || extractProductDiscriminators(product.name);
+  const candidateAttributes = extractProductDiscriminators(candidateTitle);
+  const familyEvidence = sourceAttributes.platformVariants.some((value) => candidateAttributes.platformVariants.includes(value))
+    || sourceAttributes.seriesSignatures.some((value) => candidateAttributes.seriesSignatures.includes(value));
+  if (marker && marker.index > noun.index && (familyEvidence || brandEvidence(candidateTitle, product).matches || Boolean(product.model && modelMatches(candidateTitle, product.model)))) return true;
+
+  const candidateKind = detectProductKind(candidateTitle);
+  const kindIndex = primaryKindIndex(candidateTitle, product.kind);
+  const exactModel = Boolean(product.model && modelMatches(candidateTitle, product.model));
+  if (candidateKind === product.kind && kindIndex >= 0 && kindIndex < noun.index && (exactModel || /\b(?:with|includes?|bundle)\b/i.test(candidateTitle.slice(kindIndex, noun.index)))) return false;
+  if (exactModel && !marker) return false;
   const bare = candidateTitle.replace(TITLE_PREFIX_RE, '').trim();
   if (product.brand) {
     const firstWord = bare.match(/[A-Za-z0-9][A-Za-z0-9.&'-]*/)?.[0] ?? '';
-    if (firstWord && firstWord.toLowerCase() !== product.brand.toLowerCase()) return true;
+    if (firstWord && firstWord.toLowerCase() !== product.brand.toLowerCase() && !brandEvidence(candidateTitle, product).matches) return true;
   }
   const identityRe = product.model
     ? new RegExp(escapeRegExp(product.model).replace(/[-\s]/g, '[-\\s]?'), 'i')
@@ -619,39 +803,50 @@ export function isAccessoryListing(title: string | null | undefined, product: Pr
   return noun.index < identityMatch.index;
 }
 
-export function scoreRetailCandidate(title: string | null | undefined, product: ProductIdentity): number {
+export function evaluateRetailCandidate(title: string | null | undefined, product: ProductIdentity): RetailCandidateEvaluation {
   const candidateTitle = String(title ?? '');
-  if (!candidateTitle) return 0;
-  if (product.kind === 'game-console') {
-    const consoleAccessory = /\b(?:disc\s+drives?|controllers?|charging\s+stations?|headsets?|faceplates?|covers?|skins?|cases?|stands?|replacement\s+parts?)\b/i.test(candidateTitle);
-    const marketedForPlatform = /\b(?:for|compatible\s+with|replacement\s+for|designed\s+for)\b[^,;.]{0,80}\b(?:playstation|ps\s*[2-6]|xbox|nintendo\s+switch)\b/i.test(candidateTitle);
-    const hardwareEvidence = /\b(?:consoles?|systems?|slim|all[\s-]*digital|\d+(?:\.\d+)?\s*(?:tb|gb))\b/i.test(candidateTitle);
-    if ((consoleAccessory && marketedForPlatform) || !hardwareEvidence) return 0;
-  }
-  if (product.kind !== 'game-console' && !ACCESSORY_NOUN_RE.test(product.name) && isAccessoryListing(candidateTitle, product)) return 0;
+  const rejectionReasons: string[] = [];
+  const matchedEvidence: string[] = [];
+  if (!candidateTitle) return { accepted: false, score: 0, rejectionReasons: ['empty-title'], matchedEvidence };
+  if (!hasSufficientRetailIdentity(product)) rejectionReasons.push('insufficient-source-identity');
+  if (isAccessoryListing(candidateTitle, product)) rejectionReasons.push('accessory-or-component');
   const exactModel = product.model ? modelMatches(candidateTitle, product.model) : false;
   const discriminators = matchesProductDiscriminators(candidateTitle, product);
-  if (!discriminators.matches) return 0;
-  const credibleBrand = Boolean(product.brand) && !GENERIC_BRAND_RE.test(product.brand);
-  const brandMatches = credibleBrand ? new RegExp(`\\b${escapeRegExp(product.brand)}\\b`, 'i').test(candidateTitle) : false;
-  // Generic overlap such as "4K", "smart", or "wireless" is not product
-  // identity. A credible brand must match unless an exact model proves it.
-  if (credibleBrand && !brandMatches && !exactModel && !discriminators.strongFamilyMatch) return 0;
+  if (discriminators.conflicts.length) rejectionReasons.push(...discriminators.conflicts.map((value) => `attribute-conflict:${value}`));
+  if (discriminators.missing.length) rejectionReasons.push(...discriminators.missing.map((value) => `attribute-missing:${value}`));
+  const brand = brandEvidence(candidateTitle, product);
+  if (brand.expected && !brand.matches && !exactModel) rejectionReasons.push(`brand-mismatch:${brand.label}`);
   const candidateKind = detectProductKind(candidateTitle);
-  if (!exactModel && product.kind && candidateKind !== product.kind) return 0;
+  if (!exactModel && product.kind && candidateKind !== product.kind) rejectionReasons.push(`kind-mismatch:${product.kind}:${candidateKind || 'unknown'}`);
+  if (product.model && !exactModel) rejectionReasons.push(`model-mismatch:${product.model}`);
+  if (rejectionReasons.length) return { accepted: false, score: 0, rejectionReasons: [...new Set(rejectionReasons)], matchedEvidence };
+
   let score = 0;
   if (product.model) {
-    if (exactModel) score += 5;
-    else return 0;
+    score += 5;
+    matchedEvidence.push(`model:${product.model}`);
   }
-  if (product.model2 && modelMatches(candidateTitle, product.model2)) score += 2;
-  if (brandMatches) score += 2;
+  if (product.model2 && modelMatches(candidateTitle, product.model2)) {
+    score += 2;
+    matchedEvidence.push(`model2:${product.model2}`);
+  }
+  if (brand.matches) {
+    score += 2;
+    matchedEvidence.push(`brand:${brand.label}`);
+  }
   score += discriminators.matchedCount;
+  if (discriminators.matchedCount) matchedEvidence.push(`attributes:${discriminators.matchedCount}`);
   const tokens = product.tokens.map((token) => token.toLowerCase()).filter((token) => token.length > 2);
   const lower = candidateTitle.toLowerCase();
   const hits = tokens.filter((token) => lower.includes(token)).length;
   score += tokens.length ? (hits / tokens.length) * 3 : 0;
-  return score;
+  if (hits) matchedEvidence.push(`tokens:${hits}/${tokens.length}`);
+  if (product.kind && candidateKind === product.kind) matchedEvidence.push(`kind:${product.kind}`);
+  return { accepted: score > 0, score, rejectionReasons: [], matchedEvidence };
+}
+
+export function scoreRetailCandidate(title: string | null | undefined, product: ProductIdentity): number {
+  return evaluateRetailCandidate(title, product).score;
 }
 
 function retailPriceFloor(product: ProductIdentity): number {
@@ -661,15 +856,14 @@ function retailPriceFloor(product: ProductIdentity): number {
 
 export function matchAmazonCandidates(candidates: AmazonCandidate[], product: ProductIdentity): AmazonCandidateMatch | null {
   const scored = candidates
-    .filter((candidate) => !candidate.sponsored && candidate.price != null && candidate.price >= retailPriceFloor(product))
-    .map((candidate) => ({ candidate, score: scoreRetailCandidate(candidate.title, product) - (candidate.used ? 3 : 0) }))
+    .filter((candidate) => !candidate.sponsored && !candidate.used && candidate.price != null && candidate.price >= retailPriceFloor(product))
+    .map((candidate) => ({ candidate, score: scoreRetailCandidate(candidate.title, product) }))
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score);
   if (!scored.length) return null;
   const top = scored[0]?.score ?? 0;
   const band = scored.filter((entry) => entry.score >= top - 1.5);
-  const newCandidates = band.filter((entry) => !entry.candidate.used);
-  return [...(newCandidates.length ? newCandidates : band)].sort((left, right) => (left.candidate.price ?? Infinity) - (right.candidate.price ?? Infinity))[0] ?? null;
+  return [...band].sort((left, right) => (left.candidate.price ?? Infinity) - (right.candidate.price ?? Infinity))[0] ?? null;
 }
 
 export interface AmazonMatchOverride {

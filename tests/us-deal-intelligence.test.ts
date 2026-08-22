@@ -9,9 +9,11 @@ import {
   chooseAmazonMatch,
   detectComparisonCurrency,
   detectMixedLot,
+  evaluateRetailCandidate,
   extractProductDiscriminators,
   extractProductIdentity,
   formatUsd,
+  hasSufficientRetailIdentity,
   isAccessoryListing,
   modelMatches,
   parseAmazonSearchHtml,
@@ -107,10 +109,14 @@ test('inventory prefixes do not become brands for consoles and storage', () => {
 
 test('product discriminator families generalize across capacities, resolutions, sizes, and platforms', () => {
   assert.deepEqual(extractProductDiscriminators('Samsung 55 inch 4K TV'), {
-    capacities: [], resolutions: ['4k'], dimensions: ['55in'], platformVariants: [],
+    capacities: [], resolutions: ['4k'], dimensions: ['55in'], platformVariants: [], memoryTypes: [],
+    frequencies: [], refreshRates: [], storageTypes: [], networkStandards: [], voltages: [], wattages: [],
+    batteryCapacities: [], lensRanges: [], gpuModels: [], cpuModels: [], editions: [], seriesSignatures: [],
   });
   assert.deepEqual(extractProductDiscriminators('Microsoft Xbox Series X 1TB Console'), {
-    capacities: ['1tb'], resolutions: [], dimensions: [], platformVariants: ['xbox:seriesx'],
+    capacities: ['1tb'], resolutions: [], dimensions: [], platformVariants: ['xbox:seriesx'], memoryTypes: [],
+    frequencies: [], refreshRates: [], storageTypes: [], networkStandards: [], voltages: [], wattages: [],
+    batteryCapacities: [], lensRanges: [], gpuModels: [], cpuModels: [], editions: [], seriesSignatures: [],
   });
   const xbox = extractProductIdentity('Microsoft Xbox Series X 1TB Console');
   assert.ok(scoreRetailCandidate('Xbox Series X 1 TB All-Digital Console', xbox) > 0);
@@ -120,6 +126,132 @@ test('product discriminator families generalize across capacities, resolutions, 
   assert.ok(scoreRetailCandidate('Samsung 55-Inch 4K UHD Smart Television', television) > 0);
   assert.equal(scoreRetailCandidate('Samsung 65-Inch 4K UHD Smart Television', television), 0);
   assert.equal(scoreRetailCandidate('Samsung 55-Inch 1080p Smart Television', television), 0);
+});
+
+test('candidate evaluation rejects near matches generically across unrelated product families', () => {
+  const cases = [
+    {
+      source: 'Lot 41 | Apple iPhone 15 Pro Max 256GB Phone',
+      accepted: 'Apple iPhone 15 Pro Max 256GB Unlocked Smartphone',
+      rejected: 'Apple iPhone 14 Pro Max 256GB Unlocked Smartphone',
+      reason: /seriesSignatures/,
+    },
+    {
+      source: 'Google Pixel 8 Pro 128GB Phone',
+      accepted: 'Google Pixel 8 Pro 128GB Unlocked Smartphone',
+      rejected: 'Google Pixel 7 Pro 128GB Unlocked Smartphone',
+      reason: /seriesSignatures/,
+    },
+    {
+      source: 'Corsair Vengeance DDR5 32GB 6000MHz Memory Kit',
+      accepted: 'Corsair Vengeance DDR5 32GB 6000MHz RAM Kit',
+      rejected: 'Corsair Vengeance DDR4 32GB 3200MHz RAM Kit',
+      reason: /memoryTypes|frequencies/,
+    },
+    {
+      source: 'Samsung 27 inch 1440p 144Hz Monitor',
+      accepted: 'Samsung 27-Inch 1440p 144Hz Gaming Monitor',
+      rejected: 'Samsung 27-Inch 1080p 75Hz Monitor',
+      reason: /resolutions|refreshRates/,
+    },
+    {
+      source: 'Sony PlayStation 5 Digital Edition Console',
+      accepted: 'Sony PS5 Slim Digital Edition Console 1TB',
+      rejected: 'Sony PS5 Disc Version Gaming Console 825GB',
+      reason: /editions/,
+    },
+    {
+      source: 'DeWalt 20V 5Ah Cordless Impact Driver',
+      accepted: 'DEWALT 20V MAX Impact Driver with 5Ah Battery',
+      rejected: 'DEWALT 12V MAX Impact Driver with 2Ah Battery',
+      reason: /voltages|batteryCapacities/,
+    },
+    {
+      source: 'Canon RF 24-70mm Camera Lens',
+      accepted: 'Canon RF 24-70mm Standard Zoom Camera Lens',
+      rejected: 'Canon RF 24-105mm Standard Zoom Camera Lens',
+      reason: /lensRanges/,
+    },
+    {
+      source: 'ASUS GeForce RTX 4070 Graphics Card',
+      accepted: 'ASUS Dual GeForce RTX 4070 OC Edition Graphics Card',
+      rejected: 'ASUS TUF Gaming GeForce RTX 4070 Ti Super Graphics Card',
+      reason: /gpuModels/,
+    },
+    {
+      source: 'ZOTAC GeForce RTX 4070 Ti 16GB Graphics Card',
+      accepted: 'ZOTAC Gaming GeForce RTX 4070 Ti 16GB Graphics Card',
+      rejected: 'ZOTAC Gaming GeForce RTX 4070 Ti Super 16GB Graphics Card',
+      reason: /gpuModels/,
+    },
+    {
+      source: 'AMD Ryzen 7 5800X Processor',
+      accepted: 'AMD Ryzen 7 5800X Desktop Processor',
+      rejected: 'AMD Ryzen 7 5700X Desktop Processor',
+      reason: /cpuModels/,
+    },
+    {
+      source: 'Apple M3 Pro MacBook Pro 18GB',
+      accepted: 'Apple M3 Pro MacBook Pro with 18GB Unified Memory',
+      rejected: 'Apple M3 Max MacBook Pro with 18GB Unified Memory',
+      reason: /cpuModels/,
+    },
+  ];
+
+  for (const entry of cases) {
+    const identity = extractProductIdentity(entry.source);
+    const good = evaluateRetailCandidate(entry.accepted, identity);
+    const bad = evaluateRetailCandidate(entry.rejected, identity);
+    assert.equal(good.accepted, true, `${entry.source}: ${good.rejectionReasons.join(', ')}`);
+    assert.equal(bad.accepted, false, entry.source);
+    assert.match(bad.rejectionReasons.join(' '), entry.reason);
+  }
+});
+
+test('candidate evaluation distinguishes a complete product from accessories without product-specific bypasses', () => {
+  const consoleIdentity = extractProductIdentity('AV - PLAYSTATION 5 CONSOLE');
+  const bundle = evaluateRetailCandidate('Sony PlayStation 5 Slim Console with DualSense Controller Bundle', consoleIdentity);
+  const controller = evaluateRetailCandidate('DualSense Wireless Controller for Sony PlayStation 5', consoleIdentity);
+  const drive = evaluateRetailCandidate('PlayStation Disc Drive For PS5 Digital Edition Consoles (slim)', consoleIdentity);
+  assert.equal(bundle.accepted, true);
+  assert.ok(bundle.matchedEvidence.some((value) => value === 'kind:game-console'));
+  assert.equal(controller.accepted, false);
+  assert.ok(controller.rejectionReasons.includes('accessory-or-component'));
+  assert.equal(drive.accepted, false);
+  assert.ok(drive.rejectionReasons.includes('accessory-or-component'));
+});
+
+test('underidentified source titles fail closed instead of inheriting a plausible retail price', () => {
+  const vagueCases = [
+    ['Custom computer', 'CyberPowerPC Gamer Xtreme Desktop Computer Intel Core i7 RTX 4060'],
+    ['Workstation Computer', 'Dell Precision 5820 Workstation Computer'],
+    ['Toast Touchscreen POS System', 'Toast Flex Touchscreen POS System Terminal'],
+    ['Oculus VR Headset', 'Meta Quest 2 Advanced All-In-One VR Headset 128GB'],
+  ] as const;
+
+  for (const [source, candidate] of vagueCases) {
+    const identity = extractProductIdentity(source);
+    assert.equal(hasSufficientRetailIdentity(identity), false, source);
+    const evaluation = evaluateRetailCandidate(candidate, identity);
+    assert.equal(evaluation.accepted, false, source);
+    assert.ok(evaluation.rejectionReasons.includes('insufficient-source-identity'), source);
+  }
+});
+
+test('model-free products remain matchable when brand, kind, and hard attributes establish identity', () => {
+  const cases = [
+    ['AV - PLAYSTATION 5 CONSOLE', 'Sony PlayStation 5 Slim Console with DualSense Controller Bundle'],
+    ['SEAGATE 8TB EXTERNAL DRIVE', 'Seagate 8TB Expansion Desktop External Hard Drive'],
+    ['Magcubic 4K Smart Projector WiFi Bluetooth', 'Magcubic 4K Smart Projector WiFi Bluetooth'],
+    ['ASUS GEFORCE RTX4070 12GB GRAPHICS CARD', 'ASUS Dual GeForce RTX 4070 OC Edition 12GB Graphics Card'],
+  ] as const;
+
+  for (const [source, candidate] of cases) {
+    const identity = extractProductIdentity(source);
+    assert.equal(hasSufficientRetailIdentity(identity), true, source);
+    const evaluation = evaluateRetailCandidate(candidate, identity);
+    assert.equal(evaluation.accepted, true, `${source}: ${evaluation.rejectionReasons.join(', ')}`);
+  }
 });
 
 test('unrelated Samsung 4K monitor is rejected for a Magcubic projector identity', () => {
@@ -251,6 +383,7 @@ test('Amazon matching rejects accessories and unrelated models while retaining t
   assert.equal(isAccessoryListing('Sony WF-1000XM5 Wireless Earbuds with Charging Case', product), false);
   const match = chooseAmazonMatch(product, [
     { asin: 'B000000003', title: badTitles[0]!, price: 26.99, used: false, sponsored: false, url: '' },
+    { asin: 'B000000005', title: 'Renewed Sony WF-1000XM5 Wireless Earbuds', price: 129, used: true, sponsored: false, url: '' },
     { asin: 'B000000004', title: 'Sony WF-1000XM5 Wireless Earbuds with Charging Case', price: 278, used: false, sponsored: false, url: '' },
   ], product);
   assert.equal(match?.candidate.asin, 'B000000004');

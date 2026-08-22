@@ -8,6 +8,7 @@ import {
   RETAIL_BATCH_SIZE,
   retailCacheTtl,
   retailIdentityCacheKey,
+  retailProviderCacheKey,
 } from '../src/intelligence/retail-policy.js';
 import { extractProductIdentity } from '../src/intelligence/us-deal-intelligence.js';
 
@@ -22,6 +23,8 @@ test('retail cache keys are provider, country, epoch, and identity aware', () =>
   const identity = extractProductIdentity('Onkyo TX-SR304 Multi-Channel AV Receiver');
   assert.match(retailIdentityCacheKey(identity, 4), /^amazon-us:4:/);
   assert.notEqual(retailIdentityCacheKey(identity, 4), retailIdentityCacheKey(identity, 5));
+  assert.equal(retailProviderCacheKey('  Sony   PS5 Console '), 'amazon-us:provider:sony ps5 console');
+  assert.equal(retailProviderCacheKey(identity.query), retailProviderCacheKey(identity.query));
 });
 
 test('Amazon challenges are not treated as empty search results', () => {
@@ -30,6 +33,7 @@ test('Amazon challenges are not treated as empty search results', () => {
   assert.equal(retailCacheTtl('matched'), 12 * 60 * 60 * 1000);
   assert.equal(retailCacheTtl('no_match'), 15 * 60 * 1000);
   assert.equal(retailCacheTtl('rate_limited'), 5 * 60 * 1000);
+  assert.equal(retailCacheTtl('parse_error'), 2 * 60 * 1000);
   assert.ok(retailCacheTtl('blocked') < retailCacheTtl('matched'));
 });
 

@@ -266,3 +266,33 @@ ignored by Git.
   is strict but accepts equivalent `PlayStation 5` and `PS5` spelling.
 - Console accessories/games cannot become console retail matches. Storage
   capacity and credible brand must match before a price is trusted.
+
+## v0.3.6 product-fingerprint matcher
+
+- Retail candidates pass one generic evaluator; there is no console-only
+  scoring bypass. The evaluator records matched evidence and explicit rejection
+  reasons for future diagnostics.
+- Product identity removes bounded lot, inventory, and condition prefixes and
+  skips `Lot <id>` pipe segments before selecting the searchable product name.
+- Canonical brand families cover equivalent manufacturer/product-family names
+  such as Sony/PlayStation, Microsoft/Xbox, Apple/iPhone, Google/Pixel, and
+  Western Digital/WD without relaxing unrelated brands.
+- Required attributes fail closed across capacity, platform, resolution,
+  dimensions, RAM generation/frequency, display refresh, storage medium,
+  network standard, voltage/wattage, battery capacity, camera lens range,
+  GPU/CPU SKU and suffix, edition, and model-series signatures.
+- Primary-product evidence separates a complete item or explicit bundle from a
+  game, case, controller, mount, replacement part, or other accessory. Used,
+  renewed, open-box, and sponsored Amazon results are never new-retail values.
+- Source identity has its own sufficiency gate. A model-free lot needs a
+  credible brand, recognized primary-product kind, and at least one hard
+  discriminator. Vague labels such as `Custom computer`, `Workstation
+  Computer`, or an unspecified `VR Headset` stay unpriced instead of borrowing
+  an arbitrary plausible product's retail value.
+- `RETAIL_MATCHING_EPOCH` remains only for legacy decision-cache migration;
+  current provider evidence is always re-evaluated by the active matcher.
+- Amazon provider evidence is cached by normalized query separately from the
+  match decision. Matcher upgrades revalidate normalized candidates instead of
+  refetching every watched lot; legacy normalized candidates migrate forward.
+  Challenge, rate-limit, parse, and transport failures are distinct from a real
+  zero-result response and can never be shown as proof that no product exists.

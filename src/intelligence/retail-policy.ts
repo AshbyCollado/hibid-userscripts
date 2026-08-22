@@ -10,8 +10,13 @@ export function isAmazonChallengeHtml(html: string): boolean {
 
 export function retailIdentityCacheKey(identity: ProductIdentity, epoch: number): string {
   return `amazon-us:${epoch}:${[
-    identity.query, identity.brand, identity.model, identity.model2, identity.kind, ...identity.capacities
+    identity.query, identity.brand, identity.model, identity.model2, identity.kind,
+    JSON.stringify(identity.discriminators || {}), ...identity.capacities
   ].map((item) => String(item || '').toLocaleLowerCase('en-US')).join('|')}`;
+}
+
+export function retailProviderCacheKey(query: string): string {
+  return `amazon-us:provider:${query.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')}`;
 }
 
 export function partitionRetailBatches<T>(items: readonly T[], size = 6): T[][] {
@@ -22,6 +27,7 @@ export function partitionRetailBatches<T>(items: readonly T[], size = 6): T[][] 
 export function retailCacheTtl(status: string): number {
   if (status === 'matched') return 12 * 60 * 60 * 1000;
   if (status === 'blocked' || status === 'rate_limited') return 5 * 60 * 1000;
+  if (status === 'parse_error') return 2 * 60 * 1000;
   return 15 * 60 * 1000;
 }
 
