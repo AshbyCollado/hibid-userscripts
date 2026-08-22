@@ -146,6 +146,14 @@ function safeExternalUrl(url: string): string {
   } catch { return '#'; }
 }
 
+export function visibleLotIdSignature(root: ParentNode): string {
+  return [...root.querySelectorAll<HTMLElement>('app-lot-tile[id^="lot-"]')]
+    .map((tile) => tile.id.slice(4))
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
+
 function researchLinks(query: string): { amazon: string; ebay: string; camel: string } {
   const amazon = new URL('https://www.amazon.com/s'); amazon.searchParams.set('k', query);
   const ebay = new URL('https://www.ebay.com/sch/i.html'); ebay.searchParams.set('_nkw', query); ebay.searchParams.set('LH_Sold', '1'); ebay.searchParams.set('LH_Complete', '1');
@@ -421,6 +429,7 @@ export class DealIntelligenceController {
   private generation = 0;
   private rerunTimer: number | null = null;
   private records = new Map<string, AnalysisRecord>();
+  private visibleLotSignature = '';
 
   constructor(private readonly getRoute: () => HiBidRoute, private readonly transport: HiBidTransport) {}
 
@@ -431,11 +440,16 @@ export class DealIntelligenceController {
   handleMutations(mutations: MutationRecord[]): void {
     if (!SUPPORTED.has(this.getRoute().kind)) return;
     const hasNewLot = mutations.some((mutation) => [...mutation.addedNodes].some((node) => node instanceof Element && (node.matches('app-lot-tile[id^="lot-"], #lotlens-root') || Boolean(node.querySelector('app-lot-tile[id^="lot-"], #lotlens-root')))));
-    if (hasNewLot) this.schedule(300);
+    if (!hasNewLot) return;
+    const nextSignature = visibleLotIdSignature(document);
+    if (nextSignature && nextSignature !== this.visibleLotSignature) {
+      this.visibleLotSignature = nextSignature;
+      this.schedule(300);
+    }
   }
 
   handleLocationChange(): void {
-    this.generation += 1; this.records.clear(); this.summaryValue = emptySummary(); this.schedule(250);
+    this.generation += 1; this.records.clear(); this.visibleLotSignature = ''; this.summaryValue = emptySummary(); this.schedule(250);
   }
 
   async clearCache(): Promise<void> {
@@ -462,6 +476,7 @@ export class DealIntelligenceController {
     try {
       const settings = normalizeSettings(await getSyncStorage());
       let lots = route.kind === 'lot' ? [extractHibidLotDetail(document, location.href)].filter((item): item is HiBidLotRecord => Boolean(item)) : extractHiBidVisibleLots(document, route, location.href);
+      this.visibleLotSignature = lots.map((lot) => lot.id).filter(Boolean).sort().join('|');
       const stored = await readStoredLots(lots.map((lot) => lot.id));
       let auctionPremiums = await readAuctionPremiums(lots.map((lot) => lot.auctionId));
       const quickRecords = buildAnalysisRecords(lots, stored, auctionPremiums, settings);

@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
+import { JSDOM } from 'jsdom';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
+import { visibleLotIdSignature } from '../src/content/deal-intelligence.js';
 
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.3.27');
+  assert.equal(chrome.version, '0.3.28');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
@@ -23,6 +25,15 @@ test('Chrome and Waterfox use direct background Amazon transport without opening
   assert.match(background, /cache: 'default'/);
   assert.doesNotMatch(background, /credentials: 'omit'/);
   assert.doesNotMatch(background, /if \(supportsAmazonHelperWindow\(\)\)/);
+});
+
+test('HiBid redraws with the same stable lot IDs do not look like a new catalog', () => {
+  const first = new JSDOM('<app-lot-tile id="lot-30"></app-lot-tile><app-lot-tile id="lot-10"></app-lot-tile>');
+  const redraw = new JSDOM('<section><app-lot-tile id="lot-10"></app-lot-tile><app-lot-tile id="lot-30"></app-lot-tile></section>');
+  const changed = new JSDOM('<app-lot-tile id="lot-10"></app-lot-tile><app-lot-tile id="lot-40"></app-lot-tile>');
+  assert.equal(visibleLotIdSignature(first.window.document), '10|30');
+  assert.equal(visibleLotIdSignature(redraw.window.document), '10|30');
+  assert.equal(visibleLotIdSignature(changed.window.document), '10|40');
 });
 
 test('personalized watchlist exports use the account DOM and never extension-origin GraphQL', async () => {

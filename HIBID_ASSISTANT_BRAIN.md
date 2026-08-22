@@ -400,3 +400,9 @@ ignored by Git.
 - Cold Chrome catalog verification exposed `HTTP 503` and `Failed to fetch` for nearly every anonymous Amazon request.
 - The donor userscript's `GM_xmlhttpRequest` uses the user's normal browser session. Flippah now mirrors that behavior with credentialed, normal-cache extension fetches while retaining paced batches, bounded failures, and sanitized results.
 - The provider cache epoch is `v7`, preventing older parse/no-match snapshots from masking the transport correction.
+
+## v0.3.28 stable catalog redraw handling
+
+- HiBid periodically replaces visible tile elements without changing the lots. The old mutation handler restarted the entire Amazon queue whenever those replacement nodes appeared.
+- Flippah now fingerprints the sorted stable lot IDs and restarts only when that identity set changes, such as pagination or a genuine live-catalog update.
+- Cosmetic/countdown redraws no longer erase in-flight Amazon results or trap a catalog at its first few batches.
