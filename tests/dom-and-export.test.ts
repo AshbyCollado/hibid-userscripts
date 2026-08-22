@@ -47,6 +47,28 @@ test('past auction groups follow HiBid watched-header sibling boundaries', () =>
   assert.deepEqual(extractPastAuctionGroupState(dom.window.document, groups[0]!), { found: true, expectedTotal: 2, visibleCount: 2 });
 });
 
+test('active watchlist keeps three auction groups isolated, preserves visible lot numbers, and ignores Flippah annotations', () => {
+  const groups = [
+    ['769995', 'Government Surplus', 'Paterson, NJ'],
+    ['765731', 'Pro Audio', 'Edison, NJ'],
+    ['767962', 'Aircraft Developer', 'Carteret, NJ']
+  ];
+  const html = `<div>${groups.map(([auctionId, title, location], groupIndex) => `
+    <app-watched-auction-header><div class="listing-box-title"><a href="/catalog/${auctionId}/test"><strong>${title}</strong></a><a href="https://maps.google.com/maps?q=x">${location}</a></div></app-watched-auction-header>
+    ${[1, 2, 3].map((lotIndex) => {
+      const id = `${groupIndex + 1}00${lotIndex}`;
+      return `<app-lot-tile id="lot-${id}"><a href="/lot/${id}/item">Lot ${lotIndex + 10} | Item ${groupIndex + 1}-${lotIndex}</a><div>High Bid: $${lotIndex}.00</div><div class="flippah-deal-strip" data-flippah-owned="true">Amazon: mixed review eBay: --</div><span class="flippah-allin" data-flippah-owned="true">All-in $999</span></app-lot-tile>`;
+    }).join('')}`).join('')}</div>`;
+  const dom = new JSDOM(html, { url: 'https://hibid.com/account/watchlist' });
+  const route = resolveHiBidRoute(dom.window.location.href);
+  const items = extractAccountLots(dom.window.document, route, dom.window.location.href);
+  assert.equal(items.length, 9);
+  assert.deepEqual([...new Set(items.map((item) => item.auctionId))], groups.map(([id]) => id));
+  assert.deepEqual(items.slice(0, 3).map((item) => item.lot), ['11', '12', '13']);
+  assert.ok(items.every((item) => item.auctionTitle && item.location));
+  assert.ok(items.every((item) => !/Amazon:|eBay:|All-in/i.test(item.rawText)));
+});
+
 test('lot detail includes lead, category, structured fields, description, and all images', () => {
   const html = `<h1>SteelSeries Arctis Nova 7 Wireless Xbox</h1><table>
     <tr><th>Lot #</th><td>6</td></tr><tr><th>Lead</th><td>SteelSeries Arctis Nova 7 Wireless Xbox</td></tr>

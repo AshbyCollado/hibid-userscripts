@@ -123,6 +123,7 @@ test('low-confidence Amazon evidence cannot become a retail value', () => {
   };
   assert.equal(trustedAmazonMarketValue('low_confidence', match, 1), null);
   assert.equal(trustedAmazonMarketValue('matched', match, 2), 699.98);
+  assert.equal(trustedAmazonMarketValue('matched', { ...match, candidate: { ...match.candidate, price: 0 } }, 1), null);
 });
 
 test('multi-unit and mixed lots require an explicit confirmed quantity', () => {
@@ -153,15 +154,17 @@ test('ordinary single-product marketing prose does not trigger mixed-lot review'
   assert.equal(projector.mixed, false);
 });
 
-test('US all-in math applies premium and tax to hammer plus premium, then shipping', () => {
-  const result = calculateAllInCost({ hammer: 100, buyerPremiumPct: 15, salesTaxPct: 8.25, shipping: 12 });
+test('US all-in math applies premium and tax without a shipping adjustment', () => {
+  const result = calculateAllInCost({ hammer: 100, buyerPremiumPct: 15, salesTaxPct: 8.25 });
   assert.equal(result.currency, 'USD');
   assert.equal(result.premium, 15);
   assert.equal(result.taxableSubtotal, 115);
   assert.ok(Math.abs(result.tax - 9.4875) < 1e-10);
-  assert.ok(Math.abs(result.total - 136.4875) < 1e-10);
-  assert.equal(formatUsd(result.total), '$136.49');
-  const untaxedPremium = calculateAllInCost({ hammer: 100, buyerPremiumPct: 15, salesTaxPct: 10, shipping: 0, taxOnPremium: false });
+  assert.ok(Math.abs(result.total - 124.4875) < 1e-10);
+  assert.equal(formatUsd(result.total), '$124.49');
+  const legacyShipping = calculateAllInCost({ hammer: 100, buyerPremiumPct: 15, salesTaxPct: 8.25, shipping: 99 } as never);
+  assert.equal(legacyShipping.total, result.total);
+  const untaxedPremium = calculateAllInCost({ hammer: 100, buyerPremiumPct: 15, salesTaxPct: 10, taxOnPremium: false });
   assert.equal(untaxedPremium.taxableSubtotal, 100);
   assert.equal(untaxedPremium.total, 125);
 });

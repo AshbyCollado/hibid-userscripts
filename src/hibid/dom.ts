@@ -14,7 +14,7 @@ function visibleText(root: Document | Element): string {
   let node: Node | null = walker.nextNode();
   while (node) {
     const parent = node.parentElement;
-    if (parent && !parent.closest('script,style,template,[hidden],[aria-hidden="true"]')) {
+    if (parent && !parent.closest('script,style,template,[hidden],[aria-hidden="true"],[data-flippah-owned="true"],.flippah-deal-strip,.flippah-allin,#lotlens-root')) {
       const style = parent.getAttribute('style') || '';
       if (!/(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(style)) chunks.push(node.nodeValue || '');
     }
@@ -105,9 +105,11 @@ export function extractHiBidVisibleLots(root: Document | Element, route: HiBidRo
     const id = (tile.id || '').replace(/^lot-/, '') || href.match(/\/lot\/(\d+)/i)?.[1] || tile.querySelector('[data-event-item-id]')?.getAttribute('data-event-item-id') || '';
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    const raw = clean(tile.textContent);
-    const title = clean(tile.querySelector('h1,h2,h3,h4,.title,[class*="title"]')?.textContent) || clean(link?.textContent) || `Lot ${id}`;
-    records.push({ source: 'hibid-dom', pageKind: route.kind, id, eventItemId: id, itemId: '', lot: id, title, lead: title, url: href || `${new URL(sourceUrl).origin}/lot/${id}`, image: imageList(tile)[0] || '', images: imageList(tile), description: '', descriptionHtml: '', category: '', categories: [], currentBid: money(raw.match(/(?:high|current)\s+bid[^\d$]*[\$]?\s*[\d,.]+/i)?.[0] || ''), nextBid: money(raw.match(/\bbid\s+[\$]?\s*[\d,.]+/i)?.[0] || ''), bidCount: Number(raw.match(/(\d+)\s+bids?/i)?.[1] || '') || null, status: /won/i.test(raw) ? 'Won' : '', timeLeft: clean(raw.match(/\b(?:\d+h\s*)?\d+m\b/i)?.[0]), quantity: null, shippingOffered: /shipping/i.test(raw), auctionId: route.auctionId || '', auctionTitle: '', location: '', buyerPremium: '', rawText: raw });
+    const raw = clean(visibleText(tile));
+    const titleText = clean(tile.querySelector('h1,h2,h3,h4,.title,[class*="title"]')?.textContent) || clean(link?.textContent) || `Lot ${id}`;
+    const lot = titleText.match(/\bLot\s*#?\s*([\w.-]+)/i)?.[1] || raw.match(/\bLot\s*#?\s*([\w.-]+)/i)?.[1] || id;
+    const title = clean(titleText.replace(/^\s*Lot\s*#?\s*[\w.-]+\s*(?:\||-|:)\s*/i, '')) || titleText;
+    records.push({ source: 'hibid-dom', pageKind: route.kind, id, eventItemId: id, itemId: '', lot, title, lead: title, url: href || `${new URL(sourceUrl).origin}/lot/${id}`, image: imageList(tile)[0] || '', images: imageList(tile), description: '', descriptionHtml: '', category: '', categories: [], currentBid: money(raw.match(/(?:high|current)\s+bid[^\d$]*[\$]?\s*[\d,.]+/i)?.[0] || ''), nextBid: money(raw.match(/\bbid\s+[\$]?\s*[\d,.]+/i)?.[0] || ''), bidCount: Number(raw.match(/(\d+)\s+bids?/i)?.[1] || '') || null, status: /won/i.test(raw) ? 'Won' : (/outbid/i.test(raw) ? 'Outbid' : (/winning/i.test(raw) ? 'Winning' : '')), timeLeft: clean(raw.match(/\b(?:\d+d\s*)?(?:\d+h\s*)?\d+m\b/i)?.[0]), quantity: null, shippingOffered: /shipping/i.test(raw), auctionId: route.auctionId || '', auctionTitle: '', location: '', buyerPremium: '', rawText: raw });
   }
   return records;
 }
@@ -263,6 +265,23 @@ export function extractAccountLots(
     if (!selectedGroup) return [];
     const container = groupContainer(root, selectedGroup);
     return container ? extractHiBidVisibleLots(container, route, locationLike) : [];
+  }
+  if (route.kind === 'watchlist' || route.kind === 'currentbids-winning' || route.kind === 'currentbids-outbid') {
+    const groups = extractPastAuctionGroups(root, locationLike);
+    if (groups.length) {
+      const grouped: HiBidLotRecord[] = [];
+      const seen = new Set<string>();
+      for (const group of groups) {
+        const container = groupContainer(root, group);
+        if (!container) continue;
+        for (const lot of extractHiBidVisibleLots(container, route, locationLike)) {
+          if (seen.has(lot.id)) continue;
+          seen.add(lot.id);
+          grouped.push({ ...lot, auctionId: group.id, auctionTitle: group.title, location: group.location });
+        }
+      }
+      if (grouped.length) return grouped;
+    }
   }
   return extractHiBidVisibleLots(root, route, locationLike);
 }

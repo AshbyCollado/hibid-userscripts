@@ -47,6 +47,22 @@ export function patchLegacyEbayQueryModule(source) {
   return `${source.slice(0, start)}${replacement}${source.slice(end)}`;
 }
 
+export function patchLegacyRemoveShipping(source) {
+  const labelMarker = '<label for="lotlens-shipping">Shipping</label>';
+  const labelIndex = source.indexOf(labelMarker);
+  if (labelIndex < 0) throw new Error('Unable to locate the legacy shipping control');
+  const rowStart = source.lastIndexOf('<div class="lotlens-row">', labelIndex);
+  const rowEnd = source.indexOf('</div>', labelIndex);
+  if (rowStart < 0 || rowEnd < 0) throw new Error('Unable to locate the legacy shipping row');
+  let patched = `${source.slice(0, rowStart)}${source.slice(rowEnd + '</div>'.length)}`;
+  patched = patched
+    .replaceAll('shipCents:i.shipCents', 'shipCents:0')
+    .replaceAll('shipCents:wi.shipCents', 'shipCents:0')
+    .replaceAll('i.shipCents=wi.shipCents', 'i.shipCents=0')
+    .replaceAll('Budget is below shipping', 'Budget is below fees and tax');
+  return patched;
+}
+
 export function patchLegacyHibidPageModule(source) {
   const currentBidNeedle = 'currentBid:[`app-lot-details-subpanel .lot-high-bid`,`.lot-high-bid`,`.live-catalog-high-bid-status-default.lot-bid-container`]';
   const currentBidReplacement = 'currentBid:[`app-lot-details-subpanel .lot-high-bid`,`.lot-high-bid`,`.live-catalog-high-bid-status-default.lot-bid-container`,`.lot-price-realized-container`]';

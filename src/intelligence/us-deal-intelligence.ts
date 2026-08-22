@@ -58,7 +58,6 @@ export interface UsAllInInput {
   hammer: number;
   buyerPremiumPct: number;
   salesTaxPct: number;
-  shipping?: number;
   taxOnPremium?: boolean;
 }
 
@@ -68,7 +67,6 @@ export interface UsAllInResult {
   premium: number;
   taxableSubtotal: number;
   tax: number;
-  shipping: number;
   total: number;
 }
 
@@ -89,7 +87,7 @@ export interface AmazonCandidateMatch {
 export type AmazonMatch = AmazonCandidateMatch;
 
 export function trustedAmazonMarketValue(status: string, match: AmazonCandidateMatch | null | undefined, quantity = 1): number | null {
-  if (status !== 'matched' || match?.candidate.price == null) return null;
+  if (status !== 'matched' || match?.candidate.price == null || !Number.isFinite(match.candidate.price) || match.candidate.price <= 0) return null;
   return match.candidate.price * Math.max(1, Number.isFinite(quantity) ? quantity : 1);
 }
 
@@ -449,11 +447,10 @@ export function calculateUsAllIn(input: UsAllInInput): UsAllInResult {
   const hammer = amount(input.hammer, 'hammer');
   const premiumPct = amount(input.buyerPremiumPct, 'buyerPremiumPct');
   const taxPct = amount(input.salesTaxPct, 'salesTaxPct');
-  const shipping = amount(input.shipping, 'shipping', true);
   const premium = hammer * premiumPct / 100;
   const taxableSubtotal = hammer + (input.taxOnPremium === false ? 0 : premium);
   const tax = taxableSubtotal * taxPct / 100;
-  return { currency: 'USD', hammer, premium, taxableSubtotal, tax, shipping, total: hammer + premium + tax + shipping };
+  return { currency: 'USD', hammer, premium, taxableSubtotal, tax, total: hammer + premium + tax };
 }
 
 function decodeHtml(value: string): string {

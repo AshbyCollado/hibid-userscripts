@@ -23,7 +23,6 @@ interface StoredLotState {
   resaleEstimate: number | null;
   confirmedQuantity: number | null;
   maxBid: number | null;
-  shipping: number;
   updatedAt: number;
 }
 
@@ -81,7 +80,7 @@ function normalizeStored(value: unknown): StoredLotState {
     queryOverride: typeof source.queryOverride === 'string' ? source.queryOverride.trim().slice(0, 180) : '',
     amazonOverrideAsin: typeof source.amazonOverrideAsin === 'string' ? source.amazonOverrideAsin.trim().slice(0, 10) : '',
     resaleEstimate: finite(source.resaleEstimate), confirmedQuantity: finite(source.confirmedQuantity),
-    maxBid: finite(source.maxBid), shipping: finite(source.shipping) ?? 0,
+    maxBid: finite(source.maxBid),
     updatedAt: finite(source.updatedAt) ?? 0
   };
 }
@@ -95,7 +94,6 @@ async function readStoredLots(ids: string[]): Promise<Map<string, StoredLotState
     const watched = watchlist[id];
     if (stored.resaleEstimate === null && Number.isFinite(Number(watched?.resaleCents))) stored.resaleEstimate = Number(watched.resaleCents) / 100;
     if (stored.maxBid === null && Number.isFinite(Number(watched?.maxBidCents))) stored.maxBid = Number(watched.maxBidCents) / 100;
-    if (!stored.shipping && Number.isFinite(Number(watched?.shipCents))) stored.shipping = Number(watched.shipCents) / 100;
     return [id, stored];
   }));
 }
@@ -157,11 +155,12 @@ function installPageStyles(): void {
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-    .flippah-deal-strip{display:flex;flex-wrap:wrap;gap:4px;margin:5px 0;font:700 11px/1.2 system-ui,sans-serif}
-    .flippah-deal-pill{display:inline-flex;align-items:center;min-height:22px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:5px;background:#f8fafc;color:#475569;letter-spacing:0}
-    .flippah-deal-pill.green{border-color:#65a30d;background:#ecfccb;color:#365314}.flippah-deal-pill.yellow{border-color:#ca8a04;background:#fef9c3;color:#713f12}
-    .flippah-deal-pill.orange{border-color:#ea580c;background:#ffedd5;color:#7c2d12}.flippah-deal-pill.red{border-color:#dc2626;background:#fee2e2;color:#7f1d1d}
-    .flippah-deal-pill.black{border-color:#374151;background:#111827;color:#fff}.flippah-allin{display:block;margin-top:2px;font:700 10px/1.15 system-ui,sans-serif;letter-spacing:0}
+    .flippah-deal-strip{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 10px;min-height:24px;margin:5px 0;padding:3px 5px;font:700 11px/1.2 system-ui,sans-serif;letter-spacing:0}
+    .flippah-deal-pill{display:inline-flex;align-items:center;gap:5px;min-height:20px;color:#475569;white-space:nowrap}
+    .flippah-deal-dot{display:inline-block;width:9px;height:9px;border:1px solid #64748b;border-radius:50%;background:#94a3b8;flex:0 0 9px}
+    .flippah-deal-pill.green .flippah-deal-dot{border-color:#3f6212;background:#65a30d}.flippah-deal-pill.yellow .flippah-deal-dot{border-color:#854d0e;background:#eab308}
+    .flippah-deal-pill.orange .flippah-deal-dot{border-color:#9a3412;background:#f97316}.flippah-deal-pill.red .flippah-deal-dot{border-color:#991b1b;background:#dc2626}
+    .flippah-deal-pill.black .flippah-deal-dot{border-color:#111827;background:#111827}.flippah-allin{display:block;margin-top:2px;font:700 10px/1.15 system-ui,sans-serif;letter-spacing:0}
   `;
   document.documentElement.append(style);
 }
@@ -181,17 +180,21 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
   const bidControl = [...tile.querySelectorAll<HTMLElement>('button,a')].find((element) => /^\s*Bid\s+\$?\s*[\d,.]+/i.test(element.textContent || ''));
   if (bidControl && record.allIn) {
     let allIn = bidControl.querySelector<HTMLElement>(':scope > .flippah-allin');
-    if (!allIn) { allIn = document.createElement('span'); allIn.className = 'flippah-allin'; bidControl.append(allIn); }
+    if (!allIn) { allIn = document.createElement('span'); allIn.className = 'flippah-allin'; allIn.dataset.flippahOwned = 'true'; bidControl.append(allIn); }
     allIn.textContent = `All-in ${formatUsd(record.allIn.total)}`;
-    allIn.title = 'Current/next bid plus buyer premium, estimated US sales tax, and saved shipping';
+    allIn.title = 'Current/next bid plus buyer premium and estimated US sales tax';
   }
   let strip = tile.querySelector<HTMLElement>(`:scope .flippah-deal-strip[data-flippah-retail-for="${CSS.escape(record.lot.id)}"]`);
   if (!strip) {
-    strip = document.createElement('div'); strip.className = 'flippah-deal-strip'; strip.dataset.flippahRetailFor = record.lot.id;
-    const title = tile.querySelector('[class*="title"],h2,h3,h4') || tile.firstElementChild;
-    title?.insertAdjacentElement('afterend', strip);
+    strip = document.createElement('div'); strip.className = 'flippah-deal-strip'; strip.dataset.flippahRetailFor = record.lot.id; strip.dataset.flippahOwned = 'true';
+    const content = tile.querySelector('.lot-tile-content');
+    const heading = tile.querySelector('.lot-lead-heading');
+    if (content) content.insertAdjacentElement('beforebegin', strip);
+    else if (heading) heading.insertAdjacentElement('afterend', strip);
+    else if (bidControl) bidControl.insertAdjacentElement('beforebegin', strip);
+    else tile.append(strip);
   }
-  if (!strip) return;
+  if (!strip.isConnected) return;
   const amazonPrice = amazonMarketValue(record);
   const ebayPrice = record.state.resaleEstimate;
   const amazonLabel = record.currency === 'CAD' ? 'Amazon: CAD' : record.mixed.mixed ? 'Amazon: mixed review' : record.needsQuantity ? 'Amazon: qty review' : amazonPrice === null ? 'Amazon: --' : `Amazon ${formatUsd(amazonPrice)}`;
@@ -201,7 +204,10 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
     : null;
   strip.replaceChildren();
   const add = (text: string, cls: string, title: string) => {
-    const pill = document.createElement('span'); pill.className = `flippah-deal-pill ${cls}`; pill.textContent = text; pill.title = title; strip!.append(pill);
+    const pill = document.createElement('span'); pill.className = `flippah-deal-pill ${cls}`; pill.title = title; pill.setAttribute('aria-label', title);
+    const dot = document.createElement('span'); dot.className = 'flippah-deal-dot'; dot.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span'); label.textContent = text;
+    pill.append(dot, label); strip!.append(pill);
   };
   add(amazonLabel, record.amazonIndicator.cls, record.amazon?.message || indicatorTitle('Amazon', record.amazonIndicator, amazonPrice));
   add(ebayLabel, record.ebayIndicator.cls, indicatorTitle('eBay saved resale', record.ebayIndicator, ebayPrice));
@@ -310,19 +316,6 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   }
   section.append(evidence);
 
-  const terms = details('Auction Terms');
-  terms.append(
-    element('div', '', `Buyer premium: ${record.premiumPct.toFixed(2)}% (saved for this auction)`),
-    element('div', '', `Location: ${record.lot.location || 'not stated'}`),
-    element('div', '', `Shipping: ${record.lot.shippingOffered ? 'offered' : 'not confirmed'}`)
-  );
-  section.append(terms);
-  const fees = details('Fee Evidence');
-  fees.append(
-    element('div', '', 'Simple Flippah math: hammer + buyer premium + estimated sales tax + saved shipping.'),
-    element('div', '', record.allIn ? `Current all-in: ${formatUsd(record.allIn.total)}` : 'No USD all-in calculation for this lot.')
-  );
-  section.append(fees);
   const bind = (element: HTMLInputElement | null, marker: string, handler: () => void) => {
     if (!element || element.dataset[marker] === 'true') return;
     element.dataset[marker] = 'true'; element.addEventListener('change', handler); element.addEventListener('input', handler);
@@ -361,7 +354,7 @@ function buildAnalysisRecords(
     const hammer = selectAuctionHammer(lot.nextBid, lot.currentBid);
     const premiumPct = auctionPremiums.get(lot.auctionId) ?? numberFrom(lot.buyerPremium) ?? 15;
     const allIn = currency === 'USD' && hammer !== null
-      ? calculateUsAllIn({ hammer, buyerPremiumPct: premiumPct, salesTaxPct: taxPct, shipping: state.shipping, taxOnPremium: settings.taxOnPremium })
+      ? calculateUsAllIn({ hammer, buyerPremiumPct: premiumPct, salesTaxPct: taxPct, taxOnPremium: settings.taxOnPremium })
       : null;
     const ebayNet = state.resaleEstimate === null
       ? null

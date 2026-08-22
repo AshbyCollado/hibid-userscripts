@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { buildEbaySoldQuery, patchLegacyEbayQueryModule, patchLegacyHibidPageModule } from '../scripts/legacy-ebay-query.mjs';
+import { buildEbaySoldQuery, patchLegacyEbayQueryModule, patchLegacyHibidPageModule, patchLegacyRemoveShipping } from '../scripts/legacy-ebay-query.mjs';
 
 test('eBay query preserves the complete Onkyo model and product type', () => {
   assert.equal(
@@ -37,6 +37,14 @@ test('legacy calculator bundle receives the maintained eBay query builder', asyn
   assert.match(patched, /function w\(title\)/);
   assert.doesNotMatch(patched, /slice\(0,6\)/);
   assert.match(patched, /query\.length > 120/);
+});
+
+test('legacy calculator build patch removes shipping UI and ignores persisted shipping costs', async () => {
+  const source = await readFile('reference-build/flippah-v0.1.0/assets/index.ts-BuCXDImd.js', 'utf8');
+  const patched = patchLegacyRemoveShipping(source);
+  assert.doesNotMatch(patched, /<label for="lotlens-shipping">Shipping<\/label>/);
+  assert.doesNotMatch(patched, /shipCents:i\.shipCents|shipCents:wi\.shipCents|Budget is below shipping/);
+  assert.match(patched, /shipCents:0/);
 });
 
 test('legacy lot parser recognizes closed-lot Price Realized amounts without waiting for degraded timeout', () => {

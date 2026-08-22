@@ -44,12 +44,18 @@ TypeScript and intentionally excludes the donor's page-rewrite behavior.
 
 ## Watchlist reliability
 
-Flippah `v0.3.2` reads `/account/watchlist` through its dedicated account-page
+Flippah `v0.3.3` reads `/account/watchlist` through its dedicated account-page
 DOM parser. HiBid requires private buyer authorization for `WatchListSearch`,
 so personalized data is never requested from an extension-origin GraphQL call.
 If the displayed total and stable lot count drift while a lot closes, Flippah
 uses HiBid's safe Refresh control and retries the snapshot before validation.
 Account tokens and account identity are never read or copied into diagnostics.
+
+Catalog deal indicators mount outside HiBid's clipped lot-title container, so
+their Amazon/eBay status dots remain visible. Flippah excludes its own
+annotations from copied lot text, preserves watchlist auction grouping, and
+keeps all-in math focused on hammer, buyer premium, and sales tax. Shipping,
+Auction Terms, and Fee Evidence inputs/sections are not part of the panel.
 
 ## Commands
 

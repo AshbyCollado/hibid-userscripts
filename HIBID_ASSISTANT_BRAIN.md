@@ -221,3 +221,23 @@ ignored by Git.
 - Release acceptance must run the real toolbar `Copy JSON` action on the signed-
   in watchlist and parse the clipboard payload; a successful page load alone is
   not acceptance.
+
+## v0.3.3 visible deal indicators and calculator cleanup
+
+- HiBid clips content appended inside `.live-catalog-lot-lead-container`; retail
+  indicators mount before `.lot-tile-content` (or after `.lot-lead-heading`),
+  never inside the title container.
+- Catalog indicators use a visible status dot plus Amazon/eBay label. Browser
+  acceptance checks their rendered full-window position, not only DOM counts.
+- Nodes marked `data-flippah-owned="true"`, `.flippah-deal-strip`,
+  `.flippah-allin`, and `#lotlens-root` are excluded from scraper text.
+- Active Watchlist/Winning/Outbid exports retain each watched auction's ID,
+  title, and location, and preserve the visible lot number separately from the
+  stable event-item ID.
+- Shipping is absent from the calculator UI and ignored by all-in math,
+  including legacy saved `shipCents`. Auction Terms and Fee Evidence blocks are
+  absent from Flippah's lot panel.
+- Chrome acceptance uses auctions `769995`, `765731`, and `767962`, with three
+  direct lots from each recorded under `docs/evidence/flippah-v0.3.3/`.
+- Upcoming lots can have no current bid. Their panel stays in manual current-bid
+  mode and must not invent an all-in amount.
