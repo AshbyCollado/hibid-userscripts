@@ -22,7 +22,7 @@ export function retailIdentityCacheKey(identity: ProductIdentity, epoch: number)
 }
 
 export function retailProviderCacheKey(query: string): string {
-  return `amazon-us:provider-v3:${query.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')}`;
+  return `amazon-us:provider-v4:${query.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')}`;
 }
 
 export function retailCacheTtl(status: string): number {

@@ -3,7 +3,7 @@ import { failure, isEnvelope, payloadBytes, success, type MessageEnvelope } from
 import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, putRecordBatch } from '../core/job-db.js';
 import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.js';
 import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
-import { clearRetailCache, findRetailCacheByQuery, getRetailCache, putRetailCache } from '../core/retail-db.js';
+import { clearRetailCache, getRetailCache, putRetailCache } from '../core/retail-db.js';
 import { detectProductKind, evaluateRetailCandidate, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
 import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailCandidateList, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
@@ -49,11 +49,13 @@ function sanitizeAmazonCandidates(value: unknown): ReturnType<typeof parseAmazon
   return retailCandidateList<any>(value).slice(0, 30).flatMap((candidate) => {
     const asin = String(candidate?.asin || '').toUpperCase();
     const title = String(candidate?.title || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    const matchText = String(candidate?.matchText || title).replace(/\s+/g, ' ').trim().slice(0, 800);
     const price = candidate?.price == null ? null : Number(candidate.price);
     if (!/^[A-Z0-9]{10}$/.test(asin) || !title || (price !== null && (!Number.isFinite(price) || price <= 0))) return [];
     return [{
       asin,
       title,
+      matchText,
       price,
       used: Boolean(candidate?.used),
       sponsored: Boolean(candidate?.sponsored),
@@ -306,10 +308,6 @@ async function readResponseText(response: Response): Promise<string> {
   return new TextDecoder().decode(bytes);
 }
 
-function uniqueCandidates(candidates: ReturnType<typeof parseAmazonCandidates>): ReturnType<typeof parseAmazonCandidates> {
-  return [...new Map(candidates.map((candidate) => [candidate.asin, candidate])).values()];
-}
-
 function evaluateProviderSnapshot(identity: ProductIdentity, snapshot: RetailProviderSnapshot, cached: boolean): RetailLookupResult {
   if (snapshot.status !== 'ok') {
     const status: RetailLookupStatus = snapshot.status === 'no_results' ? 'no_match' : snapshot.status;
@@ -318,7 +316,7 @@ function evaluateProviderSnapshot(identity: ProductIdentity, snapshot: RetailPro
   const candidateAudit = snapshot.candidates.slice(0, 8).map((candidate) => ({
     asin: candidate.asin,
     title: candidate.title,
-    ...evaluateRetailCandidate(candidate.title, identity),
+    ...evaluateRetailCandidate(candidate.matchText || candidate.title, identity),
   }));
   const match = matchAmazonCandidates(snapshot.candidates, identity);
   const status: RetailLookupStatus = match ? (match.score >= 3 ? 'matched' : 'low_confidence') : 'no_match';
@@ -340,14 +338,6 @@ async function providerSnapshot(query: string): Promise<{ snapshot: RetailProvid
   const cached = await getRetailCache<RetailProviderSnapshot>(providerKey);
   if (cached && reusableRetailSnapshot(cached.status)) return { snapshot: cached, cached: true };
 
-  const legacy = await findRetailCacheByQuery<RetailLookupResult>(query);
-  const legacyCandidates = retailCandidateList<ReturnType<typeof parseAmazonCandidates>[number]>(legacy?.candidates);
-  if (legacy && (legacy.match?.candidate || legacyCandidates.length)) {
-    const candidates = uniqueCandidates([...(legacy.match?.candidate ? [legacy.match.candidate] : []), ...legacyCandidates]);
-    const migrated: RetailProviderSnapshot = { status: 'ok', query, candidates, fetchedAt: legacy.fetchedAt, message: 'Revalidated cached Amazon.com evidence' };
-    await putRetailCache(providerKey, migrated, retailCacheTtl('matched'));
-    return { snapshot: migrated, cached: true };
-  }
   const snapshot = await joinInflight(amazonInflight, providerKey, async (): Promise<RetailProviderSnapshot> => {
     const url = new URL('https://www.amazon.com/s');
     url.searchParams.set('k', query);

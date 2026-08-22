@@ -23,7 +23,7 @@ in-page calculator remains limited to individual lot pages.
 
 ## US deal intelligence
 
-Flippah `v0.3.23` adds title-authoritative product identity with structured
+Flippah `v0.3.24` adds title-authoritative product identity with structured
 description enrichment and condition parsing, Amazon.com retail evidence,
 manual eBay Sold verification, saved resale estimates, mixed-lot and quantity
 review gates, and compact Current Bids/Watchlist verdicts. Catalog annotations
@@ -40,6 +40,12 @@ it is never presented as a verified Amazon price. eBay remains
 user-directed: Flippah opens an exact Sold and Completed search, then uses the
 resale estimate the user saves in the lot panel. Only normalized Amazon
 evidence returns to HiBid; raw provider HTML is never stored or sent to HiBid.
+
+The `v0.3.24` matcher normalizes retail unit aliases, understands compact
+quantity notation such as `6x12oz`, requires package-count and volume evidence,
+and uses Amazon result-link slugs when the visible result title omits a brand.
+Its provider-cache epoch prevents older incomplete search snapshots from
+silently surviving these matching upgrades.
 
 The product extraction, condition assessment, matching, cache behavior, and
 verdict ideas are adapted from Diego Magalhaes's MIT-licensed

@@ -302,6 +302,51 @@ test('Amazon liquidation matching rejects wrong package, color, material, family
   }
 });
 
+test('live catalog edge cases preserve package count, volume aliases, and color identity', () => {
+  const baskets = extractProductIdentity('XUANGUO Woven Rope Baskets, 3 Pack, Dark Green');
+  const basketMatch = chooseAmazonMatch(baskets, [
+    { asin: 'B0DRJD5V7J', title: 'XUANGUO Small Woven Storage Baskets for Shelves, 12 x 8 x 5, Dark Green', price: 22.87, used: false, sponsored: false, url: '' },
+    { asin: 'B0BW5RL8ZC', title: 'XUANGUO Woven Cotton Rope Storage Baskets 15x10x9.3 3 Pack Dark Green', price: 35.87, used: false, sponsored: false, url: '' },
+  ]);
+  assert.equal(basketMatch?.candidate.asin, 'B0BW5RL8ZC');
+
+  const tovolo = extractProductIdentity('Tovolo Insulated 2 Qt Food Traveler Thermos');
+  assert.equal(
+    evaluateRetailCandidate('Tovolo Insulated Food Container 2 Quart Food Traveler Thermos for Hot and Cold Food', tovolo).accepted,
+    true
+  );
+
+  const glasses = extractProductIdentity('ZMOWIPDL 6x12oz Clear Blue Hobnail Glass Cups Set');
+  assert.deepEqual(glasses.discriminators.packageCounts, ['6']);
+  assert.deepEqual(glasses.discriminators.volumes, ['12oz']);
+  assert.deepEqual(glasses.discriminators.colors, ['blue']);
+  assert.equal(
+    evaluateRetailCandidate('ZMOWIPDL Drinking Glasses Set of 6, 12oz Lake Blue Hobnail Glass Cups', glasses).accepted,
+    true
+  );
+});
+
+test('missing bundle quantity cannot price a smaller or incomplete variant', () => {
+  const pyrex = extractProductIdentity('NEW Pyrex Portables 9 Piece Bakeware Carrier Set');
+  const baskets = extractProductIdentity('XUANGUO Woven Rope Baskets, 3 Pack, Dark Green');
+  assert.equal(scoreRetailCandidate('Pyrex 3-Qt Portables Black Red Insulated Casserole Carry Tote', pyrex), 0);
+  assert.equal(scoreRetailCandidate('XUANGUO Small Woven Storage Basket, Dark Green', baskets), 0);
+});
+
+test('Amazon result URL slug can restore a brand omitted from the visible title', () => {
+  const html = `
+    <div data-asin="B0GC3RRTB1">
+      <a href="/Leebein-Electric-Cordless-Cleaning-Barbecue/dp/B0GC3RRTB1">
+        <img class="s-image" alt="Electric Grill Brush, High Torque Rechargeable BBQ Grill Cleaner, 3-in-1" />
+      </a>
+      <span class="a-price"><span class="a-offscreen">$46.79</span></span>
+    </div>`;
+  const [candidate] = parseAmazonSearchHtml(html);
+  assert.match(candidate?.matchText || '', /Leebein/i);
+  const identity = extractProductIdentity('Leebein Electric Grill Brush 3-in-1');
+  assert.equal(chooseAmazonMatch(identity, candidate ? [candidate] : [])?.candidate.asin, 'B0GC3RRTB1');
+});
+
 test('catalog corpus rejects wrong sports, container, bowl-size, and speed variants', () => {
   const cases = [
     ['NERF Mega Ball 20" Outdoor Kickball & Toy', 'Hasbro NERF Turbo Jr. Kids Foam Football - Classic Foam Football for Kids'],

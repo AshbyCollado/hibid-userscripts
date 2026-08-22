@@ -361,3 +361,19 @@ ignored by Git.
   final corpus rejects generic football/soccer/bash-ball candidates for the
   20-inch NERF kickball and rejects an 8-in-1 hub for the 9-in-1 ORICO lot while
   selecting a 9-in-1 candidate instead.
+
+## v0.3.24 cross-auction identity gate
+
+- A three-auction Chrome audit found that cached candidate sets could survive a
+  matcher upgrade. Provider snapshots now use cache epoch `provider-v4`; older
+  snapshots are not migrated into the active epoch.
+- Normalize `qt` / `quart`, ounce, liter, and cup spellings before comparing
+  product volume. Parse compact bundle notation such as `6x12oz` into both a
+  package count and a per-item volume.
+- Missing package-count or volume evidence is a hard rejection. A cheaper
+  single basket cannot price a three-pack, and a carrier alone cannot price a
+  nine-piece bakeware set.
+- When Amazon truncates the visible result title, the product-link slug may add
+  matching evidence while the human-facing title remains unchanged.
+- Treat `clear` as transparency rather than a competing color when a chromatic
+  color is also present, such as `clear blue glass`.

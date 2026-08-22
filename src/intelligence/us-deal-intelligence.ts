@@ -117,6 +117,8 @@ export interface UsAllInResult {
 export interface AmazonCandidate {
   asin: string;
   title: string;
+  /** Search-result URL slug, used only when Amazon truncates identity from the visible title. */
+  matchText?: string;
   price: number | null;
   used: boolean;
   sponsored: boolean;
@@ -387,15 +389,30 @@ export function extractProductDiscriminators(value: string | null | undefined): 
   const packageCounts = [
     ...collect(/\b(\d{1,4})[\s-]*(?:pack|pk|count|ct|pcs?|pieces?)\b/gi, (match) => String(Number(match[1]))),
     ...collect(/\b(?:pack|set)\s+of\s+(\d{1,4})\b/gi, (match) => String(Number(match[1]))),
+    ...collect(/\b(\d{1,4})\s*[x×]\s*\d+(?:\.\d+)?\s*(?:fl\s*oz|oz|ounces?|qt|quarts?|ml|liters?|litres?|l|cups?)\b/gi, (match) => String(Number(match[1]))),
   ];
-  const colors = COLOR_WORDS.filter((color) => new RegExp(`\\b${color}\\b`, 'i').test(source)).map((color) => color === 'gray' ? 'grey' : color);
+  let colors = COLOR_WORDS.filter((color) => new RegExp(`\\b${color}\\b`, 'i').test(source)).map((color) => color === 'gray' ? 'grey' : color);
+  // In phrases such as "clear blue glass", clear describes transparency rather
+  // than a competing color variant. The chromatic color carries the identity.
+  if (colors.includes('clear') && colors.length > 1) colors = colors.filter((color) => color !== 'clear');
   const materials = MATERIAL_WORDS.filter(([, pattern]) => pattern.test(source)).map(([material]) => material);
   const productFamilies = PRODUCT_FAMILY_PATTERNS.filter(([, pattern]) => pattern.test(source)).map(([family]) => family);
   if (/\bballs?\b/i.test(source) && !productFamilies.some((family) => ['kickball', 'football', 'soccer-ball', 'bounce-ball'].includes(family))) {
     productFamilies.push('other-ball');
   }
   const variantLabels = collect(/\b(?:unit|model|style|size)\s*[-:#]?\s*([a-z0-9][a-z0-9-]{0,15})\b/gi, (match) => String(match[1]).toLowerCase());
-  const volumes = collect(/\b(\d+(?:\.\d+)?)[\s-]*(fl\s*oz|oz|ounces?|qt|quarts?|ml|liters?|litres?|l)\b/gi, (match) => `${match[1]}${String(match[2]).replace(/\s+/g, '').toLowerCase()}`);
+  const canonicalVolumeUnit = (value: string): string => {
+    const unit = value.replace(/\s+/g, '').toLowerCase();
+    if (/^(?:quart|quarts|qt)$/.test(unit)) return 'qt';
+    if (/^(?:ounce|ounces|oz|floz)$/.test(unit)) return 'oz';
+    if (/^(?:liter|liters|litre|litres|l)$/.test(unit)) return 'l';
+    if (/^(?:cup|cups)$/.test(unit)) return 'cup';
+    return unit;
+  };
+  const volumes = [
+    ...collect(/\b(\d+(?:\.\d+)?)[\s-]*(fl\s*oz|oz|ounces?|qt|quarts?|ml|liters?|litres?|l|cups?)\b/gi, (match) => `${match[1]}${canonicalVolumeUnit(String(match[2]))}`),
+    ...collect(/\b\d{1,4}\s*[x×]\s*(\d+(?:\.\d+)?)\s*(fl\s*oz|oz|ounces?|qt|quarts?|ml|liters?|litres?|l|cups?)\b/gi, (match) => `${match[1]}${canonicalVolumeUnit(String(match[2]))}`),
+  ];
   const modeCounts = collect(/\b(\d{1,2})[\s-]*(?:speeds?|modes?|settings?)\b/gi, (match) => String(Number(match[1])));
   const featureCounts = collect(/\b(\d{1,2})[\s-]*in[\s-]*1\b/gi, (match) => String(Number(match[1])));
   const unique = (items: string[]) => [...new Set(items)];
@@ -465,6 +482,10 @@ function matchesProductDiscriminators(candidateTitle: string, product: ProductId
     if (wrong.length) conflicts.push(`productFamilies:${expectedFamily}!=${wrong.join(',')}`);
   }
   return { matches: conflicts.length === 0 && missing.length === 0, matchedCount, conflicts, missing };
+}
+
+function criticalMissingDiscriminators(missing: string[]): string[] {
+  return missing.filter((value) => /^(?:packageCounts|volumes):/.test(value));
 }
 
 export function buildProductResearchQuery(title: string | null | undefined): string {
@@ -808,6 +829,20 @@ function parseAmazonPrice(block: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function amazonResultSlug(block: string, asin: string): string {
+  const match = block.match(new RegExp(`href\\s*=\\s*["']([^"']*?/(?:dp|gp/product)/${asin}(?:[/?#][^"']*)?)["']`, 'i'));
+  if (!match?.[1]) return '';
+  try {
+    const url = new URL(decodeHtml(match[1]), 'https://www.amazon.com');
+    const parts = url.pathname.split('/').filter(Boolean);
+    const marker = parts.findIndex((part) => /^(?:dp|product)$/i.test(part));
+    const slug = marker > 0 ? parts[marker - 1] : '';
+    return decodeURIComponent(slug || '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  } catch {
+    return '';
+  }
+}
+
 export function parseAmazonCandidates(html: string | null | undefined): AmazonCandidate[] {
   const source = String(html ?? '');
   const starts = [...source.matchAll(/<div\b[^>]*\bdata-asin\s*=\s*["']([A-Z0-9]{10})["'][^>]*>/gi)];
@@ -820,10 +855,12 @@ export function parseAmazonCandidates(html: string | null | undefined): AmazonCa
     if (!asin) return;
     const title = htmlAttribute(block, 'alt') || htmlText(block, /<(?:h2|span)[^>]*(?:data-cy=["']title-recipe["']|s-title-instructions-style|a-size-base-plus)[^>]*>([\s\S]*?)<\/(?:h2|span)>/i);
     if (!title) return;
+    const slug = amazonResultSlug(block, asin);
     const sponsored = /data-component-type=["']sp-sponsored-result|\bAdHolder\b|\bSponsored(?:\s+Ad)?\b|sponsored-label-text/i.test(block);
     const candidate: AmazonCandidate = {
       asin,
       title,
+      matchText: slug ? `${title} ${slug}` : title,
       price: parseAmazonPrice(block),
       used: USED_RE.test(title),
       sponsored,
@@ -949,6 +986,7 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
   const exactModel = product.model ? modelMatches(candidateTitle, product.model) : false;
   const discriminators = matchesProductDiscriminators(candidateTitle, product);
   if (discriminators.conflicts.length) rejectionReasons.push(...discriminators.conflicts.map((value) => `attribute-conflict:${value}`));
+  rejectionReasons.push(...criticalMissingDiscriminators(discriminators.missing).map((value) => `attribute-missing:${value}`));
   const brand = brandEvidence(candidateTitle, product);
   const candidateKind = detectProductKind(candidateTitle);
   const sourceFamily = canonicalBrandFamily(`${product.brand} ${product.name}`);
@@ -999,7 +1037,7 @@ export function scoreRetailCandidate(title: string | null | undefined, product: 
   // prevent a different model, capacity, platform, or product kind from being
   // promoted merely because it shares broad search words.
   const guarded = evaluateRetailCandidate(candidateTitle, product);
-  if (guarded.rejectionReasons.some((reason) => /^(?:accessory-or-component|attribute-conflict|kind-mismatch|model-mismatch|brand-mismatch)/.test(reason))) return 0;
+  if (guarded.rejectionReasons.some((reason) => /^(?:accessory-or-component|attribute-conflict|attribute-missing|kind-mismatch|model-mismatch|brand-mismatch)/.test(reason))) return 0;
   let score = 0;
   if (product.model) {
     if (!modelMatches(candidateTitle, product.model)) return 0;
@@ -1021,7 +1059,7 @@ function retailPriceFloor(product: ProductIdentity): number {
 export function matchAmazonCandidates(candidates: AmazonCandidate[], product: ProductIdentity): AmazonCandidateMatch | null {
   const scored = candidates
     .filter((candidate) => !candidate.sponsored && !candidate.used && candidate.price != null && candidate.price >= retailPriceFloor(product))
-    .map((candidate) => ({ candidate, score: scoreRetailCandidate(candidate.title, product) }))
+    .map((candidate) => ({ candidate, score: scoreRetailCandidate(candidate.matchText || candidate.title, product) }))
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score);
   if (!scored.length) return null;
