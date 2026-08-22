@@ -863,7 +863,12 @@ export function parseAmazonCandidates(html: string | null | undefined): AmazonCa
     const block = source.slice(start, end);
     const asin = match[1]?.toUpperCase();
     if (!asin) return;
-    const title = htmlAttribute(block, 'alt') || htmlText(block, /<(?:h2|span)[^>]*(?:data-cy=["']title-recipe["']|s-title-instructions-style|a-size-base-plus)[^>]*>([\s\S]*?)<\/(?:h2|span)>/i);
+    // Amazon image alt text is frequently truncated before decisive suffixes
+    // such as "(Renewed)". Prefer the complete result heading, then fall back
+    // to the older title markers and finally the image description.
+    const title = htmlText(block, /<h2\b[^>]*>([\s\S]*?)<\/h2>/i)
+      || htmlText(block, /<span[^>]*(?:data-cy=["']title-recipe["']|s-title-instructions-style|a-size-base-plus)[^>]*>([\s\S]*?)<\/span>/i)
+      || htmlAttribute(block, 'alt');
     if (!title) return;
     const slug = amazonResultSlug(block, asin);
     const sponsored = /data-component-type=["']sp-sponsored-result|\bAdHolder\b|\bSponsored(?:\s+Ad)?\b|sponsored-label-text/i.test(block);

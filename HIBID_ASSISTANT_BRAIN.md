@@ -445,3 +445,8 @@ ignored by Git.
 
 - Sanitization re-derives used/open-box/refurbished/renewed state from every Amazon candidate title instead of trusting an older serialized boolean.
 - The provider cache generation advanced to `provider-v8`, preventing stale parser evidence from supplying a used price as new retail after a matcher release.
+
+## v0.3.37 complete Amazon result titles
+
+- Amazon result headings take precedence over image `alt` text because the latter can truncate before decisive condition text such as `(Renewed)`.
+- Provider cache generation `provider-v9` prevents old truncated titles from being reused as new-retail evidence.
