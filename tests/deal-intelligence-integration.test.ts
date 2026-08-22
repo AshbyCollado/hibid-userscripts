@@ -4,11 +4,12 @@ import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
 import { visibleLotIdSignature } from '../src/content/deal-intelligence.js';
+import { shouldReloadExtension } from '../src/background/dev-auto-reload.js';
 
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.3.28');
+  assert.equal(chrome.version, '0.3.29');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
@@ -25,6 +26,12 @@ test('Chrome and Waterfox use direct background Amazon transport without opening
   assert.match(background, /cache: 'default'/);
   assert.doesNotMatch(background, /credentials: 'omit'/);
   assert.doesNotMatch(background, /if \(supportsAmazonHelperWindow\(\)\)/);
+});
+
+test('unpacked builds self-reload only when the installed semantic version changes', () => {
+  assert.equal(shouldReloadExtension('0.3.29', '0.3.29'), false);
+  assert.equal(shouldReloadExtension('0.3.29', '0.3.30'), true);
+  assert.equal(shouldReloadExtension('0.3.29', 'not-a-version'), false);
 });
 
 test('HiBid redraws with the same stable lot IDs do not look like a new catalog', () => {

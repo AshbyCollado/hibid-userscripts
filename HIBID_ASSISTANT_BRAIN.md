@@ -406,3 +406,9 @@ ignored by Git.
 - HiBid periodically replaces visible tile elements without changing the lots. The old mutation handler restarted the entire Amazon queue whenever those replacement nodes appeared.
 - Flippah now fingerprints the sorted stable lot IDs and restarts only when that identity set changes, such as pagination or a genuine live-catalog update.
 - Cosmetic/countdown redraws no longer erase in-flight Amazon results or trap a catalog at its first few batches.
+
+## v0.3.29 unpacked-extension self reload
+
+- The running background compares its loaded manifest version with the unpacked manifest on disk every two seconds while awake and every 30 seconds through an alarm.
+- A changed semantic version calls `chrome.runtime.reload()` automatically. Developers still refresh the page under test, but no longer need to click Reload on `chrome://extensions` after every local install.
+- Packed releases remain unaffected because their on-disk manifest cannot change underneath the running extension.

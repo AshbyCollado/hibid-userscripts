@@ -8,6 +8,7 @@ import { detectProductKind, evaluateRetailCandidate, extractProductDiscriminator
 import { parseAmazonDocumentCandidates } from '../intelligence/amazon-document-parser.js';
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
 import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailCandidateList, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
+import { DEV_RELOAD_ALARM, installUnpackedAutoReload } from './dev-auto-reload.js';
 
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
@@ -23,6 +24,7 @@ const amazonBrowserPending = new Map<string, {
   timer: ReturnType<typeof setTimeout>;
   query: string;
 }>();
+const unpackedAutoReload = installUnpackedAutoReload();
 
 type RetailLookupStatus = 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'parse_error' | 'low_confidence';
 interface RetailLookupResult {
@@ -649,6 +651,10 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === DEV_RELOAD_ALARM) {
+    void unpackedAutoReload.check();
+    return;
+  }
   if (alarm.name === AMAZON_HELPER_CLOSE_ALARM) {
     void closeAmazonHelper();
     return;
