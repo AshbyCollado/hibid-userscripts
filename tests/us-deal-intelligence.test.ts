@@ -221,6 +221,17 @@ test('candidate evaluation distinguishes a complete product from accessories wit
   assert.ok(drive.rejectionReasons.includes('accessory-or-component'));
 });
 
+test('descriptive hyphenated prose cannot impersonate a model and match a different product', () => {
+  const identity = extractProductIdentity('Snorkeling Gear for Adults: Anti-Fog Mask 2-Pack');
+  const spray = evaluateRetailCandidate(
+    'STREAM 2 SEA Reef Safe Anti-Fog Spray for Swim Goggles, Snorkel, Scuba & Ski Masks - Defogger for Diving, Snorkeling - 2Fl Oz',
+    identity,
+  );
+  assert.equal(identity.model, null);
+  assert.equal(spray.accepted, false);
+  assert.ok(spray.rejectionReasons.includes('insufficient-source-identity'));
+});
+
 test('underidentified source titles fail closed instead of inheriting a plausible retail price', () => {
   const vagueCases = [
     ['Custom computer', 'CyberPowerPC Gamer Xtreme Desktop Computer Intel Core i7 RTX 4060'],

@@ -1,11 +1,17 @@
 import type { ProductIdentity } from './us-deal-intelligence.js';
 
 export const AMAZON_CHALLENGE_RE = /(?:enter the characters you see below|sorry, we just need to make sure|robot check|captcha)/i;
-export const RETAIL_BATCH_SIZE = 6;
-export const RETAIL_BATCH_DELAY_MS = 350;
 
 export function isAmazonChallengeHtml(html: string): boolean {
   return AMAZON_CHALLENGE_RE.test(html);
+}
+
+export function retailCandidateList<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
+export function reusableRetailSnapshot(status: unknown): boolean {
+  return status === 'ok' || status === 'no_results';
 }
 
 export function retailIdentityCacheKey(identity: ProductIdentity, epoch: number): string {
@@ -17,11 +23,6 @@ export function retailIdentityCacheKey(identity: ProductIdentity, epoch: number)
 
 export function retailProviderCacheKey(query: string): string {
   return `amazon-us:provider:${query.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')}`;
-}
-
-export function partitionRetailBatches<T>(items: readonly T[], size = 6): T[][] {
-  if (!Number.isInteger(size) || size < 1) throw new RangeError('Retail batch size must be a positive integer');
-  return Array.from({ length: Math.ceil(items.length / size) }, (_unused, index) => items.slice(index * size, (index + 1) * size));
 }
 
 export function retailCacheTtl(status: string): number {

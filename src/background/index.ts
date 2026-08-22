@@ -5,16 +5,23 @@ import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.
 import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
 import { clearRetailCache, findRetailCacheByQuery, getRetailCache, putRetailCache } from '../core/retail-db.js';
 import { detectProductKind, evaluateRetailCandidate, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
-import { isAmazonChallengeHtml, joinInflight, RETAIL_BATCH_DELAY_MS, RETAIL_BATCH_SIZE, retailCacheTtl, retailProviderCacheKey } from '../intelligence/retail-policy.js';
+import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
+import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailCandidateList, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
 
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
 const WATCH_REFRESH_ALARM = 'flippah:watch-refresh';
 const AMAZON_BODY_LIMIT = 2_000_000;
+const AMAZON_HELPER_KEY = 'flippahAmazonHelperV1';
+const AMAZON_REQUEST_KEY = 'flippahAmazonRequestV1';
+const AMAZON_HELPER_CLOSE_ALARM = 'flippah:amazon-helper-close';
 const amazonInflight = new Map<string, Promise<RetailProviderSnapshot>>();
-let retailBlockedUntil = 0;
-let retailDrainTimer: ReturnType<typeof setTimeout> | null = null;
-const retailQueue: Array<{ identity: ProductIdentity; resolve: (value: RetailLookupResult) => void; reject: (error: unknown) => void }> = [];
+let amazonProviderTail: Promise<void> = Promise.resolve();
+const amazonBrowserPending = new Map<string, {
+  resolve: (snapshot: RetailProviderSnapshot) => void;
+  timer: ReturnType<typeof setTimeout>;
+  query: string;
+}>();
 
 type RetailLookupStatus = 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'parse_error' | 'low_confidence';
 interface RetailLookupResult {
@@ -25,15 +32,149 @@ interface RetailLookupResult {
   fetchedAt: number;
   cached: boolean;
   message: string;
+  retryAfterMs?: number;
   candidateAudit?: Array<Pick<RetailCandidateEvaluation, 'accepted' | 'score' | 'rejectionReasons' | 'matchedEvidence'> & { asin: string; title: string }>;
 }
 
 interface RetailProviderSnapshot {
-  status: 'ok' | 'no_results' | 'blocked' | 'rate_limited' | 'parse_error';
+  status: 'ok' | 'no_results' | 'blocked' | 'rate_limited' | 'parse_error' | 'network_error';
   query: string;
   candidates: ReturnType<typeof parseAmazonCandidates>;
   fetchedAt: number;
   message: string;
+  retryAfterMs?: number;
+}
+
+function sanitizeAmazonCandidates(value: unknown): ReturnType<typeof parseAmazonCandidates> {
+  return retailCandidateList<any>(value).slice(0, 30).flatMap((candidate) => {
+    const asin = String(candidate?.asin || '').toUpperCase();
+    const title = String(candidate?.title || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    const price = candidate?.price == null ? null : Number(candidate.price);
+    if (!/^[A-Z0-9]{10}$/.test(asin) || !title || (price !== null && (!Number.isFinite(price) || price <= 0))) return [];
+    return [{
+      asin,
+      title,
+      price,
+      used: Boolean(candidate?.used),
+      sponsored: Boolean(candidate?.sponsored),
+      url: `https://www.amazon.com/dp/${asin}`
+    }];
+  });
+}
+
+interface AmazonHelperState { tabId: number; windowId: number; }
+interface AmazonRequestState { token: string; query: string; tabId: number; createdAt: number; }
+
+function supportsAmazonHelperWindow(): boolean {
+  return typeof chrome.windows !== 'undefined' && typeof chrome.tabs !== 'undefined';
+}
+
+async function readAmazonHelper(): Promise<AmazonHelperState | null> {
+  const stored = await chrome.storage.local.get(AMAZON_HELPER_KEY);
+  const helper = stored[AMAZON_HELPER_KEY] as Partial<AmazonHelperState> | undefined;
+  if (!Number.isInteger(helper?.tabId) || !Number.isInteger(helper?.windowId)) return null;
+  try {
+    const tab = await chrome.tabs.get(helper!.tabId!);
+    if (tab.windowId !== helper!.windowId) return null;
+    return { tabId: helper!.tabId!, windowId: helper!.windowId! };
+  } catch {
+    await chrome.storage.local.remove(AMAZON_HELPER_KEY);
+    return null;
+  }
+}
+
+async function ensureAmazonHelper(): Promise<AmazonHelperState> {
+  const existing = await readAmazonHelper();
+  if (existing) return existing;
+  const created = await chrome.windows.create({
+    url: 'about:blank',
+    type: 'popup',
+    focused: false,
+    state: 'minimized',
+  });
+  if (!created) throw new Error('Amazon research helper could not be created');
+  const tab = created.tabs?.[0];
+  if (!created.id || !tab?.id) throw new Error('Amazon research helper could not be created');
+  const helper = { windowId: created.id, tabId: tab.id };
+  await chrome.storage.local.set({ [AMAZON_HELPER_KEY]: helper });
+  return helper;
+}
+
+async function closeAmazonHelper(): Promise<void> {
+  const helper = await readAmazonHelper();
+  await chrome.storage.local.remove([AMAZON_HELPER_KEY, AMAZON_REQUEST_KEY]);
+  if (!helper) return;
+  try { await chrome.windows.remove(helper.windowId); } catch { /* already closed */ }
+}
+
+async function scheduleAmazonHelperClose(): Promise<void> {
+  await chrome.alarms.create(AMAZON_HELPER_CLOSE_ALARM, { when: Date.now() + 60_000 });
+}
+
+async function loadAmazonBrowser(query: string): Promise<RetailProviderSnapshot> {
+  const helper = await ensureAmazonHelper();
+  const token = crypto.randomUUID();
+  const url = new URL('https://www.amazon.com/s');
+  url.searchParams.set('k', query);
+  url.searchParams.set('flippahToken', token);
+  await chrome.storage.local.set({
+    [AMAZON_REQUEST_KEY]: { token, query, tabId: helper.tabId, createdAt: Date.now() } satisfies AmazonRequestState,
+  });
+  return new Promise<RetailProviderSnapshot>((resolve) => {
+    const timer = setTimeout(() => {
+      amazonBrowserPending.delete(token);
+      void chrome.storage.local.remove(AMAZON_REQUEST_KEY);
+      resolve({
+        status: 'network_error', query, candidates: [], fetchedAt: Date.now(), retryAfterMs: 5_000,
+        message: 'Amazon.com background research timed out'
+      });
+    }, 18_000);
+    amazonBrowserPending.set(token, { resolve, timer, query });
+    void chrome.windows.update(helper.windowId, { state: 'minimized' })
+      .then(() => chrome.tabs.update(helper.tabId, { url: url.href, active: false }))
+      .then(() => scheduleAmazonHelperClose())
+      .catch((error) => {
+        const pending = amazonBrowserPending.get(token);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        amazonBrowserPending.delete(token);
+        void chrome.storage.local.remove(AMAZON_REQUEST_KEY);
+        resolve({
+          status: 'network_error', query, candidates: [], fetchedAt: Date.now(), retryAfterMs: 5_000,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  });
+}
+
+async function completeAmazonBrowser(message: any, sender: chrome.runtime.MessageSender): Promise<void> {
+  const senderUrl = new URL(sender.url || 'https://invalid.invalid');
+  if (!/(^|\.)amazon\.com$/i.test(senderUrl.hostname) || !sender.tab?.id || sender.frameId !== 0) throw new Error('Rejected Amazon helper result sender');
+  const token = String(message.token || '');
+  const stored = await chrome.storage.local.get(AMAZON_REQUEST_KEY);
+  const request = stored[AMAZON_REQUEST_KEY] as Partial<AmazonRequestState> | undefined;
+  if (!request || request.token !== token || request.tabId !== sender.tab.id || Date.now() - Number(request.createdAt || 0) > 60_000) {
+    throw new Error('Rejected stale Amazon helper result');
+  }
+  const query = retailQuery(request.query);
+  const pending = amazonBrowserPending.get(token);
+  const status = ['ok', 'no_results', 'blocked', 'parse_error'].includes(String(message.status))
+    ? message.status as RetailProviderSnapshot['status']
+    : 'parse_error';
+  const snapshot: RetailProviderSnapshot = {
+    status,
+    query,
+    candidates: status === 'ok' ? sanitizeAmazonCandidates(message.candidates) : [],
+    fetchedAt: Date.now(),
+    message: String(message.message || 'Amazon.com background research returned no details').slice(0, 300)
+  };
+  await putRetailCache(retailProviderCacheKey(query), snapshot, retailCacheTtl(status === 'ok' ? 'matched' : status));
+  await chrome.storage.local.remove(AMAZON_REQUEST_KEY);
+  await scheduleAmazonHelperClose();
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  amazonBrowserPending.delete(token);
+  pending.resolve(snapshot);
 }
 
 function localGet(): Promise<Record<string, any>> {
@@ -80,6 +221,38 @@ async function handleLegacyMessage(message: any): Promise<unknown> {
     return { ok: true };
   }
   return undefined;
+}
+
+async function readProviderThrottle(provider: RetailProviderName): Promise<ProviderThrottleState> {
+  const key = providerStateStorageKey(provider);
+  const state = await localGet();
+  return normalizeProviderThrottle(state[key]);
+}
+
+async function writeProviderThrottle(provider: RetailProviderName, next: ProviderThrottleState): Promise<ProviderThrottleState> {
+  const key = providerStateStorageKey(provider);
+  await localSet({ [key]: next });
+  return next;
+}
+
+async function markProviderFailure(provider: RetailProviderName, status: string, minimumDelayMs: number): Promise<number> {
+  const current = await readProviderThrottle(provider);
+  const now = Date.now();
+  const next = nextProviderFailureState(current, status, minimumDelayMs, now);
+  await writeProviderThrottle(provider, next);
+  return next.nextAllowedAt - now;
+}
+
+async function markProviderSuccess(provider: RetailProviderName, minimumDelayMs = 0): Promise<void> {
+  await writeProviderThrottle(provider, successfulProviderState(Date.now(), minimumDelayMs));
+}
+
+async function withAmazonProviderLock<T>(work: () => Promise<T>): Promise<T> {
+  const previous = amazonProviderTail;
+  let release!: () => void;
+  amazonProviderTail = new Promise<void>((resolve) => { release = resolve; });
+  await previous.catch(() => undefined);
+  try { return await work(); } finally { release(); }
 }
 
 function ensureHiBidSender(sender: chrome.runtime.MessageSender): void {
@@ -140,7 +313,7 @@ function uniqueCandidates(candidates: ReturnType<typeof parseAmazonCandidates>):
 function evaluateProviderSnapshot(identity: ProductIdentity, snapshot: RetailProviderSnapshot, cached: boolean): RetailLookupResult {
   if (snapshot.status !== 'ok') {
     const status: RetailLookupStatus = snapshot.status === 'no_results' ? 'no_match' : snapshot.status;
-    return { status, query: snapshot.query, match: null, candidates: snapshot.candidates.slice(0, 8), fetchedAt: snapshot.fetchedAt, cached, message: snapshot.message };
+    return { status, query: snapshot.query, match: null, candidates: snapshot.candidates.slice(0, 8), fetchedAt: snapshot.fetchedAt, cached, message: snapshot.message, retryAfterMs: snapshot.retryAfterMs };
   }
   const candidateAudit = snapshot.candidates.slice(0, 8).map((candidate) => ({
     asin: candidate.asin,
@@ -165,41 +338,57 @@ function evaluateProviderSnapshot(identity: ProductIdentity, snapshot: RetailPro
 async function providerSnapshot(query: string): Promise<{ snapshot: RetailProviderSnapshot; cached: boolean }> {
   const providerKey = retailProviderCacheKey(query);
   const cached = await getRetailCache<RetailProviderSnapshot>(providerKey);
-  if (cached && (cached.status === 'ok' || cached.status === 'no_results')) return { snapshot: cached, cached: true };
+  if (cached && reusableRetailSnapshot(cached.status)) return { snapshot: cached, cached: true };
 
   const legacy = await findRetailCacheByQuery<RetailLookupResult>(query);
-  if (legacy && (legacy.match?.candidate || legacy.candidates.length)) {
-    const candidates = uniqueCandidates([...(legacy.match?.candidate ? [legacy.match.candidate] : []), ...legacy.candidates]);
+  const legacyCandidates = retailCandidateList<ReturnType<typeof parseAmazonCandidates>[number]>(legacy?.candidates);
+  if (legacy && (legacy.match?.candidate || legacyCandidates.length)) {
+    const candidates = uniqueCandidates([...(legacy.match?.candidate ? [legacy.match.candidate] : []), ...legacyCandidates]);
     const migrated: RetailProviderSnapshot = { status: 'ok', query, candidates, fetchedAt: legacy.fetchedAt, message: 'Revalidated cached Amazon.com evidence' };
     await putRetailCache(providerKey, migrated, retailCacheTtl('matched'));
     return { snapshot: migrated, cached: true };
   }
-  if (cached) return { snapshot: cached, cached: true };
-
-  if (Date.now() < retailBlockedUntil) {
-    return { snapshot: { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), message: 'Amazon lookup is cooling down after a challenge' }, cached: false };
-  }
-  const snapshot = await joinInflight(amazonInflight, providerKey, async (): Promise<RetailProviderSnapshot> => {
+  const snapshot = await joinInflight(amazonInflight, providerKey, () => withAmazonProviderLock(async (): Promise<RetailProviderSnapshot> => {
+    const throttle = await readProviderThrottle('amazon');
+    if (Date.now() < throttle.nextAllowedAt) {
+      const retryAfterMs = throttle.nextAllowedAt - Date.now();
+      return { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), retryAfterMs, message: `Amazon lookup is waiting ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s before retrying` };
+    }
     const url = new URL('https://www.amazon.com/s');
     url.searchParams.set('k', query);
+    if (supportsAmazonHelperWindow()) {
+      const result = await loadAmazonBrowser(query);
+      if (result.status === 'blocked') {
+        const retryAfterMs = await markProviderFailure('amazon', 'challenge', 30_000);
+        return { ...result, retryAfterMs };
+      }
+      if (result.status === 'network_error') {
+        const retryAfterMs = await markProviderFailure('amazon', 'network-error', 5_000);
+        return { ...result, retryAfterMs };
+      }
+      if (result.status === 'ok' && !result.candidates.length) result.status = 'parse_error';
+      await putRetailCache(providerKey, result, retailCacheTtl(result.status === 'ok' ? 'matched' : result.status));
+      await markProviderSuccess('amazon', 1_500);
+      return result;
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12_000);
     try {
       const response = await fetch(url.href, {
-        method: 'GET', credentials: 'omit', cache: 'no-store', redirect: 'follow', referrerPolicy: 'no-referrer',
+        method: 'GET', credentials: 'include', cache: 'no-store', redirect: 'follow',
         headers: { accept: 'text/html,application/xhtml+xml' }, signal: controller.signal
       });
       const finalUrl = new URL(response.url || url.href);
       if (!/(^|\.)amazon\.com$/i.test(finalUrl.hostname)) throw new Error('Amazon lookup redirected outside Amazon.com');
       if (response.status === 429 || response.status === 503) {
-        retailBlockedUntil = Date.now() + 5 * 60 * 1000;
-        return { status: 'rate_limited', query, candidates: [], fetchedAt: Date.now(), message: `Amazon.com returned HTTP ${response.status}` };
+        const retryAfterMs = await markProviderFailure('amazon', `http-${response.status}`, 20_000);
+        return { status: 'rate_limited', query, candidates: [], fetchedAt: Date.now(), retryAfterMs, message: `Amazon.com returned HTTP ${response.status}; retrying after a paced wait` };
       }
       if (!response.ok) throw new Error(`Amazon.com returned HTTP ${response.status}`);
       const html = await readResponseText(response);
       if (isAmazonChallengeHtml(html)) {
-        retailBlockedUntil = Date.now() + 5 * 60 * 1000;
-        const blocked: RetailProviderSnapshot = { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), message: 'Amazon.com returned a challenge page' };
+        const retryAfterMs = await markProviderFailure('amazon', 'challenge', 30_000);
+        const blocked: RetailProviderSnapshot = { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), retryAfterMs, message: 'Amazon.com returned a challenge page; retrying after a paced wait' };
         await putRetailCache(providerKey, blocked, retailCacheTtl(blocked.status));
         return blocked;
       }
@@ -211,13 +400,18 @@ async function providerSnapshot(query: string): Promise<{ snapshot: RetailProvid
         message: status === 'ok' ? `Parsed ${candidates.length} Amazon.com candidate(s)` : status === 'no_results' ? 'Amazon.com returned no product results' : 'Amazon.com results could not be parsed; no no-match decision was made',
       };
       await putRetailCache(providerKey, result, retailCacheTtl(status === 'ok' ? 'matched' : status));
+      await markProviderSuccess('amazon', 1_500);
       return result;
     } catch (error) {
-      throw error;
+      const retryAfterMs = await markProviderFailure('amazon', 'network-error', 5_000);
+      return {
+        status: 'network_error', query, candidates: [], fetchedAt: Date.now(), retryAfterMs,
+        message: error instanceof Error ? error.message : String(error),
+      };
     } finally {
       clearTimeout(timer);
     }
-  });
+  }));
   return { snapshot, cached: false };
 }
 
@@ -227,25 +421,9 @@ async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupR
     const provider = await providerSnapshot(query);
     return evaluateProviderSnapshot(identity, provider.snapshot, provider.cached);
   } catch (error) {
-    return { status: 'network_error', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, message: error instanceof Error ? error.message : String(error) };
+    const retryAfterMs = await markProviderFailure('amazon', 'network-error', 5_000);
+    return { status: 'network_error', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, retryAfterMs, message: error instanceof Error ? error.message : String(error) };
   }
-}
-
-function scheduleRetailDrain(): void {
-  if (retailDrainTimer !== null) return;
-  retailDrainTimer = setTimeout(() => {
-    retailDrainTimer = null;
-    const batch = retailQueue.splice(0, RETAIL_BATCH_SIZE);
-    for (const item of batch) lookupAmazonNow(item.identity).then(item.resolve, item.reject);
-    if (retailQueue.length) retailDrainTimer = setTimeout(() => { retailDrainTimer = null; scheduleRetailDrain(); }, RETAIL_BATCH_DELAY_MS);
-  }, retailQueue.length > RETAIL_BATCH_SIZE ? RETAIL_BATCH_DELAY_MS : 0);
-}
-
-function queueRetailLookup(identity: ProductIdentity): Promise<RetailLookupResult> {
-  return new Promise((resolve, reject) => {
-    retailQueue.push({ identity, resolve, reject });
-    scheduleRetailDrain();
-  });
 }
 
 function validateSearchBody(body: any): void {
@@ -340,11 +518,11 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
     }
     case 'flippah:retail.lookup':
       ensureHiBidSender(sender);
-      return queueRetailLookup(validateRetailIdentity((message.payload as any)?.identity));
+      return lookupAmazonNow(validateRetailIdentity((message.payload as any)?.identity));
     case 'flippah:retail.cache.clear':
       ensureHiBidSender(sender);
       await clearRetailCache();
-      retailBlockedUntil = 0;
+      await closeAmazonHelper();
       return { cleared: true };
     case 'flippah:job.put': {
       ensureHiBidSender(sender);
@@ -383,6 +561,12 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
 }
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+  if ((message as any)?.type === 'flippah:amazon.browser.result') {
+    completeAmazonBrowser(message, sender)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
   if (!isEnvelope(message)) {
     if ((message as any)?.kind) {
       handleLegacyMessage(message).then(sendResponse).catch(() => sendResponse({ ok: false, error: 'storage_error' }));
@@ -494,6 +678,10 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === AMAZON_HELPER_CLOSE_ALARM) {
+    void closeAmazonHelper();
+    return;
+  }
   if (alarm.name === WATCH_REFRESH_ALARM) {
     void refreshWatchlist();
     return;

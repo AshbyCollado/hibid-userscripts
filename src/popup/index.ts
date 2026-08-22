@@ -105,13 +105,15 @@ function scrapeStatusText(current: number, count: number | null | undefined): st
 
 function analysisStatusText(analysis: PageContext['analysis']): string {
   if (analysis.phase === 'scanning' || analysis.phase === 'retail') {
-    return analysis.total ? `Checking ${analysis.analyzed} of ${analysis.total}` : 'Checking visible lots';
+    return 'Checking prices';
   }
   if (analysis.phase === 'complete') {
-    const review = analysis.mixedLots ? ` · ${analysis.mixedLots} need review` : '';
-    return `${analysis.retailMatched} price${analysis.retailMatched === 1 ? '' : 's'} found${review}`;
+    if (analysis.mixedLots || analysis.quantityReview) return 'Prices ready; some lots need review';
+    return analysis.retailMatched ? 'Prices ready' : 'No verified prices found';
   }
-  return analysis.message === 'Amazon auto-lookup is off' ? 'Automatic checks are off' : 'Ready';
+  if (analysis.phase === 'error') return 'Price check needs attention';
+  if (analysis.phase === 'unsupported-currency') return 'USD comparison unavailable';
+  return analysis.message === 'Automatic price checks are off' ? 'Automatic checks are off' : 'Ready';
 }
 
 function currentHtml(): string {
@@ -126,7 +128,7 @@ function currentHtml(): string {
   const analysis = context.analysis;
   const analysisPercent = analysis.total > 0 ? Math.min(100, Math.round(analysis.analyzed / analysis.total * 100)) : 0;
   const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid'].includes(context.route.kind)
-    ? `<div class="analysis"><div class="analysis-head"><strong>Price check</strong><span>${escapeHtml(analysisStatusText(analysis))}</span></div>${analysis.phase === 'scanning' || analysis.phase === 'retail' ? `<div class="progress"><i style="width:${analysisPercent}%"></i></div>` : ''}<div class="actions compact"><button id="rerun-analysis" class="button" ${analysis.phase === 'scanning' || analysis.phase === 'retail' ? 'disabled' : ''}>Check prices again</button><button id="clear-retail-cache" class="button">Clear saved prices</button></div></div>`
+    ? `<div class="analysis"><div class="analysis-head"><strong>Price research</strong><span>${escapeHtml(analysisStatusText(analysis))}</span></div>${analysis.phase === 'scanning' || analysis.phase === 'retail' ? `<div class="progress"><i style="width:${analysisPercent}%"></i></div>` : ''}<div class="actions compact"><button id="rerun-analysis" class="button" ${analysis.phase === 'scanning' || analysis.phase === 'retail' ? 'disabled' : ''}>Check again</button><button id="clear-retail-cache" class="button">Clear saved prices</button></div></div>`
     : '';
   return `<section class="panel"><div class="card"><div class="eyebrow">Scraper</div><h1>${escapeHtml(routeLabel())}</h1>${groupSelect}<div class="status ${statusClass()}"><span class="dot"></span><span>${escapeHtml(scrapeStatusText(current, count))}</span></div>${busy() || job?.phase === 'completed' ? `<div class="progress"><i style="width:${percent}%"></i></div>` : ''}<div class="actions"><button id="copy-llm" class="button primary" ${!canStart && !complete ? 'disabled' : ''}>Copy for AI</button><button id="copy-json" class="button" ${!canStart && !complete ? 'disabled' : ''}>Copy JSON</button>${busy() ? '<button id="stop" class="button danger">Stop</button>' : ''}${job?.phase === 'failed' || job?.phase === 'stale' || job?.phase === 'stopped' ? '<button id="retry" class="button">Try again</button>' : ''}</div><div class="toast">${escapeHtml(toast)}</div>${analysisHtml}${debugHtml()}</div></section>`;
 }

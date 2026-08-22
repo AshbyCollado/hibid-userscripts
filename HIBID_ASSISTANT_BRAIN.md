@@ -296,3 +296,46 @@ ignored by Git.
   refetching every watched lot; legacy normalized candidates migrate forward.
   Challenge, rate-limit, parse, and transport failures are distinct from a real
   zero-result response and can never be shown as proof that no product exists.
+
+## v0.3.9 stable retail providers
+
+- Automatic catalog analysis is Amazon-only. eBay remains a manual Sold and
+  Completed search plus a user-saved resale estimate in the Flippah lot panel.
+- Catalog analysis must never call every visible lot through `Promise.all`.
+  Amazon uses one serial page queue plus a background cross-tab lock. Cached
+  evidence skips pacing; cold requests wait two seconds between lots and the
+  background persists a minimum request interval across service-worker restarts.
+- Amazon requests use the fixed `https://www.amazon.com/*` host permission.
+- Amazon 429, 503, challenge, parse, and network failures use bounded retries
+  with exponential backoff. Cooldown state lives in `chrome.storage.local`,
+  survives service-worker restarts, and is not erased by Clear Saved Prices.
+- Legacy Amazon cache records may omit `candidates`; treat them as an empty
+  candidate list and re-fetch. Never read `.length` from unvalidated cache data.
+- Only conclusive `ok` and `no_results` Amazon snapshots are reusable. Blocked,
+  rate-limited, parse-error, and network-error snapshots must trigger a real
+  bounded retry after cooldown rather than replaying a cached failure.
+- A tile displays an eBay value only after the user saves a resale estimate.
+  The eBay indicator remains gray and links to exact Sold and Completed results
+  until then.
+- Release acceptance includes the exact 700-lot catalog `769459`: verify visible
+  Amazon values populate where identity and evidence match, failures remain
+  retryable rather than becoming false no-match results, eBay stays manual, and
+  Chrome's installed extension reports the release version before testing.
+
+## v0.3.13 browser-backed Amazon transport
+
+- Chrome uses one reusable minimized popup window containing one top-level
+  Amazon search tab. The helper stays unfocused, navigates serially, and closes
+  after 60 idle seconds. Never create one tab per lot or switch the user's
+  selected HiBid tab.
+- The Amazon content script accepts results only when a short-lived token, the
+  stored request marker, the helper tab ID, the sender origin, and the top frame
+  all agree. Raw HTML, cookies, and account data never cross into HiBid.
+- Offscreen frames and response-header rewriting were removed: Amazon loaded in
+  the frame, but Chrome did not inject the parser into that child context.
+- Chrome acceptance on catalog `769459` proved the installed `v0.3.13`, one
+  helper tab, HiBid remaining selected, and visible exact-match values including
+  Citicr `$25.99`, PONY DANCE `$38.95`, and SONOFF `$36.90`.
+- The same run caught and fixed a false snorkeling-mask/anti-fog-spray match.
+  Descriptive title compounds such as `anti-fog` are not model identifiers;
+  uppercase manufacturer codes such as `NT-USB+` remain supported.

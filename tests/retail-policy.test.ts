@@ -3,21 +3,13 @@ import test from 'node:test';
 import {
   isAmazonChallengeHtml,
   joinInflight,
-  partitionRetailBatches,
-  RETAIL_BATCH_DELAY_MS,
-  RETAIL_BATCH_SIZE,
   retailCacheTtl,
+  retailCandidateList,
   retailIdentityCacheKey,
   retailProviderCacheKey,
+  reusableRetailSnapshot,
 } from '../src/intelligence/retail-policy.js';
 import { extractProductIdentity } from '../src/intelligence/us-deal-intelligence.js';
-
-test('retail policy batches cold work six at a time without dropping entries', () => {
-  const values = Array.from({ length: 14 }, (_unused, index) => index + 1);
-  assert.deepEqual(partitionRetailBatches(values), [[1,2,3,4,5,6], [7,8,9,10,11,12], [13,14]]);
-  assert.equal(RETAIL_BATCH_SIZE, 6);
-  assert.equal(RETAIL_BATCH_DELAY_MS, 350);
-});
 
 test('retail cache keys are provider, country, epoch, and identity aware', () => {
   const identity = extractProductIdentity('Onkyo TX-SR304 Multi-Channel AV Receiver');
@@ -35,6 +27,20 @@ test('Amazon challenges are not treated as empty search results', () => {
   assert.equal(retailCacheTtl('rate_limited'), 5 * 60 * 1000);
   assert.equal(retailCacheTtl('parse_error'), 2 * 60 * 1000);
   assert.ok(retailCacheTtl('blocked') < retailCacheTtl('matched'));
+});
+
+test('old retail cache entries without a candidate array fail closed', () => {
+  assert.deepEqual(retailCandidateList(undefined), []);
+  assert.deepEqual(retailCandidateList({ length: 4 }), []);
+  assert.deepEqual(retailCandidateList([{ asin: 'B000000001' }]), [{ asin: 'B000000001' }]);
+});
+
+test('only conclusive Amazon snapshots are reusable', () => {
+  assert.equal(reusableRetailSnapshot('ok'), true);
+  assert.equal(reusableRetailSnapshot('no_results'), true);
+  for (const status of ['blocked', 'rate_limited', 'parse_error', 'network_error']) {
+    assert.equal(reusableRetailSnapshot(status), false);
+  }
 });
 
 test('duplicate retail requests join one in-flight operation and release it afterward', async () => {

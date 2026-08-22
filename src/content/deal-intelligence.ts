@@ -4,6 +4,7 @@ import { routeFingerprint } from '../core/route.js';
 import type { DealAnalysisSummary, HiBidLotRecord, HiBidRoute, HiBidTransport } from '../core/types.js';
 import { hydrateHibidLots, mergeHibidVisibleWithHydrated } from '../hibid/api.js';
 import { extractHiBidVisibleLots, extractHibidLotDetail } from '../hibid/dom.js';
+import { runProviderQueue } from '../intelligence/provider-queue.js';
 import {
   assessCondition, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
   detectComparisonCurrency, detectMixedLot, extractProductIdentity, formatUsd,
@@ -34,6 +35,7 @@ interface RetailLookupResult {
   fetchedAt: number;
   cached: boolean;
   message: string;
+  retryAfterMs?: number;
   candidateAudit?: Array<Pick<RetailCandidateEvaluation, 'accepted' | 'score' | 'rejectionReasons' | 'matchedEvidence'> & { asin: string; title: string }>;
 }
 
@@ -54,7 +56,11 @@ interface AnalysisRecord {
 }
 
 function emptySummary(): DealAnalysisSummary {
-  return { phase: 'idle', routeFingerprint: '', total: 0, analyzed: 0, retailMatched: 0, retailUnmatched: 0, mixedLots: 0, quantityReview: 0, message: 'Ready', updatedAt: Date.now() };
+  return {
+    phase: 'idle', routeFingerprint: '', total: 0, analyzed: 0, retailMatched: 0, retailUnmatched: 0,
+    amazonAnalyzed: 0, amazonMatched: 0,
+    mixedLots: 0, quantityReview: 0, message: 'Ready', updatedAt: Date.now()
+  };
 }
 
 function localGet(keys: string | string[]): Promise<Record<string, any>> {
@@ -175,6 +181,10 @@ function amazonMarketValue(record: AnalysisRecord): number | null {
   return trustedAmazonMarketValue(record.amazon?.status || '', record.amazon?.match, record.state.confirmedQuantity ?? 1);
 }
 
+function ebayMarketValue(record: AnalysisRecord): number | null {
+  return record.state.resaleEstimate;
+}
+
 function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
   const tile = tileFor(record.lot.id);
   if (!tile) return;
@@ -198,10 +208,10 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
   }
   if (!strip.isConnected) return;
   const amazonPrice = amazonMarketValue(record);
-  const ebayPrice = record.state.resaleEstimate;
+  const ebayPrice = ebayMarketValue(record);
   const links = researchLinks(record.identity.query);
   const amazonLabel = record.currency === 'CAD' ? 'Amazon: CAD' : record.mixed.mixed ? 'Amazon: mixed review' : record.needsQuantity ? 'Amazon: qty review' : amazonPrice === null ? 'Amazon: --' : `Amazon ${formatUsd(amazonPrice)}`;
-  const ebayLabel = ebayPrice === null ? 'eBay: --' : `eBay ${formatUsd(ebayPrice)}`;
+  const ebayLabel = ebayPrice === null ? 'eBay: --' : `eBay ${formatUsd(ebayPrice)}${record.state.resaleEstimate !== null ? ' saved' : ''}`;
   const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-')) && record.allIn
     ? computeAccountVerdict({ status: record.lot.status || record.lot.rawText, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice })
     : null;
@@ -216,7 +226,10 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
     pill.append(dot, label); strip!.append(pill);
   };
   add(amazonLabel, record.amazonIndicator.cls, record.amazon?.message || indicatorTitle('Amazon', record.amazonIndicator, amazonPrice), links.amazon);
-  add(ebayLabel, record.ebayIndicator.cls, `${indicatorTitle('eBay saved resale', record.ebayIndicator, ebayPrice)}. Open exact sold and completed results.`, links.ebay);
+  const ebayTitle = record.state.resaleEstimate !== null
+    ? `${indicatorTitle('eBay saved resale', record.ebayIndicator, ebayPrice)}. Open Sold and Completed results to verify it.`
+    : 'Open eBay Sold and Completed results, then enter a resale value in Flippah.';
+  add(ebayLabel, record.ebayIndicator.cls, ebayTitle, links.ebay);
   if (verdict) add(verdict.label, verdict.cls, verdict.advice);
 }
 
@@ -257,6 +270,7 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   const query = cleanQuery(queryInput?.value || record.state.queryOverride || record.identity.query);
   const links = researchLinks(query);
   const amazonPrice = amazonMarketValue(record);
+  const ebayPrice = ebayMarketValue(record);
   const conditionText = record.condition.partsOnly ? record.condition.partsReasons.join('; ') : record.condition.damaged ? record.condition.damageReasons.join('; ') : record.condition.cautions.join('; ');
   const candidates = record.amazon?.candidates || [];
   const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] => {
@@ -299,6 +313,12 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
     element('span', 'price', amazonPrice === null ? '--' : formatUsd(amazonPrice))
   );
   section.append(retail);
+  const ebayRetail = element('div', 'flippah-retail-row');
+  ebayRetail.append(
+    element('span', '', 'eBay resale (manual)'),
+    element('span', 'price', ebayPrice === null ? '--' : formatUsd(ebayPrice))
+  );
+  section.append(ebayRetail);
 
   const evidence = details('Amazon / eBay evidence');
   const linkRow = element('div', 'flippah-link-row');
@@ -309,6 +329,9 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   evidence.append(element('div', 'flippah-evidence-title', record.amazon?.match
     ? `${record.amazon.match.candidate.title} - confidence ${record.amazon.match.score.toFixed(1)}`
     : record.amazon?.message || 'No Amazon evidence loaded yet.'));
+  evidence.append(element('div', 'flippah-evidence-title', record.state.resaleEstimate !== null
+    ? `Saved eBay resale estimate: ${formatUsd(record.state.resaleEstimate)}`
+    : 'Open eBay Sold results and enter a verified resale estimate above.'));
   if (candidates.length) {
     const label = element('label', '', 'Correct Amazon match');
     const select = element('select'); select.id = 'flippah-amazon-match';
@@ -440,36 +463,84 @@ export class DealIntelligenceController {
       const preliminary = buildAnalysisRecords(lots, stored, auctionPremiums, settings);
       this.records = new Map(preliminary.map((record) => [record.lot.id, record]));
       preliminary.forEach((record) => applyTileAnnotation(record, route));
-      this.update({ total: preliminary.length, analyzed: 0, mixedLots: preliminary.filter((item) => item.mixed.mixed).length, quantityReview: preliminary.filter((item) => item.needsQuantity).length, phase: settings.amazonAutoLookup ? 'retail' : 'complete', message: settings.amazonAutoLookup ? 'Checking Amazon.com' : 'Amazon auto-lookup is off' });
-      let analyzed = 0; let matched = 0; let unmatched = 0;
-      await Promise.all(preliminary.map(async (record) => {
-        const blocked = record.currency === 'CAD' || record.mixed.mixed || record.needsQuantity || !record.identity.query;
-        if (!blocked && settings.amazonAutoLookup) {
-          const result = await runtimeMessage<RetailLookupResult>('flippah:retail.lookup', { identity: record.identity });
-          if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
-          if (record.state.amazonOverrideAsin) {
-            const candidate = result.candidates.find((item) => item.asin === record.state.amazonOverrideAsin);
-            if (candidate) {
-              result.match = { candidate, score: 100 };
-              result.status = 'matched';
-              result.message = `Manual Amazon match: ${candidate.title}`;
-            }
-          }
-          record.amazon = result;
-          const price = amazonMarketValue(record);
-          record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price }).amazon;
-          if (price !== null && result.status === 'matched') matched += 1; else unmatched += 1;
-        } else unmatched += 1;
-        analyzed += 1;
+      const eligible = preliminary.filter((record) => record.currency !== 'CAD' && !record.mixed.mixed && !record.needsQuantity && Boolean(record.identity.query));
+      const skipped = preliminary.length - eligible.length;
+      let amazonAnalyzed = settings.amazonAutoLookup ? skipped : preliminary.length;
+      const amazonMatchedIds = new Set<string>();
+      const stillCurrent = () => generation === this.generation && fingerprint === routeFingerprint(this.getRoute(), location.href);
+      const repaint = (record: AnalysisRecord) => {
         applyTileAnnotation(record, route);
         if (route.kind === 'lot') {
           const rerun = () => this.schedule(0);
-          if (!renderLotPanel(record, rerun)) window.setTimeout(() => generation === this.generation && renderLotPanel(record, rerun), 500);
+          if (!renderLotPanel(record, rerun)) window.setTimeout(() => stillCurrent() && renderLotPanel(record, rerun), 500);
         }
-        this.update({ analyzed, retailMatched: matched, retailUnmatched: unmatched, message: `Amazon analysis ${analyzed}/${preliminary.length}` });
-      }));
+      };
+      const updateProgress = () => {
+        this.update({
+          analyzed: amazonAnalyzed,
+          retailMatched: amazonMatchedIds.size,
+          retailUnmatched: Math.max(0, preliminary.length - amazonMatchedIds.size),
+          amazonAnalyzed,
+          amazonMatched: amazonMatchedIds.size,
+          message: `Checking Amazon prices ${amazonAnalyzed}/${preliminary.length}`,
+        });
+      };
+      this.update({
+        total: preliminary.length,
+        analyzed: amazonAnalyzed,
+        retailMatched: 0,
+        retailUnmatched: preliminary.length,
+        amazonAnalyzed,
+        amazonMatched: 0,
+        mixedLots: preliminary.filter((item) => item.mixed.mixed).length,
+        quantityReview: preliminary.filter((item) => item.needsQuantity).length,
+        phase: settings.amazonAutoLookup ? 'retail' : 'complete',
+        message: settings.amazonAutoLookup ? 'Starting paced Amazon checks' : 'Automatic price checks are off',
+      });
+      if (settings.amazonAutoLookup) {
+        const queueResult = await runProviderQueue({
+            items: eligible,
+            shouldContinue: stillCurrent,
+            policy: { delayMs: 2_000, maxRetries: 3, retryBaseMs: 5_000, retryMaxMs: 60_000 },
+            lookup: async (record): Promise<RetailLookupResult> => {
+              try {
+                return await runtimeMessage<RetailLookupResult>('flippah:retail.lookup', { identity: record.identity });
+              } catch (error) {
+                return { status: 'network_error', query: record.identity.query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, retryAfterMs: 5_000, message: error instanceof Error ? error.message : String(error) };
+              }
+            },
+            onProgress: ({ item: record, result }) => {
+              if (!stillCurrent()) return;
+              if (record.state.amazonOverrideAsin) {
+                const candidate = result.candidates.find((item) => item.asin === record.state.amazonOverrideAsin);
+                if (candidate) {
+                  result.match = { candidate, score: 100 };
+                  result.status = 'matched';
+                  result.message = `Manual Amazon match: ${candidate.title}`;
+                }
+              }
+              record.amazon = result;
+              const price = amazonMarketValue(record);
+              record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price }).amazon;
+              amazonAnalyzed += 1;
+              if (price !== null && result.status === 'matched') amazonMatchedIds.add(record.lot.id);
+              repaint(record);
+              updateProgress();
+            },
+          });
+        if (queueResult.stoppedResult && stillCurrent()) {
+          this.update({
+            phase: 'error',
+            message: `${queueResult.stoppedResult.message || 'Amazon price checks paused'} Use Check again after the paced wait.`
+          });
+          return;
+        }
+      }
       if (generation !== this.generation) return;
-      this.update({ phase: preliminary.some((record) => record.currency === 'CAD') && preliminary.every((record) => record.currency === 'CAD') ? 'unsupported-currency' : 'complete', message: preliminary.length ? `Analyzed ${preliminary.length} visible lot${preliminary.length === 1 ? '' : 's'}` : 'No visible lots to analyze' });
+      this.update({
+        phase: preliminary.some((record) => record.currency === 'CAD') && preliminary.every((record) => record.currency === 'CAD') ? 'unsupported-currency' : 'complete',
+        message: preliminary.length ? `Amazon prices found for ${amazonMatchedIds.size} lot${amazonMatchedIds.size === 1 ? '' : 's'}` : 'No visible lots to analyze'
+      });
     } catch (error) {
       if (generation !== this.generation) return;
       this.update({ phase: 'error', message: error instanceof Error ? error.message : String(error) });

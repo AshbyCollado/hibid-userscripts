@@ -198,6 +198,8 @@ export interface DealAnalysisSummary {
   analyzed: number;
   retailMatched: number;
   retailUnmatched: number;
+  amazonAnalyzed: number;
+  amazonMatched: number;
   mixedLots: number;
   quantityReview: number;
   message: string;

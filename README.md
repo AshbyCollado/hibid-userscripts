@@ -1,9 +1,9 @@
 # Flippah by ALOS
 
 Flippah is a read-only browser extension for HiBid research. It preserves the
-true-cost calculator, eBay research links, watchlist, notes, and alerts from the
-working `v0.1.0` extension while adding exact, auditable catalog exports and
-US deal intelligence for Amazon.com and saved eBay resale estimates.
+true-cost calculator, eBay Sold research links, watchlist, notes, and alerts
+from the working `v0.1.0` extension while adding exact, auditable catalog
+exports and automatic Amazon.com deal intelligence.
 
 The extension is built from one TypeScript source tree into separate Chrome and
 Waterfox packages. HiBid scraping is available from the toolbar popup; the
@@ -23,18 +23,22 @@ in-page calculator remains limited to individual lot pages.
 
 ## US deal intelligence
 
-Flippah `v0.3.0` adds title-authoritative product identity with structured
+Flippah `v0.3.13` adds title-authoritative product identity with structured
 description enrichment and condition parsing, Amazon.com retail evidence,
-saved eBay resale indicators, mixed-lot and quantity
+manual eBay Sold verification, saved resale estimates, mixed-lot and quantity
 review gates, and compact Current Bids/Watchlist verdicts. Catalog annotations
 are additive: Flippah does not hide, move, fade, shrink, relabel, or replace
 HiBid-owned content or controls. Genuine CAD lots remain CAD and receive no USD
 comparison.
 
-Cold Amazon lookups are centrally bounded to batches of six with 350 ms pacing,
-in-flight request joining, a 12-hour epoch-aware cache, response-size limits,
-and challenge/rate-limit cooldowns. Only normalized quote evidence returns to
-the page; raw Amazon HTML remains inside the background runtime.
+Cold Amazon lookups use one reusable minimized Chrome helper window. Its single
+Amazon tab is navigated sequentially, never takes focus from HiBid, and closes
+after one idle minute; Flippah never fans a catalog out into hundreds of tabs.
+Requests use two-second pacing, bounded retries, durable challenge/rate-limit
+cooldowns, in-flight joining, and a 12-hour evidence cache. eBay remains
+user-directed: Flippah opens an exact Sold and Completed search, then uses the
+resale estimate the user saves in the lot panel. Only normalized Amazon
+evidence returns to HiBid; raw provider HTML is never stored or sent to HiBid.
 
 The product extraction, condition assessment, matching, cache behavior, and
 verdict ideas are adapted from Diego Magalhaes's MIT-licensed
@@ -73,7 +77,9 @@ candidate has explainable match/rejection evidence in the normalized background
 result. Sponsored, used, open-box, and renewed Amazon offers cannot supply the
 new-retail value. Underidentified source lots also fail closed: a model-free
 title needs a credible brand, a recognized product kind, and at least one hard
-attribute before Flippah will display an automatic retail price.
+attribute before Flippah will display an automatic retail price. Descriptive
+hyphenated prose such as `anti-fog` cannot be promoted to a model code; this
+prevents accessory prose from creating false exact-product matches.
 
 ## Commands
 
