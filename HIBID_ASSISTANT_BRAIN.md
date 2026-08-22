@@ -387,3 +387,10 @@ ignored by Git.
 - Provider cache epoch `v5` retires every snapshot created by the old parser.
 - Release acceptance still requires live catalog evidence after updating the
   installed Chrome extension; a passing unit test alone is not completion.
+
+## v0.3.26 same-ASIN wrapper correction
+
+- Amazon's live result markup can put the actual title and price inside a
+  nested wrapper carrying the same ASIN as the outer result.
+- The tree parser traverses same-ASIN wrappers and excludes only nested results
+  with a different ASIN. Cache epoch `v6` retires the failed `v0.3.25` run.

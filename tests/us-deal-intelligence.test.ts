@@ -512,11 +512,12 @@ test('Amazon candidate parsing deduplicates ASINs and records sponsored, used, p
 test('Amazon document parser keeps nested result titles paired with their own prices', () => {
   const html = `
     <div data-asin="B0FF9WP8RF" class="organic">
-      <a href="/vancasso-Feeder-Ceramic-Feeding-Medium/dp/B0FF9WP8RF">
-        <img class="s-image" alt="vancasso Slow Feeder Dog Bowl, 1.5 Cup, Pink" />
-      </a>
-      <span class="a-price"><span class="a-offscreen">$25.99</span></span>
-      <div data-asin="B0FF9WP8RF"><span class="a-price"><span class="a-offscreen">$25.99</span></span></div>
+      <div data-asin="B0FF9WP8RF">
+        <a href="/vancasso-Feeder-Ceramic-Feeding-Medium/dp/B0FF9WP8RF">
+          <img class="s-image" alt="vancasso Slow Feeder Dog Bowl, 1.5 Cup, Pink" />
+        </a>
+        <span class="a-price"><span class="a-offscreen">$25.99</span></span>
+      </div>
     </div>
     <div data-asin="B0F8BYCWQ2" class="organic">
       <a href="/vancasso-Ceramic-Feeder-Puzzle-Floral/dp/B0F8BYCWQ2">

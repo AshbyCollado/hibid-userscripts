@@ -24,14 +24,14 @@ function textContent(node: Node): string {
   return node.childNodes.map(textContent).join('');
 }
 
-function descendants(root: Element, includeNestedResults = false): Element[] {
+function descendants(root: Element, rootAsin: string): Element[] {
   const found: Element[] = [];
   const visit = (node: Node): void => {
     if (!('childNodes' in node)) return;
     for (const child of node.childNodes) {
       if (!isElement(child)) continue;
       const nestedAsin = attribute(child, 'data-asin');
-      if (!includeNestedResults && nestedAsin && /^[A-Z0-9]{10}$/i.test(nestedAsin)) continue;
+      if (nestedAsin && /^[A-Z0-9]{10}$/i.test(nestedAsin) && nestedAsin.toUpperCase() !== rootAsin) continue;
       found.push(child);
       visit(child);
     }
@@ -60,7 +60,7 @@ function productSlug(urlValue: string, asin: string): string {
 }
 
 function parseResult(node: Element, asin: string): AmazonCandidate | null {
-  const own = descendants(node);
+  const own = descendants(node, asin);
   const image = own.find((item) => item.tagName === 'img' && hasClass(item, 's-image'));
   const titleNode = own.find((item) => item.tagName === 'h2')
     || own.find((item) => attribute(item, 'data-cy') === 'title-recipe')
