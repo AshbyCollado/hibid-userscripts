@@ -9,6 +9,7 @@ import {
   chooseAmazonMatch,
   detectComparisonCurrency,
   detectMixedLot,
+  extractProductDiscriminators,
   extractProductIdentity,
   formatUsd,
   isAccessoryListing,
@@ -77,6 +78,48 @@ test('Magcubic projector title remains authoritative over longer marketing descr
   assert.equal(identity.brand, 'Magcubic');
   assert.match(identity.name, /^Magcubic 4K Smart Projector/i);
   assert.equal(identity.query, 'magcubic 4k smart projector wifi bluetooth');
+});
+
+test('inventory prefixes do not become brands for consoles and storage', () => {
+  const ps5 = extractProductIdentity('AV - PLAYSTATION 5 CONSOLE');
+  assert.equal(ps5.query, 'playstation 5 console');
+  assert.equal(ps5.brand.toLowerCase(), 'playstation');
+  assert.equal(ps5.kind, 'game-console');
+  assert.ok(scoreRetailCandidate('Sony PlayStation 5 Console Disc Edition', ps5) >= 3);
+  assert.ok(scoreRetailCandidate('Sony PS5 Slim Console Disc Edition', ps5) >= 3);
+  assert.equal(scoreRetailCandidate('Sony PlayStation 4 Pro Console 1TB', ps5), 0);
+  assert.equal(scoreRetailCandidate('PlayStation 5 DualSense Wireless Controller', ps5), 0);
+  assert.equal(scoreRetailCandidate('Sonic Racing: CrossWorlds Amazon Exclusive Edition - PlayStation 5', ps5), 0);
+  assert.equal(scoreRetailCandidate('Starfield Standard Edition - PlayStation 5', ps5), 0);
+  assert.equal(scoreRetailCandidate('Sports FC Digital Edition Game for PS5', ps5), 0);
+  assert.equal(scoreRetailCandidate('PlayStation Disc Drive For PS5 Digital Edition Consoles (slim)', ps5), 0);
+  assert.ok(scoreRetailCandidate('Sony PlayStation 5 Slim Console with DualSense Controller Bundle', ps5) >= 3);
+
+  const seagate = extractProductIdentity('AV - SEAGATE 8TB EXTERNAL DRIVE');
+  assert.equal(seagate.query, 'seagate 8tb external drive');
+  assert.equal(seagate.brand.toLowerCase(), 'seagate');
+  assert.equal(seagate.kind, 'storage');
+  assert.deepEqual(seagate.capacities.map((value) => value.toLowerCase()), ['8tb']);
+  assert.ok(scoreRetailCandidate('Seagate Expansion Desktop 8 TB External Hard Drive USB 3.0', seagate) >= 3);
+  assert.equal(scoreRetailCandidate('Seagate Portable 4TB External Hard Drive', seagate), 0);
+  assert.equal(scoreRetailCandidate('Western Digital 8TB External Hard Drive', seagate), 0);
+});
+
+test('product discriminator families generalize across capacities, resolutions, sizes, and platforms', () => {
+  assert.deepEqual(extractProductDiscriminators('Samsung 55 inch 4K TV'), {
+    capacities: [], resolutions: ['4k'], dimensions: ['55in'], platformVariants: [],
+  });
+  assert.deepEqual(extractProductDiscriminators('Microsoft Xbox Series X 1TB Console'), {
+    capacities: ['1tb'], resolutions: [], dimensions: [], platformVariants: ['xbox:seriesx'],
+  });
+  const xbox = extractProductIdentity('Microsoft Xbox Series X 1TB Console');
+  assert.ok(scoreRetailCandidate('Xbox Series X 1 TB All-Digital Console', xbox) > 0);
+  assert.equal(scoreRetailCandidate('Xbox Series S 1TB Console', xbox), 0);
+
+  const television = extractProductIdentity('Samsung 55 inch 4K Smart TV');
+  assert.ok(scoreRetailCandidate('Samsung 55-Inch 4K UHD Smart Television', television) > 0);
+  assert.equal(scoreRetailCandidate('Samsung 65-Inch 4K UHD Smart Television', television), 0);
+  assert.equal(scoreRetailCandidate('Samsung 55-Inch 1080p Smart Television', television), 0);
 });
 
 test('unrelated Samsung 4K monitor is rejected for a Magcubic projector identity', () => {

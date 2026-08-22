@@ -256,3 +256,13 @@ ignored by Git.
   inventory prefixes such as `AV -`. Preserve dimensions because size can be a
   critical discriminator on otherwise model-less products. Both query
   implementations are parity-tested against an adversarial title corpus.
+
+## v0.3.5 baseline retail identity
+
+- Strip known HiBid inventory prefixes before brand/model/kind extraction, not
+  only from search queries. `AV - PLAYSTATION 5 CONSOLE` identifies PlayStation
+  as the brand; `AV - SEAGATE 8TB EXTERNAL DRIVE` identifies Seagate.
+- Game consoles and storage are explicit product kinds. PlayStation generation
+  is strict but accepts equivalent `PlayStation 5` and `PS5` spelling.
+- Console accessories/games cannot become console retail matches. Storage
+  capacity and credible brand must match before a price is trusted.

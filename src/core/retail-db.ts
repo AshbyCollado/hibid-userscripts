@@ -2,7 +2,7 @@ const DB_NAME = 'flippah-retail';
 const DB_VERSION = 1;
 const STORE = 'quotes';
 
-export const RETAIL_MATCHING_EPOCH = 2;
+export const RETAIL_MATCHING_EPOCH = 5;
 
 export interface RetailCacheEntry<T = unknown> {
   key: string;

@@ -44,7 +44,7 @@ TypeScript and intentionally excludes the donor's page-rewrite behavior.
 
 ## Watchlist reliability
 
-Flippah `v0.3.4` reads `/account/watchlist` through its dedicated account-page
+Flippah `v0.3.5` reads `/account/watchlist` through its dedicated account-page
 DOM parser. HiBid requires private buyer authorization for `WatchListSearch`,
 so personalized data is never requested from an extension-origin GraphQL call.
 If the displayed total and stable lot count drift while a lot closes, Flippah
@@ -62,6 +62,11 @@ auction noise. Model-less products keep differentiating specifications such as
 `4K`, `Smart`, `WiFi`, and `BT`; model punctuation such as `TX-SR304` and
 `NT-USB+` is preserved. The legacy calculator and modern intelligence layer are
 locked to the same query corpus in tests.
+
+HiBid inventory labels such as `AV -` are removed before brand detection as
+well as query generation. Console generations and storage capacities are strict
+matching attributes: PS5 research rejects PS4 and controller listings, while an
+8TB drive rejects 4TB and wrong-brand candidates.
 
 ## Commands
 

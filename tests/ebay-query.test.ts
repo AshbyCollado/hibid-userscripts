@@ -33,6 +33,8 @@ test('legacy and modern research queries stay identical across identity edge cas
     'Seagate Backup Plus Hub 8TB External Drive USB 3.0',
     'Sony WH-1000XM5 Wireless Bluetooth Headphones',
     'Dell OptiPlex 7090 Micro i7-11700T 32GB 1TB SSD',
+    'AV - PLAYSTATION 5 CONSOLE',
+    'AV - SEAGATE 8TB EXTERNAL DRIVE',
   ];
   for (const title of titles) assert.equal(buildProductResearchQuery(title), buildEbaySoldQuery(title), title);
   assert.equal(buildProductResearchQuery(titles[1]), 'rode nt-usb+ professional usb microphone');
