@@ -12,6 +12,7 @@ import {
   evaluateRetailCandidate,
   extractProductDiscriminators,
   extractProductIdentity,
+  extractStatedRetail,
   formatUsd,
   hasSufficientRetailIdentity,
   isAccessoryListing,
@@ -23,6 +24,17 @@ import {
   requiresQuantityConfirmation,
   trustedAmazonMarketValue,
 } from '../src/intelligence/us-deal-intelligence.js';
+
+test('auctioneer retail claims provide the donor-compatible provisional value', () => {
+  assert.deepEqual(
+    extractStatedRetail('Widget', 'Est. Retail Price: $129.99\nCondition: New', ''),
+    { value: 129.99, source: 'stated in listing ("Est. Retail Price: $129.99")' }
+  );
+  assert.deepEqual(
+    extractStatedRetail('Widget', '', '$80.00 - $120.00'),
+    { value: 120, source: 'auctioneer estimate high ($80.00 - $120.00)' }
+  );
+});
 
 test('structured descriptions normalize CR fields and keep labels out of free text', () => {
   const parsed = parseStructuredDescription('Est. Retail Price: 251.00\rCondition: BRAND NEW - OPEN BOX\rModel: NT-USB+\rIs Item Damaged? No');
@@ -112,11 +124,13 @@ test('product discriminator families generalize across capacities, resolutions, 
     capacities: [], resolutions: ['4k'], dimensions: ['55in'], platformVariants: [], memoryTypes: [],
     frequencies: [], refreshRates: [], storageTypes: [], networkStandards: [], voltages: [], wattages: [],
     batteryCapacities: [], lensRanges: [], gpuModels: [], cpuModels: [], editions: [], seriesSignatures: [],
+    packageCounts: [], colors: [], materials: [], productFamilies: [], variantLabels: [], volumes: [], modeCounts: [], featureCounts: [],
   });
   assert.deepEqual(extractProductDiscriminators('Microsoft Xbox Series X 1TB Console'), {
     capacities: ['1tb'], resolutions: [], dimensions: [], platformVariants: ['xbox:seriesx'], memoryTypes: [],
     frequencies: [], refreshRates: [], storageTypes: [], networkStandards: [], voltages: [], wattages: [],
     batteryCapacities: [], lensRanges: [], gpuModels: [], cpuModels: [], editions: [], seriesSignatures: [],
+    packageCounts: [], colors: [], materials: [], productFamilies: [], variantLabels: [], volumes: [], modeCounts: [], featureCounts: [],
   });
   const xbox = extractProductIdentity('Microsoft Xbox Series X 1TB Console');
   assert.ok(scoreRetailCandidate('Xbox Series X 1 TB All-Digital Console', xbox) > 0);
@@ -229,14 +243,13 @@ test('descriptive hyphenated prose cannot impersonate a model and match a differ
   );
   assert.equal(identity.model, null);
   assert.equal(spray.accepted, false);
-  assert.ok(spray.rejectionReasons.includes('insufficient-source-identity'));
+  assert.ok(spray.rejectionReasons.some((reason) => /brand-mismatch|kind-mismatch|weak-title-overlap|accessory/.test(reason)));
 });
 
 test('underidentified source titles fail closed instead of inheriting a plausible retail price', () => {
   const vagueCases = [
     ['Custom computer', 'CyberPowerPC Gamer Xtreme Desktop Computer Intel Core i7 RTX 4060'],
     ['Workstation Computer', 'Dell Precision 5820 Workstation Computer'],
-    ['Toast Touchscreen POS System', 'Toast Flex Touchscreen POS System Terminal'],
     ['Oculus VR Headset', 'Meta Quest 2 Advanced All-In-One VR Headset 128GB'],
   ] as const;
 
@@ -246,6 +259,62 @@ test('underidentified source titles fail closed instead of inheriting a plausibl
     const evaluation = evaluateRetailCandidate(candidate, identity);
     assert.equal(evaluation.accepted, false, source);
     assert.ok(evaluation.rejectionReasons.includes('insufficient-source-identity'), source);
+  }
+});
+
+test('ordinary Amazon liquidation products do not require a model or a narrow product taxonomy', () => {
+  const cases = [
+    ['Mr. Coffee Mug Warmer for Coffee & Tea Black', 'Mr. Coffee Mug Warmer for Coffee and Tea, Black'],
+    ['NERF Mega Ball 20 Outdoor Kickball Toy', 'NERF Mega Ball 20 Inch Outdoor Kickball Toy for Kids'],
+    ['XUANGUO Woven Rope Baskets 3 Pack Dark Green', 'XUANGUO Woven Rope Storage Baskets, 3 Pack, Dark Green'],
+    ['LISEN 15W MagSafe Car Mount Charger', 'LISEN 15W MagSafe Car Mount Charger for iPhone'],
+    ['ErGear Dual Monitor Arm 13 32 VESA 100x100', 'ErGear Dual Monitor Arm for 13 to 32 Inch Screens VESA 100x100'],
+    ['Toast Touchscreen POS System', 'Toast Flex Touchscreen POS System Terminal'],
+  ] as const;
+  for (const [source, candidate] of cases) {
+    const identity = extractProductIdentity(source);
+    assert.equal(hasSufficientRetailIdentity(identity), true, source);
+    const evaluation = evaluateRetailCandidate(candidate, identity);
+    assert.equal(evaluation.accepted, true, `${source}: ${evaluation.rejectionReasons.join(', ')}`);
+  }
+});
+
+test('missing marketing attributes do not reject an otherwise corroborated product', () => {
+  const identity = extractProductIdentity('LISEN 15W MagSafe Car Mount Charger');
+  const evaluation = evaluateRetailCandidate('LISEN MagSafe Car Mount Charger for iPhone', identity);
+  assert.equal(evaluation.accepted, true, evaluation.rejectionReasons.join(', '));
+});
+
+test('Amazon liquidation matching rejects wrong package, color, material, family, and labeled variants', () => {
+  const cases = [
+    ['Pampers Swaddlers Newborn Diapers, 84 ct', 'Pampers Swaddlers Diapers Size 3, 168 Count'],
+    ['Citicr 10000mAh PD20W Portable Charger, Green', 'citicr Portable Charger 10000mAh PD20W Purple'],
+    ['MALACASA 10 Inch Pasta Bowls, Set of 4', 'MALACASA 12 Pcs Porcelain Plates and Bowls Dinnerware Set'],
+    ['Bedsure White Cozy Blanket - GentleSoft Sherpa', 'Bedsure GentleSoft White Fleece Bubble Blanket'],
+    ['Sensationnel Bare Lace 13x6 Wig-Unit 17', 'Sensationnel Bare Lace 13x6 Wig-Unit 19'],
+    ['Steam Cleaner Handheld Steamer + 16 Accs', '16 Pack Microfiber Cloths for Handheld Steam Cleaner'],
+    ['Solar Automatic Drip Irrigation Kit with Timer', 'Solar Drip Irrigation Replacement Parts Only'],
+    ['JISULIFE Neck Fan 4000mAh', 'JISULIFE Portable Handheld Turbo Fan 4000mAh'],
+  ] as const;
+  for (const [source, candidate] of cases) {
+    const identity = extractProductIdentity(source);
+    assert.equal(scoreRetailCandidate(candidate, identity), 0, `${source} -> ${candidate}`);
+  }
+});
+
+test('catalog corpus rejects wrong sports, container, bowl-size, and speed variants', () => {
+  const cases = [
+    ['NERF Mega Ball 20" Outdoor Kickball & Toy', 'Hasbro NERF Turbo Jr. Kids Foam Football - Classic Foam Football for Kids'],
+    ['NERF Mega Ball 20" Outdoor Kickball & Toy', 'Nerf Franklin Sports Proshot Mini Foam Soccer Ball'],
+    ['NERF Mega Ball 20" Outdoor Kickball & Toy', 'Nerf Sports Bash Ball, Blue'],
+    ['Pink Vintage Floral Vase - Chinoiserie Decor', 'Ninehaoou Ceramic Scroll Planter 6.5 Inch, Pink Floral | Chinoiserie Floral Vase with Drainage Holes Vintage Flower Pot'],
+    ['MALACASA 10" Large Pasta Bowls, Set of 4', 'MALACASA 8.85" Large Pasta Bowls, 42 OZ White Salad Bowls Soup Bowls, Porcelain Serving Bowls Set of 4'],
+    ['JISULIFE Neck Fan - 4000mAh, USB, 3 Speeds', 'JISULIFE Portable Neck Fan, Hands-Free Bladeless, 5 Speeds, 4000 mAh'],
+    ['ORICO 9-in-1 USB-C Hub with NVMe Enclosure', 'ORICO USB-C Hub with M.2 SSD Enclosure, 8-in-1 USB C Docking Station'],
+  ] as const;
+  for (const [source, candidate] of cases) {
+    const identity = extractProductIdentity(source);
+    assert.equal(scoreRetailCandidate(candidate, identity), 0, `${source} must reject ${candidate}: ${JSON.stringify(evaluateRetailCandidate(candidate, identity))}`);
   }
 });
 
@@ -338,6 +407,17 @@ test('ordinary single-product marketing prose does not trigger mixed-lot review'
   const projector = detectMixedLot('Magcubic 4K Smart Projector, WiFi/BT', 'Projector with autofocus and automatic keystone correction.');
   assert.equal(tv.mixed, false);
   assert.equal(projector.mixed, false);
+});
+
+test('retail package counts are not mixed lots', () => {
+  const products = [
+    'Pampers Swaddlers Newborn Diapers, 84 ct',
+    'DaQin 10-Pack Bands for Galaxy Watch 20mm',
+    'SAMYUCHOLED Cake Stand, 2 pcs, 6x4, 10x4',
+    '24 Pack Mini Scented Candles: 2.5 oz Tin',
+    'Crystal Glass Apothecary Jars with Lids (4)',
+  ];
+  for (const product of products) assert.equal(detectMixedLot(product, 'Quantity: 1\nCondition: New').mixed, false, product);
 });
 
 test('US all-in math applies premium and tax without a shipping adjustment', () => {

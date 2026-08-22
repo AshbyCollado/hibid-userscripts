@@ -339,3 +339,25 @@ ignored by Git.
 - The same run caught and fixed a false snorkeling-mask/anti-fog-spray match.
   Descriptive title compounds such as `anti-fog` are not model identifiers;
   uppercase manufacturer codes such as `NT-USB+` remain supported.
+
+## v0.3.23 donor transport parity
+
+- The helper-tab and persisted catalog-wide cooldown paths are retired. Amazon
+  research now mirrors `hibid-enhancer-suite`: anonymous Amazon.com requests,
+  six concurrent lookups per batch, 350 ms between batches, per-lot failure
+  isolation, in-flight joining, and a 12-hour normalized-evidence cache.
+- Never cache or replay a challenge response, and never stop the remaining
+  catalog because one lookup is challenged. No Amazon tabs or windows open.
+- Preserve HiBid GraphQL's `estimate` field. Port the donor's extraction of
+  `Retail`, `MSRP`, `Est. Retail Price`, and estimate-range highs as an
+  auctioneer-provided provisional fallback. Label it `Retail`, not `Amazon`,
+  and keep its tooltip explicit that live Amazon verification is still needed.
+- Matcher hard evidence includes package counts, colors, materials, dimensions,
+  volumes, speed/mode counts, and mutually exclusive product families. The
+  catalog corpus covers masks versus spray, kickballs versus football/soccer
+  balls, vases versus planters, pasta-bowl sizes, and neck-fan speed variants.
+- Chrome acceptance on catalog `769459` with installed `v0.3.23` proved 90/100
+  visible lots priced after conservative matching and cache restoration. The
+  final corpus rejects generic football/soccer/bash-ball candidates for the
+  20-inch NERF kickball and rejects an 8-in-1 hub for the 9-in-1 ORICO lot while
+  selecting a 9-in-1 candidate instead.

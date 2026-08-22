@@ -9,6 +9,7 @@ export interface ProviderQueueResult {
 
 export interface ProviderQueuePolicy {
   delayMs: number;
+  batchSize: number;
   maxRetries: number;
   retryBaseMs: number;
   retryMaxMs: number;
@@ -31,7 +32,8 @@ export interface ProviderQueueRunResult<R extends ProviderQueueResult> {
 const RETRYABLE = new Set<ProviderRetryStatus>(['blocked', 'rate_limited', 'network_error', 'parse_error']);
 
 export const DEFAULT_PROVIDER_QUEUE_POLICY: ProviderQueuePolicy = {
-  delayMs: 1_500,
+  delayMs: 350,
+  batchSize: 6,
   maxRetries: 3,
   retryBaseMs: 5_000,
   retryMaxMs: 60_000,
@@ -58,9 +60,9 @@ export async function runProviderQueue<T, R extends ProviderQueueResult>(options
   const policy = { ...DEFAULT_PROVIDER_QUEUE_POLICY, ...(options.policy || {}) };
   const sleep = options.sleep || ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   let completed = 0;
+  const size = Math.max(1, Math.min(20, Math.trunc(policy.batchSize) || 1));
 
-  for (const item of options.items) {
-    if (!options.shouldContinue()) return { completed, total: options.items.length };
+  const processItem = async (item: T): Promise<{ stopped: R | null; usedNetwork: boolean }> => {
     let attempt = 0;
     while (options.shouldContinue()) {
       attempt += 1;
@@ -68,7 +70,7 @@ export async function runProviderQueue<T, R extends ProviderQueueResult>(options
       if (result.status === 'blocked' || result.status === 'rate_limited') {
         completed += 1;
         options.onProgress({ item, result, completed, total: options.items.length, attempts: attempt });
-        return { completed, total: options.items.length, stoppedResult: result };
+        return { stopped: null, usedNetwork: !result.cached };
       }
       if (shouldRetryProviderResult(result, attempt, policy)) {
         await sleep(providerRetryDelay(result, attempt, policy));
@@ -76,9 +78,18 @@ export async function runProviderQueue<T, R extends ProviderQueueResult>(options
       }
       completed += 1;
       options.onProgress({ item, result, completed, total: options.items.length, attempts: attempt });
-      if (!result.cached && completed < options.items.length) await sleep(policy.delayMs);
-      break;
+      return { stopped: null, usedNetwork: !result.cached };
     }
+    return { stopped: null, usedNetwork: false };
+  };
+
+  for (let index = 0; index < options.items.length; index += size) {
+    if (!options.shouldContinue()) return { completed, total: options.items.length };
+    const batch = options.items.slice(index, index + size);
+    const outcomes = await Promise.all(batch.map(processItem));
+    const stopped = outcomes.find((result) => result.stopped)?.stopped;
+    if (stopped) return { completed, total: options.items.length, stoppedResult: stopped };
+    if (index + size < options.items.length && outcomes.some((result) => result.usedNetwork)) await sleep(policy.delayMs);
   }
   return { completed, total: options.items.length };
 }

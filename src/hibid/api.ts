@@ -538,6 +538,7 @@ export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; so
     .map(text).filter(Boolean);
   const lotNumber = text(lot.lotNumber ?? lot.saleOrder ?? id);
   const title = text(lot.lead ?? lot.title ?? lot.name ?? `Lot ${lotNumber}`);
+  const estimate = text(lot.estimate);
   const productUrl = text(state.productUrl ?? lot.url ?? lot.productUrl);
   return {
     source: 'hibid-api',
@@ -548,6 +549,7 @@ export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; so
     lot: lotNumber,
     title,
     lead: text(lot.lead) || title,
+    estimate,
     url: productUrl ? new URL(productUrl, context.sourceUrl).href : `${new URL(context.sourceUrl).origin}/lot/${id}`,
     image: images[0] || '',
     images,

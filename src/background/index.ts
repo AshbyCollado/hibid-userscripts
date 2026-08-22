@@ -11,7 +11,7 @@ import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailCandidateLis
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
 const WATCH_REFRESH_ALARM = 'flippah:watch-refresh';
-const AMAZON_BODY_LIMIT = 2_000_000;
+const AMAZON_BODY_LIMIT = 5_000_000;
 const AMAZON_HELPER_KEY = 'flippahAmazonHelperV1';
 const AMAZON_REQUEST_KEY = 'flippahAmazonRequestV1';
 const AMAZON_HELPER_CLOSE_ALARM = 'flippah:amazon-helper-close';
@@ -348,49 +348,29 @@ async function providerSnapshot(query: string): Promise<{ snapshot: RetailProvid
     await putRetailCache(providerKey, migrated, retailCacheTtl('matched'));
     return { snapshot: migrated, cached: true };
   }
-  const snapshot = await joinInflight(amazonInflight, providerKey, () => withAmazonProviderLock(async (): Promise<RetailProviderSnapshot> => {
-    const throttle = await readProviderThrottle('amazon');
-    if (Date.now() < throttle.nextAllowedAt) {
-      const retryAfterMs = throttle.nextAllowedAt - Date.now();
-      return { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), retryAfterMs, message: `Amazon lookup is waiting ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s before retrying` };
-    }
+  const snapshot = await joinInflight(amazonInflight, providerKey, async (): Promise<RetailProviderSnapshot> => {
     const url = new URL('https://www.amazon.com/s');
     url.searchParams.set('k', query);
-    if (supportsAmazonHelperWindow()) {
-      const result = await loadAmazonBrowser(query);
-      if (result.status === 'blocked') {
-        const retryAfterMs = await markProviderFailure('amazon', 'challenge', 30_000);
-        return { ...result, retryAfterMs };
-      }
-      if (result.status === 'network_error') {
-        const retryAfterMs = await markProviderFailure('amazon', 'network-error', 5_000);
-        return { ...result, retryAfterMs };
-      }
-      if (result.status === 'ok' && !result.candidates.length) result.status = 'parse_error';
-      await putRetailCache(providerKey, result, retailCacheTtl(result.status === 'ok' ? 'matched' : result.status));
-      await markProviderSuccess('amazon', 1_500);
-      return result;
-    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12_000);
     try {
       const response = await fetch(url.href, {
-        method: 'GET', credentials: 'include', cache: 'no-store', redirect: 'follow',
-        headers: { accept: 'text/html,application/xhtml+xml' }, signal: controller.signal
+        method: 'GET', credentials: 'omit', cache: 'no-store', redirect: 'follow',
+        headers: {
+          accept: 'text/html,application/xhtml+xml',
+          'accept-language': 'en-US,en;q=0.9',
+        },
+        signal: controller.signal
       });
       const finalUrl = new URL(response.url || url.href);
       if (!/(^|\.)amazon\.com$/i.test(finalUrl.hostname)) throw new Error('Amazon lookup redirected outside Amazon.com');
       if (response.status === 429 || response.status === 503) {
-        const retryAfterMs = await markProviderFailure('amazon', `http-${response.status}`, 20_000);
-        return { status: 'rate_limited', query, candidates: [], fetchedAt: Date.now(), retryAfterMs, message: `Amazon.com returned HTTP ${response.status}; retrying after a paced wait` };
+        return { status: 'rate_limited', query, candidates: [], fetchedAt: Date.now(), message: `Amazon.com returned HTTP ${response.status}` };
       }
       if (!response.ok) throw new Error(`Amazon.com returned HTTP ${response.status}`);
       const html = await readResponseText(response);
       if (isAmazonChallengeHtml(html)) {
-        const retryAfterMs = await markProviderFailure('amazon', 'challenge', 30_000);
-        const blocked: RetailProviderSnapshot = { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), retryAfterMs, message: 'Amazon.com returned a challenge page; retrying after a paced wait' };
-        await putRetailCache(providerKey, blocked, retailCacheTtl(blocked.status));
-        return blocked;
+        return { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), message: 'Amazon.com returned a challenge page' };
       }
       const candidates = parseAmazonCandidates(html).slice(0, 30);
       const explicitNoResults = /(?:did not match any products|no results for|try checking your spelling)/i.test(html);
@@ -400,18 +380,16 @@ async function providerSnapshot(query: string): Promise<{ snapshot: RetailProvid
         message: status === 'ok' ? `Parsed ${candidates.length} Amazon.com candidate(s)` : status === 'no_results' ? 'Amazon.com returned no product results' : 'Amazon.com results could not be parsed; no no-match decision was made',
       };
       await putRetailCache(providerKey, result, retailCacheTtl(status === 'ok' ? 'matched' : status));
-      await markProviderSuccess('amazon', 1_500);
       return result;
     } catch (error) {
-      const retryAfterMs = await markProviderFailure('amazon', 'network-error', 5_000);
       return {
-        status: 'network_error', query, candidates: [], fetchedAt: Date.now(), retryAfterMs,
+        status: 'network_error', query, candidates: [], fetchedAt: Date.now(),
         message: error instanceof Error ? error.message : String(error),
       };
     } finally {
       clearTimeout(timer);
     }
-  }));
+  });
   return { snapshot, cached: false };
 }
 

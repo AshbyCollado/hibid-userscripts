@@ -66,7 +66,6 @@ for (const target of targets) {
     entryPoints: {
       background: path.join(root, 'src', 'background', 'index.ts'),
       content: path.join(root, 'src', 'content', 'index.ts'),
-      'amazon-provider': path.join(root, 'src', 'content', 'amazon-provider.ts'),
       'popup/popup': path.join(root, 'src', 'popup', 'index.ts'),
       'options/options': path.join(root, 'src', 'options', 'index.ts')
     },
@@ -123,11 +122,6 @@ for (const target of targets) {
 
   const manifest = structuredClone(commonManifest);
   if (target === 'chrome') {
-    manifest.content_scripts.push({
-      matches: ['https://www.amazon.com/*'],
-      js: ['amazon-provider.js'],
-      run_at: 'document_idle'
-    });
     manifest.key = referenceManifest.key;
     manifest.background = { service_worker: 'background.js', type: 'module' };
   } else {

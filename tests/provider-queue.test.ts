@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { providerRetryDelay, runProviderQueue } from '../src/intelligence/provider-queue.js';
 
-test('provider queue is serial, skips pacing for cache hits, and reports progress', async () => {
+test('provider queue uses donor-sized batches, skips pacing for cache-only batches, and reports progress', async () => {
   let active = 0;
   let maxActive = 0;
   const delays: number[] = [];
@@ -19,16 +19,17 @@ test('provider queue is serial, skips pacing for cache hits, and reports progres
     onProgress: ({ completed }) => progress.push(completed),
     shouldContinue: () => true,
     sleep: async (milliseconds) => { delays.push(milliseconds); },
-    policy: { delayMs: 1_500 },
+    policy: { delayMs: 350, batchSize: 2 },
   });
-  assert.equal(maxActive, 1);
+  assert.equal(maxActive, 2);
   assert.deepEqual(progress, [1, 2, 3]);
-  assert.deepEqual(delays, [1_500]);
+  assert.deepEqual(delays, [350]);
 });
 
-test('provider queue circuit-breaks immediately on a provider challenge', async () => {
+test('provider queue records a challenged item and continues like the donor sweep', async () => {
   let calls = 0;
   let finalAttempts = 0;
+  const delays: number[] = [];
   const result = await runProviderQueue({
     items: ['one', 'two'],
     lookup: async () => {
@@ -37,14 +38,15 @@ test('provider queue circuit-breaks immediately on a provider challenge', async 
     },
     onProgress: ({ attempts }) => { finalAttempts = attempts; },
     shouldContinue: () => true,
-    sleep: async () => { throw new Error('challenge circuit breaker must not sleep'); },
-    policy: { maxRetries: 3, retryBaseMs: 5_000, retryMaxMs: 60_000 },
+    sleep: async (milliseconds) => { delays.push(milliseconds); },
+    policy: { batchSize: 1, maxRetries: 3, retryBaseMs: 5_000, retryMaxMs: 60_000 },
   });
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   assert.equal(finalAttempts, 1);
-  assert.equal(result.completed, 1);
+  assert.equal(result.completed, 2);
   assert.equal(result.total, 2);
-  assert.equal(result.stoppedResult?.status, 'rate_limited');
+  assert.equal(result.stoppedResult, undefined);
+  assert.deepEqual(delays, [350]);
 });
 
 test('provider queue still retries transient parse failures with bounded backoff', async () => {

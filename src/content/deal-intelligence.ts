@@ -8,7 +8,7 @@ import { runProviderQueue } from '../intelligence/provider-queue.js';
 import {
   assessCondition, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
   detectComparisonCurrency, detectMixedLot, extractProductIdentity, formatUsd,
-  requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
+  extractStatedRetail, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
   type AmazonCandidate, type AmazonCandidateMatch, type ConditionAssessment,
   type ProductIdentity, type RetailCandidateEvaluation, type RetailIndicator, type UsAllInResult
 } from '../intelligence/us-deal-intelligence.js';
@@ -53,6 +53,7 @@ interface AnalysisRecord {
   needsQuantity: boolean;
   ebayNet: number | null;
   premiumPct: number;
+  statedRetail: ReturnType<typeof extractStatedRetail>;
 }
 
 function emptySummary(): DealAnalysisSummary {
@@ -208,9 +209,20 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
   }
   if (!strip.isConnected) return;
   const amazonPrice = amazonMarketValue(record);
+  const displayedRetail = amazonPrice ?? record.statedRetail?.value ?? null;
   const ebayPrice = ebayMarketValue(record);
   const links = researchLinks(record.identity.query);
-  const amazonLabel = record.currency === 'CAD' ? 'Amazon: CAD' : record.mixed.mixed ? 'Amazon: mixed review' : record.needsQuantity ? 'Amazon: qty review' : amazonPrice === null ? 'Amazon: --' : `Amazon ${formatUsd(amazonPrice)}`;
+  const amazonLabel = record.currency === 'CAD'
+    ? 'Amazon: CAD'
+    : record.mixed.mixed
+      ? 'Amazon: mixed review'
+      : record.needsQuantity
+        ? 'Amazon: qty review'
+        : amazonPrice !== null
+          ? `Amazon ${formatUsd(amazonPrice)}`
+          : displayedRetail !== null
+            ? `Retail ${formatUsd(displayedRetail)}`
+            : 'Amazon: --';
   const ebayLabel = ebayPrice === null ? 'eBay: --' : `eBay ${formatUsd(ebayPrice)}${record.state.resaleEstimate !== null ? ' saved' : ''}`;
   const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-')) && record.allIn
     ? computeAccountVerdict({ status: record.lot.status || record.lot.rawText, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice })
@@ -225,7 +237,12 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
     const label = document.createElement('span'); label.textContent = text;
     pill.append(dot, label); strip!.append(pill);
   };
-  add(amazonLabel, record.amazonIndicator.cls, record.amazon?.message || indicatorTitle('Amazon', record.amazonIndicator, amazonPrice), links.amazon);
+  const retailTitle = amazonPrice !== null
+    ? (record.amazon?.message || indicatorTitle('Amazon', record.amazonIndicator, amazonPrice))
+    : record.statedRetail
+      ? `Auctioneer retail claim: ${formatUsd(record.statedRetail.value)}; ${record.statedRetail.source}. Open Amazon to verify.`
+      : (record.amazon?.message || indicatorTitle('Amazon', record.amazonIndicator, null));
+  add(amazonLabel, record.amazonIndicator.cls, retailTitle, links.amazon);
   const ebayTitle = record.state.resaleEstimate !== null
     ? `${indicatorTitle('eBay saved resale', record.ebayIndicator, ebayPrice)}. Open Sold and Completed results to verify it.`
     : 'Open eBay Sold and Completed results, then enter a resale value in Flippah.';
@@ -373,7 +390,13 @@ function buildAnalysisRecords(
   const taxPct = effectiveTaxPct(settings);
   return lots.map((lot) => {
     const state = stored.get(lot.id) || normalizeStored(null);
-    const identity = extractProductIdentity(lot.lead || lot.title, lot.description);
+    const statedRetail = extractStatedRetail(lot.lead || lot.title, lot.description, String(lot.estimate || ''));
+    const identity = extractProductIdentity({
+      title: lot.lead || lot.title,
+      description: lot.description,
+      statedRetail: statedRetail?.value ?? null,
+      estimate: String(lot.estimate || ''),
+    });
     if (state.queryOverride) identity.query = state.queryOverride;
     const condition = assessCondition(lot.description);
     const mixed = detectMixedLot(lot.lead || lot.title, lot.description);
@@ -388,8 +411,8 @@ function buildAnalysisRecords(
     const ebayNet = state.resaleEstimate === null
       ? null
       : Math.max(0, state.resaleEstimate * (1 - settings.ebayFeePct / 100) - settings.ebayFeeFixedCents / 100);
-    const indicators = computeRetailIndicators(allIn, { ebay: state.resaleEstimate });
-    return { lot, identity, condition, mixed, allIn, amazon: null, amazonIndicator: indicators.amazon, ebayIndicator: indicators.ebay, state, currency, needsQuantity, ebayNet, premiumPct };
+    const indicators = computeRetailIndicators(allIn, { amazon: statedRetail?.value ?? null, ebay: state.resaleEstimate });
+    return { lot, identity, condition, mixed, allIn, amazon: null, amazonIndicator: indicators.amazon, ebayIndicator: indicators.ebay, state, currency, needsQuantity, ebayNet, premiumPct, statedRetail };
   });
 }
 
@@ -501,7 +524,7 @@ export class DealIntelligenceController {
         const queueResult = await runProviderQueue({
             items: eligible,
             shouldContinue: stillCurrent,
-            policy: { delayMs: 2_000, maxRetries: 3, retryBaseMs: 5_000, retryMaxMs: 60_000 },
+            policy: { delayMs: 350, batchSize: 6, maxRetries: 3, retryBaseMs: 5_000, retryMaxMs: 60_000 },
             lookup: async (record): Promise<RetailLookupResult> => {
               try {
                 return await runtimeMessage<RetailLookupResult>('flippah:retail.lookup', { identity: record.identity });
@@ -521,7 +544,7 @@ export class DealIntelligenceController {
               }
               record.amazon = result;
               const price = amazonMarketValue(record);
-              record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price }).amazon;
+              record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price ?? record.statedRetail?.value ?? null }).amazon;
               amazonAnalyzed += 1;
               if (price !== null && result.status === 'matched') amazonMatchedIds.add(record.lot.id);
               repaint(record);

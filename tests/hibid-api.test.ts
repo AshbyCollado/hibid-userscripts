@@ -20,6 +20,17 @@ test('closed lots prefer a nonzero realized price over HiBid highBid zero', () =
   assert.equal(record?.currentBid, 365);
 });
 
+test('GraphQL normalization retains the auctioneer estimate used by the donor fallback', () => {
+  const route = resolveHiBidRoute('https://hibid.com/catalog/769459/example');
+  const record = normalizeHibidLot({
+    eventItemId: 317882346,
+    lotNumber: '98',
+    lead: 'ErGear Dual Monitor Arm',
+    estimate: '$80.00 - $129.00',
+  }, { route, sourceUrl: 'https://hibid.com/catalog/769459/example' });
+  assert.equal(record?.estimate, '$80.00 - $129.00');
+});
+
 test('hydration cannot overwrite a visible realized price with zero', () => {
   const visible = { id: '1', currentBid: 365, status: 'Closed', rawText: 'Price Realized: 365.00 USD' } as any;
   const hydrated = { id: '1', currentBid: 0, status: 'CLOSED', rawText: '1 | Samsung TV | CLOSED' } as any;

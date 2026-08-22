@@ -23,7 +23,7 @@ in-page calculator remains limited to individual lot pages.
 
 ## US deal intelligence
 
-Flippah `v0.3.13` adds title-authoritative product identity with structured
+Flippah `v0.3.23` adds title-authoritative product identity with structured
 description enrichment and condition parsing, Amazon.com retail evidence,
 manual eBay Sold verification, saved resale estimates, mixed-lot and quantity
 review gates, and compact Current Bids/Watchlist verdicts. Catalog annotations
@@ -31,11 +31,12 @@ are additive: Flippah does not hide, move, fade, shrink, relabel, or replace
 HiBid-owned content or controls. Genuine CAD lots remain CAD and receive no USD
 comparison.
 
-Cold Amazon lookups use one reusable minimized Chrome helper window. Its single
-Amazon tab is navigated sequentially, never takes focus from HiBid, and closes
-after one idle minute; Flippah never fans a catalog out into hundreds of tabs.
-Requests use two-second pacing, bounded retries, durable challenge/rate-limit
-cooldowns, in-flight joining, and a 12-hour evidence cache. eBay remains
+Amazon lookups port the donor's catalog transport: anonymous Amazon.com HTML
+requests in batches of six, 350 ms between network batches, per-lot failure
+isolation, in-flight joining, and a 12-hour evidence cache. No Amazon tabs or
+helper windows are opened. HiBid's own Retail/MSRP/Estimate is retained as an
+explicitly labeled provisional fallback when live Amazon evidence is missing;
+it is never presented as a verified Amazon price. eBay remains
 user-directed: Flippah opens an exact Sold and Completed search, then uses the
 resale estimate the user saves in the lot panel. Only normalized Amazon
 evidence returns to HiBid; raw provider HTML is never stored or sent to HiBid.
@@ -70,7 +71,8 @@ locked to the same query corpus in tests.
 Retail matching uses a reusable product fingerprint rather than per-lot fixes.
 It removes bounded inventory/lot prefixes, normalizes brand families, requires
 the primary product kind, distinguishes accessories from real bundles, and
-fails closed on conflicting capacity, platform, resolution, size, memory type,
+fails closed on conflicting capacity, volume, package count, color, material,
+product family, mode count, platform, resolution, size, memory type,
 frequency, refresh rate, storage type, network standard, voltage, wattage,
 battery capacity, lens range, edition, or model-series evidence. Every checked
 candidate has explainable match/rejection evidence in the normalized background

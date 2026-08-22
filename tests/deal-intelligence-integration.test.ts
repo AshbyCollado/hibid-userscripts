@@ -3,27 +3,23 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
 
-test('Chrome uses one reusable minimized Amazon helper without taking over the active tab', async () => {
+test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.3.13');
+  assert.equal(chrome.version, '0.3.23');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
   assert.equal(chrome.permissions.includes('declarativeNetRequest'), false);
   assert.equal(waterfox.permissions.includes('offscreen'), false);
   assert.equal(waterfox.permissions.includes('declarativeNetRequest'), false);
-  assert.ok(chrome.content_scripts.some((entry: any) => entry.matches?.includes('https://www.amazon.com/*') && entry.js?.includes('amazon-provider.js')));
+  assert.equal(chrome.content_scripts.some((entry: any) => entry.matches?.includes('https://www.amazon.com/*')), false);
   assert.equal(chrome.content_scripts.some((entry: any) => entry.matches?.some((value: string) => /ebay/i.test(value))), false);
   assert.equal(chrome.host_permissions.some((value: string) => /bestbuy|amazon\.ca/i.test(value)), false);
   assert.deepEqual(chrome.host_permissions, waterfox.host_permissions);
   const background = await readFile('src/background/index.ts', 'utf8');
-  assert.match(background, /state: 'minimized'/);
-  assert.match(background, /focused: false/);
-  assert.match(background, /chrome\.tabs\.update\(helper\.tabId, \{ url: url\.href, active: false \}\)/);
-  assert.match(background, /AMAZON_HELPER_CLOSE_ALARM/);
-  assert.match(background, /AMAZON_REQUEST_KEY/);
-  assert.doesNotMatch(background, /chrome\.tabs\.create\([^)]*amazon/i);
+  assert.match(background, /fetch\(url\.href/);
+  assert.doesNotMatch(background, /if \(supportsAmazonHelperWindow\(\)\)/);
 });
 
 test('personalized watchlist exports use the account DOM and never extension-origin GraphQL', async () => {
@@ -38,8 +34,7 @@ test('retail transport returns normalized lookups and never exposes raw HTML or 
   const policy = await readFile('src/intelligence/retail-policy.ts', 'utf8');
   assert.match(background, /flippah:retail\.lookup/);
   assert.doesNotMatch(background, /flippah:retail\.amazon-search|flippah:retail\.cache\.get|flippah:retail\.cache\.set/);
-  assert.match(background, /loadAmazonBrowser/);
-  assert.match(background, /flippah:amazon\.browser\.result/);
+  assert.match(background, /fetch\(url\.href/);
   assert.match(background, /AMAZON_BODY_LIMIT/);
   assert.match(background, /joinInflight\(amazonInflight/);
   assert.match(background, /providerStateStorageKey/);
