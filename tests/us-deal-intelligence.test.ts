@@ -570,6 +570,20 @@ test('Amazon matching rejects accessories and unrelated models while retaining t
   assert.equal(match?.candidate.asin, 'B000000004');
 });
 
+test('Amazon matching accepts an exact accessory when the auction lot is itself that accessory', () => {
+  const product = extractProductIdentity('JSAUX 4ft Aux to RCA Male Male Y Cord Grey');
+  const result = evaluateRetailCandidate('RCA to 3.5mm Cable 4ft by JSAUX, Aux to RCA Male Y Splitter Grey', product);
+  assert.equal(result.accepted, true);
+  assert.doesNotMatch(result.rejectionReasons.join(' '), /accessory-or-component/);
+});
+
+test('Amazon matching tolerates a concatenated LED feature suffix on an inferred brand', () => {
+  const product = extractProductIdentity('SAMYUCHOLED Cake Stand, 2 pcs, 6x4, 10x4');
+  const result = evaluateRetailCandidate('SAMYUCHO Acrylic Cake Stand with Led Lights, 2 PCS Round Cake Riser', product);
+  assert.equal(result.accepted, true);
+  assert.doesNotMatch(result.rejectionReasons.join(' '), /brand-mismatch/);
+});
+
 test('Amazon indicator shares the donor thresholds in USD', () => {
   assert.equal(amazonIndicator(40, 100).cls, 'green');
   assert.equal(amazonIndicator(50, 100).cls, 'yellow');

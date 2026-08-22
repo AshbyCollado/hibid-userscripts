@@ -428,3 +428,9 @@ ignored by Git.
 
 - The first detail-enrichment gate incorrectly required positive evidence that the evaluator intentionally does not populate after a hard rejection.
 - Eligibility now depends solely on every rejection being `attribute-missing` or `attribute-conflict`; any brand, model, kind, accessory, overlap, used, or sponsored problem still blocks detail requests.
+
+## v0.3.33 retail identity edge cases
+
+- Final candidate acceptance now mirrors scoring: when the auction lot is itself an accessory (cable, cord, stand, band, etc.), an exact Amazon accessory is allowed instead of being rejected as an add-on to a different product.
+- Inferred brands tolerate a concatenated retail feature suffix such as `SAMYUCHOLED` matching Amazon's `SAMYUCHO`; the original brand remains intact and only a credible five-or-more-character maker stem is added as an alias.
+- Live acceptance targets: the JSAUX 4 ft cable and SAMYUCHO two-piece LED cake stands must receive exact Amazon evidence after catalog analysis.

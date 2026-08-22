@@ -209,7 +209,7 @@ const GENERIC_MODEL_RE = /^(?:n\/?a|none|null|nil|unknown|unspecified|various|as
 const CONDITION_PARTS_RE = /\b(for\s*parts|parts\s*only|salvage|broken|not\s*working|non[\s-]*functional|defective|scrap|damaged\s*beyond)\b/i;
 const CONDITION_GOOD_RE = /\b(brand\s*new|new|sealed|excellent|like\s*new|mint|open\s*box|good|very\s*good)\b/i;
 const POSITIVE_RE = /\b(tested\s*(?:and\s*)?working|works?\s*(?:great|well|fine|perfectly)|fully\s*functional|brand\s*new|sealed|new\s*in\s*box|nib\b)/i;
-const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|charger|adapter|mount|holder|stand|arm|topper|strap|band|bumper|shell|film|dock|lanyard|clip|controller|game|spray|cloth|cloths|pads?|wipes?|filters?|valves?|sensor\s*wires?|disc\s+drive|baffle|shield|backplate|back\s*plate|faceplate|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert)s?\b/i;
+const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|cord|charger|adapter|mount|holder|stand|arm|topper|strap|band|bumper|shell|film|dock|lanyard|clip|controller|game|spray|cloth|cloths|pads?|wipes?|filters?|valves?|sensor\s*wires?|disc\s+drive|baffle|shield|backplate|back\s*plate|faceplate|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert)s?\b/i;
 const ACCESSORY_MARKER_RE = /\b(compatible\s+with|replacement\s+for|replacement\s+parts?\s+only|designed\s+for|made\s+for|for\s+use\s+with|fits\s+(?:the\s+)?[A-Z0-9])/i;
 const FOR_PRODUCT_VERBS = 'compatible\\s+with|replacement\\s+(?:part\\s+)?for|designed\\s+for|made\\s+for|for\\s+use\\s+with|fits|suitable\\s+for|upgrade\\s+for';
 const TITLE_PREFIX_RE = /^\s*(?:\(?\s*(?:open\s*box|openbox|refurbished|refurb|renewed|used|pre[\s-]?owned)[^-|:]*\)?\s*[-|:]\s*)+/i;
@@ -893,13 +893,28 @@ function literalBrandMatches(candidateTitle: string, brand: string): boolean {
   return new RegExp(`(?:^|[^a-z0-9])${phrase}(?:$|[^a-z0-9])`, 'i').test(candidateTitle);
 }
 
+function inferredBrandAliases(brand: string): string[] {
+  const aliases = [brand];
+  // Auction titles occasionally concatenate a feature badge to the maker
+  // (for example "SAMYUCHOLED"). Keep the original identity, but also allow
+  // the credible maker stem when Amazon separates the badge from the brand.
+  const featureSuffix = brand.match(/^([a-z0-9][a-z0-9-]{4,})(led|rgb|usb)$/i);
+  if (featureSuffix?.[1]) aliases.push(featureSuffix[1]);
+  return [...new Set(aliases)];
+}
+
 function brandEvidence(candidateTitle: string, product: ProductIdentity): { matches: boolean; expected: boolean; label: string } {
   const credible = Boolean(product.brand) && !GENERIC_BRAND_RE.test(product.brand) && !CAPACITY_RE.test(product.brand) && /[a-z]/i.test(product.brand);
   if (!credible) return { matches: false, expected: false, label: '' };
   const expectedFamily = canonicalBrandFamily(`${product.brand} ${product.name}`);
   const candidateFamily = canonicalBrandFamily(candidateTitle);
   if (expectedFamily) return { matches: candidateFamily === expectedFamily, expected: true, label: expectedFamily };
-  return { matches: literalBrandMatches(candidateTitle, product.brand), expected: true, label: product.brand.toLowerCase() };
+  const aliases = inferredBrandAliases(product.brand);
+  return {
+    matches: aliases.some((alias) => literalBrandMatches(candidateTitle, alias)),
+    expected: true,
+    label: aliases.at(-1)!.toLowerCase(),
+  };
 }
 
 function productIdentityEvidenceCount(product: ProductIdentity): number {
@@ -982,7 +997,10 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
   const matchedEvidence: string[] = [];
   if (!candidateTitle) return { accepted: false, score: 0, rejectionReasons: ['empty-title'], matchedEvidence };
   if (!hasSufficientRetailIdentity(product)) rejectionReasons.push('insufficient-source-identity');
-  if (isAccessoryListing(candidateTitle, product)) rejectionReasons.push('accessory-or-component');
+  // A cable/stand/band is allowed to match the same product type. Accessory
+  // rejection protects a primary product from its add-ons; it must not reject
+  // an auction lot whose product is itself the accessory.
+  if (!ACCESSORY_NOUN_RE.test(product.name) && isAccessoryListing(candidateTitle, product)) rejectionReasons.push('accessory-or-component');
   const exactModel = product.model ? modelMatches(candidateTitle, product.model) : false;
   const discriminators = matchesProductDiscriminators(candidateTitle, product);
   if (discriminators.conflicts.length) rejectionReasons.push(...discriminators.conflicts.map((value) => `attribute-conflict:${value}`));
