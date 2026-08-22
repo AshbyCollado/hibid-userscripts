@@ -440,3 +440,8 @@ ignored by Git.
 - A three-to-six digit token immediately following a credible leading brand is retained as a model, except ordinary four-digit years.
 - This prevents products such as `Pelican 1490` from accepting a generic same-brand Pelican case that omits model `1490`.
 - Numeric-model detection anchors to the detected brand wherever it appears, so catalog prefixes such as `Lot 9 |` cannot hide the model.
+
+## v0.3.36 retail-condition cache repair
+
+- Sanitization re-derives used/open-box/refurbished/renewed state from every Amazon candidate title instead of trusting an older serialized boolean.
+- The provider cache generation advanced to `provider-v8`, preventing stale parser evidence from supplying a used price as new retail after a matcher release.

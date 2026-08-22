@@ -60,7 +60,10 @@ function sanitizeAmazonCandidates(value: unknown): ReturnType<typeof parseAmazon
       title,
       matchText,
       price,
-      used: Boolean(candidate?.used),
+      // Re-derive condition from the title as well as trusting the parser flag.
+      // This repairs older cached candidates whose title said Renewed/Open Box
+      // but whose serialized `used` flag was false.
+      used: Boolean(candidate?.used) || /\b(open\s*box|refurbished|refurb|renewed|pre[\s-]?owned|used|for\s+parts)\b/i.test(title),
       sponsored: Boolean(candidate?.sponsored),
       url: `https://www.amazon.com/dp/${asin}`
     }];
