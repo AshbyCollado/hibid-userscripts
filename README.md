@@ -121,3 +121,7 @@ Release archives must be created explicitly after browser acceptance.
 Flippah processes HiBid page and API data locally. It does not transmit or
 sell browsing, auction, watchlist, or research data. Diagnostics are sanitized
 and remain local unless the user chooses to share them.
+Flippah `v0.3.25` parses Amazon search responses as a real HTML tree in the
+background worker. Nested Amazon result nodes can no longer cross-wire one
+variant's title with another variant's price; the retail cache epoch is bumped
+so every catalog is re-evaluated under the corrected parser.

@@ -5,6 +5,7 @@ import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.
 import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
 import { clearRetailCache, getRetailCache, putRetailCache } from '../core/retail-db.js';
 import { detectProductKind, evaluateRetailCandidate, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
+import { parseAmazonDocumentCandidates } from '../intelligence/amazon-document-parser.js';
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
 import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailCandidateList, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
 
@@ -362,7 +363,7 @@ async function providerSnapshot(query: string): Promise<{ snapshot: RetailProvid
       if (isAmazonChallengeHtml(html)) {
         return { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), message: 'Amazon.com returned a challenge page' };
       }
-      const candidates = parseAmazonCandidates(html).slice(0, 30);
+      const candidates = parseAmazonDocumentCandidates(html).slice(0, 30);
       const explicitNoResults = /(?:did not match any products|no results for|try checking your spelling)/i.test(html);
       const status: RetailProviderSnapshot['status'] = candidates.length ? 'ok' : explicitNoResults ? 'no_results' : 'parse_error';
       const result: RetailProviderSnapshot = {

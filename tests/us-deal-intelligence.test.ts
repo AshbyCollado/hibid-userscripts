@@ -24,6 +24,7 @@ import {
   requiresQuantityConfirmation,
   trustedAmazonMarketValue,
 } from '../src/intelligence/us-deal-intelligence.js';
+import { parseAmazonDocumentCandidates } from '../src/intelligence/amazon-document-parser.js';
 
 test('auctioneer retail claims provide the donor-compatible provisional value', () => {
   assert.deepEqual(
@@ -506,6 +507,28 @@ test('Amazon candidate parsing deduplicates ASINs and records sponsored, used, p
   assert.equal(candidates.find((candidate) => candidate.asin === 'B000000001')?.price, 278);
   assert.equal(candidates.find((candidate) => candidate.asin === 'B000000002')?.used, true);
   assert.equal(candidates.find((candidate) => candidate.asin === 'B000000002')?.price, 199.99);
+});
+
+test('Amazon document parser keeps nested result titles paired with their own prices', () => {
+  const html = `
+    <div data-asin="B0FF9WP8RF" class="organic">
+      <a href="/vancasso-Feeder-Ceramic-Feeding-Medium/dp/B0FF9WP8RF">
+        <img class="s-image" alt="vancasso Slow Feeder Dog Bowl, 1.5 Cup, Pink" />
+      </a>
+      <span class="a-price"><span class="a-offscreen">$25.99</span></span>
+      <div data-asin="B0FF9WP8RF"><span class="a-price"><span class="a-offscreen">$25.99</span></span></div>
+    </div>
+    <div data-asin="B0F8BYCWQ2" class="organic">
+      <a href="/vancasso-Ceramic-Feeder-Puzzle-Floral/dp/B0F8BYCWQ2">
+        <img class="s-image" alt="vancasso Slow Feeder Dog Bowl, 1.5 Cup, Purple" />
+      </a>
+      <span class="a-price"><span class="a-offscreen">$19.79</span></span>
+    </div>`;
+  const candidates = parseAmazonDocumentCandidates(html);
+  assert.equal(candidates.find((item) => item.asin === 'B0FF9WP8RF')?.price, 25.99);
+  assert.match(candidates.find((item) => item.asin === 'B0FF9WP8RF')?.title || '', /Pink/);
+  assert.equal(candidates.find((item) => item.asin === 'B0F8BYCWQ2')?.price, 19.79);
+  assert.match(candidates.find((item) => item.asin === 'B0F8BYCWQ2')?.title || '', /Purple/);
 });
 
 test('Amazon matching rejects accessories and unrelated models while retaining the real product', () => {

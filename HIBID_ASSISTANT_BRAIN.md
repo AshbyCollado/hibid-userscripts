@@ -377,3 +377,13 @@ ignored by Git.
   matching evidence while the human-facing title remains unchanged.
 - Treat `clear` as transparency rather than a competing color when a chromatic
   color is also present, such as `clear blue glass`.
+## v0.3.25 Amazon result integrity
+
+- Background Amazon responses are parsed with `parse5`, mirroring the donor's
+  DOM-based parsing instead of slicing raw HTML at `data-asin` offsets.
+- Nested result elements are isolated before reading title, price, ASIN, URL
+  slug, sponsored state, and condition. A neighboring variant cannot lend its
+  price to the selected title.
+- Provider cache epoch `v5` retires every snapshot created by the old parser.
+- Release acceptance still requires live catalog evidence after updating the
+  installed Chrome extension; a passing unit test alone is not completion.
