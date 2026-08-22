@@ -585,7 +585,7 @@ test('Amazon matching tolerates a concatenated LED feature suffix on an inferred
 });
 
 test('numeric manufacturer models reject a same-brand but different product', () => {
-  const product = extractProductIdentity('Pelican 1490 Protector Laptop Case');
+  const product = extractProductIdentity('Lot 9 | Pelican 1490 Protector Laptop Case');
   assert.equal(product.model, '1490');
   assert.equal(evaluateRetailCandidate('Pelican Adventurer Laptop Bag Case 14.2 Inch Black', product).accepted, false);
   assert.equal(evaluateRetailCandidate('Pelican 1490 Protector Laptop Case, Black', product).accepted, true);

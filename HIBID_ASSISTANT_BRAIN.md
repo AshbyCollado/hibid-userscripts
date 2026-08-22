@@ -439,3 +439,4 @@ ignored by Git.
 
 - A three-to-six digit token immediately following a credible leading brand is retained as a model, except ordinary four-digit years.
 - This prevents products such as `Pelican 1490` from accepting a generic same-brand Pelican case that omits model `1490`.
+- Numeric-model detection anchors to the detected brand wherever it appears, so catalog prefixes such as `Lot 9 |` cannot hide the model.

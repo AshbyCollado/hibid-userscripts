@@ -705,8 +705,10 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   // even though a bare number elsewhere in a title usually is not. Restrict the
   // inference to the token immediately after a credible leading brand and keep
   // ordinary years out of the model path.
-  const numericBrandModel = brand === titleBrand && /^\d{3,6}$/.test(rawTokens[1] || '')
-    && !/^(?:19|20)\d{2}$/.test(rawTokens[1] || '') ? rawTokens[1]! : null;
+  const brandTokenIndex = rawTokens.findIndex((token) => token.toLowerCase() === brand.toLowerCase());
+  const numericAfterBrand = brandTokenIndex >= 0 ? rawTokens[brandTokenIndex + 1] || '' : '';
+  const numericBrandModel = /^\d{3,6}$/.test(numericAfterBrand)
+    && !/^(?:19|20)\d{2}$/.test(numericAfterBrand) ? numericAfterBrand : null;
   const titleModel = tokens.find((token) => MODEL_RE.test(token) && !/^\d+$/.test(token) && !GENERIC_MODEL_RE.test(token))
     ?? tokens.find((token) => TITLE_MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token))
     ?? numericBrandModel;
