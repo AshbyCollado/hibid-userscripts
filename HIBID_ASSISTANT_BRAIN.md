@@ -412,3 +412,8 @@ ignored by Git.
 - The running background compares its loaded manifest version with the unpacked manifest on disk every two seconds while awake and every 30 seconds through an alarm.
 - A changed semantic version calls `chrome.runtime.reload()` automatically. Developers still refresh the page under test, but no longer need to click Reload on `chrome://extensions` after every local install.
 - Packed releases remain unaffected because their on-disk manifest cannot change underneath the running extension.
+
+## v0.3.30 exact-evidence selection
+
+- Amazon price is now a tie-breaker only among candidates with effectively equal identity scores.
+- A cheaper candidate that omits a source attribute cannot undercut a complete match. Live acceptance caught a `$20.88` Vancasso bowl without color evidence outranking the exact pink `$25.99` listing; the exact listing now wins.

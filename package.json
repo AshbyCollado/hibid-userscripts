@@ -1,6 +1,6 @@
 {
   "name": "flippah-extension",
-  "version": "0.3.29",
+  "version": "0.3.30",
   "private": true,
   "type": "module",
   "description": "Flippah browser extension source and HiBid scraper core.",

@@ -1064,7 +1064,10 @@ export function matchAmazonCandidates(candidates: AmazonCandidate[], product: Pr
     .sort((left, right) => right.score - left.score);
   if (!scored.length) return null;
   const top = scored[0]?.score ?? 0;
-  const band = scored.filter((entry) => entry.score >= top - 1.5);
+  // Price breaks ties between equally specific listings. A cheaper candidate
+  // that omits source attributes (for example, the required color) must not
+  // outrank a complete exact-attribute result merely because it is plausible.
+  const band = scored.filter((entry) => entry.score >= top - 0.25);
   return [...band].sort((left, right) => (left.candidate.price ?? Infinity) - (right.candidate.price ?? Infinity))[0] ?? null;
 }
 

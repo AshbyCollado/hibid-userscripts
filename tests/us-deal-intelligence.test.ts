@@ -286,6 +286,16 @@ test('missing marketing attributes do not reject an otherwise corroborated produ
   assert.equal(evaluation.accepted, true, evaluation.rejectionReasons.join(', '));
 });
 
+test('exact source attributes outrank a cheaper candidate that omits them', () => {
+  const identity = extractProductIdentity('Vancasso Slow Feeder Dog Bowl, 1.5 Cup Pink');
+  const match = chooseAmazonMatch(identity, [
+    { asin: 'B0F8BX8CB6', title: 'vancasso Ceramic Slow Feeder Dog Bowl, 1.5 Cup Puzzle Dish for Medium Breed', price: 20.88, used: false, sponsored: false, url: '' },
+    { asin: 'B0FF9WP8RF', title: 'vancasso Slow Feeder Dog Bowl, 1.5 Cup Ceramic Slow Feeding Food Dish for Small and Medium Breed, Pink', price: 25.99, used: false, sponsored: false, url: '' },
+  ]);
+  assert.equal(match?.candidate.asin, 'B0FF9WP8RF');
+  assert.equal(match?.candidate.price, 25.99);
+});
+
 test('Amazon liquidation matching rejects wrong package, color, material, family, and labeled variants', () => {
   const cases = [
     ['Pampers Swaddlers Newborn Diapers, 84 ct', 'Pampers Swaddlers Diapers Size 3, 168 Count'],
