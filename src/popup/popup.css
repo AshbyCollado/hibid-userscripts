@@ -43,9 +43,8 @@ select { width: 100%; margin-top: 5px; border: 1px solid #c9d3e2; border-radius:
 .watch-note { margin-top: 6px; border-left: 2px solid #b8c7dd; padding-left: 7px; color: #46566f; font-size: 12px; white-space: pre-wrap; }
 .empty { padding: 30px 16px; text-align: center; color: #69778c; }
 .debug { margin-top: 10px; border-top: 1px solid #e2e7ef; padding-top: 10px; }
-.analysis { margin-top: 12px; border: 1px solid #d8e2f2; border-radius: 7px; background: #f8fbff; padding: 10px; }
+.analysis { margin-top: 14px; border-top: 1px solid #e2e7ef; padding-top: 12px; }
 .analysis-head { display: flex; justify-content: space-between; gap: 10px; color: #24436b; font-size: 12px; }
 .analysis-head span { color: #65748b; text-align: right; }
-.analysis-counts { display: flex; flex-wrap: wrap; gap: 5px 10px; margin-top: 7px; color: #65748b; font-size: 11px; }
 .actions.compact { margin-top: 8px; }
 .actions.compact .button { padding: 6px 8px; font-size: 12px; }

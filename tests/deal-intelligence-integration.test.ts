@@ -3,10 +3,10 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
 
-test('v0.3.6 browser packages permit only the fixed Amazon.com retail provider', async () => {
+test('v0.3.7 browser packages permit only the fixed Amazon.com retail provider', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.3.6');
+  assert.equal(chrome.version, '0.3.7');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.some((value: string) => /bestbuy|amazon\.ca/i.test(value)), false);
   assert.deepEqual(chrome.host_permissions, waterfox.host_permissions);
@@ -59,14 +59,16 @@ test('built lot calculator omits shipping UI and saved shipping cannot enter fee
   assert.doesNotMatch(legacy, /shipCents:i\.shipCents|shipCents:wi\.shipCents|Budget is below shipping/);
 });
 
-test('popup and options expose automatic US retail controls without replacing scraper exports', async () => {
+test('scraper keeps simple price-check controls below its export actions', async () => {
   const popup = await readFile('src/popup/index.ts', 'utf8');
   const options = await readFile('src/options/index.ts', 'utf8');
-  assert.match(popup, /US Deal Intelligence/);
-  assert.match(popup, /Re-run Analysis/);
-  assert.match(popup, /Clear Retail Cache/);
-  assert.match(popup, /Copy LLM Brief/);
+  assert.match(popup, /Price check/);
+  assert.match(popup, /Check prices again/);
+  assert.match(popup, /Clear saved prices/);
+  assert.match(popup, /Copy for AI/);
   assert.match(popup, /Copy JSON/);
+  assert.ok(popup.indexOf('id="copy-llm"') < popup.indexOf('${analysisHtml}'));
+  assert.doesNotMatch(popup, /analysis-counts|Amazon matches|US Deal Intelligence/);
   assert.match(options, /Automatically research Amazon\.com/);
   assert.equal(DEFAULT_SETTINGS.amazonAutoLookup, true);
   assert.equal(normalizeSettings({}).retailTargetPct, 50);

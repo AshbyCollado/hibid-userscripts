@@ -9,7 +9,7 @@ const app = document.querySelector<HTMLElement>('#app')!;
 let currentTabId: number | null = null;
 let context: PageContext | null = null;
 let job: ScrapeJobSummary | null = null;
-let selectedTab: 'current' | 'watchlist' = 'current';
+let selectedTab: 'current' | 'watchlist' = 'watchlist';
 let selectedGroupId = '';
 let toast = '';
 let toastFromRefreshError = false;
@@ -92,8 +92,30 @@ function statusClass(): string {
   return busy() ? 'busy' : '';
 }
 
+function scrapeStatusText(current: number, count: number | null | undefined): string {
+  if (context?.noMatches) return 'No matching lots';
+  if (!job) return 'Ready';
+  if (busy()) return count ? `Scanning ${current} of ${count}` : 'Scanning this page';
+  if (job.phase === 'completed') return `${job.hydratedCount} lot${job.hydratedCount === 1 ? '' : 's'} ready`;
+  if (job.phase === 'stopped') return 'Scan stopped';
+  if (job.phase === 'stale') return 'Page changed. Scan again';
+  if (job.phase === 'failed') return 'Could not finish the scan';
+  return 'Ready';
+}
+
+function analysisStatusText(analysis: PageContext['analysis']): string {
+  if (analysis.phase === 'scanning' || analysis.phase === 'retail') {
+    return analysis.total ? `Checking ${analysis.analyzed} of ${analysis.total}` : 'Checking visible lots';
+  }
+  if (analysis.phase === 'complete') {
+    const review = analysis.mixedLots ? ` · ${analysis.mixedLots} need review` : '';
+    return `${analysis.retailMatched} price${analysis.retailMatched === 1 ? '' : 's'} found${review}`;
+  }
+  return analysis.message === 'Amazon auto-lookup is off' ? 'Automatic checks are off' : 'Ready';
+}
+
 function currentHtml(): string {
-  if (!context?.supported) return `<section class="panel"><div class="card"><div class="eyebrow">Current page</div><h1>Open a supported HiBid page</h1><p class="route">${escapeHtml(context?.route.reason || toast || 'Flippah only exports HiBid research pages.')}</p></div></section>`;
+  if (!context?.supported) return `<section class="panel"><div class="card"><div class="eyebrow">Scraper</div><h1>Open a HiBid research page</h1><p class="route">Catalogs, searches, watchlists, and bid pages can be copied here.</p></div></section>`;
   const count = job?.expectedTotal ?? context.visibleExpectedTotal;
   const current = job?.hydratedCount || job?.enumeratedCount || 0;
   const percent = count && count > 0 ? Math.min(100, Math.round(current / count * 100)) : (job?.phase === 'completed' ? 100 : 0);
@@ -104,9 +126,9 @@ function currentHtml(): string {
   const analysis = context.analysis;
   const analysisPercent = analysis.total > 0 ? Math.min(100, Math.round(analysis.analyzed / analysis.total * 100)) : 0;
   const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid'].includes(context.route.kind)
-    ? `<div class="analysis"><div class="analysis-head"><strong>US Deal Intelligence</strong><span>${escapeHtml(analysis.message || 'Ready')}</span></div>${analysis.phase === 'scanning' || analysis.phase === 'retail' ? `<div class="progress"><i style="width:${analysisPercent}%"></i></div>` : ''}<div class="analysis-counts"><span>${analysis.analyzed}/${analysis.total || 0} analyzed</span><span>${analysis.retailMatched} Amazon matches</span>${analysis.mixedLots ? `<span>${analysis.mixedLots} mixed review</span>` : ''}</div><div class="actions compact"><button id="rerun-analysis" class="button" ${analysis.phase === 'scanning' || analysis.phase === 'retail' ? 'disabled' : ''}>Re-run Analysis</button><button id="clear-retail-cache" class="button">Clear Retail Cache</button></div></div>`
+    ? `<div class="analysis"><div class="analysis-head"><strong>Price check</strong><span>${escapeHtml(analysisStatusText(analysis))}</span></div>${analysis.phase === 'scanning' || analysis.phase === 'retail' ? `<div class="progress"><i style="width:${analysisPercent}%"></i></div>` : ''}<div class="actions compact"><button id="rerun-analysis" class="button" ${analysis.phase === 'scanning' || analysis.phase === 'retail' ? 'disabled' : ''}>Check prices again</button><button id="clear-retail-cache" class="button">Clear saved prices</button></div></div>`
     : '';
-  return `<section class="panel"><div class="card"><div class="eyebrow">HiBid ${escapeHtml(routeLabel())}</div><h1>${escapeHtml(context.title || 'Current HiBid page')}</h1><p class="route">${escapeHtml(new URL(context.url).pathname + new URL(context.url).search)}</p>${analysisHtml}${groupSelect}<div class="status ${statusClass()}"><span class="dot"></span><span>${escapeHtml(job?.message || (context.noMatches ? 'No matching lots' : 'Ready to scan'))}</span></div>${busy() || job?.phase === 'completed' ? `<div class="progress"><i style="width:${percent}%"></i></div>` : ''}<div class="actions"><button id="copy-llm" class="button primary" ${!canStart && !complete ? 'disabled' : ''}>Copy LLM Brief</button><button id="copy-json" class="button" ${!canStart && !complete ? 'disabled' : ''}>Copy JSON</button>${busy() ? '<button id="stop" class="button danger">Stop</button>' : ''}${job?.phase === 'failed' || job?.phase === 'stale' || job?.phase === 'stopped' ? '<button id="retry" class="button">Retry</button>' : ''}</div><div class="toast">${escapeHtml(toast)}</div>${debugHtml()}</div></section>`;
+  return `<section class="panel"><div class="card"><div class="eyebrow">Scraper</div><h1>${escapeHtml(routeLabel())}</h1>${groupSelect}<div class="status ${statusClass()}"><span class="dot"></span><span>${escapeHtml(scrapeStatusText(current, count))}</span></div>${busy() || job?.phase === 'completed' ? `<div class="progress"><i style="width:${percent}%"></i></div>` : ''}<div class="actions"><button id="copy-llm" class="button primary" ${!canStart && !complete ? 'disabled' : ''}>Copy for AI</button><button id="copy-json" class="button" ${!canStart && !complete ? 'disabled' : ''}>Copy JSON</button>${busy() ? '<button id="stop" class="button danger">Stop</button>' : ''}${job?.phase === 'failed' || job?.phase === 'stale' || job?.phase === 'stopped' ? '<button id="retry" class="button">Try again</button>' : ''}</div><div class="toast">${escapeHtml(toast)}</div>${analysisHtml}${debugHtml()}</div></section>`;
 }
 
 function debugHtml(): string {
@@ -116,7 +138,7 @@ function debugHtml(): string {
 }
 
 function shell(body: string): string {
-  return `<div class="shell"><header class="topbar"><span class="brand">Flippah by ALOS</span><span class="version">v${escapeHtml(chrome.runtime.getManifest().version)}</span><button id="settings" class="icon-button" title="Open Flippah settings" aria-label="Open settings">⚙</button></header><nav class="tabs" aria-label="Flippah sections"><button class="tab" data-tab="current" aria-selected="${selectedTab === 'current'}">Current Page</button><button class="tab" data-tab="watchlist" aria-selected="${selectedTab === 'watchlist'}">Watchlist</button></nav>${body}</div>`;
+  return `<div class="shell"><header class="topbar"><span class="brand">Flippah by ALOS</span><span class="version">v${escapeHtml(chrome.runtime.getManifest().version)}</span><button id="settings" class="icon-button" title="Open Flippah settings" aria-label="Open settings">⚙</button></header><nav class="tabs" aria-label="Flippah sections"><button class="tab" data-tab="watchlist" aria-selected="${selectedTab === 'watchlist'}">Watchlist</button><button class="tab" data-tab="current" aria-selected="${selectedTab === 'current'}">Scraper</button></nav>${body}</div>`;
 }
 
 async function render(): Promise<void> {
@@ -147,8 +169,8 @@ function bind(): void {
   app.querySelector('#copy-llm')?.addEventListener('click', () => void copyOrStart('llm'));
   app.querySelector('#stop')?.addEventListener('click', () => void command('flippah:job.stop'));
   app.querySelector('#retry')?.addEventListener('click', () => void command('flippah:job.retry'));
-  app.querySelector('#rerun-analysis')?.addEventListener('click', () => void analysisCommand('flippah:analysis.rerun', 'Analysis restarted'));
-  app.querySelector('#clear-retail-cache')?.addEventListener('click', () => void analysisCommand('flippah:analysis.clear-cache', 'Retail cache cleared; analysis restarted'));
+  app.querySelector('#rerun-analysis')?.addEventListener('click', () => void analysisCommand('flippah:analysis.rerun', 'Checking prices again'));
+  app.querySelector('#clear-retail-cache')?.addEventListener('click', () => void analysisCommand('flippah:analysis.clear-cache', 'Saved prices cleared; checking again'));
   app.querySelector('#copy-debug')?.addEventListener('click', () => void copyDiagnostic(false));
   app.querySelector('#download-debug')?.addEventListener('click', () => void copyDiagnostic(true));
   app.querySelector('#export-watchlist')?.addEventListener('click', () => void exportWatchlist());

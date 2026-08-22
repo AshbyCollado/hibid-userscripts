@@ -44,7 +44,7 @@ TypeScript and intentionally excludes the donor's page-rewrite behavior.
 
 ## Watchlist reliability
 
-Flippah `v0.3.6` reads `/account/watchlist` through its dedicated account-page
+Flippah `v0.3.7` reads `/account/watchlist` through its dedicated account-page
 DOM parser. HiBid requires private buyer authorization for `WatchListSearch`,
 so personalized data is never requested from an extension-origin GraphQL call.
 If the displayed total and stable lot count drift while a lot closes, Flippah

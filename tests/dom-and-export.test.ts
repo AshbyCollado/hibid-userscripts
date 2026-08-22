@@ -190,11 +190,13 @@ test('generated manifests preserve baseline content UI and split background runt
   await readFile(`dist/chrome/${chrome.options_page}`, 'utf8');
 });
 
-test('popup is toolbar-based with Current Page and Watchlist and no page overlay panel', async () => {
+test('popup opens on Watchlist with Scraper on the right and no page overlay panel', async () => {
   const popup = await readFile('src/popup/index.ts', 'utf8');
   const content = await readFile('src/content/index.ts', 'utf8');
-  assert.match(popup, /Current Page/);
+  assert.match(popup, /selectedTab: 'current' \| 'watchlist' = 'watchlist'/);
   assert.match(popup, /Watchlist/);
+  assert.match(popup, /data-tab="watchlist"[\s\S]*data-tab="current"[\s\S]*>Scraper</);
+  assert.doesNotMatch(popup, />Current Page</);
   assert.match(popup, /await updateContextFromTab\(\);/);
   assert.match(popup, /startPolling\(\);/);
   assert.match(popup, /toastFromRefreshError/);

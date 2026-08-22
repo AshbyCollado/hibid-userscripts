@@ -14,7 +14,7 @@ implemented.
   lot calculator, and keeps an active scrape alive when the popup closes.
 - `src/background/` owns API requests, bounded retries, job checkpoints,
   diagnostics, watch refreshes, alarms, and notifications.
-- `src/popup/` provides `Current Page` export controls and the preserved
+- `src/popup/` opens on `Watchlist`; the right-side `Scraper` tab provides export controls and the preserved
   `Watchlist` tab.
 - `src/options/` stores calculator, research-origin, radius, custom-instruction,
   and opt-in debug settings.
@@ -183,7 +183,7 @@ ignored by Git.
 - Chrome blocks automation from claiming extension-internal popup URLs. Popup
   markup, command wiring, polling, fingerprint-reset logic, active-tab fallback,
   and copy/diagnostic guards have source-level assertions and helper tests, but
-  the installed Current Page, Watchlist, rerun, clear-cache, copy, retry, and
+  the installed Scraper, Watchlist, rerun, clear-cache, copy, retry, and
   reconnect interactions still require a manual acceptance pass before the
   release can be called complete.
 
