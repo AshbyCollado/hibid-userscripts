@@ -3,10 +3,10 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
 
-test('v0.3.3 browser packages permit only the fixed Amazon.com retail provider', async () => {
+test('v0.3.4 browser packages permit only the fixed Amazon.com retail provider', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.3.3');
+  assert.equal(chrome.version, '0.3.4');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.some((value: string) => /bestbuy|amazon\.ca/i.test(value)), false);
   assert.deepEqual(chrome.host_permissions, waterfox.host_permissions);
@@ -39,6 +39,10 @@ test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid 
   assert.match(content, /content\.insertAdjacentElement\('beforebegin', strip\)/);
   assert.match(content, /if \(!strip\.isConnected\) return/);
   assert.match(content, /tileFor\(record\.lot\.id\)/);
+  assert.match(content, /links\.amazon/);
+  assert.match(content, /links\.ebay/);
+  assert.match(content, /Open exact sold and completed results/);
+  assert.match(content, /pill\.target = '_blank'/);
   assert.doesNotMatch(content, /\.innerHTML\s*=/);
   assert.doesNotMatch(content, /\.remove\(\)|style\.display\s*=|style\.opacity\s*=|replaceWith\(|outerHTML\s*=/);
   assert.doesNotMatch(content, /querySelectorAll\([^)]*\)\.forEach\([^)]*hidden/);

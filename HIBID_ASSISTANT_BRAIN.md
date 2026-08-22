@@ -241,3 +241,18 @@ ignored by Git.
   direct lots from each recorded under `docs/evidence/flippah-v0.3.3/`.
 - Upcoming lots can have no current bid. Their panel stays in manual current-bid
   mode and must not invent an all-in amount.
+
+## v0.3.4 exact product research queries
+
+- The legacy calculator query and modern `ProductIdentity.query` must use the
+  same full-title sanitizer. Never replace the panel query with a compact
+  brand/noun identity.
+- Model-less products retain discriminating specifications. The canonical
+  regression is `MAGCUBIC 4K SMART PROJECTOR, WIFI BT` ->
+  `magcubic 4k smart projector wifi bt`.
+- Internal model punctuation is identity-bearing: preserve `TX-SR304`,
+  `NT-USB+`, capacities, and compound specifications.
+- Remove only bounded auction noise, lot/group quantity phrases, and known
+  inventory prefixes such as `AV -`. Preserve dimensions because size can be a
+  critical discriminator on otherwise model-less products. Both query
+  implementations are parity-tested against an adversarial title corpus.

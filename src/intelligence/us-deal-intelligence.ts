@@ -165,7 +165,10 @@ const FOR_PRODUCT_VERBS = 'compatible\\s+with|replacement\\s+(?:part\\s+)?for|de
 const TITLE_PREFIX_RE = /^\s*(?:\(?\s*(?:open\s*box|openbox|refurbished|refurb|renewed|used|pre[\s-]?owned)[^-|:]*\)?\s*[-|:]\s*)+/i;
 const USED_RE = /\b(open\s*box|openbox|refurbished|refurb|renewed|pre[\s-]?owned|used|for\s+parts)\b/i;
 const GENERIC_BRAND_RE = /^(?:wireless|smart|portable|professional|digital|electric|electronic|gaming|bluetooth|usb|4k|8k|hd|full|mini|new|vintage|built[\s-]?in|multifunction|automatic|cordless|rechargeable)$/i;
-const QUERY_DESCRIPTOR_NOISE = new Set(['smart', 'wireless', 'wifi', 'wi-fi', 'bt', 'bluetooth', '4k', '8k', 'hd', 'uhd']);
+const RESEARCH_QUERY_NOISE = new Set([
+  'nice', 'estate', 'untested', 'working', 'approx', 'approximate',
+  'damage', 'damaged', 'read', 'look', 'wow', 'rare',
+]);
 const PRODUCT_KIND_PATTERNS: Array<[ProductKind, RegExp]> = [
   ['projector', /\bprojectors?\b/i],
   ['monitor', /\b(?:computer\s+)?monitors?\b/i],
@@ -194,6 +197,36 @@ function normalise(value: unknown): string {
     .replace(/[“”]/g, '"')
     .replace(/[–—]/g, '-')
     .replace(/[\u00a0\u2007\u202f]/g, ' ');
+}
+
+export function buildProductResearchQuery(title: string | null | undefined): string {
+  const original = normalise(title).replace(/\s+/g, ' ').trim();
+  if (!original) return '';
+
+  let query = original
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/^\s*lot\s*#?\s*[\w-]+\s*[-:|]\s*/i, ' ')
+    .replace(/[()[\]{}]/g, ' ')
+    .replace(/\b(?:lot|pair|set|group)\s+of\s+\d+\b/gi, ' ')
+    .replace(/\bx\s*\d+\b/gi, ' ')
+    .replace(/\b\d+\s*pcs?\b/gi, ' ')
+    .replace(/\b(?:online\s+)?auction\s+(?:item|lot)\b.*$/i, ' ')
+    .replace(/^\s*(?:av|inv(?:entory)?|sku)\s*[-:|]\s*/i, ' ')
+    .replace(/[^a-z0-9.+-]+/g, ' ');
+
+  const tokens = query
+    .split(/\s+/)
+    .map((token) => token.replace(/^[.+-]+|[.-]+$/g, ''))
+    .filter((token) => token && token !== 'x' && !RESEARCH_QUERY_NOISE.has(token));
+  query = tokens.join(' ');
+
+  if (query.length > 120) {
+    const shortened = query.slice(0, 121).replace(/\s+\S*$/, '').trim();
+    query = shortened || query.slice(0, 120).trim();
+  }
+  return tokens.length >= 2 ? query : original.slice(0, 120);
 }
 
 function firstNumber(value: string): number | null {
@@ -382,21 +415,7 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   const model = (looksLikeModel(statedModel) && modelMatches(name, statedModel) ? statedModel : null) || titleModel || (looksLikeModel(statedModel) ? statedModel : null);
   const model2 = tokens.find((token) => token !== model && token.toLowerCase() !== String(model ?? '').toLowerCase() && token.toLowerCase() !== brand.toLowerCase() && MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token)) ?? null;
   const capacities = [...new Set(tokens.filter((token) => CAPACITY_RE.test(token)))];
-  const queryParts: string[] = brand ? [brand] : [];
-  const second = tokens[1];
-  if (second && !/\d/.test(second) && second.toLowerCase() !== brand.toLowerCase()) queryParts.push(second);
-  for (const token of [model, model2, ...capacities]) {
-    if (token && !queryParts.some((part) => part.toLowerCase() === token.toLowerCase())) queryParts.push(token);
-  }
-  if (!model) {
-    const descriptor = tokens.slice(1).find((token) =>
-      token.length > 2 &&
-      !/\d/.test(token) &&
-      !QUERY_DESCRIPTOR_NOISE.has(token.toLowerCase())
-    );
-    if (descriptor && !queryParts.some((part) => part.toLowerCase() === descriptor.toLowerCase())) queryParts.push(descriptor);
-  }
-  const query = queryParts.length > 0 ? queryParts.join(' ') : tokens.slice(0, 5).join(' ');
+  const query = buildProductResearchQuery(name);
   const identity: ProductIdentity = { name, query: query.trim(), brand, model: model || null, model2, kind: detectProductKind(name), capacities, tokens: tokens.slice(0, 12) };
   if (record?.statedRetail != null && Number.isFinite(record.statedRetail) && record.statedRetail > 0) identity.statedRetail = record.statedRetail;
   return identity;

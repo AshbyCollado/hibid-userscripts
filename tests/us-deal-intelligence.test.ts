@@ -50,19 +50,19 @@ test('condition assessment respects answers instead of scanning question labels'
 
 test('product identity preserves hyphenated plus models, capacities, and parenthesized models', () => {
   const rode = extractProductIdentity('RODE NT-USB+ USB CONDENSER MICROPHONE', 'Condition: BRAND NEW\nModel: NT-USB+');
-  assert.equal(rode.query, 'RODE NT-USB+');
+  assert.equal(rode.query, 'rode nt-usb+ usb condenser microphone');
   assert.equal(rode.model, 'NT-USB+');
 
   const receiver = extractProductIdentity('Onkyo TX-SR304 Multi-Channel AV Receiver');
-  assert.match(receiver.query, /TX-SR304/);
+  assert.equal(receiver.query, 'onkyo tx-sr304 multi-channel av receiver');
   assert.equal(modelMatches('Onkyo TXSR304 AV Receiver', 'TX-SR304'), true);
 
   const mac = extractProductIdentity('Apple MacBook Pro (A2338) 13 inch');
   assert.equal(mac.model, 'A2338');
-  assert.match(mac.query, /A2338/);
+  assert.match(mac.query, /a2338/i);
 
   const ram = extractProductIdentity('$650 CORSAIR Vengeance DDR5 32GB (2x16GB) 6000MHz');
-  assert.match(ram.query, /32GB/);
+  assert.match(ram.query, /32gb/i);
   assert.ok(ram.capacities.includes('32GB'));
 
   const recordIdentity = extractProductIdentity({ title: 'Sony WF-1000XM5 Earbuds', statedRetail: 278 });
@@ -76,7 +76,7 @@ test('Magcubic projector title remains authoritative over longer marketing descr
   });
   assert.equal(identity.brand, 'Magcubic');
   assert.match(identity.name, /^Magcubic 4K Smart Projector/i);
-  assert.match(identity.query, /^Magcubic/);
+  assert.equal(identity.query, 'magcubic 4k smart projector wifi bluetooth');
 });
 
 test('unrelated Samsung 4K monitor is rejected for a Magcubic projector identity', () => {

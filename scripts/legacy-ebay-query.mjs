@@ -9,11 +9,11 @@ export function buildEbaySoldQuery(title) {
     .replace(/^\s*lot\s*#?\s*[\w-]+\s*[-:|]\s*/i, ' ')
     .replace(/[()[\]{}]/g, ' ')
     .replace(/\b(?:lot|pair|set|group)\s+of\s+\d+\b/gi, ' ')
-    .replace(/\b\d+(?:\.\d+)?\s*(?:"|in(?:ch(?:es)?)?|cm|ft|')(?=\s|$)/gi, ' ')
     .replace(/\bx\s*\d+\b/gi, ' ')
     .replace(/\b\d+\s*pcs?\b/gi, ' ')
     .replace(/\b(?:online\s+)?auction\s+(?:item|lot)\b.*$/i, ' ')
-    .replace(/[^a-z0-9.]+/g, ' ');
+    .replace(/^\s*(?:av|inv(?:entory)?|sku)\s*[-:|]\s*/i, ' ')
+    .replace(/[^a-z0-9.+-]+/g, ' ');
 
   const noise = new Set([
     'nice', 'estate', 'untested', 'working', 'approx', 'approximate',
@@ -21,7 +21,7 @@ export function buildEbaySoldQuery(title) {
   ]);
   const tokens = query
     .split(/\s+/)
-    .map((token) => token.replace(/^\.+|\.+$/g, ''))
+    .map((token) => token.replace(/^[.+-]+|[.-]+$/g, ''))
     .filter((token) => token && token !== 'x' && !noise.has(token));
   query = tokens.join(' ');
 

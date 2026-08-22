@@ -44,7 +44,7 @@ TypeScript and intentionally excludes the donor's page-rewrite behavior.
 
 ## Watchlist reliability
 
-Flippah `v0.3.3` reads `/account/watchlist` through its dedicated account-page
+Flippah `v0.3.4` reads `/account/watchlist` through its dedicated account-page
 DOM parser. HiBid requires private buyer authorization for `WatchListSearch`,
 so personalized data is never requested from an extension-origin GraphQL call.
 If the displayed total and stable lot count drift while a lot closes, Flippah
@@ -56,6 +56,12 @@ their Amazon/eBay status dots remain visible. Flippah excludes its own
 annotations from copied lot text, preserves watchlist auction grouping, and
 keeps all-in math focused on hammer, buyer premium, and sales tax. Shipping,
 Auction Terms, and Fee Evidence inputs/sections are not part of the panel.
+
+Research queries retain the complete identifying title after removing only
+auction noise. Model-less products keep differentiating specifications such as
+`4K`, `Smart`, `WiFi`, and `BT`; model punctuation such as `TX-SR304` and
+`NT-USB+` is preserved. The legacy calculator and modern intelligence layer are
+locked to the same query corpus in tests.
 
 ## Commands
 

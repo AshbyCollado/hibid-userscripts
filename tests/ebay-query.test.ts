@@ -2,22 +2,52 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { buildEbaySoldQuery, patchLegacyEbayQueryModule, patchLegacyHibidPageModule, patchLegacyRemoveShipping } from '../scripts/legacy-ebay-query.mjs';
+import { buildProductResearchQuery } from '../src/intelligence/us-deal-intelligence.js';
 
 test('eBay query preserves the complete Onkyo model and product type', () => {
   assert.equal(
     buildEbaySoldQuery('Onkyo TX-SR304 Multi-Channel AV Receiver'),
-    'onkyo tx sr304 multi channel av receiver'
+    'onkyo tx-sr304 multi-channel av receiver'
   );
+});
+
+test('model-less products retain their distinguishing specifications', () => {
+  const title = 'MAGCUBIC 4K SMART PROJECTOR, WIFI BT';
+  const expected = 'magcubic 4k smart projector wifi bt';
+  assert.equal(buildEbaySoldQuery(title), expected);
+  assert.equal(buildProductResearchQuery(title), expected);
+  const url = new URL('https://www.ebay.com/sch/i.html');
+  url.searchParams.set('_nkw', buildProductResearchQuery(title));
+  url.searchParams.set('LH_Sold', '1');
+  url.searchParams.set('LH_Complete', '1');
+  assert.equal(url.searchParams.get('_nkw'), expected);
+});
+
+test('legacy and modern research queries stay identical across identity edge cases', () => {
+  const titles = [
+    'Onkyo TX-SR304 Multi-Channel AV Receiver',
+    'Rode NT-USB+ Professional USB Microphone',
+    'AV - ASUS GEFORCE RTX4060 8GB VIDEO CARD',
+    'Samsung 55 inch 4K UHD Smart TV WiFi Bluetooth',
+    'Lot #6 | Group of 3 - Apple MacBook Pro (A2338) 13 inch - Untested',
+    'Seagate Backup Plus Hub 8TB External Drive USB 3.0',
+    'Sony WH-1000XM5 Wireless Bluetooth Headphones',
+    'Dell OptiPlex 7090 Micro i7-11700T 32GB 1TB SSD',
+  ];
+  for (const title of titles) assert.equal(buildProductResearchQuery(title), buildEbaySoldQuery(title), title);
+  assert.equal(buildProductResearchQuery(titles[1]), 'rode nt-usb+ professional usb microphone');
+  assert.equal(buildProductResearchQuery(titles[2]), 'asus geforce rtx4060 8gb video card');
+  assert.equal(buildProductResearchQuery(titles[3]), 'samsung 55 inch 4k uhd smart tv wifi bluetooth');
 });
 
 test('eBay query removes auction noise without dropping identifying edge cases', () => {
   assert.equal(
     buildEbaySoldQuery('Lot #6 | Group of 3 - Apple MacBook Pro (A2338) 13 inch - Untested'),
-    'apple macbook pro a2338'
+    'apple macbook pro a2338 13 inch'
   );
   assert.equal(
     buildEbaySoldQuery('Lot 12: Sony STR-DH790 7.2-Channel Dolby Atmos AV Receiver'),
-    'sony str dh790 7.2 channel dolby atmos av receiver'
+    'sony str-dh790 7.2-channel dolby atmos av receiver'
   );
 });
 

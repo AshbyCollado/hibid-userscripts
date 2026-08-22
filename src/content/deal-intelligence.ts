@@ -157,6 +157,7 @@ function installPageStyles(): void {
   style.textContent = `
     .flippah-deal-strip{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 10px;min-height:24px;margin:5px 0;padding:3px 5px;font:700 11px/1.2 system-ui,sans-serif;letter-spacing:0}
     .flippah-deal-pill{display:inline-flex;align-items:center;gap:5px;min-height:20px;color:#475569;white-space:nowrap}
+    a.flippah-deal-pill{text-decoration:none;cursor:pointer}a.flippah-deal-pill:hover,a.flippah-deal-pill:focus-visible{text-decoration:underline}
     .flippah-deal-dot{display:inline-block;width:9px;height:9px;border:1px solid #64748b;border-radius:50%;background:#94a3b8;flex:0 0 9px}
     .flippah-deal-pill.green .flippah-deal-dot{border-color:#3f6212;background:#65a30d}.flippah-deal-pill.yellow .flippah-deal-dot{border-color:#854d0e;background:#eab308}
     .flippah-deal-pill.orange .flippah-deal-dot{border-color:#9a3412;background:#f97316}.flippah-deal-pill.red .flippah-deal-dot{border-color:#991b1b;background:#dc2626}
@@ -197,20 +198,24 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
   if (!strip.isConnected) return;
   const amazonPrice = amazonMarketValue(record);
   const ebayPrice = record.state.resaleEstimate;
+  const links = researchLinks(record.identity.query);
   const amazonLabel = record.currency === 'CAD' ? 'Amazon: CAD' : record.mixed.mixed ? 'Amazon: mixed review' : record.needsQuantity ? 'Amazon: qty review' : amazonPrice === null ? 'Amazon: --' : `Amazon ${formatUsd(amazonPrice)}`;
   const ebayLabel = ebayPrice === null ? 'eBay: --' : `eBay ${formatUsd(ebayPrice)}`;
   const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-')) && record.allIn
     ? computeAccountVerdict({ status: record.lot.status || record.lot.rawText, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice })
     : null;
   strip.replaceChildren();
-  const add = (text: string, cls: string, title: string) => {
-    const pill = document.createElement('span'); pill.className = `flippah-deal-pill ${cls}`; pill.title = title; pill.setAttribute('aria-label', title);
+  const add = (text: string, cls: string, title: string, href = '') => {
+    const pill = document.createElement(href ? 'a' : 'span'); pill.className = `flippah-deal-pill ${cls}`; pill.title = title; pill.setAttribute('aria-label', title);
+    if (pill instanceof HTMLAnchorElement) {
+      pill.href = safeExternalUrl(href); pill.target = '_blank'; pill.rel = 'noopener noreferrer';
+    }
     const dot = document.createElement('span'); dot.className = 'flippah-deal-dot'; dot.setAttribute('aria-hidden', 'true');
     const label = document.createElement('span'); label.textContent = text;
     pill.append(dot, label); strip!.append(pill);
   };
-  add(amazonLabel, record.amazonIndicator.cls, record.amazon?.message || indicatorTitle('Amazon', record.amazonIndicator, amazonPrice));
-  add(ebayLabel, record.ebayIndicator.cls, indicatorTitle('eBay saved resale', record.ebayIndicator, ebayPrice));
+  add(amazonLabel, record.amazonIndicator.cls, record.amazon?.message || indicatorTitle('Amazon', record.amazonIndicator, amazonPrice), links.amazon);
+  add(ebayLabel, record.ebayIndicator.cls, `${indicatorTitle('eBay saved resale', record.ebayIndicator, ebayPrice)}. Open exact sold and completed results.`, links.ebay);
   if (verdict) add(verdict.label, verdict.cls, verdict.advice);
 }
 
