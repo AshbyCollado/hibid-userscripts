@@ -5,7 +5,7 @@ import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.
 import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
 import { clearRetailCache, getRetailCache, putRetailCache } from '../core/retail-db.js';
 import { detectProductKind, evaluateRetailCandidate, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
-import { parseAmazonDocumentCandidates } from '../intelligence/amazon-document-parser.js';
+import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '../intelligence/amazon-document-parser.js';
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
 import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailCandidateList, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
 import { DEV_RELOAD_ALARM, installUnpackedAutoReload } from './dev-auto-reload.js';
@@ -392,7 +392,41 @@ async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupR
   const query = retailQuery(identity.query);
   try {
     const provider = await providerSnapshot(query);
-    return evaluateProviderSnapshot(identity, provider.snapshot, provider.cached);
+    let result = evaluateProviderSnapshot(identity, provider.snapshot, provider.cached);
+    if (result.status === 'no_match' && provider.snapshot.status === 'ok') {
+      const candidates = provider.snapshot.candidates
+        .map((candidate) => ({ candidate, evaluation: evaluateRetailCandidate(candidate.matchText || candidate.title, identity) }))
+        .filter(({ candidate, evaluation }) => !candidate.sponsored && !candidate.used && candidate.price != null
+          && evaluation.matchedEvidence.length >= 2
+          && evaluation.rejectionReasons.length > 0
+          && evaluation.rejectionReasons.every((reason) => /^attribute-(?:missing|conflict):/.test(reason)))
+        .sort((left, right) => right.evaluation.matchedEvidence.length - left.evaluation.matchedEvidence.length)
+        .slice(0, 2);
+      if (candidates.length) {
+        const enrichedByAsin = new Map<string, ReturnType<typeof enrichAmazonCandidateFromDetail>>();
+        await Promise.all(candidates.map(async ({ candidate }) => {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 10_000);
+          try {
+            const response = await fetch(candidate.url, { credentials: 'include', cache: 'default', redirect: 'follow', signal: controller.signal });
+            if (!response.ok) return;
+            const html = await readResponseText(response);
+            if (!isAmazonChallengeHtml(html)) enrichedByAsin.set(candidate.asin, enrichAmazonCandidateFromDetail(candidate, html));
+          } catch { /* retain the conservative search-card result */ }
+          finally { clearTimeout(timer); }
+        }));
+        if (enrichedByAsin.size) {
+          const enrichedSnapshot = {
+            ...provider.snapshot,
+            candidates: provider.snapshot.candidates.map((candidate) => enrichedByAsin.get(candidate.asin) || candidate),
+            fetchedAt: Date.now(),
+          };
+          await putRetailCache(retailProviderCacheKey(query), enrichedSnapshot, retailCacheTtl('matched'));
+          result = evaluateProviderSnapshot(identity, enrichedSnapshot, false);
+        }
+      }
+    }
+    return result;
   } catch (error) {
     const retryAfterMs = await markProviderFailure('amazon', 'network-error', 5_000);
     return { status: 'network_error', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, retryAfterMs, message: error instanceof Error ? error.message : String(error) };

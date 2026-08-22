@@ -123,3 +123,36 @@ export function parseAmazonDocumentCandidates(html: string | null | undefined): 
   }
   return [...byAsin.values()];
 }
+
+function elementById(root: Node, id: string): Element | null {
+  if (isElement(root) && attribute(root, 'id') === id) return root;
+  if (!('childNodes' in root)) return null;
+  for (const child of root.childNodes) {
+    const match = elementById(child, id);
+    if (match) return match;
+  }
+  return null;
+}
+
+/** Add detail-page identity evidence while preserving the search result's market price. */
+export function enrichAmazonCandidateFromDetail(candidate: AmazonCandidate, html: string | null | undefined): AmazonCandidate {
+  const document = parse(String(html || ''));
+  const title = textContent(elementById(document, 'productTitle') || document).replace(/\s+/g, ' ').trim();
+  if (!title || title.length > 1_000) return candidate;
+  const evidenceIds = [
+    'feature-bullets', 'productOverview_feature_div', 'detailBullets_feature_div',
+    'productFactsDesktop_feature_div', 'variation_color_name', 'variation_size_name'
+  ];
+  const evidence = evidenceIds
+    .map((id) => elementById(document, id))
+    .filter((node): node is Element => Boolean(node))
+    .map((node) => textContent(node).replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' ');
+  return {
+    ...candidate,
+    title,
+    matchText: `${title} ${evidence}`.replace(/\s+/g, ' ').trim().slice(0, 4_000),
+    used: candidate.used || USED_RE.test(`${title} ${evidence}`),
+  };
+}

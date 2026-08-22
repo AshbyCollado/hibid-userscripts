@@ -24,7 +24,7 @@ import {
   requiresQuantityConfirmation,
   trustedAmazonMarketValue,
 } from '../src/intelligence/us-deal-intelligence.js';
-import { parseAmazonDocumentCandidates } from '../src/intelligence/amazon-document-parser.js';
+import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '../src/intelligence/amazon-document-parser.js';
 
 test('auctioneer retail claims provide the donor-compatible provisional value', () => {
   assert.deepEqual(
@@ -540,6 +540,17 @@ test('Amazon document parser keeps nested result titles paired with their own pr
   assert.match(candidates.find((item) => item.asin === 'B0FF9WP8RF')?.title || '', /Pink/);
   assert.equal(candidates.find((item) => item.asin === 'B0F8BYCWQ2')?.price, 19.79);
   assert.match(candidates.find((item) => item.asin === 'B0F8BYCWQ2')?.title || '', /Purple/);
+});
+
+test('Amazon detail enrichment restores hard attributes omitted by a search card', () => {
+  const source = { asin: 'B0DETAIL001', title: 'DaQin Bands for Galaxy Watch', matchText: 'DaQin Bands for Galaxy Watch', price: 15.99, used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0DETAIL001' };
+  const enriched = enrichAmazonCandidateFromDetail(source, `
+    <span id="productTitle">DaQin 10 Pack Bands Compatible with Galaxy Watch 20mm</span>
+    <div id="feature-bullets">Ten colors, 20 mm replacement sport straps</div>
+  `);
+  assert.equal(enriched.price, 15.99);
+  assert.match(enriched.matchText, /10 Pack/);
+  assert.match(enriched.matchText, /20 mm/);
 });
 
 test('Amazon matching rejects accessories and unrelated models while retaining the real product', () => {

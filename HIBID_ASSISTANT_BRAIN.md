@@ -417,3 +417,9 @@ ignored by Git.
 
 - Amazon price is now a tie-breaker only among candidates with effectively equal identity scores.
 - A cheaper candidate that omits a source attribute cannot undercut a complete match. Live acceptance caught a `$20.88` Vancasso bowl without color evidence outranking the exact pink `$25.99` listing; the exact listing now wins.
+
+## v0.3.31 bounded Amazon detail enrichment
+
+- Amazon search cards sometimes omit package count, dimensions, or variant text that exists on the exact product page.
+- When a strong candidate is rejected solely for those hard attributes, Flippah fetches at most two same-origin Amazon detail pages, adds product-title/spec/variation evidence, and reevaluates conservatively.
+- Brand, model, product-kind, accessory, used, and sponsored rejections never trigger this fallback; wrong products stay blocked.
