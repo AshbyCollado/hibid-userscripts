@@ -346,7 +346,9 @@ async function providerSnapshot(query: string): Promise<{ snapshot: RetailProvid
     const timer = setTimeout(() => controller.abort(), 12_000);
     try {
       const response = await fetch(url.href, {
-        method: 'GET', credentials: 'omit', cache: 'no-store', redirect: 'follow',
+        // Match the donor userscript's GM_xmlhttpRequest behavior: research through
+        // the user's normal Amazon session instead of an anonymous cold request.
+        method: 'GET', credentials: 'include', cache: 'default', redirect: 'follow',
         headers: {
           accept: 'text/html,application/xhtml+xml',
           'accept-language': 'en-US,en;q=0.9',

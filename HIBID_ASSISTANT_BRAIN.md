@@ -394,3 +394,9 @@ ignored by Git.
   nested wrapper carrying the same ASIN as the outer result.
 - The tree parser traverses same-ASIN wrappers and excludes only nested results
   with a different ASIN. Cache epoch `v6` retires the failed `v0.3.25` run.
+
+## v0.3.27 Amazon session transport correction
+
+- Cold Chrome catalog verification exposed `HTTP 503` and `Failed to fetch` for nearly every anonymous Amazon request.
+- The donor userscript's `GM_xmlhttpRequest` uses the user's normal browser session. Flippah now mirrors that behavior with credentialed, normal-cache extension fetches while retaining paced batches, bounded failures, and sanitized results.
+- The provider cache epoch is `v7`, preventing older parse/no-match snapshots from masking the transport correction.

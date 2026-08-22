@@ -6,7 +6,7 @@ import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.3.26');
+  assert.equal(chrome.version, '0.3.27');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
@@ -19,6 +19,9 @@ test('Chrome and Waterfox use direct background Amazon transport without opening
   assert.deepEqual(chrome.host_permissions, waterfox.host_permissions);
   const background = await readFile('src/background/index.ts', 'utf8');
   assert.match(background, /fetch\(url\.href/);
+  assert.match(background, /credentials: 'include'/);
+  assert.match(background, /cache: 'default'/);
+  assert.doesNotMatch(background, /credentials: 'omit'/);
   assert.doesNotMatch(background, /if \(supportsAmazonHelperWindow\(\)\)/);
 });
 
