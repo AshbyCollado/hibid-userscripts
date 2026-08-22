@@ -584,6 +584,13 @@ test('Amazon matching tolerates a concatenated LED feature suffix on an inferred
   assert.doesNotMatch(result.rejectionReasons.join(' '), /brand-mismatch/);
 });
 
+test('numeric manufacturer models reject a same-brand but different product', () => {
+  const product = extractProductIdentity('Pelican 1490 Protector Laptop Case');
+  assert.equal(product.model, '1490');
+  assert.equal(evaluateRetailCandidate('Pelican Adventurer Laptop Bag Case 14.2 Inch Black', product).accepted, false);
+  assert.equal(evaluateRetailCandidate('Pelican 1490 Protector Laptop Case, Black', product).accepted, true);
+});
+
 test('Amazon indicator shares the donor thresholds in USD', () => {
   assert.equal(amazonIndicator(40, 100).cls, 'green');
   assert.equal(amazonIndicator(50, 100).cls, 'yellow');

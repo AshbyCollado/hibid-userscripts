@@ -434,3 +434,8 @@ ignored by Git.
 - Final candidate acceptance now mirrors scoring: when the auction lot is itself an accessory (cable, cord, stand, band, etc.), an exact Amazon accessory is allowed instead of being rejected as an add-on to a different product.
 - Inferred brands tolerate a concatenated retail feature suffix such as `SAMYUCHOLED` matching Amazon's `SAMYUCHO`; the original brand remains intact and only a credible five-or-more-character maker stem is added as an alias.
 - Live acceptance targets: the JSAUX 4 ft cable and SAMYUCHO two-piece LED cake stands must receive exact Amazon evidence after catalog analysis.
+
+## v0.3.34 numeric manufacturer models
+
+- A three-to-six digit token immediately following a credible leading brand is retained as a model, except ordinary four-digit years.
+- This prevents products such as `Pelican 1490` from accepting a generic same-brand Pelican case that omits model `1490`.

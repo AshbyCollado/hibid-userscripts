@@ -694,14 +694,22 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
     .trim();
   let name = stripInventoryPrefix(named.replace(/\s*-\s*$/, '').trim());
   if (name.length < 3) name = lead || normalise(sourceDescription).split('\n')[0]?.trim() || '';
-  const tokens = tokeniseIdentity(name).filter((token) => !NOISE_WORDS.has(token.toLowerCase()) && !/^\$?[\d.,]+$/.test(token));
+  const rawTokens = tokeniseIdentity(name);
+  const tokens = rawTokens.filter((token) => !NOISE_WORDS.has(token.toLowerCase()) && !/^\$?[\d.,]+$/.test(token));
   const titleBrand = tokens[0] || '';
   const statedBrand = (fieldValue(parsed.fields, 'brand', 'manufacturer', 'make') ?? '').trim();
   const statedBrandAppearsInTitle = statedBrand && new RegExp(`\\b${escapeRegExp(statedBrand)}\\b`, 'i').test(name);
   const brand = statedBrand && (!titleBrand || GENERIC_BRAND_RE.test(titleBrand) || statedBrandAppearsInTitle) ? statedBrand : titleBrand;
   const statedModel = (fieldValue(parsed.fields, 'model', 'model #', 'model number', 'mpn') ?? '').trim();
+  // Numeric manufacturer models such as Pelican 1490 are meaningful identity,
+  // even though a bare number elsewhere in a title usually is not. Restrict the
+  // inference to the token immediately after a credible leading brand and keep
+  // ordinary years out of the model path.
+  const numericBrandModel = brand === titleBrand && /^\d{3,6}$/.test(rawTokens[1] || '')
+    && !/^(?:19|20)\d{2}$/.test(rawTokens[1] || '') ? rawTokens[1]! : null;
   const titleModel = tokens.find((token) => MODEL_RE.test(token) && !/^\d+$/.test(token) && !GENERIC_MODEL_RE.test(token))
-    ?? tokens.find((token) => TITLE_MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token));
+    ?? tokens.find((token) => TITLE_MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token))
+    ?? numericBrandModel;
   const model = (looksLikeModel(statedModel) && modelMatches(name, statedModel) ? statedModel : null) || titleModel || (looksLikeModel(statedModel) ? statedModel : null);
   const model2 = tokens.find((token) => token !== model && token.toLowerCase() !== String(model ?? '').toLowerCase() && token.toLowerCase() !== brand.toLowerCase() && TITLE_MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token)) ?? null;
   const capacities = [...new Set(tokens.filter((token) => CAPACITY_RE.test(token)))];
