@@ -450,3 +450,4 @@ ignored by Git.
 
 - Amazon result headings take precedence over image `alt` text because the latter can truncate before decisive condition text such as `(Renewed)`.
 - Provider cache generation `provider-v9` prevents old truncated titles from being reused as new-retail evidence.
+- The maintained parse5 document parser uses the same heading-first rule; this is the parser used by background Amazon fetches. Its cache generation is `provider-v10`.

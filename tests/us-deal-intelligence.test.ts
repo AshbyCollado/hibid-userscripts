@@ -543,7 +543,7 @@ test('Amazon document parser keeps nested result titles paired with their own pr
 });
 
 test('Amazon parser prefers a complete heading that exposes renewed condition', () => {
-  const candidates = parseAmazonSearchHtml(`
+  const candidates = parseAmazonDocumentCandidates(`
     <div data-asin="B0BLTCBSQF">
       <img alt="SteelSeries Arctis Nova 7X Wireless Headset — 38Hr Battery — Xbox..." />
       <h2><span>SteelSeries Arctis Nova 7X Wireless Headset - Black (Renewed)</span></h2>

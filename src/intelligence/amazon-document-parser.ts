@@ -65,7 +65,11 @@ function parseResult(node: Element, asin: string): AmazonCandidate | null {
   const titleNode = own.find((item) => item.tagName === 'h2')
     || own.find((item) => attribute(item, 'data-cy') === 'title-recipe')
     || own.find((item) => hasClass(item, 's-title-instructions-style'));
-  const title = (image ? attribute(image, 'alt') : '') || textContent(titleNode || node).replace(/\s+/g, ' ').trim();
+  // The image alt is often shortened before a decisive suffix such as
+  // "(Renewed)". The visible result heading is the authoritative title.
+  const title = (titleNode ? textContent(titleNode).replace(/\s+/g, ' ').trim() : '')
+    || (image ? attribute(image, 'alt') : '')
+    || textContent(node).replace(/\s+/g, ' ').trim();
   if (!title) return null;
 
   const offscreen = own.find((item) => hasClass(item, 'a-offscreen'));
