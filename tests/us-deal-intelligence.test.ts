@@ -4,11 +4,14 @@ import {
   amazonIndicator,
   assessLotCondition,
   buildAccountVerdict,
+  buildRetailIndicatorTooltip,
   buildRetailLinks,
+  buildRetailSearchPresentation,
   calculateAllInCost,
   chooseAmazonMatch,
   detectComparisonCurrency,
   detectMixedLot,
+  explainHibidStatus,
   evaluateRetailCandidate,
   extractProductDiscriminators,
   extractProductIdentity,
@@ -43,6 +46,51 @@ test('structured descriptions normalize CR fields and keep labels out of free te
   assert.equal(parsed.fields.model, 'NT-USB+');
   assert.equal(parsed.fields['is item damaged'], 'No');
   assert.equal(parsed.freeText, '');
+});
+
+test('retail indicator tooltips explain exact values and every color threshold', () => {
+  const cases = [
+    { allIn: 49, cls: 'green', phrase: 'below 50%' },
+    { allIn: 50, cls: 'yellow', phrase: '50% to 64%' },
+    { allIn: 65, cls: 'orange', phrase: '65% to 74%' },
+    { allIn: 75, cls: 'red', phrase: '75% or more' },
+  ] as const;
+  for (const entry of cases) {
+    const indicator = amazonIndicator(entry.allIn, 100);
+    assert.equal(indicator.cls, entry.cls);
+    const title = buildRetailIndicatorTooltip({
+      providerName: 'Amazon', indicator, allIn: entry.allIn, marketPrice: 100, evidenceSource: 'Exact Model 123'
+    });
+    assert.match(title, /Amazon: \$100\.00 reference from Exact Model 123/);
+    assert.match(title, new RegExp(entry.phrase.replace('%', '\\%')));
+  }
+});
+
+test('missing retail evidence creates branded search actions with normalized queries', () => {
+  const amazon = buildRetailSearchPresentation('amazon', '  Onkyo   TX-SR304  ');
+  assert.equal(amazon.label, 'Amazon \u2197');
+  assert.equal(new URL(amazon.href).searchParams.get('k'), 'Onkyo TX-SR304');
+  assert.match(amazon.title, /No verified Amazon price/);
+
+  const ebay = buildRetailSearchPresentation('ebay', 'Magcubic 4K Projector');
+  const url = new URL(ebay.href);
+  assert.equal(ebay.label, 'eBay \u2197');
+  assert.equal(url.searchParams.get('_nkw'), 'Magcubic 4K Projector');
+  assert.equal(url.searchParams.get('LH_Sold'), '1');
+  assert.equal(url.searchParams.get('LH_Complete'), '1');
+  assert.match(ebay.title, /Sold and Completed/);
+});
+
+test('HiBid status hover text explains known states and safely handles unknown ones', () => {
+  assert.match(explainHibidStatus('POSTED'), /published.*does not confirm/i);
+  assert.match(explainHibidStatus('OPEN'), /open for bidding/i);
+  assert.match(explainHibidStatus('UPCOMING'), /has not opened/i);
+  assert.match(explainHibidStatus('CLOSING'), /closing sequence/i);
+  assert.match(explainHibidStatus('CLOSED'), /bidding has ended/i);
+  assert.match(explainHibidStatus('WINNING'), /currently lead/i);
+  assert.match(explainHibidStatus('OUTBID'), /another bidder currently leads/i);
+  assert.match(explainHibidStatus('WON'), /you won/i);
+  assert.match(explainHibidStatus('PAUSED BY AUCTIONEER'), /HiBid's current lot status/);
 });
 
 test('condition assessment respects answers instead of scanning question labels', () => {

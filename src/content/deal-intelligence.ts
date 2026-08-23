@@ -6,9 +6,9 @@ import { hydrateHibidLots, mergeHibidVisibleWithHydrated } from '../hibid/api.js
 import { extractHiBidVisibleLots, extractHibidLotDetail } from '../hibid/dom.js';
 import { runProviderQueue } from '../intelligence/provider-queue.js';
 import {
-  assessCondition, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
+  assessCondition, buildRetailIndicatorTooltip, buildRetailSearchPresentation, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
   detectComparisonCurrency, detectMixedLot, extractProductIdentity, formatUsd,
-  extractStatedRetail, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
+  explainHibidStatus, extractStatedRetail, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
   type AmazonCandidate, type AmazonCandidateMatch, type ConditionAssessment,
   type ProductIdentity, type RetailCandidateEvaluation, type RetailIndicator, type UsAllInResult
 } from '../intelligence/us-deal-intelligence.js';
@@ -173,17 +173,15 @@ function installPageStyles(): void {
   style.textContent = `
     .flippah-deal-strip{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 10px;min-height:24px;margin:5px 0;padding:3px 5px;font:700 11px/1.2 system-ui,sans-serif;letter-spacing:0}
     .flippah-deal-pill{display:inline-flex;align-items:center;gap:5px;min-height:20px;color:#475569;white-space:nowrap}
-    a.flippah-deal-pill{text-decoration:none;cursor:pointer}a.flippah-deal-pill:hover,a.flippah-deal-pill:focus-visible{text-decoration:underline}
+    a.flippah-deal-pill{text-decoration:none;cursor:pointer}a.flippah-deal-pill:hover{text-decoration:underline}a.flippah-deal-pill:focus-visible{outline:2px solid #2563eb;outline-offset:2px;text-decoration:none}
     .flippah-deal-dot{display:inline-block;width:9px;height:9px;border:1px solid #64748b;border-radius:50%;background:#94a3b8;flex:0 0 9px}
     .flippah-deal-pill.green .flippah-deal-dot{border-color:#3f6212;background:#65a30d}.flippah-deal-pill.yellow .flippah-deal-dot{border-color:#854d0e;background:#eab308}
     .flippah-deal-pill.orange .flippah-deal-dot{border-color:#9a3412;background:#f97316}.flippah-deal-pill.red .flippah-deal-dot{border-color:#991b1b;background:#dc2626}
     .flippah-deal-pill.black .flippah-deal-dot{border-color:#111827;background:#111827}.flippah-allin{display:block;margin-top:2px;font:700 10px/1.15 system-ui,sans-serif;letter-spacing:0}
+    .flippah-deal-pill.search{min-height:22px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;box-shadow:0 1px 1px rgba(15,23,42,.08);font-size:11px}
+    .flippah-deal-pill.search.amazon{border-color:#f59e0b;color:#111827;font-family:Arial,sans-serif;font-weight:800}.flippah-deal-pill.search.ebay{border-color:#93c5fd;color:#3665f3;font-family:Arial,sans-serif;font-weight:800}
   `;
   document.documentElement.append(style);
-}
-
-function indicatorTitle(name: string, indicator: RetailIndicator, price: number | null): string {
-  return price === null ? `${name}: no saved or verified value` : `${name}: ${formatUsd(price)}; all-in is ${indicator.ratio === null ? 'unknown' : `${Math.round(indicator.ratio * 100)}%`} of value`;
 }
 
 function amazonMarketValue(record: AnalysisRecord): number | null {
@@ -230,32 +228,58 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
           ? `Amazon ${formatUsd(amazonPrice)}`
           : displayedRetail !== null
             ? `Retail ${formatUsd(displayedRetail)}`
-            : 'Amazon: --';
-  const ebayLabel = ebayPrice === null ? 'eBay: --' : `eBay ${formatUsd(ebayPrice)}${record.state.resaleEstimate !== null ? ' saved' : ''}`;
+            : 'Amazon';
+  const ebayLabel = ebayPrice === null ? 'eBay' : `eBay ${formatUsd(ebayPrice)}${record.state.resaleEstimate !== null ? ' saved' : ''}`;
   const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-')) && record.allIn
     ? computeAccountVerdict({ status: record.lot.status || record.lot.rawText, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice })
     : null;
   strip.replaceChildren();
-  const add = (text: string, cls: string, title: string, href = '') => {
-    const pill = document.createElement(href ? 'a' : 'span'); pill.className = `flippah-deal-pill ${cls}`; pill.title = title; pill.setAttribute('aria-label', title);
+  const add = (text: string, cls: string, title: string, href = '', showDot = true, brand = '') => {
+    const pill = document.createElement(href ? 'a' : 'span'); pill.className = `flippah-deal-pill ${cls}${brand ? ` search ${brand}` : ''}`; pill.title = title; pill.setAttribute('aria-label', title);
     if (pill instanceof HTMLAnchorElement) {
       pill.href = safeExternalUrl(href); pill.target = '_blank'; pill.rel = 'noopener noreferrer';
     }
-    const dot = document.createElement('span'); dot.className = 'flippah-deal-dot'; dot.setAttribute('aria-hidden', 'true');
     const label = document.createElement('span'); label.textContent = text;
-    pill.append(dot, label); strip!.append(pill);
+    if (showDot) {
+      const dot = document.createElement('span'); dot.className = 'flippah-deal-dot'; dot.setAttribute('aria-hidden', 'true'); pill.append(dot);
+    }
+    pill.append(label); strip!.append(pill);
   };
-  const retailTitle = amazonPrice !== null
-    ? (record.amazon?.message || indicatorTitle('Amazon', record.amazonIndicator, amazonPrice))
-    : record.statedRetail
-      ? `Auctioneer retail claim: ${formatUsd(record.statedRetail.value)}; ${record.statedRetail.source}. Open Amazon to verify.`
-      : (record.amazon?.message || indicatorTitle('Amazon', record.amazonIndicator, null));
-  add(amazonLabel, record.amazonIndicator.cls, retailTitle, links.amazon);
-  const ebayTitle = record.state.resaleEstimate !== null
-    ? `${indicatorTitle('eBay saved resale', record.ebayIndicator, ebayPrice)}. Open Sold and Completed results to verify it.`
-    : 'Open eBay Sold and Completed results, then enter a resale value in Flippah.';
-  add(ebayLabel, record.ebayIndicator.cls, ebayTitle, links.ebay);
-  if (verdict) add(verdict.label, verdict.cls, verdict.advice);
+  const amazonSpecialTitle = record.currency === 'CAD'
+    ? 'CAD listing: Flippah does not compare a Canadian-dollar lot against US-dollar Amazon prices.'
+    : record.mixed.mixed
+      ? 'Mixed/group lot: review every identifiable component before using a single retail value.'
+      : record.needsQuantity
+        ? 'Quantity review: confirm how many complete units are included before using a retail comparison.'
+        : '';
+  if (displayedRetail === null && !amazonSpecialTitle) {
+    const search = buildRetailSearchPresentation('amazon', record.identity.query);
+    add(search.label, '', search.title, search.href, false, 'amazon');
+  } else {
+    const retailTitle = amazonSpecialTitle || (amazonPrice !== null
+      ? buildRetailIndicatorTooltip({
+          providerName: 'Amazon', indicator: record.amazonIndicator, allIn: record.allIn?.total,
+          marketPrice: amazonPrice, evidenceSource: record.amazon?.match?.candidate.title || 'verified Amazon.com match'
+        })
+      : record.statedRetail
+        ? buildRetailIndicatorTooltip({
+            providerName: 'Auctioneer retail', indicator: record.amazonIndicator, allIn: record.allIn?.total,
+            marketPrice: record.statedRetail.value, evidenceSource: record.statedRetail.source
+          })
+        : 'Amazon comparison needs manual review.');
+    add(amazonLabel, record.amazonIndicator.cls, retailTitle, links.amazon);
+  }
+  if (ebayPrice === null) {
+    const search = buildRetailSearchPresentation('ebay', record.identity.query);
+    add(search.label, '', search.title, search.href, false, 'ebay');
+  } else {
+    const ebayTitle = `${buildRetailIndicatorTooltip({
+      providerName: 'eBay', indicator: record.ebayIndicator, allIn: record.allIn?.total,
+      marketPrice: ebayPrice, evidenceSource: 'your saved manual resale estimate'
+    })} Open Sold and Completed results to verify it.`;
+    add(ebayLabel, record.ebayIndicator.cls, ebayTitle, links.ebay);
+  }
+  if (verdict) add(verdict.label, verdict.cls, `${explainHibidStatus(record.lot.status)} Flippah: ${verdict.advice}`);
 }
 
 function lotPanelStyles(): string {
@@ -265,6 +289,10 @@ function lotPanelStyles(): string {
     .flippah-intelligence .price{color:#0d47a1;font-weight:800}.flippah-condition{margin-top:8px;border-left:3px solid #b45309;background:#fff7ed;padding:7px}.flippah-condition.danger{border-color:#b91c1c;background:#fef2f2}
     .flippah-intelligence details{margin-top:7px;border:1px solid #e2e2df;border-radius:6px;background:#fff;padding:7px}.flippah-intelligence summary{cursor:pointer;font-weight:750}.flippah-intelligence a{color:#0d47a1;font-weight:700}.flippah-link-row{display:flex;flex-wrap:wrap;gap:9px;margin-top:7px}
     .flippah-evidence-title{margin-top:7px;color:#4b5563}.flippah-intelligence select,.flippah-intelligence input{min-height:30px;border:1px solid #cfd4d0;border-radius:6px;background:#fff;padding:5px 7px}.flippah-intelligence select{width:100%;margin-top:7px}.flippah-quantity{display:flex;align-items:center;gap:8px;margin-top:7px}.flippah-quantity input{width:70px}
+    .flippah-retail-value{display:inline-flex;align-items:center;gap:6px;font-weight:800}.flippah-retail-value .flippah-deal-dot{display:inline-block;width:9px;height:9px;border:1px solid #64748b;border-radius:50%;background:#94a3b8;flex:0 0 9px}
+    .flippah-retail-value.green .flippah-deal-dot{border-color:#3f6212;background:#65a30d}.flippah-retail-value.yellow .flippah-deal-dot{border-color:#854d0e;background:#eab308}.flippah-retail-value.orange .flippah-deal-dot{border-color:#9a3412;background:#f97316}.flippah-retail-value.red .flippah-deal-dot{border-color:#991b1b;background:#dc2626}
+    .flippah-search-pill{display:inline-flex;align-items:center;min-height:26px;padding:3px 8px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;text-decoration:none;box-shadow:0 1px 1px rgba(15,23,42,.08)}.flippah-search-pill.amazon{border-color:#f59e0b;color:#111827;font-family:Arial,sans-serif}.flippah-search-pill.ebay{border-color:#93c5fd;color:#3665f3;font-family:Arial,sans-serif}.flippah-search-pill:hover{text-decoration:underline}.flippah-search-pill:focus-visible{outline:2px solid #2563eb;outline-offset:2px;text-decoration:none}
+    .flippah-review-value{display:inline-flex;align-items:center;min-height:24px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;color:#475569;font-weight:750}
   </style>`;
 }
 
@@ -314,6 +342,24 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
     node.append(element('strong', '', label), document.createTextNode(` ${text}`));
     return node;
   };
+  const searchValue = (provider: 'amazon' | 'ebay'): HTMLAnchorElement => {
+    const presentation = buildRetailSearchPresentation(provider, query);
+    const link = element('a', `flippah-search-pill ${provider}`, presentation.label);
+    link.href = safeExternalUrl(presentation.href); link.target = '_blank'; link.rel = 'noopener noreferrer';
+    link.title = presentation.title; link.setAttribute('aria-label', presentation.ariaLabel);
+    return link;
+  };
+  const pricedValue = (providerName: string, price: number, indicator: RetailIndicator, evidenceSource: string): HTMLSpanElement => {
+    const value = element('span', `flippah-retail-value ${indicator.cls}`);
+    const dot = element('span', 'flippah-deal-dot'); dot.setAttribute('aria-hidden', 'true');
+    value.append(dot, element('span', 'price', formatUsd(price)));
+    const title = buildRetailIndicatorTooltip({ providerName, indicator, allIn: record.allIn?.total, marketPrice: price, evidenceSource });
+    value.title = title; value.setAttribute('aria-label', title);
+    return value;
+  };
+  const reviewValue = (label: string, title: string): HTMLSpanElement => {
+    const value = element('span', 'flippah-review-value', label); value.title = title; value.setAttribute('aria-label', title); return value;
+  };
 
   section.replaceChildren();
   const head = element('div', 'flippah-intelligence-head');
@@ -333,16 +379,21 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
     quantity.append(input); section.append(quantity);
   }
   const retail = element('div', 'flippah-retail-row');
-  retail.append(
-    element('span', '', `Amazon.com${record.state.confirmedQuantity && record.state.confirmedQuantity > 1 ? ` x${record.state.confirmedQuantity}` : ''}`),
-    element('span', 'price', amazonPrice === null ? '--' : formatUsd(amazonPrice))
-  );
+  const amazonValue = record.currency === 'CAD'
+    ? reviewValue('CAD', 'CAD listing: Flippah does not compare a Canadian-dollar lot against US-dollar Amazon prices.')
+    : record.mixed.mixed
+      ? reviewValue('Mixed review', 'Mixed/group lot: review every identifiable component before using a single retail value.')
+      : record.needsQuantity
+        ? reviewValue('Qty review', 'Confirm how many complete units are included before using a retail comparison.')
+        : amazonPrice === null
+          ? searchValue('amazon')
+          : pricedValue('Amazon', amazonPrice, record.amazonIndicator, record.amazon?.match?.candidate.title || 'verified Amazon.com match');
+  retail.append(element('span', '', `Amazon.com${record.state.confirmedQuantity && record.state.confirmedQuantity > 1 ? ` x${record.state.confirmedQuantity}` : ''}`), amazonValue);
   section.append(retail);
   const ebayRetail = element('div', 'flippah-retail-row');
-  ebayRetail.append(
-    element('span', '', 'eBay resale (manual)'),
-    element('span', 'price', ebayPrice === null ? '--' : formatUsd(ebayPrice))
-  );
+  ebayRetail.append(element('span', '', 'eBay resale (manual)'), ebayPrice === null
+    ? searchValue('ebay')
+    : pricedValue('eBay', ebayPrice, record.ebayIndicator, 'your saved manual resale estimate'));
   section.append(ebayRetail);
 
   const evidence = details('Amazon / eBay evidence');

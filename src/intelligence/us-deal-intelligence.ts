@@ -164,6 +164,14 @@ export interface RetailIndicator {
   label: string;
 }
 
+export interface RetailSearchPresentation {
+  provider: 'amazon' | 'ebay';
+  label: string;
+  href: string;
+  title: string;
+  ariaLabel: string;
+}
+
 export type AccountVerdictKind =
   | 'parts_only'
   | 'manual'
@@ -1148,6 +1156,50 @@ export function computeRetailIndicators(allIn: number | UsAllInResult | null | u
   return { amazon: computeAmazonIndicator(allIn, prices.amazon), ebay: computeEbayIndicator(allIn, prices.ebay) };
 }
 
+export function retailIndicatorBandDescription(indicator: Pick<RetailIndicator, 'cls'>): string {
+  switch (indicator.cls) {
+    case 'green': return 'Green means the all-in cost is below 50% of the reference value.';
+    case 'yellow': return 'Yellow means the all-in cost is 50% to 64% of the reference value.';
+    case 'orange': return 'Orange means the all-in cost is 65% to 74% of the reference value.';
+    case 'red': return 'Red means the all-in cost is 75% or more of the reference value.';
+    default: return 'No verified value is available for a price comparison.';
+  }
+}
+
+export function buildRetailIndicatorTooltip(input: {
+  providerName: string;
+  indicator: RetailIndicator;
+  allIn: number | null | undefined;
+  marketPrice: number | null | undefined;
+  evidenceSource: string;
+}): string {
+  const cleanedSource = input.evidenceSource.replace(/\s+/g, ' ').trim() || 'reference value';
+  const source = cleanedSource.length > 140 ? `${cleanedSource.slice(0, 137)}...` : cleanedSource;
+  if (input.indicator.ratio === null || input.allIn == null || input.marketPrice == null) {
+    return `${input.providerName}: no saved or verified value. ${retailIndicatorBandDescription(input.indicator)}`;
+  }
+  return `${input.providerName}: ${formatUsd(input.marketPrice)} reference from ${source}. All-in ${formatUsd(input.allIn)} is ${Math.round(input.indicator.ratio * 100)}% of that value. ${retailIndicatorBandDescription(input.indicator)}`;
+}
+
+export function explainHibidStatus(status: string | null | undefined): string {
+  const cleaned = String(status ?? '').replace(/\s+/g, ' ').trim();
+  const normalized = cleaned.toUpperCase();
+  if (/\bOUTBID\b|\bLOSING\b/.test(normalized)) return 'Outbid: another bidder currently leads. Review your verified ceiling before deciding what to do.';
+  if (/\bWINNING\b/.test(normalized)) return 'Winning: you currently lead this lot, but the auction has not ended.';
+  if (/\bWON\b/.test(normalized)) return 'Won: the auction reports that you won this lot.';
+  if (/\bCLOS(?:ED|ING)\b/.test(normalized)) {
+    return /\bCLOSED\b/.test(normalized)
+      ? 'Closed: bidding has ended for this lot.'
+      : 'Closing: the lot is in its closing sequence and its end time may extend after a bid.';
+  }
+  if (/\bUPCOMING\b/.test(normalized)) return 'Upcoming: the lot is published, but bidding has not opened yet.';
+  if (/\bOPEN\b/.test(normalized)) return 'Open: HiBid currently shows this lot as open for bidding.';
+  if (/\bPOSTED\b/.test(normalized)) return 'Posted: HiBid has published this lot. Posted alone does not confirm that bidding is open.';
+  return cleaned
+    ? `${cleaned.slice(0, 80)}: HiBid's current lot status. Check the lot page for exact timing and bidding details.`
+    : 'HiBid status is unavailable. Check the lot page for exact timing and bidding details.';
+}
+
 export function computeAccountVerdict(input: AccountVerdictInput): AccountVerdict {
   const partsOnly = input.partsOnly === true || input.condition?.partsOnly === true;
   if (partsOnly) return { kind: 'parts_only', cls: 'black', label: 'parts-only lot', advice: 'do not use working-retail math; value it as parts.' };
@@ -1188,6 +1240,18 @@ export function buildRetailLinks(query: string | null | undefined): RetailLinks 
     amazonUrl: amazon,
     ebayUrl: ebay,
   };
+}
+
+export function buildRetailSearchPresentation(provider: 'amazon' | 'ebay', query: string | null | undefined): RetailSearchPresentation {
+  const cleaned = String(query ?? '').replace(/\s+/g, ' ').trim();
+  const links = buildRetailLinks(cleaned);
+  const shownQuery = !cleaned ? 'this lot' : cleaned.length > 100 ? `${cleaned.slice(0, 97)}...` : cleaned;
+  if (provider === 'amazon') {
+    const title = `No verified Amazon price was found. Search Amazon.com for "${shownQuery}".`;
+    return { provider, label: 'Amazon \u2197', href: links.amazon, title, ariaLabel: title };
+  }
+  const title = `No saved eBay resale value is available. Search eBay Sold and Completed listings for "${shownQuery}".`;
+  return { provider, label: 'eBay \u2197', href: links.ebay, title, ariaLabel: title };
 }
 
 export function formatUsd(value: number | null | undefined): string {

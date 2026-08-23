@@ -1,5 +1,5 @@
 FLIPPAH BY ALOS - CHROME BETA
-Version 0.3.38
+Version 0.3.39
 
 INSTALL
 
@@ -7,7 +7,7 @@ INSTALL
 2. In Chrome, open: chrome://extensions
 3. Turn on Developer mode in the upper-right corner.
 4. Click Load unpacked.
-5. Select the extracted Flippah-Chrome-v0.3.38 folder. Select the folder that contains manifest.json.
+5. Select the extracted Flippah-Chrome-v0.3.39 folder. Select the folder that contains manifest.json.
 6. Pin Flippah from Chrome's Extensions menu so its toolbar button is easy to reach.
 7. Open or refresh a HiBid page.
 
@@ -19,7 +19,8 @@ USING FLIPPAH
 - Copy for AI copies the same auction data with the resale-analysis instructions included.
 - Price checks run automatically on visible HiBid catalog lots.
 - A colored Amazon price means Flippah found a plausible new-product match.
-- A gray Amazon result means Flippah did not find a match it trusted. Check those manually.
+- A colored price includes a hover explanation for its deal band.
+- An Amazon or eBay search pill means no verified value is saved; click it to research that lot manually.
 - Open an individual lot page for the full calculator, product evidence, notes, and manual eBay sold search.
 
 IMPORTANT
