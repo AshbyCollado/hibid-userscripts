@@ -9,7 +9,7 @@ import { shouldReloadExtension } from '../src/background/dev-auto-reload.js';
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.3.39');
+  assert.equal(chrome.version, '0.3.50');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
@@ -29,9 +29,9 @@ test('Chrome and Waterfox use direct background Amazon transport without opening
 });
 
 test('unpacked builds self-reload only when the installed semantic version changes', () => {
-  assert.equal(shouldReloadExtension('0.3.39', '0.3.39'), false);
-  assert.equal(shouldReloadExtension('0.3.39', '0.3.40'), true);
-  assert.equal(shouldReloadExtension('0.3.39', 'not-a-version'), false);
+  assert.equal(shouldReloadExtension('0.3.50', '0.3.50'), false);
+  assert.equal(shouldReloadExtension('0.3.50', '0.3.51'), true);
+  assert.equal(shouldReloadExtension('0.3.50', 'not-a-version'), false);
 });
 
 test('HiBid redraws with the same stable lot IDs do not look like a new catalog', () => {

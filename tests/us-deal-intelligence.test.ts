@@ -13,12 +13,14 @@ import {
   detectMixedLot,
   explainHibidStatus,
   evaluateRetailCandidate,
+  extractLotQuantityFromTitle,
   extractProductDiscriminators,
   extractProductIdentity,
   extractStatedRetail,
   formatUsd,
   hasSufficientRetailIdentity,
   isAccessoryListing,
+  matchAmazonCandidates,
   modelMatches,
   parseAmazonSearchHtml,
   parseStructuredDescription,
@@ -243,9 +245,9 @@ test('candidate evaluation rejects near matches generically across unrelated pro
     },
     {
       source: 'ZOTAC GeForce RTX 4070 Ti 16GB Graphics Card',
-      accepted: 'ZOTAC Gaming GeForce RTX 4070 Ti 16GB Graphics Card',
-      rejected: 'ZOTAC Gaming GeForce RTX 4070 Ti Super 16GB Graphics Card',
-      reason: /gpuModels/,
+      accepted: 'ZOTAC Gaming GeForce RTX 4070 Ti Super 16GB Graphics Card',
+      rejected: 'ZOTAC Gaming GeForce RTX 4070 Ti 12GB Graphics Card',
+      reason: /gpuModels|capacities/,
     },
     {
       source: 'AMD Ryzen 7 5800X Processor',
@@ -299,7 +301,10 @@ test('underidentified source titles fail closed instead of inheriting a plausibl
   const vagueCases = [
     ['Custom computer', 'CyberPowerPC Gamer Xtreme Desktop Computer Intel Core i7 RTX 4060'],
     ['Workstation Computer', 'Dell Precision 5820 Workstation Computer'],
+    ['Tower Workstation Computers', 'Dell 2026 Edition Tower Desktop Computer Intel Core i3'],
+    ['Custom Workstation Computer', 'Adamant Custom 16-Core Workstation Computer PC Ryzen 9'],
     ['Oculus VR Headset', 'Meta Quest 2 Advanced All-In-One VR Headset 128GB'],
+    ['GeForce RTX GPUs', 'GIGABYTE GeForce RTX 3050 WINDFORCE OC 6GB Graphics Card'],
   ] as const;
 
   for (const [source, candidate] of vagueCases) {
@@ -308,7 +313,84 @@ test('underidentified source titles fail closed instead of inheriting a plausibl
     const evaluation = evaluateRetailCandidate(candidate, identity);
     assert.equal(evaluation.accepted, false, source);
     assert.ok(evaluation.rejectionReasons.includes('insufficient-source-identity'), source);
+    assert.equal(matchAmazonCandidates([{
+      asin: 'B0VAGUE001', title: candidate, price: 999, used: false, sponsored: false,
+      url: 'https://www.amazon.com/dp/B0VAGUE001'
+    }], identity), null, source);
   }
+});
+
+test('GPU matching rejects conflicting extra models and preserves exact manufacturer part numbers', () => {
+  const identity = extractProductIdentity('PNY RTX 4600 900-5G132-1760-000 GPU');
+  assert.equal(identity.model, '900-5G132-1760-000');
+  assert.equal(
+    evaluateRetailCandidate('PNY RTX 4600 900-5G132-1760-000 Professional GPU', identity).accepted,
+    true
+  );
+  const contaminated = evaluateRetailCandidate(
+    'PNY RTX 4600 900-5G132-1760-000 GPU PNY NVIDIA GeForce RTX 5050 Dual-Fan Graphics Card 8GB GDDR6',
+    identity
+  );
+  assert.equal(contaminated.accepted, false);
+  assert.match(contaminated.rejectionReasons.join(','), /gpuModels:unexpected-nvidia:rtx:5050:base/);
+  assert.equal(matchAmazonCandidates([{
+    asin: 'B0WRONG5050',
+    title: 'PNY NVIDIA GeForce RTX 5050 Dual-Fan Graphics Card 8GB GDDR6',
+    matchText: 'PNY RTX 4600 900-5G132-1760-000 GPU PNY NVIDIA GeForce RTX 5050 Dual-Fan Graphics Card 8GB GDDR6',
+    price: 349.99,
+    used: false,
+    sponsored: false,
+    url: 'https://www.amazon.com/dp/B0WRONG5050',
+  }], identity), null);
+});
+
+test('less-specific duplicate GPU evidence does not reject the exact Ti Super variant', () => {
+  const identity = extractProductIdentity('ZOTAC GeForce RTX 4070 Ti 16GB Graphics Card');
+  const candidate = evaluateRetailCandidate(
+    'ZOTAC GeForce RTX 4070 Ti Graphics Card ZOTAC GAMING GeForce RTX 4070 Ti SUPER 16GB GDDR6X',
+    identity
+  );
+  assert.equal(candidate.accepted, true, candidate.rejectionReasons.join(','));
+  const match = matchAmazonCandidates([{
+    asin: 'B0EXACT4070',
+    title: 'ZOTAC GAMING GeForce RTX 4070 Ti SUPER Trinity Black Edition 16GB GDDR6X',
+    matchText: 'ZOTAC GAMING GeForce RTX 4070 Ti SUPER Trinity Black Edition 16GB GDDR6X GIGABYTE GeForce RTX 5070 Ti 16GB',
+    price: 1359,
+    used: false,
+    sponsored: false,
+    url: 'https://www.amazon.com/dp/B0EXACT4070',
+  }], identity);
+  assert.equal(match?.candidate.asin, 'B0EXACT4070');
+});
+
+test('replacement bowls and remotes cannot impersonate the primary appliance or stereo', () => {
+  const processor = extractProductIdentity('Robot Coupe R2 3 Qt Food Processor');
+  assert.equal(
+    evaluateRetailCandidate('112204S Food Processor Gray Bowl 3 Qt Compatible with Robot Coupe R2', processor).accepted,
+    false
+  );
+  const stereo = extractProductIdentity('Vtg Sony Component Stereo System w/ Remote');
+  assert.equal(
+    evaluateRetailCandidate('RM-AMU009 Replacement Remote Control fit for Sony Mini Hi-Fi Component Audio Stereo System', stereo).accepted,
+    false
+  );
+  const remote = extractProductIdentity('Sony RM-AMU009 Replacement Remote Control');
+  assert.equal(
+    evaluateRetailCandidate('Sony RM-AMU009 Replacement Remote Control', remote).accepted,
+    true
+  );
+});
+
+test('connector counts are hard product attributes', () => {
+  const inverter = extractProductIdentity('POTEK 3000W Power Inverter 4 USB Black');
+  assert.equal(
+    evaluateRetailCandidate('POTEK 3000W Power Inverter with 4 USB Ports Black', inverter).accepted,
+    true
+  );
+  assert.equal(
+    evaluateRetailCandidate('POTEK 3000W Power Inverter with 4 AC Outlets and 2 USB Ports Black', inverter).accepted,
+    false
+  );
 });
 
 test('ordinary Amazon liquidation products do not require a model or a narrow product taxonomy', () => {
@@ -492,6 +574,12 @@ test('multi-unit and mixed lots require an explicit confirmed quantity', () => {
   assert.equal(requiresQuantityConfirmation(1, false, null), false);
 });
 
+test('lot quantities embedded in titles require confirmation', () => {
+  assert.equal(extractLotQuantityFromTitle('LOT OF 3: WESTERN DIGITAL 2 TB HARD DRIVES'), 3);
+  assert.equal(extractLotQuantityFromTitle('(4) x SPORTS CARDS'), 4);
+  assert.equal(extractLotQuantityFromTitle('4K HDMI Cable 10 ft'), null);
+});
+
 test('genuine Canadian evidence blocks USD comparison', () => {
   assert.equal(detectComparisonCurrency('High Bid: 20.00 CAD', ''), 'CAD');
   assert.equal(detectComparisonCurrency('High Bid: 20.00 Can', ''), 'CAD');
@@ -504,6 +592,11 @@ test('mixed-lot detection identifies bundles and returns component text', () => 
   assert.ok(mixed.reasons.length > 0);
   assert.ok(mixed.components.some((component) => /Apple MacBook/i.test(component)));
   assert.equal(detectMixedLot('Sony WH-1000XM4 headphones').mixed, false);
+  assert.equal(
+    detectMixedLot('GeForce RTX GPUs', 'Lot of (2) consisting of: GeForce RTX 3060 Ti; GeForce RTX 4070').mixed,
+    true
+  );
+  assert.equal(detectMixedLot('PNY RTX 4500 Ada', 'Lot of (1) consisting of: PNY RTX 4500 Ada').mixed, false);
 });
 
 test('ordinary single-product marketing prose does not trigger mixed-lot review', () => {
@@ -599,6 +692,59 @@ test('Amazon parser prefers a complete heading that exposes renewed condition', 
     </div>`);
   assert.match(candidates[0]?.title || '', /Renewed/);
   assert.equal(candidates[0]?.used, true);
+});
+
+test('Amazon parser ignores a brand-only first heading and preserves the full product identity', () => {
+  const html = `
+    <div data-asin="B0WEP982VI">
+      <h2><span>WEP</span></h2>
+      <a href="/WEP-982-VI-Cordless-Soldering-Station/dp/B0WEP982VI">
+        <img class="s-image" alt="WEP 982-VI 1 Cordless Soldering Station for Dewalt 20V Battery" />
+      </a>
+      <div data-cy="title-recipe"><span>982-VI 1 Cordless Soldering Station for Dewalt 20V Battery</span></div>
+      <span class="a-price"><span class="a-offscreen">$59.99</span></span>
+    </div>`;
+  const candidate = parseAmazonDocumentCandidates(html)[0];
+  assert.match(candidate?.title || '', /982-VI.*Cordless Soldering Station/i);
+  assert.equal(candidate?.price, 59.99);
+  const identity = extractProductIdentity('WEP 982-VI Cordless Soldering Station');
+  assert.equal(matchAmazonCandidates(candidate ? [candidate] : [], identity)?.candidate.price, 59.99);
+
+  const legacy = parseAmazonSearchHtml(html)[0];
+  assert.match(legacy?.title || '', /982-VI.*Cordless Soldering Station/i);
+});
+
+test('RTX 4070 Ti 16GB auction shorthand resolves to the uniquely matching Ti Super variant', () => {
+  const identity = extractProductIdentity('AV - ZOTAC GEFORCE RTX4070 Ti 16GB GRAPHICS CARD');
+  assert.deepEqual(identity.discriminators.gpuModels, ['nvidia:rtx:4070:ti-super']);
+  const candidateAttributes = extractProductDiscriminators('ZOTAC GAMING GeForce RTX 4070 Ti 16GB GDDR6X');
+  assert.deepEqual(candidateAttributes.capacities, ['16gb']);
+  assert.deepEqual(candidateAttributes.gpuModels, ['nvidia:rtx:4070:ti-super']);
+  assert.match(identity.query, /rtx4070 ti super/i);
+  assert.equal(evaluateRetailCandidate('ZOTAC Gaming GeForce RTX 4070 Ti SUPER 16GB GDDR6X Graphics Card', identity).accepted, true);
+  assert.equal(evaluateRetailCandidate('ZOTAC Gaming GeForce RTX 4070 Ti 12GB GDDR6X Graphics Card', identity).accepted, false);
+  assert.match(
+    evaluateRetailCandidate('ASUS TUF Gaming GeForce RTX 4070 Ti SUPER 16GB GDDR6X Graphics Card', identity).rejectionReasons.join(','),
+    /brand-mismatch:zotac/
+  );
+});
+
+test('identity extraction handles per-item markers and manufacturer model suffixes', () => {
+  const inkbird = extractProductIdentity('{each} Inkbird ISV-200W Precision Cooker');
+  assert.equal(inkbird.brand, 'Inkbird');
+  assert.equal(inkbird.query, 'inkbird isv-200w precision cooker');
+  assert.equal(evaluateRetailCandidate('Inkbird 2.4G WiFi Sous Vide Cooker ISV-200W 1000W', inkbird).accepted, true);
+
+  const breville = extractProductIdentity('Breville CSV700 PSS HydroPro Immersion Circulator');
+  assert.equal(breville.model, 'CSV700PSS');
+  assert.equal(evaluateRetailCandidate('Breville Commercial CSV700PSS HydroPro Sous Vide Immersion Circulator', breville).accepted, true);
+  assert.equal(evaluateRetailCandidate('Breville Commercial CSV750PSS HydroPro Plus Sous Vide Immersion Circulator', breville).accepted, false);
+});
+
+test('brand matching is accent-insensitive without weakening model identity', () => {
+  const identity = extractProductIdentity('Mahlkönig X54 Coffee Grinder');
+  assert.equal(evaluateRetailCandidate('Mahlkonig X54 Allround Electric Coffee Grinder', identity).accepted, true);
+  assert.equal(evaluateRetailCandidate('Mahlkonig E64 Electric Coffee Grinder', identity).accepted, false);
 });
 
 test('Amazon detail enrichment restores hard attributes omitted by a search card', () => {

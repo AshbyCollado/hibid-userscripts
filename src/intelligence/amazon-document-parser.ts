@@ -1,5 +1,5 @@
 import { parse, type DefaultTreeAdapterTypes } from 'parse5';
-import type { AmazonCandidate } from './us-deal-intelligence.js';
+import { selectAmazonCandidateTitle, type AmazonCandidate } from './us-deal-intelligence.js';
 
 type Node = DefaultTreeAdapterTypes.Node;
 type Element = DefaultTreeAdapterTypes.Element;
@@ -61,14 +61,16 @@ function productSlug(urlValue: string, asin: string): string {
 
 function parseResult(node: Element, asin: string): AmazonCandidate | null {
   const own = descendants(node, asin);
-  const image = own.find((item) => item.tagName === 'img' && hasClass(item, 's-image'));
-  const titleNode = own.find((item) => item.tagName === 'h2')
-    || own.find((item) => attribute(item, 'data-cy') === 'title-recipe')
-    || own.find((item) => hasClass(item, 's-title-instructions-style'));
-  // The image alt is often shortened before a decisive suffix such as
-  // "(Renewed)". The visible result heading is the authoritative title.
-  const title = (titleNode ? textContent(titleNode).replace(/\s+/g, ' ').trim() : '')
-    || (image ? attribute(image, 'alt') : '')
+  const image = own.find((item) => item.tagName === 'img' && hasClass(item, 's-image'))
+    || own.find((item) => item.tagName === 'img' && Boolean(attribute(item, 'alt')));
+  const titleNodes = own.filter((item) => item.tagName === 'h2'
+    || attribute(item, 'data-cy') === 'title-recipe'
+    || hasClass(item, 's-title-instructions-style'));
+  const titleEvidence = [
+    image ? attribute(image, 'alt') : '',
+    ...titleNodes.map((item) => textContent(item).replace(/\s+/g, ' ').trim()),
+  ];
+  const title = selectAmazonCandidateTitle(titleEvidence)
     || textContent(node).replace(/\s+/g, ' ').trim();
   if (!title) return null;
 
@@ -83,6 +85,9 @@ function parseResult(node: Element, asin: string): AmazonCandidate | null {
 
   const link = own.find((item) => item.tagName === 'a' && new RegExp(`/(?:dp|gp/product)/${asin}(?:[/?#]|$)`, 'i').test(attribute(item, 'href')));
   const slug = link ? productSlug(attribute(link, 'href'), asin) : '';
+  const matchText = [...new Set([title, ...titleEvidence, slug]
+    .map((value) => value.replace(/^Sponsored\s*Ad\s*[\u2013-]\s*/i, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean))].join(' ');
   const sponsored = /\bAdHolder\b/.test(attribute(node, 'class'))
     || own.some((item) => attribute(item, 'data-component-type') === 'sp-sponsored-result')
     || own.some((item) => /^(?:Sponsored|Sponsored Ad)$/i.test(textContent(item).trim()) && /sponsored/i.test(attribute(item, 'class')));
@@ -90,9 +95,9 @@ function parseResult(node: Element, asin: string): AmazonCandidate | null {
   return {
     asin,
     title: title.replace(/^Sponsored\s*Ad\s*[\u2013-]\s*/i, '').trim(),
-    matchText: slug ? `${title} ${slug}` : title,
+    matchText,
     price,
-    used: USED_RE.test(title),
+    used: USED_RE.test(matchText),
     sponsored,
     url: `https://www.amazon.com/dp/${asin}`,
   };

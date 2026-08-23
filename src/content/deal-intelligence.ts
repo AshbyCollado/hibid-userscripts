@@ -8,7 +8,7 @@ import { runProviderQueue } from '../intelligence/provider-queue.js';
 import {
   assessCondition, buildRetailIndicatorTooltip, buildRetailSearchPresentation, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
   detectComparisonCurrency, detectMixedLot, extractProductIdentity, formatUsd,
-  explainHibidStatus, extractStatedRetail, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
+  explainHibidStatus, extractLotQuantityFromTitle, extractStatedRetail, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
   type AmazonCandidate, type AmazonCandidateMatch, type ConditionAssessment,
   type ProductIdentity, type RetailCandidateEvaluation, type RetailIndicator, type UsAllInResult
 } from '../intelligence/us-deal-intelligence.js';
@@ -254,7 +254,8 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
         : '';
   if (displayedRetail === null && !amazonSpecialTitle) {
     const search = buildRetailSearchPresentation('amazon', record.identity.query);
-    add(search.label, '', search.title, search.href, false, 'amazon');
+    const reason = record.amazon?.message ? ` ${record.amazon.message}.` : '';
+    add(search.label, '', `${search.title}${reason}`, search.href, false, 'amazon');
   } else {
     const retailTitle = amazonSpecialTitle || (amazonPrice !== null
       ? buildRetailIndicatorTooltip({
@@ -459,7 +460,12 @@ function buildAnalysisRecords(
     if (state.queryOverride) identity.query = state.queryOverride;
     const condition = assessCondition(lot.description);
     const mixed = detectMixedLot(lot.lead || lot.title, lot.description);
-    const quantity = lot.quantity ?? numberFrom((lot.descriptionFields as any)?.Quantity);
+    const quantities = [
+      numberFrom(lot.quantity),
+      numberFrom((lot.descriptionFields as any)?.Quantity),
+      extractLotQuantityFromTitle(lot.lead || lot.title),
+    ].filter((value): value is number => value !== null && Number.isFinite(value) && value > 0);
+    const quantity = quantities.length ? Math.max(...quantities) : null;
     const needsQuantity = requiresQuantityConfirmation(quantity, mixed.mixed, state.confirmedQuantity);
     const currency = detectLotCurrency(lot);
     const hammer = selectAuctionHammer(lot.nextBid, lot.currentBid);

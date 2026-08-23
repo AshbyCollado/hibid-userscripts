@@ -1,5 +1,5 @@
 FLIPPAH BY ALOS - CHROME BETA
-Version 0.3.39
+Version 0.3.50
 
 INSTALL
 
@@ -7,7 +7,7 @@ INSTALL
 2. In Chrome, open: chrome://extensions
 3. Turn on Developer mode in the upper-right corner.
 4. Click Load unpacked.
-5. Select the extracted Flippah-Chrome-v0.3.39 folder. Select the folder that contains manifest.json.
+5. Select the extracted Flippah-Chrome-v0.3.50 folder. Select the folder that contains manifest.json.
 6. Pin Flippah from Chrome's Extensions menu so its toolbar button is easy to reach.
 7. Open or refresh a HiBid page.
 

@@ -141,6 +141,14 @@ export function requiresQuantityConfirmation(quantity: number | null | undefined
   return Boolean(((typeof quantity === 'number' && Number.isFinite(quantity) && quantity > 1) || mixed) && !(typeof confirmedQuantity === 'number' && Number.isFinite(confirmedQuantity) && confirmedQuantity >= 1));
 }
 
+export function extractLotQuantityFromTitle(title: string | null | undefined): number | null {
+  const source = normalise(title).trim();
+  const match = source.match(/\b(?:lot|group|set)\s+of\s+(\d{1,4})\b/i)
+    || source.match(/^\s*\(?\s*(\d{1,4})\s*\)?\s*[x×]\s+/i);
+  const quantity = match ? Number(match[1]) : 0;
+  return Number.isInteger(quantity) && quantity > 1 ? quantity : null;
+}
+
 export function detectComparisonCurrency(rawText: string | null | undefined, buyerPremium: string | null | undefined): 'USD' | 'CAD' {
   const evidence = `${rawText || ''} ${buyerPremium || ''}`;
   return /\b(?:CAD|CDN)\b/i.test(evidence) || /(?:\$\s*)?\d[\d,.]*\s+Can\b/.test(evidence) ? 'CAD' : 'USD';
@@ -208,6 +216,7 @@ const NOISE_WORDS = new Set([
 ]);
 const MODEL_RE = /^[A-Za-z]{1,8}-?\d{1,8}[A-Za-z0-9+.-]*$/;
 const MODEL_ALT_RE = /^[A-Za-z]{1,8}-[A-Za-z0-9+.]{2,14}$/;
+const PART_NUMBER_RE = /^(?=.{8,32}$)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]+(?:-[A-Za-z0-9]+){2,}$/;
 // Title prose such as "anti-fog" or "heavy-duty" is not a model. A
 // letter-only hyphenated title token must look like an uppercase manufacturer
 // code (for example NT-USB+); explicitly stated Model fields stay permissive.
@@ -217,8 +226,8 @@ const GENERIC_MODEL_RE = /^(?:n\/?a|none|null|nil|unknown|unspecified|various|as
 const CONDITION_PARTS_RE = /\b(for\s*parts|parts\s*only|salvage|broken|not\s*working|non[\s-]*functional|defective|scrap|damaged\s*beyond)\b/i;
 const CONDITION_GOOD_RE = /\b(brand\s*new|new|sealed|excellent|like\s*new|mint|open\s*box|good|very\s*good)\b/i;
 const POSITIVE_RE = /\b(tested\s*(?:and\s*)?working|works?\s*(?:great|well|fine|perfectly)|fully\s*functional|brand\s*new|sealed|new\s*in\s*box|nib\b)/i;
-const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|cord|charger|adapter|mount|holder|stand|arm|topper|strap|band|bumper|shell|film|dock|lanyard|clip|controller|game|spray|cloth|cloths|pads?|wipes?|filters?|valves?|sensor\s*wires?|disc\s+drive|baffle|shield|backplate|back\s*plate|faceplate|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert)s?\b/i;
-const ACCESSORY_MARKER_RE = /\b(compatible\s+with|replacement\s+for|replacement\s+parts?\s+only|designed\s+for|made\s+for|for\s+use\s+with|fits\s+(?:the\s+)?[A-Z0-9])/i;
+const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|cord|charger|adapter|mount|holder|stand|arm|topper|strap|band|bumper|shell|film|dock|lanyard|clip|controller|game|spray|cloth|cloths|pads?|wipes?|filters?|valves?|sensor\s*wires?|disc\s+drive|remote(?:\s+control)?|bowl|jar|lid|blade|baffle|shield|backplate|back\s*plate|faceplate|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert)s?\b/i;
+const ACCESSORY_MARKER_RE = /\b(compatible\s+with|replacement\s+for|replacement\s+parts?\s+only|designed\s+for|made\s+for|for\s+use\s+with|fits?\s+for|fits\s+(?:the\s+)?[A-Z0-9])/i;
 const FOR_PRODUCT_VERBS = 'compatible\\s+with|replacement\\s+(?:part\\s+)?for|designed\\s+for|made\\s+for|for\\s+use\\s+with|fits|suitable\\s+for|upgrade\\s+for';
 const TITLE_PREFIX_RE = /^\s*(?:\(?\s*(?:open\s*box|openbox|refurbished|refurb|renewed|used|pre[\s-]?owned)[^-|:]*\)?\s*[-|:]\s*)+/i;
 const USED_RE = /\b(open\s*box|openbox|refurbished|refurb|renewed|pre[\s-]?owned|used|for\s+parts)\b/i;
@@ -305,6 +314,7 @@ function normalise(value: unknown): string {
 
 function stripInventoryPrefix(value: string): string {
   return value
+    .replace(/^\s*\{?\s*(?:each|ea)\s*\}?\s*/i, '')
     .replace(/^\s*lot\s*#?\s*[a-z0-9-]+\s*[-:|]\s*/i, '')
     .replace(/^\s*(?:av|inv(?:entory)?|sku|stock|item)\s*(?:#\s*[a-z0-9-]+\s*)?[-:|]\s*/i, '')
     .replace(/^\s*(?:brand\s+new|new|open\s*box|used|refurbished|renewed)\s*[-:|]\s*/i, '')
@@ -381,10 +391,15 @@ export function extractProductDiscriminators(value: string | null | undefined): 
   const wattages = collect(/\b(\d+(?:\.\d+)?)[\s-]*(?:w|watt(?:s)?)\b/gi, (match) => `${match[1]}w`);
   const batteryCapacities = collect(/\b(\d+(?:\.\d+)?)[\s-]*(?:ah|amp[\s-]*hours?)\b/gi, (match) => `${match[1]}ah`);
   const lensRanges = collect(/\b(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?[\s-]*mm\b/gi, (match) => `${match[1]}${match[2] ? `-${match[2]}` : ''}mm`);
-  const gpuModels = [
+  let gpuModels = [
     ...collect(/\b(rtx|gtx)\s*(\d{3,4})(?:\s*(ti))?(?:\s*(super))?\b/gi, (match) => `nvidia:${match[1]}:${match[2]}:${[match[3], match[4]].filter(Boolean).join('-') || 'base'}`.toLowerCase()),
     ...collect(/\bradeon\s+rx\s*(\d{3,4})(?:\s*(xtx|xt))?\b/gi, (match) => `amd:rx:${match[1]}:${match[2] || 'base'}`.toLowerCase()),
   ];
+  // The RTX 4070 Ti non-SUPER is a 12 GB card. Listings and auctioneers often
+  // omit "SUPER" while retaining 16 GB, which still identifies the SKU.
+  if (capacities.includes('16gb') && gpuModels.includes('nvidia:rtx:4070:ti')) {
+    gpuModels = gpuModels.map((value) => value === 'nvidia:rtx:4070:ti' ? 'nvidia:rtx:4070:ti-super' : value);
+  }
   const cpuModels = [
     ...collect(/\bcore\s+i([3579])[\s-]*(\d{4,5})([a-z]{0,2})\b/gi, (match) => `intel:i${match[1]}:${match[2]}:${match[3] || 'base'}`.toLowerCase()),
     ...collect(/\bryzen\s+([3579])\s+(\d{4})([a-z]{0,3})\b/gi, (match) => `amd:ryzen${match[1]}:${match[2]}:${match[3] || 'base'}`.toLowerCase()),
@@ -422,7 +437,11 @@ export function extractProductDiscriminators(value: string | null | undefined): 
     ...collect(/\b\d{1,4}\s*[x×]\s*(\d+(?:\.\d+)?)\s*(fl\s*oz|oz|ounces?|qt|quarts?|ml|liters?|litres?|l|cups?)\b/gi, (match) => `${match[1]}${canonicalVolumeUnit(String(match[2]))}`),
   ];
   const modeCounts = collect(/\b(\d{1,2})[\s-]*(?:speeds?|modes?|settings?)\b/gi, (match) => String(Number(match[1])));
-  const featureCounts = collect(/\b(\d{1,2})[\s-]*in[\s-]*1\b/gi, (match) => String(Number(match[1])));
+  const featureCounts = [
+    ...collect(/\b(\d{1,2})[\s-]*in[\s-]*1\b/gi, (match) => String(Number(match[1]))),
+    ...collect(/\b(\d{1,2})[\s-]*(usb(?:[\s-]*[ac])?)(?:[\s-]*(?:ports?|outlets?))?\b/gi, (match) => `${String(match[2]).replace(/[\s-]/g, '').toLowerCase()}:${Number(match[1])}`),
+    ...collect(/\b(\d{1,2})[\s-]*ac[\s-]*outlets?\b/gi, (match) => `ac:${Number(match[1])}`),
+  ];
   const unique = (items: string[]) => [...new Set(items)];
   return {
     capacities: unique(capacities),
@@ -466,12 +485,25 @@ function matchesProductDiscriminators(candidateTitle: string, product: ProductId
   let matchedCount = 0;
   const conflicts: string[] = [];
   const missing: string[] = [];
+  const isLessSpecificShadow = (expectedValue: string, actualValue: string): boolean => {
+    const expectedParts = expectedValue.split(':');
+    const actualParts = actualValue.split(':');
+    if (expectedParts.length !== actualParts.length || expectedParts.slice(0, -1).join(':') !== actualParts.slice(0, -1).join(':')) return false;
+    const expectedVariant = expectedParts.at(-1) || '';
+    const actualVariant = actualParts.at(-1) || '';
+    return expectedVariant !== 'base' && (actualVariant === 'base' || expectedVariant.split('-').includes(actualVariant));
+  };
   for (const group of groups) {
     if (!expected[group].length) continue;
     const absent = expected[group].filter((value) => !actual[group].includes(value));
     if (absent.length) {
       if (actual[group].length) conflicts.push(`${group}:${absent.join(',')}`);
       else missing.push(`${group}:${absent.join(',')}`);
+    }
+    if (group === 'gpuModels' || group === 'cpuModels') {
+      const unexpected = actual[group].filter((value) => !expected[group].includes(value)
+        && !expected[group].some((expectedValue) => isLessSpecificShadow(expectedValue, value)));
+      if (unexpected.length) conflicts.push(`${group}:unexpected-${unexpected.join(',')}`);
     }
     matchedCount += (expected[group].length - absent.length) * (group === 'platformVariants' || group === 'seriesSignatures' ? 2 : 1);
   }
@@ -717,14 +749,24 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   const numericAfterBrand = brandTokenIndex >= 0 ? rawTokens[brandTokenIndex + 1] || '' : '';
   const numericBrandModel = /^\d{3,6}$/.test(numericAfterBrand)
     && !/^(?:19|20)\d{2}$/.test(numericAfterBrand) ? numericAfterBrand : null;
-  const titleModel = tokens.find((token) => MODEL_RE.test(token) && !/^\d+$/.test(token) && !GENERIC_MODEL_RE.test(token))
+  const titleModelBase = tokens.find((token) => MODEL_RE.test(token) && !/^\d+$/.test(token) && !GENERIC_MODEL_RE.test(token))
     ?? tokens.find((token) => TITLE_MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token))
+    ?? rawTokens.find((token) => PART_NUMBER_RE.test(token))
     ?? numericBrandModel;
+  const titleModelIndex = titleModelBase ? rawTokens.findIndex((token) => token.toLowerCase() === titleModelBase.toLowerCase()) : -1;
+  const titleModelSuffix = titleModelIndex >= 0 ? rawTokens[titleModelIndex + 1] || '' : '';
+  const titleModel = titleModelBase && /^[A-Z]{2,4}$/.test(titleModelSuffix)
+    && !/^(?:GPU|CPU|USB|LED|LCD|SSD|HDD|RAM|WIFI|HDMI|OC)$/i.test(titleModelSuffix)
+    ? `${titleModelBase}${titleModelSuffix}`
+    : titleModelBase;
   const model = (looksLikeModel(statedModel) && modelMatches(name, statedModel) ? statedModel : null) || titleModel || (looksLikeModel(statedModel) ? statedModel : null);
   const model2 = tokens.find((token) => token !== model && token.toLowerCase() !== String(model ?? '').toLowerCase() && token.toLowerCase() !== brand.toLowerCase() && TITLE_MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token)) ?? null;
   const capacities = [...new Set(tokens.filter((token) => CAPACITY_RE.test(token)))];
-  const query = buildProductResearchQuery(name);
+  let query = buildProductResearchQuery(name);
   const discriminators = extractProductDiscriminators(name);
+  if (discriminators.gpuModels.includes('nvidia:rtx:4070:ti-super') && !/\brtx\s*4070\s*ti\s+super\b/i.test(query)) {
+    query = query.replace(/\brtx\s*4070\s*ti\b/i, (value) => `${value} super`);
+  }
   if (model || discriminators.gpuModels.length || discriminators.cpuModels.length) discriminators.seriesSignatures = [];
   const identity: ProductIdentity = { name, query: query.trim(), brand, model: model || null, model2, kind: detectProductKind(name), capacities, discriminators, tokens: tokens.slice(0, 12) };
   if (record?.statedRetail != null && Number.isFinite(record.statedRetail) && record.statedRetail > 0) identity.statedRetail = record.statedRetail;
@@ -774,6 +816,7 @@ export function detectMixedLot(title: string | null | undefined, description = '
     ['title', /\b(?:bundle|lot)\s+of\s+(?:different|assorted|mixed|various)\b/i, 'mixed bundle wording'],
     ['title', /\bwith\s+(?:components?|contents?|assorted\s+items?|mixed\s+items?|equipment)\b/i, 'explicit component or contents wording'],
     ['description', /\b(?:assorted|mixed|various)\s+(?:items?|components?|equipment|contents)\b/i, 'description identifies assorted components'],
+    ['description', /\blot\s+of\s*\(?\s*(?:[2-9]|\d{2,})\s*\)?\s+consisting\s+of\b/i, 'description identifies multiple lot components'],
   ];
   for (const [source, pattern, reason] of checks) if (pattern.test(source === 'title' ? titleText : descriptionText)) reasons.push(reason);
   const parsed = parseStructuredDescription(description);
@@ -829,6 +872,37 @@ function htmlAttribute(block: string, name: string): string {
   return match?.[1] ? decodeHtml(match[1]) : '';
 }
 
+function cleanAmazonCandidateTitle(value: string | null | undefined): string {
+  return normalise(value)
+    .replace(/^Sponsored\s*Ad\s*[\u2013-]\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Amazon's current search card can expose a brand-only first h2 while the
+ * product image/title recipe still carries the full identity. Pick the richest
+ * complete title instead of trusting DOM order.
+ */
+export function selectAmazonCandidateTitle(values: Array<string | null | undefined>): string {
+  const candidates = [...new Set(values.map(cleanAmazonCandidateTitle).filter(Boolean))];
+  let best = '';
+  let bestScore = -Infinity;
+  for (const candidate of candidates) {
+    const words = compactTokens(candidate);
+    let score = Math.min(candidate.length, 360);
+    if (words.length <= 1) score -= 240;
+    if (/(?:\.{3}|\u2026)\s*$/.test(candidate)) score -= 180;
+    if (USED_RE.test(candidate)) score += 24;
+    if (/\d/.test(candidate) && /[a-z]/i.test(candidate)) score += 12;
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 function htmlText(block: string, selector: RegExp): string {
   const match = block.match(selector);
   return match?.[1] ? stripTags(match[1]) : '';
@@ -871,21 +945,22 @@ export function parseAmazonCandidates(html: string | null | undefined): AmazonCa
     const block = source.slice(start, end);
     const asin = match[1]?.toUpperCase();
     if (!asin) return;
-    // Amazon image alt text is frequently truncated before decisive suffixes
-    // such as "(Renewed)". Prefer the complete result heading, then fall back
-    // to the older title markers and finally the image description.
-    const title = htmlText(block, /<h2\b[^>]*>([\s\S]*?)<\/h2>/i)
-      || htmlText(block, /<span[^>]*(?:data-cy=["']title-recipe["']|s-title-instructions-style|a-size-base-plus)[^>]*>([\s\S]*?)<\/span>/i)
-      || htmlAttribute(block, 'alt');
+    const headings = [...block.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)].map((entry) => stripTags(entry[1] || ''));
+    const recipes = [...block.matchAll(/<[^>]*(?:data-cy=["']title-recipe["']|class=["'][^"']*(?:s-title-instructions-style|a-size-base-plus)[^"']*["'])[^>]*>([\s\S]*?)<\/[^>]+>/gi)]
+      .map((entry) => stripTags(entry[1] || ''));
+    const imageAlt = htmlAttribute(block.match(/<img\b[^>]*class=["'][^"']*\bs-image\b[^"']*["'][^>]*>/i)?.[0] || '', 'alt');
+    const titleEvidence = [imageAlt, ...recipes, ...headings];
+    const title = selectAmazonCandidateTitle(titleEvidence);
     if (!title) return;
     const slug = amazonResultSlug(block, asin);
+    const matchText = [...new Set([title, ...titleEvidence.map(cleanAmazonCandidateTitle), slug].filter(Boolean))].join(' ');
     const sponsored = /data-component-type=["']sp-sponsored-result|\bAdHolder\b|\bSponsored(?:\s+Ad)?\b|sponsored-label-text/i.test(block);
     const candidate: AmazonCandidate = {
       asin,
       title,
-      matchText: slug ? `${title} ${slug}` : title,
+      matchText,
       price: parseAmazonPrice(block),
-      used: USED_RE.test(title),
+      used: USED_RE.test(matchText),
       sponsored,
       url: `https://www.amazon.com/dp/${asin}`,
     };
@@ -912,8 +987,9 @@ function canonicalBrandFamily(value: string | null | undefined): string | null {
 
 function literalBrandMatches(candidateTitle: string, brand: string): boolean {
   if (!brand) return false;
-  const phrase = escapeRegExp(brand).replace(/\s+/g, '\\s+');
-  return new RegExp(`(?:^|[^a-z0-9])${phrase}(?:$|[^a-z0-9])`, 'i').test(candidateTitle);
+  const fold = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  const phrase = escapeRegExp(fold(brand)).replace(/\s+/g, '\\s+');
+  return new RegExp(`(?:^|[^a-z0-9])${phrase}(?:$|[^a-z0-9])`, 'i').test(fold(candidateTitle));
 }
 
 function inferredBrandAliases(brand: string): string[] {
@@ -949,6 +1025,8 @@ const RETAIL_IDENTITY_NOISE = new Set([
   ...NOISE_WORDS,
   'adult', 'adults', 'black', 'blue', 'clear', 'green', 'grey', 'gray', 'kids',
   'large', 'medium', 'pink', 'purple', 'red', 'small', 'white', 'wooden',
+  'computer', 'computers', 'custom', 'desktop', 'desktops', 'pc', 'tower', 'workstation', 'workstations',
+  'card', 'cards', 'geforce', 'gpu', 'gpus', 'graphics', 'gtx', 'radeon', 'rtx', 'video',
 ]);
 
 function retailIdentityTokens(product: ProductIdentity): string[] {
@@ -976,12 +1054,19 @@ function primaryKindIndex(title: string, kind: ProductKind | null): number {
   return pattern?.exec(title)?.index ?? -1;
 }
 
+function sourceIsAccessoryProduct(product: ProductIdentity): boolean {
+  const noun = ACCESSORY_NOUN_RE.exec(product.name);
+  if (!noun) return false;
+  const before = product.name.slice(Math.max(0, noun.index - 24), noun.index);
+  return !/(?:\bwith|\bw\s*\/|\bincludes?|\bincluding|\bplus)\s*$/i.test(before);
+}
+
 export function isAccessoryListing(title: string | null | undefined, product: ProductIdentity): boolean {
   const candidateTitle = String(title ?? '');
   if (product.kind === 'game-console' && detectProductKind(candidateTitle) !== 'game-console') return true;
   if (/\breplacement\s+parts?\s+only\b|\bnot\s+a\s+complete\b/i.test(candidateTitle)) return true;
   const noun = ACCESSORY_NOUN_RE.exec(candidateTitle);
-  if (!noun || ACCESSORY_NOUN_RE.test(product.name)) return false;
+  if (!noun || sourceIsAccessoryProduct(product)) return false;
   const identity = [product.brand, product.model, product.model2].filter(Boolean).map((value) => escapeRegExp(String(value)).replace(/[-\s]/g, '[-\\s]?')).join('|');
   if (identity) {
     const forProduct = new RegExp(`\\b(?:${FOR_PRODUCT_VERBS})\\s+(?:the\\s+)?[^,;.]{0,40}?(?:${identity})`, 'i');
@@ -1023,7 +1108,7 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
   // A cable/stand/band is allowed to match the same product type. Accessory
   // rejection protects a primary product from its add-ons; it must not reject
   // an auction lot whose product is itself the accessory.
-  if (!ACCESSORY_NOUN_RE.test(product.name) && isAccessoryListing(candidateTitle, product)) rejectionReasons.push('accessory-or-component');
+  if (!sourceIsAccessoryProduct(product) && isAccessoryListing(candidateTitle, product)) rejectionReasons.push('accessory-or-component');
   const exactModel = product.model ? modelMatches(candidateTitle, product.model) : false;
   const discriminators = matchesProductDiscriminators(candidateTitle, product);
   if (discriminators.conflicts.length) rejectionReasons.push(...discriminators.conflicts.map((value) => `attribute-conflict:${value}`));
@@ -1032,8 +1117,8 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
   const candidateKind = detectProductKind(candidateTitle);
   const sourceFamily = canonicalBrandFamily(`${product.brand} ${product.name}`);
   const candidateFamily = canonicalBrandFamily(candidateTitle);
-  if (!exactModel && sourceFamily && candidateFamily && sourceFamily !== candidateFamily) rejectionReasons.push(`brand-mismatch:${sourceFamily}`);
-  if (!exactModel && !sourceFamily && brand.expected && !brand.matches) {
+  if (sourceFamily && candidateFamily && sourceFamily !== candidateFamily) rejectionReasons.push(`brand-mismatch:${sourceFamily}`);
+  if (!sourceFamily && brand.expected && !brand.matches) {
     rejectionReasons.push(`brand-mismatch:${brand.label}`);
   }
   if (!exactModel && product.kind && candidateKind && candidateKind !== product.kind) rejectionReasons.push(`kind-mismatch:${product.kind}:${candidateKind}`);
@@ -1066,6 +1151,12 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
   return { accepted: score > 0, score, rejectionReasons: [], matchedEvidence };
 }
 
+export function evaluateAmazonCandidateEvidence(candidate: AmazonCandidate, product: ProductIdentity): RetailCandidateEvaluation {
+  const titleEvaluation = evaluateRetailCandidate(candidate.title, product);
+  if (titleEvaluation.accepted || !candidate.matchText || candidate.matchText === candidate.title) return titleEvaluation;
+  return evaluateRetailCandidate(candidate.matchText, product);
+}
+
 export function scoreRetailCandidate(title: string | null | undefined, product: ProductIdentity): number {
   const candidateTitle = String(title ?? '');
   const lower = candidateTitle.toLowerCase();
@@ -1073,12 +1164,12 @@ export function scoreRetailCandidate(title: string | null | undefined, product: 
   // Direct port of hibid-enhancer-suite's relevance engine. Accessories are
   // disqualified; a known model is mandatory; then brand and token overlap
   // rank the remaining plausible results.
-  if (!ACCESSORY_NOUN_RE.test(product.name) && isAccessoryListing(candidateTitle, product)) return 0;
+  if (!sourceIsAccessoryProduct(product) && isAccessoryListing(candidateTitle, product)) return 0;
   // Preserve Flippah's hard identity conflicts around the donor score. These
   // prevent a different model, capacity, platform, or product kind from being
   // promoted merely because it shares broad search words.
   const guarded = evaluateRetailCandidate(candidateTitle, product);
-  if (guarded.rejectionReasons.some((reason) => /^(?:accessory-or-component|attribute-conflict|attribute-missing|kind-mismatch|model-mismatch|brand-mismatch)/.test(reason))) return 0;
+  if (guarded.rejectionReasons.some((reason) => /^(?:insufficient-source-identity|accessory-or-component|attribute-conflict|attribute-missing|kind-mismatch|model-mismatch|brand-mismatch)/.test(reason))) return 0;
   let score = 0;
   if (product.model) {
     if (!modelMatches(candidateTitle, product.model)) return 0;
@@ -1100,7 +1191,10 @@ function retailPriceFloor(product: ProductIdentity): number {
 export function matchAmazonCandidates(candidates: AmazonCandidate[], product: ProductIdentity): AmazonCandidateMatch | null {
   const scored = candidates
     .filter((candidate) => !candidate.sponsored && !candidate.used && candidate.price != null && candidate.price >= retailPriceFloor(product))
-    .map((candidate) => ({ candidate, score: scoreRetailCandidate(candidate.matchText || candidate.title, product) }))
+    .map((candidate) => {
+      const titleScore = scoreRetailCandidate(candidate.title, product);
+      return { candidate, score: titleScore || scoreRetailCandidate(candidate.matchText || candidate.title, product) };
+    })
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score);
   if (!scored.length) return null;

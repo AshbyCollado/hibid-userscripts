@@ -22,7 +22,10 @@ export function retailIdentityCacheKey(identity: ProductIdentity, epoch: number)
 }
 
 export function retailProviderCacheKey(query: string): string {
-  return `amazon-us:provider-v10:${query.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')}`;
+  // This epoch describes the parsed Amazon search-card payload, not the
+  // identity matcher. Matcher improvements must re-evaluate cached candidates
+  // instead of forcing an entire catalog or watchlist back through Amazon.
+  return `amazon-us:provider-v12:${query.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')}`;
 }
 
 export function retailCacheTtl(status: string): number {

@@ -4,7 +4,7 @@ import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, 
 import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.js';
 import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
 import { clearRetailCache, getRetailCache, putRetailCache } from '../core/retail-db.js';
-import { detectProductKind, evaluateRetailCandidate, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
+import { detectProductKind, evaluateAmazonCandidateEvidence, evaluateRetailCandidate, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
 import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '../intelligence/amazon-document-parser.js';
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
 import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailCandidateList, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
@@ -322,7 +322,7 @@ function evaluateProviderSnapshot(identity: ProductIdentity, snapshot: RetailPro
   const candidateAudit = snapshot.candidates.slice(0, 8).map((candidate) => ({
     asin: candidate.asin,
     title: candidate.title,
-    ...evaluateRetailCandidate(candidate.matchText || candidate.title, identity),
+    ...evaluateAmazonCandidateEvidence(candidate, identity),
   }));
   const match = matchAmazonCandidates(snapshot.candidates, identity);
   const status: RetailLookupStatus = match ? (match.score >= 3 ? 'matched' : 'low_confidence') : 'no_match';
