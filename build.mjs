@@ -12,7 +12,7 @@ const version = String(packageJson.version);
 await rm(path.join(root, 'dist'), { recursive: true, force: true });
 
 const referenceManifest = JSON.parse(await readFile(path.join(reference, 'manifest.json'), 'utf8'));
-const referenceResources = referenceManifest.web_accessible_resources?.[0]?.resources || [];
+const referenceContentCss = 'assets/index-uNBN1arP.css';
 
 const commonManifest = {
   manifest_version: 3,
@@ -42,18 +42,14 @@ const commonManifest = {
     js: ['content.js', 'legacy-content.js'],
     run_at: 'document_idle'
   }],
-  web_accessible_resources: [{
-    matches: ['https://hibid.com/*', 'https://*.hibid.com/*'],
-    resources: referenceResources,
-    use_dynamic_url: false
-  }]
 };
 
 for (const target of targets) {
   const outdir = path.join(root, 'dist', target);
   await mkdir(path.join(outdir, 'popup'), { recursive: true });
   await mkdir(path.join(outdir, 'options'), { recursive: true });
-  await cp(path.join(reference, 'assets'), path.join(outdir, 'assets'), { recursive: true });
+  await mkdir(path.join(outdir, 'assets'), { recursive: true });
+  await cp(path.join(reference, referenceContentCss), path.join(outdir, referenceContentCss));
   await cp(path.join(root, 'assets', 'icons'), path.join(outdir, 'icons'), {
     recursive: true,
     filter: (entry) => path.basename(entry) !== 'flippah-source.png'
@@ -106,18 +102,6 @@ for (const target of targets) {
         }));
       }
     }]
-  });
-
-  await build({
-    entryPoints: [path.join(root, 'src', 'legacy', 'tax-rates-compat.ts')],
-    outfile: path.join(outdir, 'assets', 'taxRates-B3rE_xel.js'),
-    bundle: true,
-    format: 'esm',
-    platform: 'browser',
-    target: 'firefox128',
-    minify: true,
-    legalComments: 'none',
-    logLevel: 'warning'
   });
 
   const manifest = structuredClone(commonManifest);

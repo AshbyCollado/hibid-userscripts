@@ -1,4 +1,5 @@
 import { activeTab, getSyncStorage, runtimeMessage, tabMessage } from '../core/browser.js';
+import { buildCsv } from '../core/csv.js';
 import { getDiagnostic, getJobForFingerprint, getRecords } from '../core/job-db.js';
 import { normalizeSettings } from '../core/settings.js';
 import { jobMatchesContextAndScope } from '../core/job-scope.js';
@@ -208,8 +209,11 @@ async function copyText(text: string): Promise<void> {
   const area = document.createElement('textarea');
   area.value = text; area.style.position = 'fixed'; area.style.opacity = '0';
   document.body.append(area); area.select();
-  if (!document.execCommand('copy')) throw new Error('Clipboard copy was denied');
-  area.remove();
+  try {
+    if (!document.execCommand('copy')) throw new Error('Clipboard copy was denied');
+  } finally {
+    area.remove();
+  }
 }
 
 async function copyCompleted(format: 'json' | 'llm'): Promise<void> {
@@ -237,22 +241,39 @@ async function copyOrStart(format: 'json' | 'llm'): Promise<void> {
 }
 
 async function copyDiagnostic(download: boolean): Promise<void> {
-  if (!job) return;
-  const diagnostic = await getDiagnostic(job.jobId);
-  if (!diagnostic) throw new Error('No diagnostic is stored for this scrape; run or retry it with this version first');
-  if (download) await runtimeMessage('flippah:diagnostic.download', { diagnostic });
-  else await copyText(JSON.stringify(diagnostic, null, 2));
-  toast = download ? 'Diagnostic downloaded' : 'Diagnostic copied';
+  try {
+    if (!job) throw new Error('No scrape diagnostic is available yet');
+    const diagnostic = await getDiagnostic(job.jobId);
+    if (!diagnostic) throw new Error('No diagnostic is stored for this scrape; run or retry it with this version first');
+    if (download) await runtimeMessage('flippah:diagnostic.download', { diagnostic });
+    else await copyText(JSON.stringify(diagnostic, null, 2));
+    toast = download ? 'Diagnostic downloaded' : 'Diagnostic copied';
+  } catch (error) {
+    toast = error instanceof Error ? error.message : String(error);
+  }
   await render();
 }
 
 async function exportWatchlist(): Promise<void> {
-  const rows = await legacyMessage<any[]>({ kind: 'watch:list' });
-  const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-  const csv = ['title,url,current_bid,max_bid,note', ...rows.map((item) => [item.title, item.url, Number(item.currentBidCents || 0) / 100, item.maxBidCents == null ? '' : Number(item.maxBidCents) / 100, item.note].map(quote).join(','))].join('\r\n');
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  link.download = 'flippah-watchlist.csv'; link.click(); URL.revokeObjectURL(link.href);
+  try {
+    const rows = await legacyMessage<any[]>({ kind: 'watch:list' });
+    const csv = buildCsv([
+      ['title', 'url', 'current_bid', 'max_bid', 'note'],
+      ...rows.map((item) => [item.title, item.url, Number(item.currentBidCents || 0) / 100, item.maxBidCents == null ? '' : Number(item.maxBidCents) / 100, item.note])
+    ]);
+    const link = document.createElement('a');
+    const objectUrl = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    link.href = objectUrl;
+    link.download = 'flippah-watchlist.csv';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+    toast = `Downloaded ${rows.length} watched lot${rows.length === 1 ? '' : 's'}`;
+  } catch (error) {
+    toast = error instanceof Error ? error.message : String(error);
+  }
+  await render();
 }
 
 function startPolling(): void {
@@ -315,4 +336,10 @@ async function init(): Promise<void> {
   await render();
 }
 
-void init();
+void init().catch((error) => {
+  const box = document.createElement('div');
+  box.className = 'empty';
+  box.setAttribute('role', 'alert');
+  box.textContent = `Flippah could not open: ${error instanceof Error ? error.message : String(error)}`;
+  app.replaceChildren(box);
+});

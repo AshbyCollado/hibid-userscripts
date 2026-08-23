@@ -31,10 +31,10 @@ are additive: Flippah does not hide, move, fade, shrink, relabel, or replace
 HiBid-owned content or controls. Genuine CAD lots remain CAD and receive no USD
 comparison.
 
-Amazon lookups port the donor's catalog transport: anonymous Amazon.com HTML
-requests in batches of six, 350 ms between network batches, per-lot failure
-isolation, in-flight joining, and a 12-hour evidence cache. No Amazon tabs or
-helper windows are opened. HiBid's own Retail/MSRP/Estimate is retained as an
+Amazon lookups port the donor's catalog transport through browser-context
+Amazon.com HTML requests in batches of six, 350 ms between network batches,
+per-lot failure isolation, in-flight joining, and a 12-hour evidence cache. No
+Amazon tabs or helper windows are opened. HiBid's own Retail/MSRP/Estimate is retained as an
 explicitly labeled provisional fallback when live Amazon evidence is missing;
 it is never presented as a verified Amazon price. eBay remains
 user-directed: Flippah opens an exact Sold and Completed search, then uses the
@@ -125,3 +125,20 @@ Flippah `v0.3.25` parses Amazon search responses as a real HTML tree in the
 background worker. Nested Amazon result nodes can no longer cross-wire one
 variant's title with another variant's price; the retail cache epoch is bumped
 so every catalog is re-evaluated under the corrected parser.
+
+## v0.3.51 final beta hardening
+
+- The release package includes only the reference stylesheet required by the
+  preserved lot calculator. Unused reference JavaScript and unnecessary web
+  accessible resources are no longer shipped.
+- The dormant Amazon helper-window implementation was removed. Amazon research
+  continues through the direct background provider and cannot open hidden
+  research windows or tabs.
+- Watchlist CSV fields that could be interpreted as spreadsheet formulas are
+  neutralized before download.
+- Popup clipboard, diagnostic, CSV-download, and options-storage failures now
+  produce visible errors instead of failing silently.
+- Synced numeric and text settings are normalized and bounded before entering
+  fee math or persistent state.
+- The Chrome and Waterfox builds pass the complete automated suite. Browser
+  installation and a live Chrome smoke test remain mandatory before packaging.

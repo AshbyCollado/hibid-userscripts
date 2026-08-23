@@ -36,10 +36,20 @@ async function init(): Promise<void> {
       originLabel: String(form.get('originLabel') || ''), originZip: String(form.get('originZip') || ''),
       radiusMiles: number('radiusMiles'), customInstructions: String(form.get('customInstructions') || '')
     });
-    await setSyncStorage(next as unknown as Record<string, unknown>);
     const status = document.querySelector<HTMLElement>('#status')!;
-    status.textContent = 'Saved'; window.setTimeout(() => { status.textContent = ''; }, 1800);
+    try {
+      await setSyncStorage(next as unknown as Record<string, unknown>);
+      status.textContent = 'Saved';
+      window.setTimeout(() => { status.textContent = ''; }, 1800);
+    } catch (error) {
+      status.textContent = error instanceof Error ? `Could not save: ${error.message}` : 'Could not save settings';
+    }
   });
 }
 
-void init();
+void init().catch((error) => {
+  const message = document.createElement('p');
+  message.setAttribute('role', 'alert');
+  message.textContent = `Flippah settings could not open: ${error instanceof Error ? error.message : String(error)}`;
+  app.replaceChildren(message);
+});

@@ -85,3 +85,23 @@ test('blank nullable numeric settings remain unset instead of becoming zero', ()
   assert.equal(settings.ebayFeePct, DEFAULT_SETTINGS.ebayFeePct);
   assert.equal(settings.radiusMiles, DEFAULT_SETTINGS.radiusMiles);
 });
+
+test('corrupt synced settings are bounded before they reach fee math or storage', () => {
+  const settings = normalizeSettings({
+    stateCode: 'xx', taxPctOverride: -9, ebayFeePct: 900, ebayFeeFixedCents: -25,
+    radiusMiles: 9999, retailTargetPct: 0, retailWarningPct: 120,
+    originLabel: 'x'.repeat(500), originZip: '9'.repeat(50), customInstructions: 'z'.repeat(10_000)
+  });
+  assert.equal(settings.stateCode, null);
+  assert.equal(settings.taxPctOverride, 0);
+  assert.equal(settings.ebayFeePct, 40);
+  assert.equal(settings.ebayFeeFixedCents, 0);
+  assert.equal(settings.radiusMiles, 500);
+  assert.equal(settings.retailTargetPct, 1);
+  assert.equal(settings.retailWarningPct, 95);
+  assert.equal(settings.originLabel.length, 120);
+  assert.equal(settings.originZip.length, 20);
+  assert.equal(settings.customInstructions.length, 4000);
+  assert.equal(normalizeSettings({ stateCode: 'nj' }).stateCode, 'NJ');
+  assert.equal(normalizeSettings({ taxPctOverride: true }).taxPctOverride, null);
+});

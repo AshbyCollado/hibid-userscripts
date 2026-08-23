@@ -62,29 +62,36 @@ export function effectiveTaxPct(settings: Pick<FlippahSettings, 'stateCode' | 't
 
 function finite(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
   const result = Number(value);
   return Number.isFinite(result) ? result : null;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 export function normalizeSettings(value: unknown): FlippahSettings {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const stateCode = typeof source.stateCode === 'string' ? source.stateCode.trim().toUpperCase() : '';
+  const taxPctOverride = finite(source.taxPctOverride);
   return {
-    stateCode: typeof source.stateCode === 'string' && source.stateCode ? source.stateCode : null,
-    taxPctOverride: finite(source.taxPctOverride),
+    stateCode: stateCode && Object.hasOwn(US_STATE_TAX_RATES, stateCode) ? stateCode : null,
+    taxPctOverride: taxPctOverride === null ? null : clamp(taxPctOverride, 0, 20),
     taxOnPremium: typeof source.taxOnPremium === 'boolean' ? source.taxOnPremium : true,
-    ebayFeePct: finite(source.ebayFeePct) ?? DEFAULT_SETTINGS.ebayFeePct,
-    ebayFeeFixedCents: finite(source.ebayFeeFixedCents) ?? DEFAULT_SETTINGS.ebayFeeFixedCents,
+    ebayFeePct: clamp(finite(source.ebayFeePct) ?? DEFAULT_SETTINGS.ebayFeePct, 0, 40),
+    ebayFeeFixedCents: Math.round(clamp(finite(source.ebayFeeFixedCents) ?? DEFAULT_SETTINGS.ebayFeeFixedCents, 0, 1000)),
     catalogChips: typeof source.catalogChips === 'boolean' ? source.catalogChips : true,
     nativeWatchSync: typeof source.nativeWatchSync === 'boolean' ? source.nativeWatchSync : false,
     taxExempt: typeof source.taxExempt === 'boolean' ? source.taxExempt : false,
     debugMode: typeof source.debugMode === 'boolean' ? source.debugMode : false,
     includePrivateWatchNotes: typeof source.includePrivateWatchNotes === 'boolean' ? source.includePrivateWatchNotes : false,
     amazonAutoLookup: typeof source.amazonAutoLookup === 'boolean' ? source.amazonAutoLookup : true,
-    retailTargetPct: Math.max(1, Math.min(95, finite(source.retailTargetPct) ?? DEFAULT_SETTINGS.retailTargetPct)),
-    retailWarningPct: Math.max(1, Math.min(95, finite(source.retailWarningPct) ?? DEFAULT_SETTINGS.retailWarningPct)),
-    originLabel: typeof source.originLabel === 'string' && source.originLabel.trim() ? source.originLabel.trim() : DEFAULT_SETTINGS.originLabel,
-    originZip: typeof source.originZip === 'string' && source.originZip.trim() ? source.originZip.trim() : DEFAULT_SETTINGS.originZip,
-    radiusMiles: Math.max(1, Math.min(500, finite(source.radiusMiles) ?? DEFAULT_SETTINGS.radiusMiles)),
-    customInstructions: typeof source.customInstructions === 'string' ? source.customInstructions.trim() : ''
+    retailTargetPct: clamp(finite(source.retailTargetPct) ?? DEFAULT_SETTINGS.retailTargetPct, 1, 95),
+    retailWarningPct: clamp(finite(source.retailWarningPct) ?? DEFAULT_SETTINGS.retailWarningPct, 1, 95),
+    originLabel: typeof source.originLabel === 'string' && source.originLabel.trim() ? source.originLabel.trim().slice(0, 120) : DEFAULT_SETTINGS.originLabel,
+    originZip: typeof source.originZip === 'string' && source.originZip.trim() ? source.originZip.trim().slice(0, 20) : DEFAULT_SETTINGS.originZip,
+    radiusMiles: Math.round(clamp(finite(source.radiusMiles) ?? DEFAULT_SETTINGS.radiusMiles, 1, 500)),
+    customInstructions: typeof source.customInstructions === 'string' ? source.customInstructions.trim().slice(0, 4000) : ''
   };
 }

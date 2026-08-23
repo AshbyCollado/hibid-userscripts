@@ -451,3 +451,26 @@ ignored by Git.
 - Amazon result headings take precedence over image `alt` text because the latter can truncate before decisive condition text such as `(Renewed)`.
 - Provider cache generation `provider-v9` prevents old truncated titles from being reused as new-retail evidence.
 - The maintained parse5 document parser uses the same heading-first rule; this is the parser used by background Amazon fetches. Its cache generation is `provider-v10`.
+
+## v0.3.51 final beta hardening
+
+- Flippah already contains the donor-derived catalog-wide Amazon queue, paced
+  batching, duplicate joining, twelve-hour cache, product extraction,
+  condition checks, candidate matching, and account verdicts. Do not describe
+  those capabilities as missing merely because the TypeScript implementation
+  differs from the donor's userscript internals.
+- The release package vendors only the reference calculator CSS. Compiled
+  reference JavaScript is development evidence and must not be copied into
+  `dist` or exposed as a web-accessible resource.
+- Amazon research must use the direct background provider. The dormant helper
+  window/content-script path was removed; a production build must not contain
+  `flippahToken`, `amazon.browser.result`, or `chrome.windows` research code.
+- CSV exports neutralize formula-leading cells, settings are bounded on read,
+  and popup/options failures must be visible to the user.
+- CodeInspectus is an adversarial release aid, not proof of complete security.
+  Its findings against `legacy/tampermonkey` and `reference-build` are archived
+  source findings; the Chrome manifest `key` is a public extension identity,
+  not an API secret. Record scanner coverage limits alongside results.
+- After every build, update `C:\Users\ashby\Documents\lotlens-local`, reload or
+  auto-reload the Chrome extension, and verify the displayed version and a real
+  HiBid page before creating the friend beta ZIP.
