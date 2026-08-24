@@ -474,3 +474,21 @@ ignored by Git.
 - After every build, update `C:\Users\ashby\Documents\lotlens-local`, reload or
   auto-reload the Chrome extension, and verify the displayed version and a real
   HiBid page before creating the friend beta ZIP.
+
+## v0.4.0 open-source research quality pass
+
+- Canonical HiBid lot images receive an extension-owned, pointer-transparent
+  full-size hover preview. Sandhills `img.axd` URLs retain the base `w=0&h=0`
+  parameters and remove only the appended `h=<thumb>&w=<thumb>` pair. The
+  feature is enabled by default through `fullSizeImageHover`.
+- Complete export remains governed by exact stable-ID coverage. A separate
+  non-blocking fidelity audit measures identity, title, URL, description,
+  images, category, pricing, and status/time. Missing evidence is reported and
+  never fabricated.
+- Optional outcomes use `flippahOutcomeV1:<eventItemId>` local-storage records.
+  They preserve the first predicted resale baseline, actual all-in, sold price,
+  selling costs, channel, realized profit, and prediction error. Outcome CSV is
+  offered only after at least one outcome exists.
+- Inspiration and attribution live in `docs/OPEN_SOURCE_INSPIRATION.md` and
+  `vendor/hoverzoom/LICENSE`. Automatic bidding, synthetic data, and broad JSON
+  guessing remain excluded.

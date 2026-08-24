@@ -76,6 +76,10 @@ export function activeTab(): Promise<chrome.tabs.Tab | null> {
       const webTab = tabs.find((tab) => /^https?:\/\//i.test(String(tab.url || '')));
       if (webTab) return webTab;
     }
+    const supported = (await query({}))
+      .filter((tab) => /^(?:https:\/\/)?(?:[^/]+\.)?hibid\.com\//i.test(String(tab.url || '')))
+      .sort((left, right) => Number(right.lastAccessed || 0) - Number(left.lastAccessed || 0));
+    if (supported[0]) return supported[0];
     return null;
   })();
 }

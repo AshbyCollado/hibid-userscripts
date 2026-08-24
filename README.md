@@ -20,6 +20,8 @@ in-page calculator remains limited to individual lot pages.
 - `legacy/tampermonkey/` - previous userscript implementation and fixtures
 - `vendor/hibid-enhancer-suite/` - MIT license and revision attribution for the
   parsing and retail-matching logic adapted into Flippah
+- `vendor/hoverzoom/` - upstream MIT license for the full-size HiBid image URL
+  behavior adapted into Flippah
 
 ## US deal intelligence
 
@@ -142,3 +144,19 @@ so every catalog is re-evaluated under the corrected parser.
   fee math or persistent state.
 - The Chrome and Waterfox builds pass the complete automated suite. Browser
   installation and a live Chrome smoke test remain mandatory before packaging.
+
+## v0.4.0 research quality loop
+
+- Hovering a canonical HiBid lot photo opens a transient full-resolution
+  preview without moving, replacing, or intercepting HiBid controls. The
+  behavior can be disabled in Options.
+- Every verified JSON and AI export includes field-level fidelity for stable
+  identity, title, URL, description, photos, category, pricing, and status/time.
+  Copy confirmation reports description and photo coverage immediately.
+- Individual lot panels include a collapsed, optional resale-outcome recorder.
+  Actual all-in cost, sold price, selling costs, and sales channel stay in local
+  extension storage. Flippah calculates realized profit and the difference from
+  the original saved resale estimate; outcomes can be exported as CSV from the
+  Watchlist tab.
+- Source inspirations and exclusions are documented in
+  `docs/OPEN_SOURCE_INSPIRATION.md`.

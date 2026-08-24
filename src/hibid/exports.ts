@@ -1,5 +1,6 @@
 import type { FlippahSettings } from '../core/settings.js';
 import type { HiBidLotRecord, PageContext, ScrapeJobSummary } from '../core/types.js';
+import { auditHibidRecordFidelity, type HibidFidelityAudit } from './fidelity.js';
 
 export interface HiBidExportPayload {
   context: {
@@ -22,6 +23,7 @@ export interface HiBidExportPayload {
     revision: number;
     expectedCount: number;
     uniqueItemCount: number;
+    fidelity: HibidFidelityAudit;
   };
 }
 
@@ -41,7 +43,14 @@ export function buildHibidExportPayload(context: PageContext, job: ScrapeJobSumm
       complete: true, expectedCount: job.expectedTotal, copiedCount: items.length, routeFingerprint: job.fingerprint
     },
     items: items.map((item) => settings.includePrivateWatchNotes ? item : ({ ...item, watchNotes: undefined })),
-    audit: { complete: true, jobId: job.jobId, revision: job.revision, expectedCount: items.length, uniqueItemCount: items.length }
+    audit: {
+      complete: true,
+      jobId: job.jobId,
+      revision: job.revision,
+      expectedCount: items.length,
+      uniqueItemCount: items.length,
+      fidelity: auditHibidRecordFidelity(items),
+    }
   };
 }
 
@@ -96,7 +105,7 @@ For local flips, replace ebay_net with estimated_local_resale. Never calculate p
 
 Put these columns first: row_id, lot, title, item_url, current_bid, next_bid, status, estimated_resale, profit_if_won_now, recommended_max_bid, profit_at_recommended_max_bid, proof_type, reason, risk_notes, sedan_fit, shipping_assumption. Sort decision sheets by profit_if_won_now descending. Freeze only the header row, hide nothing, bold populated decision columns, and use distinct colors for current bid, resale, both profit fields, max bid, and proof type. Highlight current_bid red when it exceeds recommended_max_bid.
 
-Create Best Bids, Research Leads, Local Flip Leads, Bundle/Parts Leads, Mixed Lot / Component Review, All Lots, Garbage, Evidence, and Coverage Audit sheets. The coverage audit must reconcile ${payload.context.expectedCount} expected records to ${payload.items.length} unique supplied records.
+Create Best Bids, Research Leads, Local Flip Leads, Bundle/Parts Leads, Mixed Lot / Component Review, All Lots, Garbage, Evidence, and Coverage Audit sheets. The coverage audit must reconcile ${payload.context.expectedCount} expected records to ${payload.items.length} unique supplied records and report the supplied field-fidelity metrics. Missing descriptions, images, categories, prices, or statuses are uncertainty to investigate, not permission to invent evidence.
 
 ## DISTANCE
 

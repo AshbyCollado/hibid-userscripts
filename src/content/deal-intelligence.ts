@@ -1,5 +1,6 @@
 import { getSyncStorage, runtimeMessage } from '../core/browser.js';
 import { effectiveTaxPct, normalizeSettings, type FlippahSettings } from '../core/settings.js';
+import { calculateDealOutcome, normalizeDealOutcome, outcomeStorageKey, type DealOutcome, type OutcomeChannel } from '../core/outcomes.js';
 import { routeFingerprint } from '../core/route.js';
 import type { DealAnalysisSummary, HiBidLotRecord, HiBidRoute, HiBidTransport } from '../core/types.js';
 import { hydrateHibidLots, mergeHibidVisibleWithHydrated } from '../hibid/api.js';
@@ -54,6 +55,7 @@ interface AnalysisRecord {
   ebayNet: number | null;
   premiumPct: number;
   statedRetail: ReturnType<typeof extractStatedRetail>;
+  outcome: DealOutcome | null;
 }
 
 function emptySummary(): DealAnalysisSummary {
@@ -112,6 +114,23 @@ async function saveStoredLot(id: string, patch: Partial<StoredLotState>): Promis
   const next = { ...current, ...patch, updatedAt: Date.now() };
   await localSet({ [key]: next });
   return next;
+}
+
+async function readStoredOutcomes(ids: string[]): Promise<Map<string, DealOutcome | null>> {
+  const keys = ids.map(outcomeStorageKey);
+  const raw = keys.length ? await localGet(keys) : {};
+  return new Map(ids.map((id) => [id, normalizeDealOutcome(raw[outcomeStorageKey(id)])]));
+}
+
+async function saveStoredOutcome(outcome: DealOutcome): Promise<void> {
+  await localSet({ [outcomeStorageKey(outcome.lotId)]: outcome });
+}
+
+async function clearStoredOutcome(id: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => chrome.storage.local.remove(outcomeStorageKey(id), () => {
+    const error = chrome.runtime.lastError;
+    if (error) reject(new Error(error.message)); else resolve();
+  }));
 }
 
 async function readAuctionPremiums(ids: string[]): Promise<Map<string, number>> {
@@ -294,6 +313,7 @@ function lotPanelStyles(): string {
     .flippah-retail-value.green .flippah-deal-dot{border-color:#3f6212;background:#65a30d}.flippah-retail-value.yellow .flippah-deal-dot{border-color:#854d0e;background:#eab308}.flippah-retail-value.orange .flippah-deal-dot{border-color:#9a3412;background:#f97316}.flippah-retail-value.red .flippah-deal-dot{border-color:#991b1b;background:#dc2626}
     .flippah-search-pill{display:inline-flex;align-items:center;min-height:26px;padding:3px 8px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;text-decoration:none;box-shadow:0 1px 1px rgba(15,23,42,.08)}.flippah-search-pill.amazon{border-color:#f59e0b;color:#111827;font-family:Arial,sans-serif}.flippah-search-pill.ebay{border-color:#93c5fd;color:#3665f3;font-family:Arial,sans-serif}.flippah-search-pill:hover{text-decoration:underline}.flippah-search-pill:focus-visible{outline:2px solid #2563eb;outline-offset:2px;text-decoration:none}
     .flippah-review-value{display:inline-flex;align-items:center;min-height:24px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;color:#475569;font-weight:750}
+    .flippah-outcome-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}.flippah-outcome-grid label{display:grid;gap:3px;color:#4b5563}.flippah-outcome-grid input,.flippah-outcome-grid select{width:100%;margin:0}.flippah-outcome-result{margin-top:8px;padding:7px;border-radius:5px;background:#f1f5f9;font-weight:750}.flippah-outcome-actions{display:flex;gap:7px;margin-top:8px}.flippah-outcome-actions button{min-height:30px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;padding:5px 9px;font-weight:750;cursor:pointer}.flippah-outcome-help{margin-top:6px;color:#64748b}
   </style>`;
 }
 
@@ -422,6 +442,45 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   }
   section.append(evidence);
 
+  const outcomeDetails = details(record.outcome ? 'Resale outcome saved' : 'Record resale outcome');
+  outcomeDetails.className = 'flippah-outcome';
+  const outcome = record.outcome;
+  const outcomeGrid = element('div', 'flippah-outcome-grid');
+  const outcomeInput = (labelText: string, id: string, value: number | null, placeholder = '') => {
+    const label = element('label', '', labelText);
+    const input = element('input');
+    input.id = id; input.type = 'number'; input.min = '0'; input.step = '0.01'; input.placeholder = placeholder;
+    input.value = value === null ? '' : String(value);
+    label.append(input); return label;
+  };
+  outcomeGrid.append(
+    outcomeInput('Actual all-in paid', 'flippah-outcome-cost', outcome?.actualAllInCost ?? null, record.allIn ? record.allIn.total.toFixed(2) : ''),
+    outcomeInput('Sold for', 'flippah-outcome-sold', outcome?.soldPrice ?? null),
+    outcomeInput('Selling costs', 'flippah-outcome-costs', outcome?.sellingCosts ?? null, 'fees + shipping'),
+  );
+  const channelLabel = element('label', '', 'Sold through');
+  const channel = element('select'); channel.id = 'flippah-outcome-channel';
+  for (const [value, label] of [['', 'Not sold yet'], ['ebay', 'eBay'], ['marketplace', 'Facebook Marketplace'], ['local', 'Local sale'], ['other', 'Other']] as const) {
+    const option = element('option', '', label); option.value = value; option.selected = outcome?.channel === value; channel.append(option);
+  }
+  channelLabel.append(channel); outcomeGrid.append(channelLabel); outcomeDetails.append(outcomeGrid);
+  const outcomeResult = calculateDealOutcome({
+    actualAllInCost: outcome?.actualAllInCost ?? null,
+    soldPrice: outcome?.soldPrice ?? null,
+    sellingCosts: outcome?.sellingCosts ?? null,
+    predictedResale: outcome?.predictedResale ?? null,
+  });
+  if (outcomeResult.profit !== null || outcomeResult.predictionError !== null) {
+    const parts = [outcomeResult.profit === null ? '' : `Actual profit ${formatUsd(outcomeResult.profit)}`];
+    if (outcomeResult.predictionError !== null) parts.push(`estimate difference ${outcomeResult.predictionError >= 0 ? '+' : ''}${formatUsd(outcomeResult.predictionError)}`);
+    outcomeDetails.append(element('div', 'flippah-outcome-result', parts.filter(Boolean).join(' · ')));
+  }
+  outcomeDetails.append(element('div', 'flippah-outcome-help', 'Optional and stored only in Flippah. The first saved resale estimate becomes the comparison baseline.'));
+  const outcomeActions = element('div', 'flippah-outcome-actions');
+  const saveOutcomeButton = element('button', '', 'Save outcome'); saveOutcomeButton.id = 'flippah-outcome-save'; saveOutcomeButton.type = 'button'; outcomeActions.append(saveOutcomeButton);
+  if (outcome) { const clear = element('button', '', 'Clear'); clear.id = 'flippah-outcome-clear'; clear.type = 'button'; outcomeActions.append(clear); }
+  outcomeDetails.append(outcomeActions); section.append(outcomeDetails);
+
   const bind = (element: HTMLInputElement | null, marker: string, handler: () => void) => {
     if (!element || element.dataset[marker] === 'true') return;
     element.dataset[marker] = 'true'; element.addEventListener('change', handler); element.addEventListener('input', handler);
@@ -438,6 +497,30 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   });
   section.querySelector<HTMLSelectElement>('#flippah-amazon-match')?.addEventListener('change', (event) => void saveStoredLot(record.lot.id, { amazonOverrideAsin: (event.currentTarget as HTMLSelectElement).value }).then(onChange));
   section.querySelector<HTMLInputElement>('#flippah-confirmed-quantity')?.addEventListener('change', (event) => void saveStoredLot(record.lot.id, { confirmedQuantity: numberFrom((event.currentTarget as HTMLInputElement).value) }).then(onChange));
+  section.querySelector<HTMLButtonElement>('#flippah-outcome-save')?.addEventListener('click', () => {
+    const inputNumber = (id: string, fallback: number | null = null) => {
+      const input = section?.querySelector<HTMLInputElement>(`#${id}`);
+      return input?.value.trim() ? numberFrom(input.value) : fallback;
+    };
+    const predictedResale = outcome?.predictedResale ?? ebayPrice ?? amazonPrice;
+    const next: DealOutcome = {
+      lotId: record.lot.id,
+      lotNumber: record.lot.lot,
+      title: record.lot.lead || record.lot.title,
+      url: record.lot.url,
+      auctionId: record.lot.auctionId,
+      actualAllInCost: inputNumber('flippah-outcome-cost', record.allIn?.total ?? null),
+      soldPrice: inputNumber('flippah-outcome-sold'),
+      sellingCosts: inputNumber('flippah-outcome-costs'),
+      predictedResale,
+      channel: (section?.querySelector<HTMLSelectElement>('#flippah-outcome-channel')?.value || '') as OutcomeChannel,
+      soldAt: outcome?.soldAt || '',
+      note: outcome?.note || '',
+      updatedAt: Date.now(),
+    };
+    void saveStoredOutcome(next).then(onChange);
+  });
+  section.querySelector<HTMLButtonElement>('#flippah-outcome-clear')?.addEventListener('click', () => void clearStoredOutcome(record.lot.id).then(onChange));
   return true;
 }
 
@@ -445,6 +528,7 @@ function buildAnalysisRecords(
   lots: HiBidLotRecord[],
   stored: Map<string, StoredLotState>,
   auctionPremiums: Map<string, number>,
+  outcomes: Map<string, DealOutcome | null>,
   settings: FlippahSettings
 ): AnalysisRecord[] {
   const taxPct = effectiveTaxPct(settings);
@@ -477,7 +561,7 @@ function buildAnalysisRecords(
       ? null
       : Math.max(0, state.resaleEstimate * (1 - settings.ebayFeePct / 100) - settings.ebayFeeFixedCents / 100);
     const indicators = computeRetailIndicators(allIn, { amazon: statedRetail?.value ?? null, ebay: state.resaleEstimate });
-    return { lot, identity, condition, mixed, allIn, amazon: null, amazonIndicator: indicators.amazon, ebayIndicator: indicators.ebay, state, currency, needsQuantity, ebayNet, premiumPct, statedRetail };
+    return { lot, identity, condition, mixed, allIn, amazon: null, amazonIndicator: indicators.amazon, ebayIndicator: indicators.ebay, state, currency, needsQuantity, ebayNet, premiumPct, statedRetail, outcome: outcomes.get(lot.id) || null };
   });
 }
 
@@ -535,10 +619,17 @@ export class DealIntelligenceController {
       let lots = route.kind === 'lot' ? [extractHibidLotDetail(document, location.href)].filter((item): item is HiBidLotRecord => Boolean(item)) : extractHiBidVisibleLots(document, route, location.href);
       this.visibleLotSignature = lots.map((lot) => lot.id).filter(Boolean).sort().join('|');
       const stored = await readStoredLots(lots.map((lot) => lot.id));
+      const outcomes = await readStoredOutcomes(lots.map((lot) => lot.id));
       let auctionPremiums = await readAuctionPremiums(lots.map((lot) => lot.auctionId));
-      const quickRecords = buildAnalysisRecords(lots, stored, auctionPremiums, settings);
+      const quickRecords = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings);
       this.records = new Map(quickRecords.map((record) => [record.lot.id, record]));
-      quickRecords.forEach((record) => applyTileAnnotation(record, route));
+      quickRecords.forEach((record) => {
+        applyTileAnnotation(record, route);
+        if (route.kind === 'lot') {
+          const rerun = () => this.schedule(0);
+          if (!renderLotPanel(record, rerun)) window.setTimeout(() => renderLotPanel(record, rerun), 500);
+        }
+      });
       this.update({
         total: quickRecords.length,
         mixedLots: quickRecords.filter((item) => item.mixed.mixed).length,
@@ -546,22 +637,22 @@ export class DealIntelligenceController {
         message: quickRecords.length ? `Calculated all-in for ${quickRecords.length} visible lot${quickRecords.length === 1 ? '' : 's'}` : 'No visible lots to analyze'
       });
       if (lots.length) {
-        const hydrated = await hydrateHibidLots(this.transport, lots.map((lot) => lot.id), route, location.href, { rawRecords: [], retries: 2 });
-        const byId = new Map(hydrated.items.map((lot) => [lot.id, lot]));
-        lots = lots.map((lot) => {
-          const hydratedLot = byId.get(lot.id);
-          return hydratedLot ? mergeHibidVisibleWithHydrated(lot, hydratedLot) : lot;
-        });
+        try {
+          const hydrated = await hydrateHibidLots(this.transport, lots.map((lot) => lot.id), route, location.href, { rawRecords: [], retries: 2 });
+          const byId = new Map(hydrated.items.map((lot) => [lot.id, lot]));
+          lots = lots.map((lot) => {
+            const hydratedLot = byId.get(lot.id);
+            return hydratedLot ? mergeHibidVisibleWithHydrated(lot, hydratedLot) : lot;
+          });
+        } catch (error) {
+          if (route.kind !== 'lot') throw error;
+          this.update({ message: 'Using the complete lot page because live enrichment was unavailable' });
+        }
       }
       if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
       auctionPremiums = await readAuctionPremiums(lots.map((lot) => lot.auctionId));
-      const preliminary = buildAnalysisRecords(lots, stored, auctionPremiums, settings);
+      const preliminary = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings);
       this.records = new Map(preliminary.map((record) => [record.lot.id, record]));
-      preliminary.forEach((record) => applyTileAnnotation(record, route));
-      const eligible = preliminary.filter((record) => record.currency !== 'CAD' && !record.mixed.mixed && !record.needsQuantity && Boolean(record.identity.query));
-      const skipped = preliminary.length - eligible.length;
-      let amazonAnalyzed = settings.amazonAutoLookup ? skipped : preliminary.length;
-      const amazonMatchedIds = new Set<string>();
       const stillCurrent = () => generation === this.generation && fingerprint === routeFingerprint(this.getRoute(), location.href);
       const repaint = (record: AnalysisRecord) => {
         applyTileAnnotation(record, route);
@@ -570,6 +661,11 @@ export class DealIntelligenceController {
           if (!renderLotPanel(record, rerun)) window.setTimeout(() => stillCurrent() && renderLotPanel(record, rerun), 500);
         }
       };
+      preliminary.forEach(repaint);
+      const eligible = preliminary.filter((record) => record.currency !== 'CAD' && !record.mixed.mixed && !record.needsQuantity && Boolean(record.identity.query));
+      const skipped = preliminary.length - eligible.length;
+      let amazonAnalyzed = settings.amazonAutoLookup ? skipped : preliminary.length;
+      const amazonMatchedIds = new Set<string>();
       const updateProgress = () => {
         this.update({
           analyzed: amazonAnalyzed,

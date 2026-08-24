@@ -3,6 +3,7 @@ import { buildCsv } from '../core/csv.js';
 import { getDiagnostic, getJobForFingerprint, getRecords } from '../core/job-db.js';
 import { normalizeSettings } from '../core/settings.js';
 import { jobMatchesContextAndScope } from '../core/job-scope.js';
+import { calculateDealOutcome, type DealOutcome } from '../core/outcomes.js';
 import type { PageContext, ScrapeJobSummary } from '../core/types.js';
 import { buildHibidExportPayload, buildHibidLlmBrief } from '../hibid/exports.js';
 
@@ -148,8 +149,14 @@ async function render(): Promise<void> {
   if (selectedTab === 'current') {
     replaceMarkup(app, shell(currentHtml()));
   } else {
-    const watchlist = await legacyMessage<any[]>({ kind: 'watch:list' }).catch(() => []);
-    const cards = watchlist.length ? `<section class="panel"><div class="actions" style="margin:0 0 10px"><button id="export-watchlist" class="button primary">Export CSV</button></div><div class="watch-list">${watchlist.map((item) => `<article class="watch"><div>${safeHiBidUrl(item.imageUrl, '') ? `<img src="${escapeHtml(safeHiBidUrl(item.imageUrl, ''))}" alt="">` : ''}</div><div><a class="watch-title" href="${escapeHtml(safeHiBidUrl(item.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title || `Lot ${item.lotId}`)}</a><div class="watch-meta">${escapeHtml(item.auctioneerName || 'Unknown auctioneer')}</div><div class="watch-meta">${Number.isFinite(item.currentBidCents) ? `$${(item.currentBidCents / 100).toFixed(2)} bid` : 'Bid unavailable'}${Number.isFinite(item.maxBidCents) ? ` · max $${(item.maxBidCents / 100).toFixed(2)}` : ''}</div><div class="watch-meta countdown" data-ends-at="${escapeHtml(item.endsAt ?? '')}">${escapeHtml(formatCountdown(item.endsAt))}</div>${item.note ? `<div class="watch-note">${escapeHtml(item.note)}</div>` : ''}</div><button class="icon-button remove-watch" data-lot-id="${escapeHtml(item.lotId)}" title="Remove watched lot">×</button></article>`).join('')}</div></section>` : '<div class="empty">No watched lots yet.</div>';
+    const [watchlist, outcomes] = await Promise.all([
+      legacyMessage<any[]>({ kind: 'watch:list' }).catch(() => []),
+      legacyMessage<DealOutcome[]>({ kind: 'outcome:list' }).catch(() => []),
+    ]);
+    const exportActions = `<div class="actions" style="margin:0 0 10px"><button id="export-watchlist" class="button primary">Export watchlist</button>${outcomes.length ? `<button id="export-outcomes" class="button">Export outcomes (${outcomes.length})</button>` : ''}</div>`;
+    const cards = watchlist.length
+      ? `<section class="panel">${exportActions}<div class="watch-list">${watchlist.map((item) => `<article class="watch"><div>${safeHiBidUrl(item.imageUrl, '') ? `<img src="${escapeHtml(safeHiBidUrl(item.imageUrl, ''))}" alt="">` : ''}</div><div><a class="watch-title" href="${escapeHtml(safeHiBidUrl(item.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title || `Lot ${item.lotId}`)}</a><div class="watch-meta">${escapeHtml(item.auctioneerName || 'Unknown auctioneer')}</div><div class="watch-meta">${Number.isFinite(item.currentBidCents) ? `$${(item.currentBidCents / 100).toFixed(2)} bid` : 'Bid unavailable'}${Number.isFinite(item.maxBidCents) ? ` · max $${(item.maxBidCents / 100).toFixed(2)}` : ''}</div><div class="watch-meta countdown" data-ends-at="${escapeHtml(item.endsAt ?? '')}">${escapeHtml(formatCountdown(item.endsAt))}</div>${item.note ? `<div class="watch-note">${escapeHtml(item.note)}</div>` : ''}</div><button class="icon-button remove-watch" data-lot-id="${escapeHtml(item.lotId)}" title="Remove watched lot">×</button></article>`).join('')}</div></section>`
+      : `<section class="panel">${exportActions}<div class="empty">No watched lots yet.</div></section>`;
     replaceMarkup(app, shell(cards));
   }
   bind();
@@ -177,6 +184,7 @@ function bind(): void {
   app.querySelector('#copy-debug')?.addEventListener('click', () => void copyDiagnostic(false));
   app.querySelector('#download-debug')?.addEventListener('click', () => void copyDiagnostic(true));
   app.querySelector('#export-watchlist')?.addEventListener('click', () => void exportWatchlist());
+  app.querySelector('#export-outcomes')?.addEventListener('click', () => void exportOutcomes());
   app.querySelectorAll<HTMLButtonElement>('.remove-watch').forEach((button) => button.addEventListener('click', async () => {
     await legacyMessage({ kind: 'watch:remove', lotId: button.dataset.lotId }); await render();
   }));
@@ -223,7 +231,7 @@ async function copyCompleted(format: 'json' | 'llm'): Promise<void> {
   const payload = buildHibidExportPayload(context, job, items, settings);
   const text = format === 'json' ? JSON.stringify(payload, null, 2) : buildHibidLlmBrief(payload, settings);
   await copyText(text);
-  toast = `Copied ${items.length} lot${items.length === 1 ? '' : 's'}`;
+  toast = `Copied ${items.length} lot${items.length === 1 ? '' : 's'} · details ${payload.audit.fidelity.metrics.description.percent}% · photos ${payload.audit.fidelity.metrics.images.percent}%`;
 }
 
 async function copyOrStart(format: 'json' | 'llm'): Promise<void> {
@@ -270,6 +278,34 @@ async function exportWatchlist(): Promise<void> {
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
     toast = `Downloaded ${rows.length} watched lot${rows.length === 1 ? '' : 's'}`;
+  } catch (error) {
+    toast = error instanceof Error ? error.message : String(error);
+  }
+  await render();
+}
+
+function downloadCsv(filename: string, rows: unknown[][]): void {
+  const link = document.createElement('a');
+  const objectUrl = URL.createObjectURL(new Blob([buildCsv(rows)], { type: 'text/csv' }));
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+}
+
+async function exportOutcomes(): Promise<void> {
+  try {
+    const outcomes = await legacyMessage<DealOutcome[]>({ kind: 'outcome:list' });
+    downloadCsv('flippah-resale-outcomes.csv', [
+      ['lot', 'title', 'url', 'actual_all_in', 'sold_price', 'selling_costs', 'actual_profit', 'predicted_resale', 'prediction_error', 'channel', 'updated_at'],
+      ...outcomes.map((outcome) => {
+        const result = calculateDealOutcome(outcome);
+        return [outcome.lotNumber, outcome.title, outcome.url, outcome.actualAllInCost ?? '', outcome.soldPrice ?? '', outcome.sellingCosts ?? '', result.profit ?? '', outcome.predictedResale ?? '', result.predictionError ?? '', outcome.channel, new Date(outcome.updatedAt).toISOString()];
+      }),
+    ]);
+    toast = `Downloaded ${outcomes.length} resale outcome${outcomes.length === 1 ? '' : 's'}`;
   } catch (error) {
     toast = error instanceof Error ? error.message : String(error);
   }

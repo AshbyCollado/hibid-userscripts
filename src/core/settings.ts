@@ -19,6 +19,7 @@ export interface FlippahSettings extends ResearchSettings {
   amazonAutoLookup: boolean;
   retailTargetPct: number;
   retailWarningPct: number;
+  fullSizeImageHover: boolean;
 }
 
 export const DEFAULT_RESEARCH_SETTINGS: ResearchSettings = {
@@ -42,7 +43,8 @@ export const DEFAULT_SETTINGS: FlippahSettings = {
   includePrivateWatchNotes: false,
   amazonAutoLookup: true,
   retailTargetPct: 50,
-  retailWarningPct: 25
+  retailWarningPct: 25,
+  fullSizeImageHover: true
 };
 
 export const US_STATE_TAX_RATES: Readonly<Record<string, number>> = {
@@ -89,6 +91,7 @@ export function normalizeSettings(value: unknown): FlippahSettings {
     amazonAutoLookup: typeof source.amazonAutoLookup === 'boolean' ? source.amazonAutoLookup : true,
     retailTargetPct: clamp(finite(source.retailTargetPct) ?? DEFAULT_SETTINGS.retailTargetPct, 1, 95),
     retailWarningPct: clamp(finite(source.retailWarningPct) ?? DEFAULT_SETTINGS.retailWarningPct, 1, 95),
+    fullSizeImageHover: typeof source.fullSizeImageHover === 'boolean' ? source.fullSizeImageHover : true,
     originLabel: typeof source.originLabel === 'string' && source.originLabel.trim() ? source.originLabel.trim().slice(0, 120) : DEFAULT_SETTINGS.originLabel,
     originZip: typeof source.originZip === 'string' && source.originZip.trim() ? source.originZip.trim().slice(0, 20) : DEFAULT_SETTINGS.originZip,
     radiusMiles: Math.round(clamp(finite(source.radiusMiles) ?? DEFAULT_SETTINGS.radiusMiles, 1, 500)),

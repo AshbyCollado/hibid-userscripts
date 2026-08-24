@@ -71,12 +71,14 @@ test('state portal context extracts only numeric portal children', () => {
 
 test('settings preserve calculator keys and add durable research defaults', () => {
   assert.equal(DEFAULT_SETTINGS.originZip, '08817');
+  assert.equal(DEFAULT_SETTINGS.fullSizeImageHover, true);
   const settings = normalizeSettings({ taxExempt: true, taxOnPremium: false, originZip: '07008', radiusMiles: 50, customInstructions: 'Be strict.' });
   assert.equal(settings.taxExempt, true);
   assert.equal(settings.taxOnPremium, false);
   assert.equal(settings.originZip, '07008');
   assert.equal(settings.radiusMiles, 50);
   assert.equal(settings.customInstructions, 'Be strict.');
+  assert.equal(normalizeSettings({ fullSizeImageHover: false }).fullSizeImageHover, false);
 });
 
 test('blank nullable numeric settings remain unset instead of becoming zero', () => {

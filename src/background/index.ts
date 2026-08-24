@@ -2,6 +2,7 @@ import { HIBID_GRAPHQL_ENDPOINT, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QU
 import { failure, isEnvelope, payloadBytes, success, type MessageEnvelope } from '../core/messages.js';
 import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, putRecordBatch } from '../core/job-db.js';
 import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.js';
+import { collectStoredOutcomes } from '../core/outcomes.js';
 import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
 import { clearRetailCache, getRetailCache, putRetailCache } from '../core/retail-db.js';
 import { detectProductKind, evaluateAmazonCandidateEvidence, evaluateRetailCandidate, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
@@ -60,6 +61,7 @@ async function handleLegacyMessage(message: any): Promise<unknown> {
   const watchlist = state.watchlist && typeof state.watchlist === 'object' ? state.watchlist : {};
   const premiums = state.premiums && typeof state.premiums === 'object' ? state.premiums : {};
   if (message.kind === 'watch:list') return Object.values(watchlist);
+  if (message.kind === 'outcome:list') return collectStoredOutcomes(state);
   if (message.kind === 'watch:add') {
     const lot = message.lot;
     if (!lot || typeof lot !== 'object' || !String(lot.lotId || '')) return { ok: false, error: 'invalid_lot' };

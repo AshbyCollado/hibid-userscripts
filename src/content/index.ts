@@ -1,12 +1,14 @@
-import { runtimeMessage } from '../core/browser.js';
+import { getSyncStorage, runtimeMessage } from '../core/browser.js';
 import { buildScrapeDiagnostic } from '../core/diagnostics.js';
 import { failure, isEnvelope, success, type MessageEnvelope } from '../core/messages.js';
 import { resolveHiBidRoute, routeFingerprint } from '../core/route.js';
+import { normalizeSettings } from '../core/settings.js';
 import type { HiBidLotRecord, HiBidRoute, PageContext, PastAuctionGroup, ScrapeJobSummary } from '../core/types.js';
 import type { HiBidTransport } from '../core/types.js';
 import { extractAccountLots, extractHiBidPageState, extractHiBidPortalSearchContext, extractHibidLotDetail, extractPastAuctionGroups, extractPastAuctionGroupState } from '../hibid/dom.js';
 import { scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js';
 import { DealIntelligenceController } from './deal-intelligence.js';
+import { installHibidImagePreview } from './image-preview.js';
 
 document.documentElement.dataset.flippahContentVersion = chrome.runtime.getManifest().version;
 
@@ -26,6 +28,17 @@ const dealIntelligence = new DealIntelligenceController(() => {
   if (route.supported && route.statePrefix && route.kind === 'search') route = { ...route, ...extractHiBidPortalSearchContext(document) };
   return route;
 }, transport);
+const imagePreview = installHibidImagePreview(document, window, false);
+
+void getSyncStorage()
+  .then((value) => imagePreview.setEnabled(normalizeSettings(value).fullSizeImageHover))
+  .catch(() => imagePreview.setEnabled(true));
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && changes.fullSizeImageHover) {
+    imagePreview.setEnabled(changes.fullSizeImageHover.newValue !== false);
+  }
+});
 
 function abortableRuntime<T>(type: string, payload: unknown, signal?: AbortSignal): Promise<T> {
   if (signal?.aborted) return Promise.reject(new Error('HiBid scrape cancelled'));

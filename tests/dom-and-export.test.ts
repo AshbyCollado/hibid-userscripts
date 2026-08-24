@@ -76,7 +76,7 @@ test('lot detail includes lead, category, structured fields, description, and al
     <tr><th>Condition</th><td>New - Factory Sealed</td></tr><tr><th>Functional?</th><td>Yes</td></tr>
   </table><div id="description">Shelf Location: Z1<br>In Packaging?: Yes<br>Missing Parts?: No</div>
   <div class="lot-images"><img src="https://img/one.jpg"><img data-src="https://img/two.jpg"></div>
-  <aside class="recommendations"><img src="https://img/unrelated.jpg"></aside>`;
+  <aside class="recommendations"><img src="https://img/unrelated.jpg"></aside><div>OPEN</div>`;
   const dom = new JSDOM(html, { url: 'https://hibid.com/lot/6/steelseries' });
   const record = extractHibidLotDetail(dom.window.document, dom.window.location.href)!;
   assert.equal(record.lot, '6');
@@ -85,6 +85,7 @@ test('lot detail includes lead, category, structured fields, description, and al
   assert.equal(record.images.length, 2);
   assert.ok(!record.images.some((url) => url.includes('unrelated')));
   assert.equal((record.descriptionFields as Record<string, string>).Condition, 'New - Factory Sealed');
+  assert.equal(record.status, 'OPEN');
 });
 
 test('lot detail rejects consent CSS and auction-level descriptions', () => {
@@ -123,7 +124,9 @@ test('LLM brief carries complete-only audit and mandatory resale rules', () => {
   assert.match(brief, /VERIFIED EBAY SOLD DATA/i);
   assert.match(brief, /profit_if_won_now/);
   assert.match(brief, /Mixed Lot \/ Component Review/);
+  assert.match(brief, /field-fidelity metrics/i);
   assert.equal(payload.audit.complete, true);
+  assert.equal(payload.audit.fidelity.metrics.description.percent, 100);
 });
 
 test('private HiBid watch notes are exported only when enabled', () => {

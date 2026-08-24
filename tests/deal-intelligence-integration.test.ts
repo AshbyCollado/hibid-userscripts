@@ -9,7 +9,7 @@ import { shouldReloadExtension } from '../src/background/dev-auto-reload.js';
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.3.51');
+  assert.equal(chrome.version, '0.4.0');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
@@ -32,7 +32,7 @@ test('Chrome and Waterfox use direct background Amazon transport without opening
 
 test('unpacked builds self-reload only when the installed semantic version changes', () => {
   assert.equal(shouldReloadExtension('0.3.51', '0.3.51'), false);
-  assert.equal(shouldReloadExtension('0.3.51', '0.3.52'), true);
+  assert.equal(shouldReloadExtension('0.3.51', '0.4.0'), true);
   assert.equal(shouldReloadExtension('0.3.51', 'not-a-version'), false);
 });
 
@@ -122,4 +122,17 @@ test('scraper keeps simple price-check controls below its export actions', async
   assert.equal(DEFAULT_SETTINGS.amazonAutoLookup, true);
   assert.equal(normalizeSettings({}).retailTargetPct, 50);
   assert.equal(normalizeSettings({}).retailWarningPct, 25);
+});
+
+test('open-source QoL additions stay optional, local, and visible through end-user controls', async () => {
+  const content = await readFile('src/content/deal-intelligence.ts', 'utf8');
+  const page = await readFile('src/content/index.ts', 'utf8');
+  const popup = await readFile('src/popup/index.ts', 'utf8');
+  const exports = await readFile('src/hibid/exports.ts', 'utf8');
+  assert.match(page, /installHibidImagePreview/);
+  assert.match(content, /Record resale outcome/);
+  assert.match(content, /flippah-outcome-save/);
+  assert.match(popup, /Export outcomes/);
+  assert.match(popup, /details \$\{payload\.audit\.fidelity\.metrics\.description\.percent\}%/);
+  assert.match(exports, /auditHibidRecordFidelity/);
 });
