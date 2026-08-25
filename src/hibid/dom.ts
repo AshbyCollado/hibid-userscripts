@@ -5,6 +5,18 @@ function clean(value: string | null | undefined): string {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function textWithLineBreaks(node: Element | null): string {
+  if (!node) return '';
+  const clone = node.cloneNode(true) as Element;
+  clone.querySelectorAll('br').forEach((breakNode) => breakNode.replaceWith('\n'));
+  return String(clone.textContent || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map(clean)
+    .filter(Boolean)
+    .join('\n');
+}
+
 function visibleText(root: Document | Element): string {
   const documentRoot = root.nodeType === 9 ? root as Document : root.ownerDocument;
   const start = root.nodeType === 9 ? (root as Document).body || (root as Document).documentElement : root as Element;
@@ -183,7 +195,7 @@ export function extractHibidLotDetail(root: Document | Element, locationLike: Lo
   const lot = fields['Lot #'] || raw.match(/\bLot\s*#?\s*:?\s*([\w-]+)/i)?.[1] || id;
   const lead = fields.Lead || clean(root.querySelector('h1, .lot-title, [class*="lot-title"]')?.textContent) || `Lot ${lot}`;
   const descriptionNode = canonicalLotDescription(root, lotInfo);
-  const description = clean(descriptionNode?.textContent) || clean(fields.Description);
+  const description = textWithLineBreaks(descriptionNode) || clean(fields.Description);
   const images = canonicalImages(root, sourceUrl);
   const bidText = raw.match(/(?:High|Current)\s+Bid\s*:?\s*\$?\s*[\d,.]+/i)?.[0]
     || raw.match(/Price\s+Realized\s*:?\s*\$?\s*[\d,.]+/i)?.[0]

@@ -18,6 +18,12 @@ export interface ConditionAssessment {
   freeText: string;
 }
 
+export interface ConditionPresentation {
+  label: string;
+  tone: 'good' | 'warning' | 'danger' | 'unknown';
+  title: string;
+}
+
 export interface ProductIdentity {
   name: string;
   query: string;
@@ -587,7 +593,7 @@ export function parseStructuredDescription(text: string | null | undefined): Str
     const match = line.match(FIELD_LINE_RE);
     if (match && match[1]?.trim()) {
       const key = match[1].trim().toLowerCase().replace(/\s+/g, ' ');
-      const value = match[3]?.trim() ?? '';
+      const value = (match[3] ?? '').replace(/^\s*:\s*/, '').trim();
       if (match[2] === '?' && !value) {
         freeLines.push(line);
       } else {
@@ -676,6 +682,69 @@ export function assessCondition(text: string | null | undefined): ConditionAsses
     fields,
     freeText,
   };
+}
+
+export function buildConditionPresentation(assessment: ConditionAssessment): ConditionPresentation {
+  const stated = assessment.condition.trim();
+  const lower = stated.toLowerCase();
+  let label = 'Condition ?';
+  let tone: ConditionPresentation['tone'] = 'unknown';
+  if (assessment.partsOnly) {
+    label = 'Parts only';
+    tone = 'danger';
+  } else if (assessment.damaged) {
+    label = 'Damaged';
+    tone = 'danger';
+  } else if (/\b(?:factory|new)[\s-]*sealed\b|\bsealed\b/.test(lower)) {
+    label = 'New · sealed';
+    tone = 'good';
+  } else if (/\bopen[\s-]*box\b/.test(lower)) {
+    label = 'Open box';
+    tone = 'warning';
+  } else if (/\b(?:brand[\s-]*)?new\b/.test(lower)) {
+    label = 'New';
+    tone = 'good';
+  } else if (/\blike[\s-]*new\b|\bexcellent\b/.test(lower)) {
+    label = 'Like new';
+    tone = 'good';
+  } else if (/\bused\b/.test(lower)) {
+    label = 'Used';
+    tone = 'warning';
+  } else if (/\bfair\b|\bpoor\b/.test(lower)) {
+    label = /\bpoor\b/.test(lower) ? 'Poor' : 'Fair';
+    tone = 'warning';
+  } else if (/\bgood\b/.test(lower)) {
+    label = 'Good';
+    tone = 'good';
+  } else if (assessment.cautions.length) {
+    const caution = assessment.cautions[0]!.replace(/^condition:\s*/i, '').trim();
+    label = caution ? caution.replace(/^./, (value) => value.toUpperCase()).slice(0, 24) : 'Review condition';
+    tone = 'warning';
+  } else if (assessment.positive) {
+    label = 'Functional';
+    tone = 'good';
+  } else if (stated) {
+    label = stated.slice(0, 24);
+    tone = 'warning';
+  }
+
+  const fields = assessment.fields;
+  const evidence = [
+    ['Packaging', fieldValue(fields, 'in packaging', 'packaging')],
+    ['Damaged', fieldValue(fields, 'is item damaged', 'item damaged', 'damaged')],
+    ['Functional', fieldValue(fields, 'is item functional', 'item functional', 'functional', 'working')],
+    ['Missing parts', fieldValue(fields, 'missing major parts', 'missing parts', 'missing any parts')],
+  ].flatMap(([name, value]) => {
+    const cleaned = String(value || '').replace(/^[\s:?-]+/, '').trim();
+    return cleaned ? [`${name}: ${cleaned}`] : [];
+  });
+  const notes = [...assessment.partsReasons, ...assessment.damageReasons, ...assessment.cautions];
+  const title = [
+    `Condition: ${stated || 'not stated'}`,
+    ...evidence,
+    ...notes,
+  ].filter(Boolean).join(' · ');
+  return { label, tone, title };
 }
 
 export function looksLikeModel(value: string | null | undefined): boolean {
@@ -1183,14 +1252,9 @@ export function scoreRetailCandidate(title: string | null | undefined, product: 
   return Math.max(score, guarded.score);
 }
 
-function retailPriceFloor(product: ProductIdentity): number {
-  const statedRetail = product.statedRetail;
-  return statedRetail != null && Number.isFinite(statedRetail) && statedRetail > 0 ? statedRetail * 0.3 : 0;
-}
-
 export function matchAmazonCandidates(candidates: AmazonCandidate[], product: ProductIdentity): AmazonCandidateMatch | null {
   const scored = candidates
-    .filter((candidate) => !candidate.sponsored && !candidate.used && candidate.price != null && candidate.price >= retailPriceFloor(product))
+    .filter((candidate) => !candidate.sponsored && !candidate.used && candidate.price != null && candidate.price > 0)
     .map((candidate) => {
       const titleScore = scoreRetailCandidate(candidate.title, product);
       return { candidate, score: titleScore || scoreRetailCandidate(candidate.matchText || candidate.title, product) };

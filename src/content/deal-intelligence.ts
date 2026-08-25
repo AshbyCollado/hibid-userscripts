@@ -7,9 +7,9 @@ import { hydrateHibidLots, mergeHibidVisibleWithHydrated } from '../hibid/api.js
 import { extractHiBidVisibleLots, extractHibidLotDetail } from '../hibid/dom.js';
 import { runProviderQueue } from '../intelligence/provider-queue.js';
 import {
-  assessCondition, buildRetailIndicatorTooltip, buildRetailSearchPresentation, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
+  assessCondition, buildConditionPresentation, buildRetailIndicatorTooltip, buildRetailSearchPresentation, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
   detectComparisonCurrency, detectMixedLot, extractProductIdentity, formatUsd,
-  explainHibidStatus, extractLotQuantityFromTitle, extractStatedRetail, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
+  explainHibidStatus, extractLotQuantityFromTitle, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
   type AmazonCandidate, type AmazonCandidateMatch, type ConditionAssessment,
   type ProductIdentity, type RetailCandidateEvaluation, type RetailIndicator, type UsAllInResult
 } from '../intelligence/us-deal-intelligence.js';
@@ -56,7 +56,6 @@ interface AnalysisRecord {
   needsQuantity: boolean;
   ebayNet: number | null;
   premiumPct: number;
-  statedRetail: ReturnType<typeof extractStatedRetail>;
   outcome: DealOutcome | null;
 }
 
@@ -248,6 +247,9 @@ function installPageStyles(): void {
     .flippah-deal-pill.black .flippah-deal-dot{border-color:#111827;background:#111827}.flippah-allin{display:block;margin-top:2px;font:700 10px/1.15 system-ui,sans-serif;letter-spacing:0}
     .flippah-deal-pill.search{min-height:22px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;box-shadow:0 1px 1px rgba(15,23,42,.08);font-size:11px}
     .flippah-deal-pill.search.amazon{border-color:#f59e0b;color:#111827;font-family:Arial,sans-serif;font-weight:800}.flippah-deal-pill.search.ebay{border-color:#93c5fd;color:#3665f3;font-family:Arial,sans-serif;font-weight:800}
+    .flippah-deal-pill.condition{min-height:20px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-weight:800}
+    .flippah-deal-pill.condition-good{border-color:#86efac;background:#f0fdf4;color:#166534}.flippah-deal-pill.condition-warning{border-color:#fcd34d;background:#fffbeb;color:#92400e}
+    .flippah-deal-pill.condition-danger{border-color:#fca5a5;background:#fef2f2;color:#991b1b}.flippah-deal-pill.condition-unknown{color:#64748b}
   `;
   document.documentElement.append(style);
 }
@@ -283,8 +285,8 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
   }
   if (!strip.isConnected) return;
   const amazonPrice = amazonMarketValue(record);
-  const displayedRetail = amazonPrice ?? record.statedRetail?.value ?? null;
   const ebayPrice = ebayMarketValue(record);
+  const condition = buildConditionPresentation(record.condition);
   const links = researchLinks(record.identity.query);
   const amazonLabel = record.currency === 'CAD'
     ? 'Amazon: CAD'
@@ -294,9 +296,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
         ? 'Amazon: qty review'
         : amazonPrice !== null
           ? `Amazon ${formatUsd(amazonPrice)}`
-          : displayedRetail !== null
-            ? `Retail ${formatUsd(displayedRetail)}`
-            : 'Amazon';
+          : 'Amazon';
   const ebayLabel = ebayPrice === null ? 'eBay' : `eBay ${formatUsd(ebayPrice)}${record.state.resaleEstimate !== null ? ' saved' : ''}`;
   const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-')) && record.allIn
     ? computeAccountVerdict({ status: record.lot.status || record.lot.rawText, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice })
@@ -320,7 +320,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
       : record.needsQuantity
         ? 'Quantity review: confirm how many complete units are included before using a retail comparison.'
         : '';
-  if (displayedRetail === null && !amazonSpecialTitle) {
+  if (amazonPrice === null && !amazonSpecialTitle) {
     const search = buildRetailSearchPresentation('amazon', record.identity.query);
     const reason = record.amazon?.message ? ` ${record.amazon.message}.` : '';
     add(search.label, '', `${search.title}${reason}`, search.href, false, 'amazon');
@@ -330,12 +330,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
           providerName: 'Amazon', indicator: record.amazonIndicator, allIn: record.allIn?.total,
           marketPrice: amazonPrice, evidenceSource: record.amazon?.match?.candidate.title || 'verified Amazon.com match'
         })
-      : record.statedRetail
-        ? buildRetailIndicatorTooltip({
-            providerName: 'Auctioneer retail', indicator: record.amazonIndicator, allIn: record.allIn?.total,
-            marketPrice: record.statedRetail.value, evidenceSource: record.statedRetail.source
-          })
-        : 'Amazon comparison needs manual review.');
+      : 'Amazon comparison needs manual review.');
     add(amazonLabel, record.amazonIndicator.cls, retailTitle, links.amazon);
   }
   if (ebayPrice === null) {
@@ -348,6 +343,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
     })} Open Sold and Completed results to verify it.`;
     add(ebayLabel, record.ebayIndicator.cls, ebayTitle, links.ebay);
   }
+  add(condition.label, `condition condition-${condition.tone}`, condition.title, '', false);
   if (verdict) add(verdict.label, verdict.cls, `${explainHibidStatus(record.lot.status)} Flippah: ${verdict.advice}`);
 }
 
@@ -583,15 +579,17 @@ function buildAnalysisRecords(
   const taxPct = effectiveTaxPct(settings);
   return lots.map((lot) => {
     const state = stored.get(lot.id) || normalizeStored(null);
-    const statedRetail = extractStatedRetail(lot.lead || lot.title, lot.description, String(lot.estimate || ''));
     const identity = extractProductIdentity({
       title: lot.lead || lot.title,
       description: lot.description,
-      statedRetail: statedRetail?.value ?? null,
-      estimate: String(lot.estimate || ''),
     });
     if (state.queryOverride) identity.query = state.queryOverride;
-    const condition = assessCondition(lot.description);
+    const structuredCondition = Object.entries(lot.descriptionFields || {})
+      .filter(([key]) => /^(?:condition|in packaging|packaging|assembly required|is item damaged|item damaged|damaged|damage desc|damage desct|damage description|is item functional|item functional|functional|working|missing major parts|missing parts|missing any parts|notes?)\??$/i.test(key.trim()))
+      .map(([key, value]) => `${key}: ${String(value || '').trim()}`)
+      .filter((line) => !/:\s*$/.test(line))
+      .join('\n');
+    const condition = assessCondition([lot.description, structuredCondition].filter(Boolean).join('\n'));
     const mixed = detectMixedLot(lot.lead || lot.title, lot.description);
     const quantities = [
       numberFrom(lot.quantity),
@@ -609,8 +607,8 @@ function buildAnalysisRecords(
     const ebayNet = state.resaleEstimate === null
       ? null
       : Math.max(0, state.resaleEstimate * (1 - settings.ebayFeePct / 100) - settings.ebayFeeFixedCents / 100);
-    const indicators = computeRetailIndicators(allIn, { amazon: statedRetail?.value ?? null, ebay: state.resaleEstimate });
-    return { lot, identity, condition, mixed, allIn, amazon: null, amazonIndicator: indicators.amazon, ebayIndicator: indicators.ebay, state, currency, needsQuantity, ebayNet, premiumPct, statedRetail, outcome: outcomes.get(lot.id) || null };
+    const indicators = computeRetailIndicators(allIn, { amazon: null, ebay: state.resaleEstimate });
+    return { lot, identity, condition, mixed, allIn, amazon: null, amazonIndicator: indicators.amazon, ebayIndicator: indicators.ebay, state, currency, needsQuantity, ebayNet, premiumPct, outcome: outcomes.get(lot.id) || null };
   });
 }
 
@@ -638,6 +636,10 @@ export class DealIntelligenceController {
       const element = elementForNode(node);
       return Boolean(element && (element.matches('#lotlens-root') || element.querySelector('#lotlens-root')));
     }));
+    if (hasLotPanelMount) {
+      this.schedule(0);
+      return;
+    }
     if (!affectedIds.length && !hasLotPanelMount) return;
     const nextSignature = visibleLotIdSignature(document);
     if (nextSignature && nextSignature !== this.visibleLotSignature) {
@@ -792,7 +794,7 @@ export class DealIntelligenceController {
               }
               record.amazon = result;
               const price = amazonMarketValue(record);
-              record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price ?? record.statedRetail?.value ?? null }).amazon;
+              record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price }).amazon;
               amazonAnalyzed += 1;
               if (price !== null && result.status === 'matched') amazonMatchedIds.add(record.lot.id);
               repaint(record);

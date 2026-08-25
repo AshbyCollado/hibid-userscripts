@@ -4,6 +4,7 @@ import {
   amazonIndicator,
   assessLotCondition,
   buildAccountVerdict,
+  buildConditionPresentation,
   buildRetailIndicatorTooltip,
   buildRetailLinks,
   buildRetailSearchPresentation,
@@ -31,7 +32,7 @@ import {
 } from '../src/intelligence/us-deal-intelligence.js';
 import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '../src/intelligence/amazon-document-parser.js';
 
-test('auctioneer retail claims provide the donor-compatible provisional value', () => {
+test('auctioneer retail claims remain parseable metadata but are not verified pricing evidence', () => {
   assert.deepEqual(
     extractStatedRetail('Widget', 'Est. Retail Price: $129.99\nCondition: New', ''),
     { value: 129.99, source: 'stated in listing ("Est. Retail Price: $129.99")' }
@@ -40,6 +41,30 @@ test('auctioneer retail claims provide the donor-compatible provisional value', 
     extractStatedRetail('Widget', '', '$80.00 - $120.00'),
     { value: 120, source: 'auctioneer estimate high ($80.00 - $120.00)' }
   );
+});
+
+test('condition pills summarize structured evidence without treating negative questions as damage', () => {
+  const sealed = buildConditionPresentation(assessLotCondition({
+    description: 'Condition: New - Factory Sealed\nDamaged?: No\nFunctional?: Yes\nMissing Parts?: No'
+  }));
+  assert.deepEqual({ label: sealed.label, tone: sealed.tone }, { label: 'New · sealed', tone: 'good' });
+  assert.match(sealed.title, /Damaged: No/);
+  assert.match(sealed.title, /Functional: Yes/);
+
+  const untested = buildConditionPresentation(assessLotCondition({ description: 'Condition: Used\nNotes: Untested' }));
+  assert.deepEqual({ label: untested.label, tone: untested.tone }, { label: 'Used', tone: 'warning' });
+
+  const damaged = buildConditionPresentation(assessLotCondition({ description: 'Condition: Fair\nDamaged?: Yes' }));
+  assert.deepEqual({ label: damaged.label, tone: damaged.tone }, { label: 'Damaged', tone: 'danger' });
+});
+
+test('Amazon matching ignores auctioneer-stated retail price floors', () => {
+  const identity = extractProductIdentity({ title: 'Onkyo TX-SR304 Multi-Channel AV Receiver', statedRetail: 9999 });
+  const match = chooseAmazonMatch(identity, [{
+    asin: 'B0EXACT001', title: 'Onkyo TX-SR304 Multi Channel AV Receiver', price: 79.99,
+    used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0EXACT001'
+  }]);
+  assert.equal(match?.candidate.asin, 'B0EXACT001');
 });
 
 test('structured descriptions normalize CR fields and keep labels out of free text', () => {

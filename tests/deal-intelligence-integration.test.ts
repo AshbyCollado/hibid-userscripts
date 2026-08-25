@@ -9,7 +9,7 @@ import { shouldReloadExtension } from '../src/background/dev-auto-reload.js';
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.4.1');
+  assert.equal(chrome.version, '0.4.2');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
@@ -32,7 +32,7 @@ test('Chrome and Waterfox use direct background Amazon transport without opening
 
 test('unpacked builds self-reload only when the installed semantic version changes', () => {
   assert.equal(shouldReloadExtension('0.3.51', '0.3.51'), false);
-  assert.equal(shouldReloadExtension('0.4.0', '0.4.1'), true);
+  assert.equal(shouldReloadExtension('0.4.1', '0.4.2'), true);
   assert.equal(shouldReloadExtension('0.3.51', 'not-a-version'), false);
 });
 
@@ -81,6 +81,7 @@ test('retail transport returns normalized lookups and never exposes raw HTML or 
   assert.match(background, /providerStateStorageKey/);
   assert.doesNotMatch(background, /flippah:ebay\.lookup/);
   assert.doesNotMatch(background, /const retailQueue:/);
+  assert.doesNotMatch(background, /source\.statedRetail/);
   assert.match(background, /rejectionReasons\.every\(\(reason\) => \/\^attribute-/);
   assert.doesNotMatch(background, /evaluation\.matchedEvidence\.length >=/);
 });
@@ -95,6 +96,8 @@ test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid 
   assert.match(content, /buildRetailSearchPresentation\('amazon'/);
   assert.match(content, /buildRetailSearchPresentation\('ebay'/);
   assert.match(content, /buildRetailIndicatorTooltip/);
+  assert.match(content, /buildConditionPresentation/);
+  assert.match(content, /condition condition-\$\{condition\.tone\}/);
   assert.match(content, /explainHibidStatus/);
   assert.doesNotMatch(content, /Amazon: --|eBay: --/);
   assert.match(content, /content\.insertAdjacentElement\('beforebegin', strip\)/);
@@ -105,6 +108,7 @@ test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid 
   assert.match(content, /Sold and Completed results to verify/);
   assert.match(content, /eBay resale \(manual\)/);
   assert.doesNotMatch(content, /flippah:ebay\.lookup/);
+  assert.doesNotMatch(content, /extractStatedRetail|record\.statedRetail|Auctioneer retail/);
   assert.match(content, /pill\.target = '_blank'/);
   assert.match(content, /focus-visible/);
   assert.doesNotMatch(content, /\.innerHTML\s*=/);

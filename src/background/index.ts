@@ -148,7 +148,6 @@ function validateRetailIdentity(value: unknown): ProductIdentity {
     discriminators,
     tokens: Array.isArray(source.tokens) ? source.tokens.slice(0, 20).map((item) => clean(item, 40)) : []
   };
-  if (Number.isFinite(Number(source.statedRetail)) && Number(source.statedRetail) > 0) identity.statedRetail = Number(source.statedRetail);
   return identity;
 }
 

@@ -167,3 +167,10 @@ so every catalog is re-evaluated under the corrected parser.
   tile when Watch or Unwatch is clicked.
 - Does not repeat retail searches when the lot ID and cached analysis are
   unchanged.
+
+## v0.4.2 evidence and condition clarity
+
+- Auctioneer estimates, claimed retail/MSRP values, and recommended bids no
+  longer influence Amazon matching, price indicators, or deal verdicts.
+- Catalog and account annotations show a compact condition pill derived from
+  the structured description, with full evidence available on hover.

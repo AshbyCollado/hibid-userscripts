@@ -81,7 +81,7 @@ test('lot detail includes lead, category, structured fields, description, and al
   const record = extractHibidLotDetail(dom.window.document, dom.window.location.href)!;
   assert.equal(record.lot, '6');
   assert.match(record.category, /Video Games/);
-  assert.match(record.description, /Shelf Location/);
+  assert.equal(record.description, 'Shelf Location: Z1\nIn Packaging?: Yes\nMissing Parts?: No');
   assert.equal(record.images.length, 2);
   assert.ok(!record.images.some((url) => url.includes('unrelated')));
   assert.equal((record.descriptionFields as Record<string, string>).Condition, 'New - Factory Sealed');
@@ -122,6 +122,7 @@ test('LLM brief carries complete-only audit and mandatory resale rules', () => {
   const brief = buildHibidLlmBrief(payload, DEFAULT_SETTINGS);
   assert.match(brief, /generic group lot may not be marked Garbage/i);
   assert.match(brief, /VERIFIED EBAY SOLD DATA/i);
+  assert.match(brief, /Ignore auctioneer estimates, stated retail\/MSRP, seller-provided values, and recommended bids/i);
   assert.match(brief, /profit_if_won_now/);
   assert.match(brief, /Mixed Lot \/ Component Review/);
   assert.match(brief, /field-fidelity metrics/i);

@@ -502,3 +502,12 @@ ignored by Git.
 - Mutation handling distinguishes native HiBid redraws from Flippah's own DOM
   writes and reapplies cached annotations after a short debounce.
 - Same-ID repairs must not rerun Amazon research or invalidate its cache.
+
+## v0.4.2 independent price evidence
+
+- Auctioneer estimates, stated retail/MSRP, seller values, and recommended bids
+  are untrusted claims. They must not influence Amazon candidate selection,
+  colored indicators, account verdicts, resale estimates, or maximum bids.
+- LLM briefs explicitly instruct downstream research to ignore those claims.
+- Condition pills use parsed structured fields and remain separate from price
+  evidence; unknown and contradictory condition data must not be upgraded.
