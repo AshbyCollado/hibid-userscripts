@@ -61,6 +61,7 @@ export function validateHibidLotHandoffV1(value: unknown): asserts value is Hibi
   if (!value || typeof value !== 'object') throw new Error('Malformed HiBid lot handoff');
   const manifest = value as Partial<HibidLotHandoffV1>;
   if (manifest.schema_version !== 1 || manifest.provider !== 'hibid') throw new Error('Unsupported HiBid lot handoff schema');
+  if (Number.isNaN(Date.parse(manifest.initiated_at || ''))) throw new Error('HiBid handoff has an invalid initiation timestamp');
   if (!manifest.source || !/^\d+$/.test(manifest.source.provider_event_item_id || '')) throw new Error('HiBid handoff is missing its event-item ID');
   if (Number.isNaN(Date.parse(manifest.source.observed_at))) throw new Error('HiBid handoff has an invalid observation timestamp');
   if (manifest.rights_basis?.kind !== 'owner-authorized-private-use' || Number.isNaN(Date.parse(manifest.rights_basis.attested_at))) throw new Error('HiBid handoff is missing its timestamped private-use attestation');
@@ -221,7 +222,12 @@ export function isHibidChallengeDocument(document: Document): boolean {
     || /(?:cf-chl-|captcha|verify (?:that )?you are human)/i.test(body);
 }
 
-export function buildHibidLotHandoffV1(raw: unknown, sourceUrl: string, observedAt = new Date().toISOString()): HibidLotHandoffV1 {
+export function buildHibidLotHandoffV1(
+  raw: unknown,
+  sourceUrl: string,
+  observedAt = new Date().toISOString(),
+  initiatedAt = observedAt,
+): HibidLotHandoffV1 {
   if (!raw || typeof raw !== 'object') throw new Error('HiBid exact-item hydration returned a malformed lot');
   const lot = raw as Record<string, any>;
   const state = lot.lotState && typeof lot.lotState === 'object' ? lot.lotState as Record<string, unknown> : {};
@@ -263,6 +269,7 @@ export function buildHibidLotHandoffV1(raw: unknown, sourceUrl: string, observed
   const manifest: HibidLotHandoffV1 = {
     schema_version: 1,
     provider: 'hibid',
+    initiated_at: initiatedAt,
     source: {
       provider_event_item_id: eventItemId,
       provider_item_id: text(lot.itemId),
@@ -309,7 +316,7 @@ export function buildHibidLotHandoffV1(raw: unknown, sourceUrl: string, observed
 export async function hydrateHibidLotHandoff(
   transport: HiBidTransport,
   sourceUrl: string,
-  options: { signal?: AbortSignal; observedAt?: string; retries?: number } = {},
+  options: { signal?: AbortSignal; observedAt?: string; initiatedAt?: string; retries?: number } = {},
 ): Promise<HibidLotHandoffV1> {
   const route = resolveHiBidRoute(sourceUrl);
   if (!route.supported || route.kind !== 'lot') throw new Error('Flippah auction handoff is available only on an individual HiBid lot');
@@ -323,7 +330,12 @@ export async function hydrateHibidLotHandoff(
       const json = await transport.hydrateLots({ operationName: HIBID_LOT_SEARCH_OPERATION, variables, query: HIBID_LOT_SEARCH_QUERY }, { signal: options.signal });
       const results = (json as any)?.data?.lotSearch?.pagedResults?.results;
       if (!Array.isArray(results) || results.length !== 1) throw new Error(`HiBid exact-item hydration returned ${Array.isArray(results) ? results.length : 0} records for one requested lot`);
-      return buildHibidLotHandoffV1(results[0], sourceUrl, options.observedAt);
+      return buildHibidLotHandoffV1(
+        results[0],
+        sourceUrl,
+        options.observedAt,
+        options.initiatedAt,
+      );
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);

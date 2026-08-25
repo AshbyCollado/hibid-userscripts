@@ -118,6 +118,7 @@ export interface HibidPhysicalPictureV1 {
 export interface HibidLotHandoffV1 {
   schema_version: 1;
   provider: 'hibid';
+  initiated_at: string;
   source: HibidSourceIdentityV1;
   lot: {
     title: string;

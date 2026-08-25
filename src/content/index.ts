@@ -33,9 +33,10 @@ const dealIntelligence = new DealIntelligenceController(() => {
 }, transport);
 const imagePreview = installHibidImagePreview(document, window, false);
 const auctionHandoff = installHibidAuctionHandoffAction(document, window, async (onSending) => {
+  const initiatedAt = new Date().toISOString();
   if (isHibidChallengeDocument(document)) throw new Error('HiBid is showing a challenge; complete it before sending this lot');
   const sourceUrl = location.href;
-  const manifest = await hydrateHibidLotHandoff(transport, sourceUrl);
+  const manifest = await hydrateHibidLotHandoff(transport, sourceUrl, { initiatedAt });
   if (location.href !== sourceUrl) throw new Error('The HiBid page changed during photo enumeration; try again on the current lot');
   onSending(manifest.pictures.length);
   return runtimeMessage<AuctionRelayAcceptedV1>('flippah:auction.handoff', { manifest });

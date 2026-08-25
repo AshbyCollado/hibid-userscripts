@@ -1,7 +1,6 @@
 import { HIBID_GRAPHQL_ENDPOINT, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, HIBID_SEARCH_ENDPOINT } from '../hibid/api.js';
 import { failure, isEnvelope, payloadBytes, success, type MessageEnvelope } from '../core/messages.js';
 import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, putRecordBatch } from '../core/job-db.js';
-import { endingAlarmSpecs, markEndingAlertNotified } from '../core/watch-alerts.js';
 import { collectStoredOutcomes } from '../core/outcomes.js';
 import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
 import { clearRetailCache, getRetailCache, putRetailCache } from '../core/retail-db.js';
@@ -16,7 +15,6 @@ import type { HibidLotHandoffV1 } from '../core/types.js';
 
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
-const WATCH_REFRESH_ALARM = 'flippah:watch-refresh';
 const AMAZON_BODY_LIMIT = 5_000_000;
 const amazonInflight = new Map<string, Promise<RetailProviderSnapshot>>();
 let amazonProviderTail: Promise<void> = Promise.resolve();
@@ -76,7 +74,6 @@ async function handleLegacyMessage(message: any): Promise<unknown> {
     const lot = message.lot;
     if (!lot || typeof lot !== 'object' || !String(lot.lotId || '')) return { ok: false, error: 'invalid_lot' };
     await localSet({ watchlist: { ...watchlist, [String(lot.lotId)]: lot } });
-    await scheduleWatchAlarms(lot);
     await updateBadge();
     return { ok: true };
   }
@@ -473,84 +470,6 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener(() => undefined);
 });
 
-async function scheduleWatchAlarms(lot: any): Promise<void> {
-  for (const { suffix, when } of endingAlarmSpecs(lot)) {
-    await chrome.alarms.create(`flippah:ending:${String(lot.lotId)}:${suffix}`, { when });
-  }
-}
-
-async function refreshWatchlist(): Promise<void> {
-  const state = await localGet();
-  const list = Object.values(state.watchlist || {}) as any[];
-  const ids = list.map((lot) => Number(lot.lotId)).filter(Number.isFinite);
-  if (!ids.length) return;
-  const next = { ...(state.watchlist || {}) };
-  const batches = Array.from({ length: Math.ceil(ids.length / 100) }, (_, index) => ids.slice(index * 100, (index + 1) * 100));
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < batches.length) {
-      const batch = batches[cursor++]!;
-      try {
-        const response: any = await postJson(HIBID_GRAPHQL_ENDPOINT, {
-      operationName: HIBID_LOT_SEARCH_OPERATION,
-      variables: {
-        auctionId: null, pageNumber: 1, pageLength: batch.length, category: null,
-        searchText: null, zip: null, miles: null, shippingOffered: false,
-        countryName: null, state: null, status: 'ALL', sortOrder: 'LOT_NUMBER',
-        filter: null, isArchive: false, countAsView: false, hideGoogle: false,
-        eventItemIds: batch
-      },
-      query: HIBID_LOT_SEARCH_QUERY
-    }, 'omit');
-        const results = response?.data?.lotSearch?.pagedResults?.results || [];
-        const returned = new Set<string>();
-        for (const result of results) {
-          const key = String(result.id || '');
-          if (!key || !next[key]) continue;
-          returned.add(key);
-          const seconds = Number(result.lotState?.timeLeftSeconds);
-          const previous = next[key];
-          const currentBidCents = Number.isFinite(Number(result.lotState?.highBid)) ? Math.round(Number(result.lotState.highBid) * 100) : previous.currentBidCents;
-          next[key] = {
-            ...previous,
-            currentBidCents,
-            endsAt: Number.isFinite(seconds) ? Date.now() + seconds * 1000 : previous.endsAt,
-            stale: false,
-            consecutiveRefreshFailures: 0,
-            lastRefreshedAt: Date.now()
-          };
-          if (!previous.notifiedOverMax && Number.isFinite(previous.maxBidCents) && currentBidCents > previous.maxBidCents) {
-            next[key].notifiedOverMax = true;
-            await chrome.notifications.create(`flippah:overmax:${key}`, {
-              type: 'basic',
-              iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
-              title: `Over your max: ${String(previous.title || `Lot ${key}`)}`,
-              message: `Current bid $${(currentBidCents / 100).toFixed(2)} exceeds your saved max.`
-            });
-          }
-          await scheduleWatchAlarms(next[key]);
-        }
-        for (const id of batch) {
-          const key = String(id);
-          if (returned.has(key) || !next[key]) continue;
-          const failures = Number(next[key].consecutiveRefreshFailures || 0) + 1;
-          next[key] = { ...next[key], consecutiveRefreshFailures: failures, stale: failures >= 2 };
-        }
-      } catch {
-        for (const id of batch) {
-          const key = String(id);
-          if (!next[key]) continue;
-          const failures = Number(next[key].consecutiveRefreshFailures || 0) + 1;
-          next[key] = { ...next[key], consecutiveRefreshFailures: failures, stale: failures >= 2 };
-        }
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(3, batches.length) }, () => worker()));
-  await localSet({ watchlist: next });
-  await updateBadge();
-}
-
 async function updateBadge(): Promise<void> {
   const state = await localGet();
   const soon = Object.values(state.watchlist || {}).filter((lot: any) => Number.isFinite(Number(lot.endsAt)) && Number(lot.endsAt) > Date.now() && Number(lot.endsAt) <= Date.now() + 3_600_000).length;
@@ -558,50 +477,10 @@ async function updateBadge(): Promise<void> {
   await chrome.action.setBadgeText({ text: soon ? String(soon) : '' });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create(WATCH_REFRESH_ALARM, { periodInMinutes: 5 });
-});
-
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === DEV_RELOAD_ALARM) {
     void unpackedAutoReload.check();
-    return;
   }
-  if (alarm.name === WATCH_REFRESH_ALARM) {
-    void refreshWatchlist();
-    return;
-  }
-  const match = /^flippah:ending:(\d+):(15m|2m)$/.exec(alarm.name);
-  if (!match) return;
-  void localGet().then((state) => {
-    const lotId = match[1]!;
-    const suffix = match[2] as '15m' | '2m';
-    const lot = state.watchlist?.[lotId];
-    if (!lot) return;
-    const nextLot = markEndingAlertNotified(lot, suffix);
-    if (!nextLot) return;
-    void localSet({ watchlist: { ...state.watchlist, [lotId]: nextLot } }).then(() => {
-      chrome.notifications.create(alarm.name, {
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
-        title: `${suffix === '15m' ? '15 minutes' : '2 minutes'} remaining`,
-        message: String(lot.title || `Lot ${lotId}`)
-      });
-    });
-  });
-});
-
-chrome.notifications.onClicked.addListener((notificationId) => {
-  const lotId = /^flippah:(?:ending|overmax):(\d+)/.exec(notificationId)?.[1];
-  if (!lotId) return;
-  void localGet().then((state) => {
-    const url = state.watchlist?.[lotId]?.url;
-    if (url) chrome.tabs.create({ url: String(url) });
-  });
-});
-
-chrome.alarms.get(WATCH_REFRESH_ALARM, (alarm) => {
-  if (!alarm) void chrome.alarms.create(WATCH_REFRESH_ALARM, { periodInMinutes: 5 });
 });
 void pruneJobs(20);
 void updateBadge();

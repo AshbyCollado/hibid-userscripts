@@ -22,7 +22,7 @@ const commonManifest = {
   description: 'Auction research, true-cost analysis, watchlists, and verified HiBid exports for smarter flips.',
   author: 'ALOS',
   homepage_url: 'https://github.com/AshbyCollado/hibid-userscripts',
-  permissions: ['storage', 'alarms', 'notifications', 'tabs', 'activeTab', 'downloads', 'clipboardWrite'],
+  permissions: ['storage', 'alarms', 'tabs', 'activeTab', 'downloads', 'clipboardWrite'],
   host_permissions: ['https://hibid.com/*', 'https://*.hibid.com/*', 'https://hibid-api.io/*', 'https://www.amazon.com/*', 'http://127.0.0.1/*'],
   action: {
     default_icon: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' },

@@ -75,6 +75,7 @@ for (const count of [7, 8, 9]) {
     assert.equal(manifest.expected_picture_count, count);
     assert.equal(manifest.pictures.length, count);
     assert.equal(manifest.fidelity.reconciled, true);
+    assert.equal(manifest.initiated_at, '2026-08-25T12:00:00.000Z');
     assert.equal(manifest.rights_basis.attested_at, '2026-08-25T12:00:00.000Z');
     assert.equal(Number.isNaN(Date.parse(manifest.rights_basis.attested_at!)), false);
     assert.deepEqual(manifest.pictures.map((item) => item.seller_ordinal), Array.from({ length: count }, (_, index) => index + 1));
@@ -93,8 +94,20 @@ test('the lazy ninth photo comes from exact GraphQL hydration rather than the ei
       return { data: { lotSearch: { pagedResults: { results: [rawLot(9)] } } } };
     },
   };
-  const manifest = await hydrateHibidLotHandoff(transport, sourceUrl, { observedAt: '2026-08-25T12:00:00.000Z' });
+  const manifest = await hydrateHibidLotHandoff(transport, sourceUrl, {
+    observedAt: '2026-08-25T12:00:01.000Z',
+    initiatedAt: '2026-08-25T12:00:00.000Z',
+  });
   assert.equal(manifest.pictures.length, 9);
+  assert.equal(manifest.initiated_at, '2026-08-25T12:00:00.000Z');
+});
+
+test('manifest validation rejects a missing or malformed click timestamp', () => {
+  const manifest = buildHibidLotHandoffV1(rawLot(1), sourceUrl);
+  assert.throws(
+    () => validateHibidLotHandoffV1({ ...manifest, initiated_at: '' }),
+    /initiation timestamp/i,
+  );
 });
 
 test('a transient eight-of-nine GraphQL snapshot is retried without duplicating the featured photo', async () => {
