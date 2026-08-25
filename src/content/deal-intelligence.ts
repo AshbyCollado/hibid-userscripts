@@ -17,6 +17,8 @@ import {
 const LOT_STATE_PREFIX = 'flippahDealLotV1:';
 const AUCTION_STATE_PREFIX = 'flippahDealAuctionV1:';
 const STYLE_ID = 'flippah-deal-intelligence-style';
+const LOT_TILE_SELECTOR = 'app-lot-tile[id^="lot-"], [data-event-item-id], .bid-status-border[id^="lot-"]';
+const FLIPPAH_OWNED_SELECTOR = '[data-flippah-owned="true"]';
 const SUPPORTED = new Set(['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid']);
 
 interface StoredLotState {
@@ -171,6 +173,53 @@ export function visibleLotIdSignature(root: ParentNode): string {
     .filter(Boolean)
     .sort()
     .join('|');
+}
+
+function elementForNode(node: Node | null): Element | null {
+  if (!node) return null;
+  if (node.nodeType === 1) return node as Element;
+  return node.parentElement;
+}
+
+function lotIdForTile(tile: Element): string {
+  const dataId = tile.getAttribute('data-event-item-id')?.trim();
+  if (dataId) return dataId;
+  const id = tile.getAttribute('id')?.trim() || '';
+  return id.startsWith('lot-') ? id.slice(4) : '';
+}
+
+function addElementLotIds(element: Element, ids: Set<string>): void {
+  if (element.matches(FLIPPAH_OWNED_SELECTOR) || element.closest(FLIPPAH_OWNED_SELECTOR)) return;
+  const closest = element.matches(LOT_TILE_SELECTOR) ? element : element.closest(LOT_TILE_SELECTOR);
+  if (closest) {
+    const id = lotIdForTile(closest);
+    if (id) ids.add(id);
+  }
+  element.querySelectorAll(LOT_TILE_SELECTOR).forEach((tile) => {
+    const id = lotIdForTile(tile);
+    if (id) ids.add(id);
+  });
+}
+
+export function mutationAffectedLotIds(mutations: readonly MutationRecord[]): string[] {
+  const ids = new Set<string>();
+  for (const mutation of mutations) {
+    const target = elementForNode(mutation.target);
+    if (target?.closest(FLIPPAH_OWNED_SELECTOR)) continue;
+    let hasNativeChange = false;
+    for (const node of [...mutation.addedNodes, ...mutation.removedNodes]) {
+      const element = elementForNode(node);
+      if (!element) {
+        if (node.textContent?.trim()) hasNativeChange = true;
+        continue;
+      }
+      if (element.matches(FLIPPAH_OWNED_SELECTOR) || element.closest(FLIPPAH_OWNED_SELECTOR)) continue;
+      hasNativeChange = true;
+      addElementLotIds(element, ids);
+    }
+    if (hasNativeChange && target) addElementLotIds(target, ids);
+  }
+  return [...ids].sort();
 }
 
 function researchLinks(query: string): { amazon: string; ebay: string; camel: string } {
@@ -569,6 +618,8 @@ export class DealIntelligenceController {
   private summaryValue = emptySummary();
   private generation = 0;
   private rerunTimer: number | null = null;
+  private annotationRepairTimer: number | null = null;
+  private pendingAnnotationRepairIds = new Set<string>();
   private records = new Map<string, AnalysisRecord>();
   private visibleLotSignature = '';
 
@@ -580,8 +631,14 @@ export class DealIntelligenceController {
 
   handleMutations(mutations: MutationRecord[]): void {
     if (!SUPPORTED.has(this.getRoute().kind)) return;
-    const hasNewLot = mutations.some((mutation) => [...mutation.addedNodes].some((node) => node instanceof Element && (node.matches('app-lot-tile[id^="lot-"], #lotlens-root') || Boolean(node.querySelector('app-lot-tile[id^="lot-"], #lotlens-root')))));
-    if (!hasNewLot) return;
+    const affectedIds = mutationAffectedLotIds(mutations);
+    const cachedIds = affectedIds.filter((id) => this.records.has(id));
+    if (cachedIds.length) this.scheduleAnnotationRepair(cachedIds);
+    const hasLotPanelMount = mutations.some((mutation) => [...mutation.addedNodes].some((node) => {
+      const element = elementForNode(node);
+      return Boolean(element && (element.matches('#lotlens-root') || element.querySelector('#lotlens-root')));
+    }));
+    if (!affectedIds.length && !hasLotPanelMount) return;
     const nextSignature = visibleLotIdSignature(document);
     if (nextSignature && nextSignature !== this.visibleLotSignature) {
       this.visibleLotSignature = nextSignature;
@@ -590,7 +647,14 @@ export class DealIntelligenceController {
   }
 
   handleLocationChange(): void {
-    this.generation += 1; this.records.clear(); this.visibleLotSignature = ''; this.summaryValue = emptySummary(); this.schedule(250);
+    this.generation += 1;
+    this.records.clear();
+    this.visibleLotSignature = '';
+    this.summaryValue = emptySummary();
+    this.pendingAnnotationRepairIds.clear();
+    if (this.annotationRepairTimer !== null) window.clearTimeout(this.annotationRepairTimer);
+    this.annotationRepairTimer = null;
+    this.schedule(250);
   }
 
   async clearCache(): Promise<void> {
@@ -602,6 +666,22 @@ export class DealIntelligenceController {
   private schedule(delay: number): void {
     if (this.rerunTimer !== null) window.clearTimeout(this.rerunTimer);
     this.rerunTimer = window.setTimeout(() => { this.rerunTimer = null; void this.run(); }, delay);
+  }
+
+  private scheduleAnnotationRepair(ids: string[]): void {
+    ids.forEach((id) => this.pendingAnnotationRepairIds.add(id));
+    if (this.annotationRepairTimer !== null) return;
+    this.annotationRepairTimer = window.setTimeout(() => {
+      this.annotationRepairTimer = null;
+      const pending = [...this.pendingAnnotationRepairIds];
+      this.pendingAnnotationRepairIds.clear();
+      const route = this.getRoute();
+      if (!route.supported || !SUPPORTED.has(route.kind)) return;
+      pending.forEach((id) => {
+        const record = this.records.get(id);
+        if (record) applyTileAnnotation(record, route);
+      });
+    }, 120);
   }
 
   private update(patch: Partial<DealAnalysisSummary>): void {

@@ -160,3 +160,10 @@ so every catalog is re-evaluated under the corrected parser.
   Watchlist tab.
 - Source inspirations and exclusions are documented in
   `docs/OPEN_SOURCE_INSPIRATION.md`.
+
+## v0.4.1 watch redraw repair
+
+- Restores cached Amazon, eBay, and all-in annotations after HiBid redraws a
+  tile when Watch or Unwatch is clicked.
+- Does not repeat retail searches when the lot ID and cached analysis are
+  unchanged.

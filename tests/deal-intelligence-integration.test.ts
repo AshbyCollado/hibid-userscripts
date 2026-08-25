@@ -3,13 +3,13 @@ import test from 'node:test';
 import { readFile, readdir } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
-import { visibleLotIdSignature } from '../src/content/deal-intelligence.js';
+import { mutationAffectedLotIds, visibleLotIdSignature } from '../src/content/deal-intelligence.js';
 import { shouldReloadExtension } from '../src/background/dev-auto-reload.js';
 
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.4.0');
+  assert.equal(chrome.version, '0.4.1');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
@@ -32,7 +32,7 @@ test('Chrome and Waterfox use direct background Amazon transport without opening
 
 test('unpacked builds self-reload only when the installed semantic version changes', () => {
   assert.equal(shouldReloadExtension('0.3.51', '0.3.51'), false);
-  assert.equal(shouldReloadExtension('0.3.51', '0.4.0'), true);
+  assert.equal(shouldReloadExtension('0.4.0', '0.4.1'), true);
   assert.equal(shouldReloadExtension('0.3.51', 'not-a-version'), false);
 });
 
@@ -43,6 +43,24 @@ test('HiBid redraws with the same stable lot IDs do not look like a new catalog'
   assert.equal(visibleLotIdSignature(first.window.document), '10|30');
   assert.equal(visibleLotIdSignature(redraw.window.document), '10|30');
   assert.equal(visibleLotIdSignature(changed.window.document), '10|40');
+});
+
+test('same-ID native watch redraws request annotation repair without reacting to Flippah itself', () => {
+  const dom = new JSDOM('<app-lot-tile id="lot-291"><div class="native">Watch</div><div data-flippah-owned="true">Amazon</div></app-lot-tile>');
+  const tile = dom.window.document.querySelector('app-lot-tile')!;
+  const observer = new dom.window.MutationObserver(() => undefined);
+  observer.observe(tile, { childList: true, subtree: true });
+
+  tile.innerHTML = '<div class="native">Unwatch</div>';
+  const nativeRecords = observer.takeRecords() as unknown as MutationRecord[];
+  assert.deepEqual(mutationAffectedLotIds(nativeRecords), ['291']);
+
+  const owned = dom.window.document.createElement('div');
+  owned.dataset.flippahOwned = 'true';
+  tile.append(owned);
+  const ownedRecords = observer.takeRecords() as unknown as MutationRecord[];
+  assert.deepEqual(mutationAffectedLotIds(ownedRecords), []);
+  observer.disconnect();
 });
 
 test('personalized watchlist exports use the account DOM and never extension-origin GraphQL', async () => {

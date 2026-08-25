@@ -492,3 +492,13 @@ ignored by Git.
 - Inspiration and attribution live in `docs/OPEN_SOURCE_INSPIRATION.md` and
   `vendor/hoverzoom/LICENSE`. Automatic bidding, synthetic data, and broad JSON
   guessing remain excluded.
+
+## v0.4.1 same-lot redraw repair
+
+- HiBid may replace an entire lot tile after Watch/Unwatch while retaining the
+  same event-item ID.
+- A stable-ID signature proves catalog identity, but it does not prove
+  Flippah-owned annotations remain mounted.
+- Mutation handling distinguishes native HiBid redraws from Flippah's own DOM
+  writes and reapplies cached annotations after a short debounce.
+- Same-ID repairs must not rerun Amazon research or invalidate its cache.

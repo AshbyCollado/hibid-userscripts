@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const extensionPath = path.join(root, 'dist', 'chrome');
-const artifacts = path.join(root, 'artifacts', 'acceptance', 'v0.4.0');
+const artifacts = path.join(root, 'artifacts', 'acceptance', 'v0.4.1');
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flippah-qol-'));
 const fixtureUrl = 'https://hibid.com/lot/317882346/magcubic-4k-smart-projector--wifi-bt';
 fs.mkdirSync(artifacts, { recursive: true });
@@ -21,6 +21,11 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
     </table>
     <div class="lot-images"><img id="fixture-lot-photo" width="128" height="128" src="https://media.sandhills.com/img.axd?id=7012043483&wid=&p=&ext=&w=0&h=0&sz=Max&checksum=abc&h=200&w=200" alt="MAGCUBIC projector"></div>
     <div>High Bid: 20.00 USD</div><div>Bid 22.00 USD</div><div>OPEN</div>
+    <app-lot-tile id="lot-317882346" data-fixture-watch-tile>
+      <div class="lot-lead-heading">MAGCUBIC 4K Smart Projector, WiFi BT</div>
+      <div class="lot-tile-content"><button class="native-watch">Watch</button></div>
+      <button>Bid 22.00 USD</button>
+    </app-lot-tile>
   </main>
 </body></html>`;
 
@@ -51,7 +56,7 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
       body: fs.readFileSync(path.join(root, 'assets', 'icons', 'flippah-source.png')),
     }));
     await page.goto(fixtureUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await page.waitForFunction(() => document.documentElement.dataset.flippahContentVersion === '0.4.0');
+    await page.waitForFunction(() => document.documentElement.dataset.flippahContentVersion === '0.4.1');
     await page.locator('#fixture-lot-photo').hover();
     const preview = page.locator('#flippah-fullsize-image-preview[data-visible="true"]');
     await preview.waitFor({ timeout: 15_000 });
@@ -93,6 +98,19 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
     await outcome.getByText('Resale outcome saved', { exact: true }).waitFor({ timeout: 10_000 });
     await page.screenshot({ path: path.join(artifacts, 'outcome-saved.png'), fullPage: false });
 
+    const fixtureTile = page.locator('[data-fixture-watch-tile]');
+    await fixtureTile.locator('.flippah-deal-strip').waitFor({ timeout: 15_000 });
+    await page.evaluate(() => {
+      const tile = document.querySelector('[data-fixture-watch-tile]');
+      if (!tile) throw new Error('Fixture watch tile missing');
+      tile.innerHTML = '<div class="lot-lead-heading">MAGCUBIC 4K Smart Projector, WiFi BT</div><div class="lot-tile-content"><button class="native-watch">Unwatch</button></div><button>Bid 22.00 USD</button>';
+    });
+    await page.waitForFunction(() => {
+      const strip = document.querySelector('[data-fixture-watch-tile] .flippah-deal-strip');
+      return Boolean(strip && /Amazon/.test(strip.textContent || '') && /eBay/.test(strip.textContent || ''));
+    }, { timeout: 15_000 });
+    await fixtureTile.screenshot({ path: path.join(artifacts, 'watch-redraw-restored.png') });
+
     await page.bringToFront();
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup/index.html`);
@@ -107,7 +125,7 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
 
     console.log(JSON.stringify({
       browser: 'Chrome Playwright', extensionId, version: await worker.evaluate(() => chrome.runtime.getManifest().version),
-      fullSizePreview: true, outcomeSaved: true, outcomeExportVisible: true,
+      fullSizePreview: true, outcomeSaved: true, watchRedrawRestored: true, outcomeExportVisible: true,
       fidelity: copied.audit.fidelity, screenshots: artifacts,
     }));
   } finally {
