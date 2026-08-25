@@ -83,6 +83,20 @@ for (const count of [7, 8, 9]) {
   });
 }
 
+test('live HiBid zero-dimension sentinels remain explicitly unknown for host-side decode', () => {
+  const manifest = buildHibidLotHandoffV1(rawLot(2, {
+    pictures: [picture(1, { width: 0, height: 0 }), picture(2, { width: -1, height: 1200.5 })],
+  }), sourceUrl);
+  assert.deepEqual(
+    manifest.pictures.map((item) => ({ width: item.width, height: item.height, hasDimensions: item.fidelity.has_dimensions })),
+    [
+      { width: null, height: null, hasDimensions: false },
+      { width: null, height: null, hasDimensions: false },
+    ],
+  );
+  validateHibidLotHandoffV1(manifest);
+});
+
 test('the lazy ninth photo comes from exact GraphQL hydration rather than the eight-photo DOM', async () => {
   const dom = new JSDOM('<main>' + Array.from({ length: 8 }, (_, index) => `<img src="thumb-${index}.jpg">`).join('') + '</main>', { url: sourceUrl });
   assert.equal(dom.window.document.images.length, 8);

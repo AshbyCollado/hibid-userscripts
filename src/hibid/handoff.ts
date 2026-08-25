@@ -19,6 +19,11 @@ function finite(value: unknown): number | null {
   return Number.isFinite(result) ? result : null;
 }
 
+function physicalDimension(value: unknown): number | null {
+  const result = finite(value);
+  return result !== null && Number.isInteger(result) && result > 0 ? result : null;
+}
+
 function cents(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const normalized = typeof value === 'string' ? value.replace(/[^0-9.-]/g, '') : value;
@@ -151,18 +156,20 @@ function pictureDescriptor(raw: Record<string, unknown>, ordinal: number, eventI
   const hd = text(raw.hdThumbnailLocation);
   const thumbnail = text(raw.thumbnailLocation);
   const urls = [full, hd, thumbnail].filter(Boolean);
+  const width = physicalDimension(raw.width);
+  const height = physicalDimension(raw.height);
   return {
     seller_ordinal: ordinal,
     source_picture_key: stablePictureKey(raw, eventItemId, full),
     description: text(raw.description),
-    width: finite(raw.width),
-    height: finite(raw.height),
+    width,
+    height,
     full_size_url: full,
     hd_thumbnail_url: hd || null,
     thumbnail_url: thumbnail || null,
     fidelity: {
       has_full_size_url: Boolean(full),
-      has_dimensions: finite(raw.width) !== null && finite(raw.height) !== null,
+      has_dimensions: width !== null && height !== null,
       https_only: urls.length > 0 && urls.every((url) => {
         try { return new URL(url).protocol === 'https:'; } catch { return false; }
       }),
