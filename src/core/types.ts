@@ -82,6 +82,78 @@ export interface HiBidLotRecord {
   [key: string]: unknown;
 }
 
+export interface HibidSourceIdentityV1 {
+  provider_event_item_id: string;
+  provider_item_id: string;
+  provider_auction_id: string;
+  lot_number: string;
+  source_url: string;
+  observed_at: string;
+}
+
+export interface HibidBuyerPremiumVariantV1 {
+  label: string;
+  rate_basis_points: number;
+  payment_method: 'cash' | 'check' | 'card' | 'credit' | 'unknown';
+}
+
+export interface HibidPhysicalPictureV1 {
+  seller_ordinal: number;
+  source_picture_key: string;
+  description: string;
+  width: number | null;
+  height: number | null;
+  full_size_url: string;
+  hd_thumbnail_url: string | null;
+  thumbnail_url: string | null;
+  fidelity: {
+    has_full_size_url: boolean;
+    has_dimensions: boolean;
+    https_only: boolean;
+    allowed_hosts: boolean;
+    usable_url_count: number;
+  };
+}
+
+export interface HibidLotHandoffV1 {
+  schema_version: 1;
+  provider: 'hibid';
+  source: HibidSourceIdentityV1;
+  lot: {
+    title: string;
+    description: string;
+    category: string;
+    currency: string;
+    current_bid_cents: number | null;
+    next_bid_cents: number | null;
+    bid_count: number | null;
+    status: string;
+    quantity: number | null;
+    shipping_offered: boolean;
+    location: string;
+    buyer_premium_raw: string;
+    buyer_premium_variants: HibidBuyerPremiumVariantV1[];
+    auction_terms: string;
+    checkout_terms: string;
+    preview_terms: string;
+  };
+  expected_picture_count: number;
+  pictures: HibidPhysicalPictureV1[];
+  fidelity: {
+    enumeration_source: 'hibid-graphql-exact-item';
+    expected_picture_count: number;
+    observed_picture_count: number;
+    descriptor_count: number;
+    reconciled: boolean;
+    duplicate_url_count: number;
+    errors: string[];
+  };
+  rights_basis: {
+    kind: 'owner-authorized-private-use';
+    attested_at: string;
+  };
+}
+
 export interface CoverageInput {
   enumeratedIds: string[];
   hydratedItems: Array<{ id?: string; eventItemId?: string }>;

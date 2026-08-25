@@ -9,6 +9,9 @@ import { extractAccountLots, extractHiBidPageState, extractHiBidPortalSearchCont
 import { scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js';
 import { DealIntelligenceController } from './deal-intelligence.js';
 import { installHibidImagePreview } from './image-preview.js';
+import { installHibidAuctionHandoffAction } from './auction-handoff-action.js';
+import { hydrateHibidLotHandoff, isHibidChallengeDocument } from '../hibid/handoff.js';
+import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
 
 document.documentElement.dataset.flippahContentVersion = chrome.runtime.getManifest().version;
 
@@ -29,6 +32,14 @@ const dealIntelligence = new DealIntelligenceController(() => {
   return route;
 }, transport);
 const imagePreview = installHibidImagePreview(document, window, false);
+const auctionHandoff = installHibidAuctionHandoffAction(document, window, async (onSending) => {
+  if (isHibidChallengeDocument(document)) throw new Error('HiBid is showing a challenge; complete it before sending this lot');
+  const sourceUrl = location.href;
+  const manifest = await hydrateHibidLotHandoff(transport, sourceUrl);
+  if (location.href !== sourceUrl) throw new Error('The HiBid page changed during photo enumeration; try again on the current lot');
+  onSending(manifest.pictures.length);
+  return runtimeMessage<AuctionRelayAcceptedV1>('flippah:auction.handoff', { manifest });
+});
 
 void getSyncStorage()
   .then((value) => imagePreview.setEnabled(normalizeSettings(value).fullSizeImageHover))
@@ -326,6 +337,7 @@ let lastHref = location.href;
 function handleLocationChange(): void {
   if (location.href === lastHref) return;
   lastHref = location.href;
+  auctionHandoff.update();
   if (activeJob && !['completed', 'failed', 'stopped', 'stale'].includes(activeJob.phase)) {
     controller?.abort();
     void saveJob({ phase: 'stale', message: 'Page changed during scrape', errorCode: 'route-fingerprint-changed', completedAt: Date.now() })
@@ -342,6 +354,7 @@ function handleLocationChange(): void {
 
 new MutationObserver((mutations) => {
   handleLocationChange();
+  auctionHandoff.update();
   dealIntelligence.handleMutations(mutations);
 }).observe(document.documentElement, { childList: true, subtree: true });
 window.addEventListener('popstate', handleLocationChange);

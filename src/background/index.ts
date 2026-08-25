@@ -10,6 +10,9 @@ import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
 import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
 import { DEV_RELOAD_ALARM, installUnpackedAutoReload } from './dev-auto-reload.js';
+import { FLIPPAH_AUCTION_PWA_PORT_KEY, FLIPPAH_AUCTION_RELAY_PORT_KEY, FLIPPAH_AUCTION_RELAY_TOKEN_KEY, postHibidLotToAuctionRelay } from '../core/auction-relay.js';
+import { eventItemIdFromHibidLotUrl, validateHibidLotHandoffV1 } from '../hibid/handoff.js';
+import type { HibidLotHandoffV1 } from '../core/types.js';
 
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
@@ -52,6 +55,13 @@ function localSet(value: Record<string, unknown>): Promise<void> {
   return new Promise((resolve, reject) => chrome.storage.local.set(value, () => {
     const error = chrome.runtime.lastError;
     if (error) reject(new Error(error.message)); else resolve();
+  }));
+}
+
+function localGetKeys(keys: string[]): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => chrome.storage.local.get(keys, (value) => {
+    const error = chrome.runtime.lastError;
+    if (error) reject(new Error(error.message)); else resolve(value);
   }));
 }
 
@@ -123,7 +133,7 @@ async function withAmazonProviderLock<T>(work: () => Promise<T>): Promise<T> {
 function ensureHiBidSender(sender: chrome.runtime.MessageSender): void {
   if (!sender.tab || sender.frameId !== 0) throw new Error('HiBid operation rejected outside the top page frame');
   const url = new URL(sender.url || sender.tab.url || 'https://invalid.invalid');
-  if (!/(^|\.)hibid\.com$/i.test(url.hostname)) throw new Error('HiBid operation rejected for this host');
+  if (url.protocol !== 'https:' || !/(^|\.)hibid\.com$/i.test(url.hostname)) throw new Error('HiBid operation rejected for this host');
 }
 
 function retailQuery(value: unknown): string {
@@ -387,6 +397,24 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       ensureHiBidSender(sender);
       await clearRetailCache();
       return { cleared: true };
+    case 'flippah:auction.handoff': {
+      ensureHiBidSender(sender);
+      const extensionBase = chrome.runtime.getURL('');
+      if (!extensionBase.startsWith('chrome-extension://')) throw new Error('Paired auction handoff currently requires the installed Chrome extension');
+      const manifest = (message.payload as any)?.manifest as HibidLotHandoffV1;
+      validateHibidLotHandoffV1(manifest);
+      const senderUrl = sender.url || sender.tab?.url || '';
+      if (eventItemIdFromHibidLotUrl(senderUrl) !== manifest.source.provider_event_item_id) throw new Error('The HiBid page changed before the lot handoff was accepted');
+      const state = await localGetKeys([FLIPPAH_AUCTION_RELAY_TOKEN_KEY, FLIPPAH_AUCTION_RELAY_PORT_KEY, FLIPPAH_AUCTION_PWA_PORT_KEY]);
+      const accepted = await postHibidLotToAuctionRelay(
+        manifest,
+        state[FLIPPAH_AUCTION_RELAY_TOKEN_KEY],
+        state[FLIPPAH_AUCTION_RELAY_PORT_KEY],
+        state[FLIPPAH_AUCTION_PWA_PORT_KEY],
+      );
+      await chrome.tabs.create({ url: accepted.lot_url, active: true });
+      return accepted;
+    }
     case 'flippah:job.put': {
       ensureHiBidSender(sender);
       const job = (message.payload as any)?.job as ScrapeJobSummary;

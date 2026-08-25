@@ -56,6 +56,26 @@ export function setSyncStorage(items: Record<string, unknown>): Promise<void> {
   });
 }
 
+export function getLocalStorage(keys?: string[]): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(keys ?? null, (items) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(items);
+    });
+  });
+}
+
+export function setLocalStorage(items: Record<string, unknown>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set(items, () => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve();
+    });
+  });
+}
+
 export function activeTab(): Promise<chrome.tabs.Tab | null> {
   const query = (queryInfo: chrome.tabs.QueryInfo) => new Promise<chrome.tabs.Tab[]>((resolve, reject) => {
     chrome.tabs.query(queryInfo, (tabs) => {
