@@ -214,6 +214,19 @@ export interface AccountVerdict {
 }
 
 const FIELD_LINE_RE = /^[ \t]*([^:?\n]{2,60}?)[ \t]*([:?])[ \t]*(.*)$/;
+const STRUCTURED_FIELD_LABELS = [
+  'Estimated Retail Price', 'Est. Retail Price', 'Shelf Location', 'Assembly Required',
+  'Missing Parts Description', 'Missing Parts Desc', 'Missing Major Parts', 'Missing Any Parts',
+  'Damage Description', 'Damage Details', 'Damage Desct', 'Damage Desc',
+  'Is Item Functional', 'Item Functional', 'Is Item Damaged', 'Item Damaged',
+  'In Packaging', 'Missing Parts', 'Functional', 'Condition', 'Damaged',
+  'Quantity', 'Model', 'VIN #', 'Year', 'Make', 'Notes', 'Note',
+] as const;
+const STRUCTURED_FIELD_MARKER_SOURCE = STRUCTURED_FIELD_LABELS
+  .slice()
+  .sort((left, right) => right.length - left.length)
+  .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  .join('|');
 const NOISE_WORDS = new Set([
   'retail', 'new', 'brand', 'the', 'best', 'with', 'and', 'for', 'built', 'in', 'a',
   'of', 'to', 'up', 'included', 'includes', 'free', 'shipping', 'lot', 'item', 'items',
@@ -311,6 +324,16 @@ const BRAND_FAMILIES: ReadonlyArray<readonly [string, RegExp]> = [
 
 function normalise(value: unknown): string {
   return String(value ?? '')
+    .replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (entity, hex: string | undefined, decimal: string | undefined) => {
+      const codePoint = Number.parseInt(hex || decimal || '', hex ? 16 : 10);
+      try {
+        return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+          ? String.fromCodePoint(codePoint)
+          : entity;
+      } catch {
+        return entity;
+      }
+    })
     .replace(/\r\n?/g, '\n')
     .replace(/[‘’ʼ′]/g, "'")
     .replace(/[“”]/g, '"')
@@ -590,6 +613,24 @@ export function parseStructuredDescription(text: string | null | undefined): Str
   const fields: StringMap = {};
   const freeLines: string[] = [];
   for (const line of normalise(text).split('\n')) {
+    const markerPattern = new RegExp(`(^|\\s+)(${STRUCTURED_FIELD_MARKER_SOURCE})\\s*(?:\\?\\s*:|:|\\?)\\s*`, 'gi');
+    const markers: Array<{ start: number; valueStart: number; key: string }> = [];
+    let marker: RegExpExecArray | null;
+    while ((marker = markerPattern.exec(line)) !== null) {
+      const prefix = marker[1] || '';
+      markers.push({
+        start: marker.index + prefix.length,
+        valueStart: markerPattern.lastIndex,
+        key: String(marker[2] || '').trim().toLowerCase().replace(/\s+/g, ' '),
+      });
+    }
+    if (markers.length && !line.slice(0, markers[0]!.start).trim()) {
+      markers.forEach((entry, index) => {
+        const value = line.slice(entry.valueStart, markers[index + 1]?.start ?? line.length).trim();
+        fields[entry.key] = value;
+      });
+      continue;
+    }
     const match = line.match(FIELD_LINE_RE);
     if (match && match[1]?.trim()) {
       const key = match[1].trim().toLowerCase().replace(/\s+/g, ' ');
@@ -658,6 +699,7 @@ export function assessCondition(text: string | null | undefined): ConditionAsses
   const cautionPatterns: ReadonlyArray<readonly [RegExp, string]> = [
     [/\buntested\b/i, 'untested'],
     [/\bnot\s*tested\b/i, 'not tested'],
+    [/\bunable\s+to\s+test\b/i, 'unable to test'],
     [/\bopen\s*box\b/i, 'open box'],
     [/\breturn(?:ed|s)?\b/i, 'customer return'],
     [/\bscratch(?:ed|es)?\b/i, 'scratched'],
@@ -687,6 +729,8 @@ export function assessCondition(text: string | null | undefined): ConditionAsses
 export function buildConditionPresentation(assessment: ConditionAssessment): ConditionPresentation {
   const stated = assessment.condition.trim();
   const lower = stated.toLowerCase();
+  const functionalText = fieldValue(assessment.fields, 'is item functional', 'item functional', 'functional', 'working') || '';
+  const missingParts = yesNo(fieldValue(assessment.fields, 'missing major parts', 'missing parts', 'missing any parts')) === true;
   let label = 'Condition ?';
   let tone: ConditionPresentation['tone'] = 'unknown';
   if (assessment.partsOnly) {
@@ -698,6 +742,9 @@ export function buildConditionPresentation(assessment: ConditionAssessment): Con
   } else if (/\b(?:factory|new)[\s-]*sealed\b|\bsealed\b/.test(lower)) {
     label = 'New · sealed';
     tone = 'good';
+  } else if (/\b(?:brand[\s-]*)?new\b/.test(lower) && /\bpackag(?:e|ing)\s+flawed\b|\bflawed\s+packag/i.test(lower)) {
+    label = 'New · packaging flawed';
+    tone = 'warning';
   } else if (/\bopen[\s-]*box\b/.test(lower)) {
     label = 'Open box';
     tone = 'warning';
@@ -706,6 +753,9 @@ export function buildConditionPresentation(assessment: ConditionAssessment): Con
     tone = 'good';
   } else if (/\blike[\s-]*new\b|\bexcellent\b/.test(lower)) {
     label = 'Like new';
+    tone = 'good';
+  } else if (/\bused\b/.test(lower) && /\bvery\s+good\b/.test(lower)) {
+    label = 'Used · very good';
     tone = 'good';
   } else if (/\bused\b/.test(lower)) {
     label = 'Used';
@@ -726,6 +776,14 @@ export function buildConditionPresentation(assessment: ConditionAssessment): Con
   } else if (stated) {
     label = stated.slice(0, 24);
     tone = 'warning';
+  }
+
+  if (!assessment.partsOnly && !assessment.damaged && missingParts) {
+    label = `${label} · parts missing`;
+    tone = 'danger';
+  } else if (!assessment.partsOnly && !assessment.damaged && /\b(?:unable\s+to\s+test|untested|not\s*tested)\b/i.test(functionalText)) {
+    label = `${label} · untested`;
+    if (tone === 'good' || tone === 'unknown') tone = 'warning';
   }
 
   const fields = assessment.fields;

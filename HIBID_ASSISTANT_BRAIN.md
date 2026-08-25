@@ -511,3 +511,16 @@ ignored by Git.
 - LLM briefs explicitly instruct downstream research to ignore those claims.
 - Condition pills use parsed structured fields and remain separate from price
   evidence; unknown and contradictory condition data must not be upgraded.
+
+## v0.4.3 inline condition evidence and toolbar activity
+
+- HiBid condition blocks may arrive as one inline string rather than one field
+  per line. The shared parser must split every recognized label, decode numeric
+  HTML spacing, and retain packaging, damage, functionality, and missing-parts
+  evidence in analysis and exports.
+- Condition chips preserve useful qualifiers such as `Used · very good` and
+  `New · packaging flawed`; missing-parts and unable-to-test evidence may not be
+  silently upgraded to an ordinary good-condition label.
+- The browser-action badge shows a blue/green activity spinner while the active
+  tab is scraping or researching prices. Scraping takes precedence, activity is
+  tab-scoped, and the existing ending-soon count returns when work finishes.

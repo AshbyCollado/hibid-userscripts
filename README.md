@@ -174,3 +174,12 @@ so every catalog is re-evaluated under the corrected parser.
   longer influence Amazon matching, price indicators, or deal verdicts.
 - Catalog and account annotations show a compact condition pill derived from
   the structured description, with full evidence available on hover.
+
+## v0.4.3 inline condition and activity clarity
+
+- Inline HiBid condition blocks now retain packaging, functionality, damage,
+  and missing-parts fields instead of swallowing them into `Shelf Location`.
+- Watchlist condition chips preserve useful qualifiers and expose critical
+  missing-parts or unable-to-test evidence through their label and tooltip.
+- The toolbar icon shows a tab-scoped activity badge while Amazon research or
+  a catalog scrape is running, then restores the ending-soon watch count.

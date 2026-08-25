@@ -31,6 +31,22 @@ test('GraphQL normalization retains the auctioneer estimate used by the donor fa
   assert.equal(record?.estimate, '$80.00 - $129.00');
 });
 
+test('GraphQL normalization parses inline HiBid condition fields without swallowing later labels', () => {
+  const route = resolveHiBidRoute('https://hibid.com/lot/317882346/example');
+  const record = normalizeHibidLot({
+    eventItemId: 317882346,
+    lotNumber: '291',
+    lead: 'WEP 982-VI Cordless Soldering Station',
+    description: 'Shelf Location: G3 Condition: Used - Very Good In Packaging?: No Assembly Required?: No Damaged?: No Functional?: Unable to Test Missing Parts?: Yes &#x20;'
+  }, { route, sourceUrl: 'https://hibid.com/lot/317882346/example' });
+  assert.equal(record?.descriptionFields['Shelf Location'], 'G3');
+  assert.equal(record?.descriptionFields.Condition, 'Used - Very Good');
+  assert.equal(record?.descriptionFields['In Packaging?'], 'No');
+  assert.equal(record?.descriptionFields['Functional?'], 'Unable to Test');
+  assert.equal(record?.descriptionFields['Missing Parts?'], 'Yes');
+  assert.doesNotMatch(record?.description || '', /&#x20;/);
+});
+
 test('hydration cannot overwrite a visible realized price with zero', () => {
   const visible = { id: '1', currentBid: 365, status: 'Closed', rawText: 'Price Realized: 365.00 USD' } as any;
   const hydrated = { id: '1', currentBid: 0, status: 'CLOSED', rawText: '1 | Samsung TV | CLOSED' } as any;

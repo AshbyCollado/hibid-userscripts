@@ -12,6 +12,7 @@ import { installHibidImagePreview } from './image-preview.js';
 import { installHibidAuctionHandoffAction } from './auction-handoff-action.js';
 import { hydrateHibidLotHandoff, isHibidChallengeDocument } from '../hibid/handoff.js';
 import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
+import { isAnalysisActivityPhase, isScrapeActivityPhase, type ToolbarActivityUpdate } from '../core/activity.js';
 
 document.documentElement.dataset.flippahContentVersion = chrome.runtime.getManifest().version;
 
@@ -26,11 +27,22 @@ const transport: HiBidTransport = {
   searchLots: (body, options) => abortableRuntime('flippah:network.search', { body }, options?.signal),
   hydrateLots: (body, options) => abortableRuntime('flippah:network.hydrate', { body }, options?.signal)
 };
+function reportToolbarActivity(update: ToolbarActivityUpdate): void {
+  void runtimeMessage('flippah:activity.set', update).catch(() => undefined);
+}
+
 const dealIntelligence = new DealIntelligenceController(() => {
   let route = resolveHiBidRoute(location.href);
   if (route.supported && route.statePrefix && route.kind === 'search') route = { ...route, ...extractHiBidPortalSearchContext(document) };
   return route;
-}, transport);
+}, transport, (summary) => reportToolbarActivity({
+  kind: 'analysis',
+  active: isAnalysisActivityPhase(summary.phase),
+  phase: summary.phase,
+  message: summary.message,
+  current: summary.amazonAnalyzed,
+  total: summary.total,
+}));
 const imagePreview = installHibidImagePreview(document, window, false);
 const auctionHandoff = installHibidAuctionHandoffAction(document, window, async (onSending) => {
   const initiatedAt = new Date().toISOString();
@@ -77,6 +89,14 @@ async function saveJob(patch: Partial<ScrapeJobSummary>): Promise<ScrapeJobSumma
     activeJob = snapshot;
     const response = await runtimeMessage<{ stored: boolean; job: ScrapeJobSummary }>('flippah:job.put', { job: snapshot });
     if (!activeJob || response.job.revision >= activeJob.revision) activeJob = response.job;
+    reportToolbarActivity({
+      kind: 'scrape',
+      active: isScrapeActivityPhase(activeJob.phase),
+      phase: activeJob.phase,
+      message: activeJob.message,
+      current: activeJob.hydratedCount || activeJob.enumeratedCount,
+      total: activeJob.expectedTotal,
+    });
     return activeJob;
   });
   saveQueue = operation.then(() => undefined, () => undefined);

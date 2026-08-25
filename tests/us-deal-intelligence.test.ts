@@ -75,6 +75,25 @@ test('structured descriptions normalize CR fields and keep labels out of free te
   assert.equal(parsed.freeText, '');
 });
 
+test('inline HiBid condition streams retain every field and numeric HTML spacing', () => {
+  const used = parseStructuredDescription('Shelf Location: G3 Condition: Used - Very Good In Packaging?: No Assembly Required?: No Damaged?: No Functional?: Unable to Test Missing Parts?: Yes &#x20;');
+  assert.equal(used.fields['shelf location'], 'G3');
+  assert.equal(used.fields.condition, 'Used - Very Good');
+  assert.equal(used.fields['in packaging'], 'No');
+  assert.equal(used.fields.functional, 'Unable to Test');
+  assert.equal(used.fields['missing parts'], 'Yes');
+  assert.equal(used.freeText, '');
+  const usedPresentation = buildConditionPresentation(assessLotCondition({ description: 'Shelf Location: G3 Condition: Used - Very Good In Packaging?: No Assembly Required?: No Damaged?: No Functional?: Unable to Test Missing Parts?: Yes &#x20;' }));
+  assert.deepEqual({ label: usedPresentation.label, tone: usedPresentation.tone }, { label: 'Used · very good · parts missing', tone: 'danger' });
+  assert.match(usedPresentation.title, /Functional: Unable to Test/);
+  assert.match(usedPresentation.title, /Missing parts: Yes/);
+
+  const flawed = buildConditionPresentation(assessLotCondition({
+    description: 'Shelf Location: G2 Condition: New - Packaging Flawed In Packaging?: Yes Assembly Required?: No Damaged?: No Functional?: Yes'
+  }));
+  assert.deepEqual({ label: flawed.label, tone: flawed.tone }, { label: 'New · packaging flawed', tone: 'warning' });
+});
+
 test('retail indicator tooltips explain exact values and every color threshold', () => {
   const cases = [
     { allIn: 49, cls: 'green', phrase: 'below 50%' },

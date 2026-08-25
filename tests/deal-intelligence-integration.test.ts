@@ -9,7 +9,7 @@ import { shouldReloadExtension } from '../src/background/dev-auto-reload.js';
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.4.2');
+  assert.equal(chrome.version, '0.4.3');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);

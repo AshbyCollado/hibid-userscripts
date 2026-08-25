@@ -8,6 +8,7 @@ import type {
   LocationLike
 } from '../core/types.js';
 import type { HiBidPageState } from '../core/types.js';
+import { parseStructuredDescription } from '../intelligence/us-deal-intelligence.js';
 
 export const HIBID_SEARCH_ENDPOINT = 'https://hibid-api.io/sr/main/v1/search/lot';
 export const HIBID_GRAPHQL_ENDPOINT = 'https://hibid.com/graphql';
@@ -484,6 +485,16 @@ function descriptionText(value: unknown): string {
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
+    .replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (entity, hex: string | undefined, decimal: string | undefined) => {
+      const codePoint = Number.parseInt(hex || decimal || '', hex ? 16 : 10);
+      try {
+        return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+          ? String.fromCodePoint(codePoint)
+          : entity;
+      } catch {
+        return entity;
+      }
+    })
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n[ \t]+/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -492,11 +503,18 @@ function descriptionText(value: unknown): string {
 }
 
 function descriptionFields(description: string): Record<string, string> {
+  const parsed = parseStructuredDescription(description).fields;
   const fields: Record<string, string> = {};
-  for (const label of ['Year', 'Make', 'Model', 'VIN #', 'Shelf Location', 'Condition', 'In Packaging?', 'Assembly Required?', 'Damaged?', 'Functional?', 'Missing Parts?']) {
-    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = description.match(new RegExp(`(?:^|\\n|\\|)\\s*${escaped}\\s*:?\\s*([^\\n|]+)`, 'i'));
-    if (match?.[1]) fields[label] = match[1].trim();
+  const mappings: Array<[string, string[]]> = [
+    ['Year', ['year']], ['Make', ['make']], ['Model', ['model']], ['VIN #', ['vin #']],
+    ['Shelf Location', ['shelf location']], ['Condition', ['condition']], ['In Packaging?', ['in packaging']],
+    ['Assembly Required?', ['assembly required']], ['Damaged?', ['is item damaged', 'item damaged', 'damaged']],
+    ['Functional?', ['is item functional', 'item functional', 'functional']],
+    ['Missing Parts?', ['missing major parts', 'missing any parts', 'missing parts']],
+  ];
+  for (const [label, aliases] of mappings) {
+    const value = aliases.map((alias) => parsed[alias]).find((entry) => Boolean(entry));
+    if (value) fields[label] = value;
   }
   return fields;
 }

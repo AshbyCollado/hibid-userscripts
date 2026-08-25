@@ -12,6 +12,7 @@ import { DEV_RELOAD_ALARM, installUnpackedAutoReload } from './dev-auto-reload.j
 import { FLIPPAH_AUCTION_PWA_PORT_KEY, FLIPPAH_AUCTION_RELAY_PORT_KEY, FLIPPAH_AUCTION_RELAY_TOKEN_KEY, postHibidLotToAuctionRelay } from '../core/auction-relay.js';
 import { eventItemIdFromHibidLotUrl, validateHibidLotHandoffV1 } from '../hibid/handoff.js';
 import type { HibidLotHandoffV1 } from '../core/types.js';
+import { isToolbarActivityUpdate, toolbarActivityPresentation, type ToolbarActivityState } from '../core/activity.js';
 
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
@@ -19,6 +20,8 @@ const AMAZON_BODY_LIMIT = 5_000_000;
 const amazonInflight = new Map<string, Promise<RetailProviderSnapshot>>();
 let amazonProviderTail: Promise<void> = Promise.resolve();
 const unpackedAutoReload = installUnpackedAutoReload();
+const toolbarActivityByTab = new Map<number, ToolbarActivityState>();
+let endingSoonBadgeCount = 0;
 
 type RetailLookupStatus = 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'parse_error' | 'low_confidence';
 interface RetailLookupResult {
@@ -394,6 +397,19 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       ensureHiBidSender(sender);
       await clearRetailCache();
       return { cleared: true };
+    case 'flippah:activity.set': {
+      ensureHiBidSender(sender);
+      const update = (message.payload as any) as unknown;
+      if (!isToolbarActivityUpdate(update) || !sender.tab?.id) throw new Error('Invalid toolbar activity update');
+      const tabId = sender.tab.id;
+      const state = { ...(toolbarActivityByTab.get(tabId) || {}) };
+      if (update.active) state[update.kind] = update;
+      else delete state[update.kind];
+      if (state.analysis || state.scrape) toolbarActivityByTab.set(tabId, state);
+      else toolbarActivityByTab.delete(tabId);
+      await applyToolbarPresentation(tabId);
+      return { shown: update.active, kind: update.kind };
+    }
     case 'flippah:auction.handoff': {
       ensureHiBidSender(sender);
       const extensionBase = chrome.runtime.getURL('');
@@ -470,12 +486,29 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener(() => undefined);
 });
 
+async function applyToolbarPresentation(tabId?: number): Promise<void> {
+  const presentation = toolbarActivityPresentation(tabId === undefined ? {} : (toolbarActivityByTab.get(tabId) || {}), endingSoonBadgeCount);
+  const target = tabId === undefined ? {} : { tabId };
+  await Promise.all([
+    chrome.action.setBadgeBackgroundColor({ ...target, color: presentation.badgeColor }),
+    chrome.action.setBadgeText({ ...target, text: presentation.badgeText }),
+    chrome.action.setTitle({ ...target, title: presentation.title }),
+  ]);
+}
+
 async function updateBadge(): Promise<void> {
   const state = await localGet();
-  const soon = Object.values(state.watchlist || {}).filter((lot: any) => Number.isFinite(Number(lot.endsAt)) && Number(lot.endsAt) > Date.now() && Number(lot.endsAt) <= Date.now() + 3_600_000).length;
-  await chrome.action.setBadgeBackgroundColor({ color: '#b64032' });
-  await chrome.action.setBadgeText({ text: soon ? String(soon) : '' });
+  endingSoonBadgeCount = Object.values(state.watchlist || {}).filter((lot: any) => Number.isFinite(Number(lot.endsAt)) && Number(lot.endsAt) > Date.now() && Number(lot.endsAt) <= Date.now() + 3_600_000).length;
+  await applyToolbarPresentation();
+  await Promise.all([...toolbarActivityByTab.keys()].map((tabId) => applyToolbarPresentation(tabId)));
 }
+
+chrome.tabs.onRemoved.addListener((tabId) => toolbarActivityByTab.delete(tabId));
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status !== 'loading' || !toolbarActivityByTab.has(tabId)) return;
+  toolbarActivityByTab.delete(tabId);
+  void applyToolbarPresentation(tabId);
+});
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === DEV_RELOAD_ALARM) {

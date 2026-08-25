@@ -621,7 +621,11 @@ export class DealIntelligenceController {
   private records = new Map<string, AnalysisRecord>();
   private visibleLotSignature = '';
 
-  constructor(private readonly getRoute: () => HiBidRoute, private readonly transport: HiBidTransport) {}
+  constructor(
+    private readonly getRoute: () => HiBidRoute,
+    private readonly transport: HiBidTransport,
+    private readonly onSummary?: (summary: DealAnalysisSummary) => void,
+  ) {}
 
   summary(): DealAnalysisSummary { return { ...this.summaryValue }; }
 
@@ -652,7 +656,7 @@ export class DealIntelligenceController {
     this.generation += 1;
     this.records.clear();
     this.visibleLotSignature = '';
-    this.summaryValue = emptySummary();
+    this.update(emptySummary());
     this.pendingAnnotationRepairIds.clear();
     if (this.annotationRepairTimer !== null) window.clearTimeout(this.annotationRepairTimer);
     this.annotationRepairTimer = null;
@@ -688,6 +692,7 @@ export class DealIntelligenceController {
 
   private update(patch: Partial<DealAnalysisSummary>): void {
     this.summaryValue = { ...this.summaryValue, ...patch, updatedAt: Date.now() };
+    try { this.onSummary?.(this.summary()); } catch { /* activity reporting must never stop analysis */ }
   }
 
   private async run(): Promise<void> {
