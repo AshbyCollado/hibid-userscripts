@@ -186,6 +186,38 @@ test('challenge pages are detected and ordinary lot copy is not', () => {
   assert.equal(isHibidChallengeDocument(lot.window.document), false);
 });
 
+test('clicking analyze on a challenge page performs no hydration or relay work', async () => {
+  const dom = new JSDOM(
+    '<!doctype html><html><head><title>Just a moment...</title></head><body><h1>Verify you are human</h1></body></html>',
+    { url: sourceUrl },
+  );
+  let hydrationCalls = 0;
+  let relayCalls = 0;
+  const action = installHibidAuctionHandoffAction(
+    dom.window.document,
+    dom.window as unknown as Window,
+    async () => {
+      if (isHibidChallengeDocument(dom.window.document)) {
+        throw new Error('HiBid is showing a challenge; complete it before sending this lot');
+      }
+      hydrationCalls += 1;
+      relayCalls += 1;
+      throw new Error('unreachable');
+    },
+  );
+
+  dom.window.document.querySelector<HTMLButtonElement>('#flippah-auction-handoff button')!.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(action.phase(), 'failure');
+  assert.equal(hydrationCalls, 0);
+  assert.equal(relayCalls, 0);
+  assert.match(
+    dom.window.document.querySelector<HTMLElement>('#flippah-auction-handoff [role="status"]')!.textContent || '',
+    /complete it before sending/i,
+  );
+});
+
 test('relay configuration permits only a bounded loopback port and a separate strong token', () => {
   assert.equal(auctionRelayUrl(undefined), 'http://127.0.0.1:8000/v1/auction-lots/handoffs/hibid');
   assert.equal(auctionRelayUrl(9000), 'http://127.0.0.1:9000/v1/auction-lots/handoffs/hibid');
