@@ -551,3 +551,11 @@ ignored by Git.
   blue `True cost` amount beside a lot title.
 - Catalog tiles have one actionable cost display: the modern `All-in` amount
   beneath HiBid's next-bid control. The lot-page calculator remains available.
+
+## v0.4.7 lot-page query identity
+
+- HiBid lot headings are transient during Angular rendering. A partial heading
+  such as `Lot # : S` is not a product identity; use the canonical `/lot/:id/:slug`
+  fallback until the structured Lead or complete heading is available.
+- Generic overrides such as `lot s` must be ignored. Detached plural suffixes
+  may be repaired, but protect real variants such as `Series S` and `Model S`.

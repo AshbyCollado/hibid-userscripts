@@ -157,7 +157,7 @@ export function detectLotCurrency(lot: Pick<HiBidLotRecord, 'rawText' | 'buyerPr
   return detectComparisonCurrency(lot.rawText, lot.buyerPremium);
 }
 
-function cleanQuery(value: string): string { return value.replace(/\s+/g, ' ').trim().slice(0, 180); }
+function cleanQuery(value: string): string { return buildProductResearchQuery(value).slice(0, 180); }
 
 function safeExternalUrl(url: string): string {
   try {
@@ -583,7 +583,15 @@ function buildAnalysisRecords(
       title: lot.lead || lot.title,
       description: lot.description,
     });
-    if (state.queryOverride) identity.query = buildProductResearchQuery(state.queryOverride);
+    if (state.queryOverride) {
+      const normalizedOverride = buildProductResearchQuery(state.queryOverride);
+      if (normalizedOverride) {
+        state.queryOverride = normalizedOverride;
+        identity.query = normalizedOverride;
+      } else {
+        state.queryOverride = '';
+      }
+    }
     const structuredCondition = Object.entries(lot.descriptionFields || {})
       .filter(([key]) => /^(?:condition|in packaging|packaging|assembly required|is item damaged|item damaged|damaged|damage desc|damage desct|damage description|is item functional|item functional|functional|working|missing major parts|missing parts|missing any parts|notes?)\??$/i.test(key.trim()))
       .map(([key, value]) => `${key}: ${String(value || '').trim()}`)

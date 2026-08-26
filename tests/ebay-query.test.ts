@@ -71,6 +71,20 @@ test('repeated HiBid title identities collapse before Amazon or eBay search', ()
   assert.equal(buildProductResearchQuery('New York New York Movie Poster'), 'new york new york movie poster');
 });
 
+test('partial HiBid headings and detached plural suffixes cannot corrupt resale searches', () => {
+  const cases = [
+    ['Lot of 3 GE Dinamap Vital Signs Monitor s', 'ge dinamap vital signs monitors'],
+    ['Lot # : S - Covidien Endo Clip III Auto Suture', 'covidien endo clip iii auto suture'],
+    ['Xbox Series S Console', 'xbox series s console'],
+  ] as const;
+  for (const [title, expected] of cases) {
+    assert.equal(buildProductResearchQuery(title), expected);
+    assert.equal(buildEbaySoldQuery(title), expected);
+  }
+  assert.equal(buildProductResearchQuery('Lot s'), '');
+  assert.equal(buildEbaySoldQuery('Lot s'), '');
+});
+
 test('eBay query uses a word-boundary character cap instead of dropping trailing identity tokens', () => {
   const query = buildEbaySoldQuery(
     'Pioneer Elite VSX-LX305 9.2 Channel Network AV Receiver Dolby Atmos Bluetooth WiFi Black With Remote Tested Working'
@@ -104,8 +118,9 @@ test('legacy catalog-chip controller is disabled', async () => {
   assert.doesNotMatch(patched, /lotlens-catalog-chip|True cost \$\{/);
 });
 
-test('legacy lot parser recognizes closed-lot Price Realized amounts without waiting for degraded timeout', () => {
-  const source = 'currentBid:[`app-lot-details-subpanel .lot-high-bid`,`.lot-high-bid`,`.live-catalog-high-bid-status-default.lot-bid-container`]';
+test('legacy lot parser recognizes closed prices and recovers transient headings from the URL', async () => {
+  const source = await readFile('reference-build/flippah-v0.1.0/assets/parseLotPage-B-8HdUYU.js', 'utf8');
   const patched = patchLegacyHibidPageModule(source);
   assert.match(patched, /\.lot-price-realized-container/);
+  assert.match(patched, /decodeURIComponent/);
 });

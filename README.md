@@ -205,3 +205,11 @@ so every catalog is re-evaluated under the corrected parser.
 - Removes the original blue `True cost` chip from catalog titles.
 - Keeps the bottom `All-in` amount as the only catalog cost figure and removes
   the obsolete catalog-chip setting.
+
+## v0.4.7 lot-page query recovery
+
+- Uses the canonical lot URL when HiBid briefly renders a placeholder heading
+  such as `Lot # : S`, preventing saved searches such as `lot s`.
+- Repairs detached plural suffixes such as `monitor s` while preserving real
+  model names such as `Xbox Series S`.
+- Rejects generic saved query overrides and restores the actual lot identity.

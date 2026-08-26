@@ -6,7 +6,7 @@ export function buildEbaySoldQuery(title) {
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/^\s*lot\s*#?\s*[\w-]+\s*[-:|]\s*/i, ' ')
+    .replace(/^\s*lot\s*#?\s*:?\s*[\w.-]+\s*[-:|]\s*/i, ' ')
     .replace(/[()[\]{}]/g, ' ')
     .replace(/\b(?:lot|pair|set|group)\s+of\s+\d+\b/gi, ' ')
     .replace(/\bx\s*\d+\b/gi, ' ')
@@ -23,11 +23,21 @@ export function buildEbaySoldQuery(title) {
     .split(/\s+/)
     .map((token) => token.replace(/^[.+-]+|[.-]+$/g, ''))
     .filter((token) => token && token !== 'x' && !noise.has(token));
-  let tokens = filteredTokens;
-  for (let blockLength = 3; blockLength <= Math.floor(filteredTokens.length / 2); blockLength += 1) {
-    if (filteredTokens.length % blockLength !== 0) continue;
-    if (filteredTokens.every((token, index) => token === filteredTokens[index % blockLength])) {
-      tokens = filteredTokens.slice(0, blockLength);
+  const detachedSuffixGuards = new Set(['series', 'model', 'size', 'type', 'class', 'grade', 'gen', 'generation', 'lot']);
+  const repairedTokens = [];
+  for (const token of filteredTokens) {
+    const previous = repairedTokens.at(-1) || '';
+    if (token === 's' && /^[a-z]{3,}$/.test(previous) && !detachedSuffixGuards.has(previous)) {
+      repairedTokens[repairedTokens.length - 1] = `${previous}s`;
+    } else {
+      repairedTokens.push(token);
+    }
+  }
+  let tokens = repairedTokens;
+  for (let blockLength = 3; blockLength <= Math.floor(repairedTokens.length / 2); blockLength += 1) {
+    if (repairedTokens.length % blockLength !== 0) continue;
+    if (repairedTokens.every((token, index) => token === repairedTokens[index % blockLength])) {
+      tokens = repairedTokens.slice(0, blockLength);
       break;
     }
   }
@@ -37,6 +47,8 @@ export function buildEbaySoldQuery(title) {
     const shortened = query.slice(0, 121).replace(/\s+\S*$/, '').trim();
     query = shortened || query.slice(0, 120).trim();
   }
+  const genericTokens = new Set(['lot', 'item', 'auction', 's']);
+  if (!tokens.some((token) => !genericTokens.has(token))) return '';
   return tokens.length >= 2 ? query : original.slice(0, 120);
 }
 
@@ -95,5 +107,13 @@ export function patchLegacyHibidPageModule(source) {
   if (!source.includes(currentBidNeedle)) {
     throw new Error('Unable to locate the legacy HiBid current-bid selectors');
   }
-  return source.replace(currentBidNeedle, currentBidReplacement);
+  let patched = source.replace(currentBidNeedle, currentBidReplacement);
+  const titleStart = patched.indexOf('function u(e){');
+  const titleEnd = patched.indexOf('function d(e,t){', titleStart);
+  if (titleStart < 0 || titleEnd < 0 || titleEnd <= titleStart) {
+    throw new Error('Unable to locate the legacy HiBid title parser');
+  }
+  const titleParser = 'function u(e){let t=c(s(e,n.lotTitle)),r=t.replace(/^Lot\\s*#?\\s*:?\\s*\\S+\\s*[-:|]\\s*/i,``).trim(),i=(e.querySelector(`meta[property="og:title"]`)?.content??``).replace(/\\s*\\|\\s*Live and Online Auctions on HiBid\\.com\\s*$/i,``).trim(),a=``;try{let t=new URL(e.location?.href??globalThis.location?.href??`https://hibid.com`).pathname.match(/\\/lot\\/\\d+\\/([^/?#]+)/i)?.[1];a=t?decodeURIComponent(t).replace(/[-_]+/g,` `).replace(/\\s+/g,` `).trim():``}catch{}let o=e=>!!e&&!/^lot(?:\\s*#?\\s*:?\\s*[\\w.-]+)?$/i.test(e);return o(r)&&r!==t?r:o(i)?i:o(t)?t:o(a)?a:t||a||null}';
+  patched = `${patched.slice(0, titleStart)}${titleParser}${patched.slice(titleEnd)}`;
+  return patched;
 }

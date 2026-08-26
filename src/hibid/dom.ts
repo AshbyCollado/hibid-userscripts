@@ -184,6 +184,24 @@ function canonicalImages(root: Document | Element, base: string): string[] {
   return [...new Set(values)];
 }
 
+function usableLotLead(value: string): boolean {
+  return Boolean(value && !/^lot(?:\s*#?\s*:?\s*[\w.-]+)?$/i.test(value.trim()));
+}
+
+function lotLeadFromUrl(sourceUrl: string): string {
+  const slug = new URL(sourceUrl).pathname.match(/\/lot\/\d+\/([^/?#]+)/i)?.[1] || '';
+  if (!slug) return '';
+  try {
+    return clean(decodeURIComponent(slug).replace(/[-_]+/g, ' '));
+  } catch {
+    return clean(slug.replace(/[-_]+/g, ' '));
+  }
+}
+
+function stripLotHeading(value: string): string {
+  return clean(value.replace(/^\s*Lot\s*#?\s*:?\s*[\w.-]+\s*(?:\||-|:)\s*/i, ''));
+}
+
 export function extractHibidLotDetail(root: Document | Element, locationLike: LocationLike | URL | string): HiBidLotRecord | null {
   const sourceUrl = toUrl(locationLike).href;
   const raw = clean(visibleText(root));
@@ -193,7 +211,15 @@ export function extractHibidLotDetail(root: Document | Element, locationLike: Lo
   const id = root.querySelector('[data-event-item-id]')?.getAttribute('data-event-item-id') || urlId;
   if (!id) return null;
   const lot = fields['Lot #'] || raw.match(/\bLot\s*#?\s*:?\s*([\w-]+)/i)?.[1] || id;
-  const lead = fields.Lead || clean(root.querySelector('h1, .lot-title, [class*="lot-title"]')?.textContent) || `Lot ${lot}`;
+  const fieldLead = clean(fields.Lead);
+  const rawHeading = clean(root.querySelector('h1, .lot-title, [class*="lot-title"]')?.textContent);
+  const headingLead = stripLotHeading(rawHeading);
+  const urlLead = lotLeadFromUrl(sourceUrl);
+  const lead = usableLotLead(fieldLead)
+    ? fieldLead
+    : (usableLotLead(headingLead) && headingLead !== rawHeading
+      ? headingLead
+      : (usableLotLead(rawHeading) ? rawHeading : (usableLotLead(urlLead) ? urlLead : `Lot ${lot}`)));
   const descriptionNode = canonicalLotDescription(root, lotInfo);
   const description = textWithLineBreaks(descriptionNode) || clean(fields.Description);
   const images = canonicalImages(root, sourceUrl);
