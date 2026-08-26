@@ -19,10 +19,18 @@ export function buildEbaySoldQuery(title) {
     'nice', 'estate', 'untested', 'working', 'approx', 'approximate',
     'damage', 'damaged', 'read', 'look', 'wow', 'rare'
   ]);
-  const tokens = query
+  const filteredTokens = query
     .split(/\s+/)
     .map((token) => token.replace(/^[.+-]+|[.-]+$/g, ''))
     .filter((token) => token && token !== 'x' && !noise.has(token));
+  let tokens = filteredTokens;
+  for (let blockLength = 3; blockLength <= Math.floor(filteredTokens.length / 2); blockLength += 1) {
+    if (filteredTokens.length % blockLength !== 0) continue;
+    if (filteredTokens.every((token, index) => token === filteredTokens[index % blockLength])) {
+      tokens = filteredTokens.slice(0, blockLength);
+      break;
+    }
+  }
   query = tokens.join(' ');
 
   if (query.length > 120) {

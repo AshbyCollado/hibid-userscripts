@@ -53,6 +53,24 @@ test('eBay query removes auction noise without dropping identifying edge cases',
   );
 });
 
+test('repeated HiBid title identities collapse before Amazon or eBay search', () => {
+  const cases = [
+    [
+      'Circon ACMI ALU-1B Light Source Circon ACMI ALU-1B Light Source',
+      'circon acmi alu-1b light source',
+    ],
+    [
+      'Smith+Nephew Dyonics Intelijet Suction Supply Unit Smith+Nephew Dyonics Intelijet Suction Supply Unit',
+      'smith+nephew dyonics intelijet suction supply unit',
+    ],
+  ];
+  for (const [title, expected] of cases) {
+    assert.equal(buildProductResearchQuery(title), expected);
+    assert.equal(buildEbaySoldQuery(title), expected);
+  }
+  assert.equal(buildProductResearchQuery('New York New York Movie Poster'), 'new york new york movie poster');
+});
+
 test('eBay query uses a word-boundary character cap instead of dropping trailing identity tokens', () => {
   const query = buildEbaySoldQuery(
     'Pioneer Elite VSX-LX305 9.2 Channel Network AV Receiver Dolby Atmos Bluetooth WiFi Black With Remote Tested Working'

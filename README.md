@@ -192,3 +192,10 @@ so every catalog is re-evaluated under the corrected parser.
   `Books` section under the toolbar popup's `Scraper` tab.
 - Exact GraphQL photo reconciliation, challenge detection, local pairing, and
   route-drift checks remain unchanged.
+
+## v0.4.5 repeated search-query repair
+
+- Collapses complete product identities that HiBid supplies twice in one
+  title before building Amazon or eBay search URLs.
+- Applies the same cleanup to user-saved query overrides and the preserved
+  legacy lot-panel query builder.

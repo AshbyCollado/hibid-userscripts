@@ -557,6 +557,15 @@ function criticalMissingDiscriminators(missing: string[]): string[] {
   return missing.filter((value) => /^(?:packageCounts|volumes):/.test(value));
 }
 
+function collapseRepeatedQueryTokens(tokens: string[]): string[] {
+  for (let blockLength = 3; blockLength <= Math.floor(tokens.length / 2); blockLength += 1) {
+    if (tokens.length % blockLength !== 0) continue;
+    const repeated = tokens.every((token, index) => token === tokens[index % blockLength]);
+    if (repeated) return tokens.slice(0, blockLength);
+  }
+  return tokens;
+}
+
 export function buildProductResearchQuery(title: string | null | undefined): string {
   const original = normalise(title).replace(/\s+/g, ' ').trim();
   if (!original) return '';
@@ -574,10 +583,10 @@ export function buildProductResearchQuery(title: string | null | undefined): str
     .replace(/^\s*(?:av|inv(?:entory)?|sku)\s*[-:|]\s*/i, ' ')
     .replace(/[^a-z0-9.+-]+/g, ' ');
 
-  const tokens = query
+  const tokens = collapseRepeatedQueryTokens(query
     .split(/\s+/)
     .map((token) => token.replace(/^[.+-]+|[.-]+$/g, ''))
-    .filter((token) => token && token !== 'x' && !RESEARCH_QUERY_NOISE.has(token));
+    .filter((token) => token && token !== 'x' && !RESEARCH_QUERY_NOISE.has(token)));
   query = tokens.join(' ');
 
   if (query.length > 120) {

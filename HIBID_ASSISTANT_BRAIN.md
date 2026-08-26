@@ -535,3 +535,12 @@ ignored by Git.
 - The content controller still performs challenge detection, exact-item
   GraphQL hydration, full physical-photo reconciliation, route-drift checks,
   and the paired local relay handoff.
+
+## v0.4.5 repeated query identities
+
+- HiBid can expose a product identity twice back-to-back in the title/lead
+  input. Search-query normalization must collapse a repeated block of at least
+  three tokens before Amazon/eBay URL construction.
+- Modern annotations, saved query overrides, and the preserved legacy lot
+  panel use the same behavior. Do not broadly deduplicate individual words;
+  legitimate names such as `New York New York` must remain intact.

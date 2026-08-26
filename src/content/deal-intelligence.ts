@@ -7,7 +7,7 @@ import { hydrateHibidLots, mergeHibidVisibleWithHydrated } from '../hibid/api.js
 import { extractHiBidVisibleLots, extractHibidLotDetail } from '../hibid/dom.js';
 import { runProviderQueue } from '../intelligence/provider-queue.js';
 import {
-  assessCondition, buildConditionPresentation, buildRetailIndicatorTooltip, buildRetailSearchPresentation, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
+  assessCondition, buildConditionPresentation, buildProductResearchQuery, buildRetailIndicatorTooltip, buildRetailSearchPresentation, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
   detectComparisonCurrency, detectMixedLot, extractProductIdentity, formatUsd,
   explainHibidStatus, extractLotQuantityFromTitle, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
   type AmazonCandidate, type AmazonCandidateMatch, type ConditionAssessment,
@@ -583,7 +583,7 @@ function buildAnalysisRecords(
       title: lot.lead || lot.title,
       description: lot.description,
     });
-    if (state.queryOverride) identity.query = state.queryOverride;
+    if (state.queryOverride) identity.query = buildProductResearchQuery(state.queryOverride);
     const structuredCondition = Object.entries(lot.descriptionFields || {})
       .filter(([key]) => /^(?:condition|in packaging|packaging|assembly required|is item damaged|item damaged|damaged|damage desc|damage desct|damage description|is item functional|item functional|functional|working|missing major parts|missing parts|missing any parts|notes?)\??$/i.test(key.trim()))
       .map(([key, value]) => `${key}: ${String(value || '').trim()}`)
