@@ -71,6 +71,24 @@ export function patchLegacyRemoveShipping(source) {
   return patched;
 }
 
+export function patchLegacyRemoveCatalogChips(source) {
+  const startMarker = 'var h=`lotlens-catalog-chip`';
+  const endMarker = 'var ae=';
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  if (start < 0 || end < 0 || end <= start) {
+    throw new Error('Unable to locate the legacy catalog-chip controller');
+  }
+  let patched = `${source.slice(0, start)}async function y(e){b()}function b(){for(let e of Array.from(document.getElementsByClassName(["lotlens","catalog","chip"].join("-"))))e.remove()}${source.slice(end)}`;
+  const styleStart = patched.indexOf('.lotlens-catalog-chip{');
+  if (styleStart >= 0) {
+    const styleEnd = patched.indexOf('}', styleStart);
+    if (styleEnd < styleStart) throw new Error('Unable to parse the legacy catalog-chip style');
+    patched = `${patched.slice(0, styleStart)}${patched.slice(styleEnd + 1)}`;
+  }
+  return patched;
+}
+
 export function patchLegacyHibidPageModule(source) {
   const currentBidNeedle = 'currentBid:[`app-lot-details-subpanel .lot-high-bid`,`.lot-high-bid`,`.live-catalog-high-bid-status-default.lot-bid-container`]';
   const currentBidReplacement = 'currentBid:[`app-lot-details-subpanel .lot-high-bid`,`.lot-high-bid`,`.live-catalog-high-bid-status-default.lot-bid-container`,`.lot-price-realized-container`]';

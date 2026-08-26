@@ -544,3 +544,10 @@ ignored by Git.
 - Modern annotations, saved query overrides, and the preserved legacy lot
   panel use the same behavior. Do not broadly deduplicate individual words;
   legitimate names such as `New York New York` must remain intact.
+
+## v0.4.6 catalog cost ownership
+
+- The preserved legacy bundle must not mount `.lotlens-catalog-chip` or show a
+  blue `True cost` amount beside a lot title.
+- Catalog tiles have one actionable cost display: the modern `All-in` amount
+  beneath HiBid's next-bid control. The lot-page calculator remains available.

@@ -199,3 +199,9 @@ so every catalog is re-evaluated under the corrected parser.
   title before building Amazon or eBay search URLs.
 - Applies the same cleanup to user-saved query overrides and the preserved
   legacy lot-panel query builder.
+
+## v0.4.6 single catalog cost display
+
+- Removes the original blue `True cost` chip from catalog titles.
+- Keeps the bottom `All-in` amount as the only catalog cost figure and removes
+  the obsolete catalog-chip setting.

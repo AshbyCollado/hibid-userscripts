@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { buildEbaySoldQuery, patchLegacyEbayQueryModule, patchLegacyHibidPageModule, patchLegacyRemoveShipping } from '../scripts/legacy-ebay-query.mjs';
+import { buildEbaySoldQuery, patchLegacyEbayQueryModule, patchLegacyHibidPageModule, patchLegacyRemoveCatalogChips, patchLegacyRemoveShipping } from '../scripts/legacy-ebay-query.mjs';
 import { buildProductResearchQuery } from '../src/intelligence/us-deal-intelligence.js';
 
 test('eBay query preserves the complete Onkyo model and product type', () => {
@@ -95,6 +95,13 @@ test('legacy calculator build patch removes shipping UI and ignores persisted sh
   assert.doesNotMatch(patched, /<label for="lotlens-shipping">Shipping<\/label>/);
   assert.doesNotMatch(patched, /shipCents:i\.shipCents|shipCents:wi\.shipCents|Budget is below shipping/);
   assert.match(patched, /shipCents:0/);
+});
+
+test('legacy catalog-chip controller is disabled', async () => {
+  const source = await readFile('reference-build/flippah-v0.1.0/assets/index.ts-BuCXDImd.js', 'utf8');
+  const patched = patchLegacyRemoveCatalogChips(source);
+  assert.match(patched, /async function y\(e\)\{b\(\)\}function b\(\)/);
+  assert.doesNotMatch(patched, /lotlens-catalog-chip|True cost \$\{/);
 });
 
 test('legacy lot parser recognizes closed-lot Price Realized amounts without waiting for degraded timeout', () => {

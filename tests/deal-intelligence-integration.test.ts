@@ -9,7 +9,7 @@ import { shouldReloadExtension } from '../src/background/dev-auto-reload.js';
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.4.5');
+  assert.equal(chrome.version, '0.4.6');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
@@ -123,8 +123,11 @@ test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid 
 
 test('built lot calculator omits shipping UI and saved shipping cannot enter fee math', async () => {
   const legacy = await readFile('dist/chrome/legacy-content.js', 'utf8');
+  const options = await readFile('dist/chrome/options/options.js', 'utf8');
   assert.doesNotMatch(legacy, /<label for="lotlens-shipping">Shipping<\/label>/);
   assert.doesNotMatch(legacy, /shipCents:i\.shipCents|shipCents:wi\.shipCents|Budget is below shipping/);
+  assert.doesNotMatch(legacy, /lotlens-catalog-chip/);
+  assert.doesNotMatch(options, /Show true-cost chips on catalog tiles/);
 });
 
 test('scraper keeps simple price-check controls below its export actions', async () => {
