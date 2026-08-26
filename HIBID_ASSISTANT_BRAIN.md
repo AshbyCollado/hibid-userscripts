@@ -524,3 +524,14 @@ ignored by Git.
 - The browser-action badge shows a blue/green activity spinner while the active
   tab is scraping or researching prices. Scraping takes precedence, activity is
   tab-scoped, and the existing ending-soon count returns when work finishes.
+
+## v0.4.4 book handoff placement
+
+- Book-photo analysis is a toolbar workflow, not HiBid page chrome. Never mount
+  `Analyze books` controls into the auction DOM.
+- On an individual `/lot/*` route, the `Scraper` tab shows a separate `Books`
+  section that triggers `flippah:auction.handoff.start` in the top content
+  script.
+- The content controller still performs challenge detection, exact-item
+  GraphQL hydration, full physical-photo reconciliation, route-drift checks,
+  and the paired local relay handoff.

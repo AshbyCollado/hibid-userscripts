@@ -183,3 +183,12 @@ so every catalog is re-evaluated under the corrected parser.
   missing-parts or unable-to-test evidence through their label and tooltip.
 - The toolbar icon shows a tab-scoped activity badge while Amazon research or
   a catalog scrape is running, then restores the ending-soon watch count.
+
+## v0.4.4 popup-only book analysis
+
+- Removes the book-analysis card from HiBid's lot page so Flippah does not add
+  a large control to the auction content.
+- Individual lot pages expose the same exact-photo handoff in a dedicated
+  `Books` section under the toolbar popup's `Scraper` tab.
+- Exact GraphQL photo reconciliation, challenge detection, local pairing, and
+  route-drift checks remain unchanged.

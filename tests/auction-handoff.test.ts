@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import {
@@ -14,7 +15,7 @@ import {
   postHibidLotToAuctionRelay,
   validateAuctionRelayResponse,
 } from '../src/core/auction-relay.js';
-import { installHibidAuctionHandoffAction } from '../src/content/auction-handoff-action.js';
+import { runHibidAuctionHandoff } from '../src/content/auction-handoff.js';
 import type { HiBidTransport } from '../src/core/types.js';
 
 const sourceUrl = 'https://hibid.com/lot/317135308/books?ref=catalog';
@@ -200,36 +201,26 @@ test('challenge pages are detected and ordinary lot copy is not', () => {
   assert.equal(isHibidChallengeDocument(lot.window.document), false);
 });
 
-test('clicking analyze on a challenge page performs no hydration or relay work', async () => {
+test('starting book analysis on a challenge page performs no hydration or relay work', async () => {
   const dom = new JSDOM(
     '<!doctype html><html><head><title>Just a moment...</title></head><body><h1>Verify you are human</h1></body></html>',
     { url: sourceUrl },
   );
   let hydrationCalls = 0;
   let relayCalls = 0;
-  const action = installHibidAuctionHandoffAction(
-    dom.window.document,
-    dom.window as unknown as Window,
-    async () => {
-      if (isHibidChallengeDocument(dom.window.document)) {
-        throw new Error('HiBid is showing a challenge; complete it before sending this lot');
-      }
-      hydrationCalls += 1;
-      relayCalls += 1;
-      throw new Error('unreachable');
-    },
-  );
-
-  dom.window.document.querySelector<HTMLButtonElement>('#flippah-auction-handoff button')!.click();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.equal(action.phase(), 'failure');
+  const transport: HiBidTransport = {
+    searchLots: async () => { throw new Error('search is not used'); },
+    hydrateLots: async () => { hydrationCalls += 1; throw new Error('unreachable'); },
+  };
+  await assert.rejects(() => runHibidAuctionHandoff({
+    document: dom.window.document,
+    sourceUrl,
+    currentUrl: () => sourceUrl,
+    transport,
+    send: async () => { relayCalls += 1; throw new Error('unreachable'); },
+  }), /complete it before sending/i);
   assert.equal(hydrationCalls, 0);
   assert.equal(relayCalls, 0);
-  assert.match(
-    dom.window.document.querySelector<HTMLElement>('#flippah-auction-handoff [role="status"]')!.textContent || '',
-    /complete it before sending/i,
-  );
 });
 
 test('relay configuration permits only a bounded loopback port and a separate strong token', () => {
@@ -273,61 +264,13 @@ test('relay response refuses a remote lot URL', () => {
   assert.throws(() => validateAuctionRelayResponse({ lot_id: '22222222-2222-4222-8222-222222222222', lot_url: `http://127.0.0.1:8080/auction-lots/${lotId}`, accepted_at: '2026-08-25T12:00:00Z' }), /does not match/i);
 });
 
-test('lot-page action acknowledges immediately and exposes progress accessibly', async () => {
-  const dom = new JSDOM('<!doctype html><html><head></head><body><h1>Books</h1></body></html>', { url: sourceUrl });
-  let resolveAnalysis!: (value: any) => void;
-  const analysis = new Promise((resolve) => { resolveAnalysis = resolve; });
-  const action = installHibidAuctionHandoffAction(dom.window.document, dom.window as unknown as Window, async (onSending) => {
-    await Promise.resolve();
-    onSending(9);
-    return analysis as any;
-  });
-  const button = dom.window.document.querySelector<HTMLButtonElement>('#flippah-auction-handoff button')!;
-  const status = dom.window.document.querySelector<HTMLElement>('#flippah-auction-handoff [role="status"]')!;
-  assert.ok(button);
-  assert.equal(dom.window.document.querySelector('h1')!.nextElementSibling?.id, 'flippah-auction-handoff');
-  assert.doesNotMatch(dom.window.document.querySelector('style[data-flippah-auction-handoff-style]')!.textContent || '', /position\s*:\s*fixed/i);
-  assert.equal(button.getBoundingClientRect().width >= 0, true);
-  button.click();
-  assert.equal(action.phase(), 'enumerating');
-  assert.equal(button.disabled, true);
-  await Promise.resolve();
-  assert.equal(action.phase(), 'sending');
-  assert.match(status.textContent || '', /9 photos securely/i);
-  resolveAnalysis({ lot_id: 'lot-1', lot_url: 'http://127.0.0.1:8000/auction-lots/lot-1', accepted_at: '2026-08-25T12:00:00Z' });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(action.phase(), 'accepted');
-  assert.equal(button.disabled, true);
-  assert.equal(button.textContent, 'Opened in Flippah');
-  assert.equal(status.getAttribute('aria-live'), 'polite');
-});
-
-test('lot-page action remounts after a HiBid redraw and resets between lot routes', () => {
-  const dom = new JSDOM('<!doctype html><html><head></head><body><main><h1>Books</h1></main></body></html>', { url: sourceUrl });
-  const action = installHibidAuctionHandoffAction(dom.window.document, dom.window as unknown as Window, async () => ({
-    lot_id: 'lot-1', lot_url: 'http://127.0.0.1:8000/auction-lots/lot-1', accepted_at: '2026-08-25T12:00:00Z',
-  }));
-  const first = dom.window.document.querySelector('#flippah-auction-handoff')!;
-  first.remove();
-  action.update();
-  const second = dom.window.document.querySelector('#flippah-auction-handoff')!;
-  assert.ok(second);
-  assert.notEqual(second, first);
-  dom.window.history.pushState({}, '', '/lot/317135307/books');
-  action.update();
-  const third = dom.window.document.querySelector('#flippah-auction-handoff')!;
-  assert.ok(third);
-  assert.notEqual(third, second);
-  assert.equal(action.phase(), 'idle');
-});
-
-test('lot-page action reports a failed reconciliation as an assertive status', async () => {
-  const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url: sourceUrl });
-  const action = installHibidAuctionHandoffAction(dom.window.document, dom.window as unknown as Window, async () => { throw new Error('pictureCount did not reconcile'); });
-  dom.window.document.querySelector<HTMLButtonElement>('#flippah-auction-handoff button')!.click();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const status = dom.window.document.querySelector<HTMLElement>('#flippah-auction-handoff [role="status"]')!;
-  assert.equal(action.phase(), 'failure');
-  assert.match(status.textContent || '', /did not reconcile/i);
-  assert.equal(status.getAttribute('aria-live'), 'assertive');
+test('book analysis lives only in the toolbar Scraper tab', () => {
+  const popup = readFileSync('src/popup/index.ts', 'utf8');
+  const content = readFileSync('src/content/index.ts', 'utf8');
+  assert.match(popup, /class="book-tools"/);
+  assert.match(popup, /id="analyze-books"/);
+  assert.match(popup, /context\.route\.kind === 'lot'/);
+  assert.match(content, /flippah:auction\.handoff\.start/);
+  assert.doesNotMatch(content, /flippah-auction-handoff|installHibidAuctionHandoffAction/);
+  assert.equal(existsSync('src/content/auction-handoff-action.ts'), false);
 });

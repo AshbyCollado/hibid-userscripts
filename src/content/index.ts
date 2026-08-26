@@ -9,8 +9,7 @@ import { extractAccountLots, extractHiBidPageState, extractHiBidPortalSearchCont
 import { scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js';
 import { DealIntelligenceController } from './deal-intelligence.js';
 import { installHibidImagePreview } from './image-preview.js';
-import { installHibidAuctionHandoffAction } from './auction-handoff-action.js';
-import { hydrateHibidLotHandoff, isHibidChallengeDocument } from '../hibid/handoff.js';
+import { runHibidAuctionHandoff } from './auction-handoff.js';
 import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
 import { isAnalysisActivityPhase, isScrapeActivityPhase, type ToolbarActivityUpdate } from '../core/activity.js';
 
@@ -44,15 +43,25 @@ const dealIntelligence = new DealIntelligenceController(() => {
   total: summary.total,
 }));
 const imagePreview = installHibidImagePreview(document, window, false);
-const auctionHandoff = installHibidAuctionHandoffAction(document, window, async (onSending) => {
-  const initiatedAt = new Date().toISOString();
-  if (isHibidChallengeDocument(document)) throw new Error('HiBid is showing a challenge; complete it before sending this lot');
+let auctionHandoffInFlight: Promise<AuctionRelayAcceptedV1> | null = null;
+
+function startAuctionHandoff(): Promise<AuctionRelayAcceptedV1> {
+  if (auctionHandoffInFlight) return auctionHandoffInFlight;
   const sourceUrl = location.href;
-  const manifest = await hydrateHibidLotHandoff(transport, sourceUrl, { initiatedAt });
-  if (location.href !== sourceUrl) throw new Error('The HiBid page changed during photo enumeration; try again on the current lot');
-  onSending(manifest.pictures.length);
-  return runtimeMessage<AuctionRelayAcceptedV1>('flippah:auction.handoff', { manifest });
-});
+  const operation = runHibidAuctionHandoff({
+    document,
+    sourceUrl,
+    currentUrl: () => location.href,
+    transport,
+    send: (manifest) => runtimeMessage<AuctionRelayAcceptedV1>('flippah:auction.handoff', { manifest }),
+  });
+  auctionHandoffInFlight = operation;
+  operation.then(
+    () => { if (auctionHandoffInFlight === operation) auctionHandoffInFlight = null; },
+    () => { if (auctionHandoffInFlight === operation) auctionHandoffInFlight = null; },
+  );
+  return operation;
+}
 
 void getSyncStorage()
   .then((value) => imagePreview.setEnabled(normalizeSettings(value).fullSizeImageHover))
@@ -343,6 +352,13 @@ async function handleMessage(message: MessageEnvelope): Promise<unknown> {
     await dealIntelligence.clearCache();
     return dealIntelligence.summary();
   }
+  if (message.type === 'flippah:auction.handoff.start') {
+    const context = pageContext();
+    if (!context.route.supported || context.route.kind !== 'lot') {
+      throw new Error('Book analysis is available only on an individual HiBid lot');
+    }
+    return startAuctionHandoff();
+  }
   throw new Error('Unknown page command');
 }
 
@@ -358,7 +374,6 @@ let lastHref = location.href;
 function handleLocationChange(): void {
   if (location.href === lastHref) return;
   lastHref = location.href;
-  auctionHandoff.update();
   if (activeJob && !['completed', 'failed', 'stopped', 'stale'].includes(activeJob.phase)) {
     controller?.abort();
     void saveJob({ phase: 'stale', message: 'Page changed during scrape', errorCode: 'route-fingerprint-changed', completedAt: Date.now() })
@@ -375,7 +390,6 @@ function handleLocationChange(): void {
 
 new MutationObserver((mutations) => {
   handleLocationChange();
-  auctionHandoff.update();
   dealIntelligence.handleMutations(mutations);
 }).observe(document.documentElement, { childList: true, subtree: true });
 window.addEventListener('popstate', handleLocationChange);

@@ -5,6 +5,7 @@ import { normalizeSettings } from '../core/settings.js';
 import { jobMatchesContextAndScope } from '../core/job-scope.js';
 import { calculateDealOutcome, type DealOutcome } from '../core/outcomes.js';
 import type { PageContext, ScrapeJobSummary } from '../core/types.js';
+import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
 import { buildHibidExportPayload, buildHibidLlmBrief } from '../hibid/exports.js';
 
 const app = document.querySelector<HTMLElement>('#app')!;
@@ -18,6 +19,9 @@ let toastFromRefreshError = false;
 let pendingCopy: 'json' | 'llm' | null = null;
 let pollTimer: number | null = null;
 let countdownTimer: number | null = null;
+let bookHandoffBusy = false;
+let bookHandoffStatus = 'Ready to send every seller photo';
+let bookHandoffFailed = false;
 
 function legacyMessage<T>(message: unknown): Promise<T> {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, (response: T) => {
@@ -132,7 +136,10 @@ function currentHtml(): string {
   const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid'].includes(context.route.kind)
     ? `<div class="analysis"><div class="analysis-head"><strong>Price research</strong><span>${escapeHtml(analysisStatusText(analysis))}</span></div>${analysis.phase === 'scanning' || analysis.phase === 'retail' ? `<div class="progress"><i style="width:${analysisPercent}%"></i></div>` : ''}<div class="actions compact"><button id="rerun-analysis" class="button" ${analysis.phase === 'scanning' || analysis.phase === 'retail' ? 'disabled' : ''}>Check again</button><button id="clear-retail-cache" class="button">Clear saved prices</button></div></div>`
     : '';
-  return `<section class="panel"><div class="card"><div class="eyebrow">Scraper</div><h1>${escapeHtml(routeLabel())}</h1>${groupSelect}<div class="status ${statusClass()}"><span class="dot"></span><span>${escapeHtml(scrapeStatusText(current, count))}</span></div>${busy() || job?.phase === 'completed' ? `<div class="progress"><i style="width:${percent}%"></i></div>` : ''}<div class="actions"><button id="copy-llm" class="button primary" ${!canStart && !complete ? 'disabled' : ''}>Copy for AI</button><button id="copy-json" class="button" ${!canStart && !complete ? 'disabled' : ''}>Copy JSON</button>${busy() ? '<button id="stop" class="button danger">Stop</button>' : ''}${job?.phase === 'failed' || job?.phase === 'stale' || job?.phase === 'stopped' ? '<button id="retry" class="button">Try again</button>' : ''}</div><div class="toast">${escapeHtml(toast)}</div>${analysisHtml}${debugHtml()}</div></section>`;
+  const booksHtml = context.route.kind === 'lot'
+    ? `<div class="book-tools"><div class="analysis-head"><strong>Books</strong><span>Complete photo handoff</span></div><p class="section-copy">Send this lot and every seller photo to the local book analyzer.</p><div class="actions compact"><button id="analyze-books" class="button" ${bookHandoffBusy ? 'disabled' : ''}>${bookHandoffBusy ? 'Sending photos…' : 'Analyze this lot'}</button></div><div class="section-status ${bookHandoffFailed ? 'failed' : ''}" role="status" aria-live="${bookHandoffFailed ? 'assertive' : 'polite'}">${escapeHtml(bookHandoffStatus)}</div></div>`
+    : '';
+  return `<section class="panel"><div class="card"><div class="eyebrow">Scraper</div><h1>${escapeHtml(routeLabel())}</h1>${groupSelect}<div class="status ${statusClass()}"><span class="dot"></span><span>${escapeHtml(scrapeStatusText(current, count))}</span></div>${busy() || job?.phase === 'completed' ? `<div class="progress"><i style="width:${percent}%"></i></div>` : ''}<div class="actions"><button id="copy-llm" class="button primary" ${!canStart && !complete ? 'disabled' : ''}>Copy for AI</button><button id="copy-json" class="button" ${!canStart && !complete ? 'disabled' : ''}>Copy JSON</button>${busy() ? '<button id="stop" class="button danger">Stop</button>' : ''}${job?.phase === 'failed' || job?.phase === 'stale' || job?.phase === 'stopped' ? '<button id="retry" class="button">Try again</button>' : ''}</div><div class="toast">${escapeHtml(toast)}</div>${analysisHtml}${booksHtml}${debugHtml()}</div></section>`;
 }
 
 function debugHtml(): string {
@@ -181,6 +188,7 @@ function bind(): void {
   app.querySelector('#retry')?.addEventListener('click', () => void command('flippah:job.retry'));
   app.querySelector('#rerun-analysis')?.addEventListener('click', () => void analysisCommand('flippah:analysis.rerun', 'Checking prices again'));
   app.querySelector('#clear-retail-cache')?.addEventListener('click', () => void analysisCommand('flippah:analysis.clear-cache', 'Saved prices cleared; checking again'));
+  app.querySelector('#analyze-books')?.addEventListener('click', () => void analyzeBooks());
   app.querySelector('#copy-debug')?.addEventListener('click', () => void copyDiagnostic(false));
   app.querySelector('#download-debug')?.addEventListener('click', () => void copyDiagnostic(true));
   app.querySelector('#export-watchlist')?.addEventListener('click', () => void exportWatchlist());
@@ -188,6 +196,24 @@ function bind(): void {
   app.querySelectorAll<HTMLButtonElement>('.remove-watch').forEach((button) => button.addEventListener('click', async () => {
     await legacyMessage({ kind: 'watch:remove', lotId: button.dataset.lotId }); await render();
   }));
+}
+
+async function analyzeBooks(): Promise<void> {
+  if (currentTabId === null || context?.route.kind !== 'lot' || bookHandoffBusy) return;
+  bookHandoffBusy = true;
+  bookHandoffFailed = false;
+  bookHandoffStatus = 'Reading and reconciling seller photos…';
+  await render();
+  try {
+    const result = await tabMessage<AuctionRelayAcceptedV1>(currentTabId, 'flippah:auction.handoff.start', {});
+    bookHandoffStatus = `Opened lot ${result.lot_id} in the book analyzer`;
+  } catch (error) {
+    bookHandoffFailed = true;
+    bookHandoffStatus = error instanceof Error ? error.message : String(error);
+  } finally {
+    bookHandoffBusy = false;
+  }
+  await render();
 }
 
 async function analysisCommand(type: string, message: string): Promise<void> {
@@ -325,6 +351,9 @@ async function updateContextFromTab(): Promise<void> {
     toast = '';
     pendingCopy = null;
     selectedGroupId = '';
+    bookHandoffBusy = false;
+    bookHandoffFailed = false;
+    bookHandoffStatus = 'Ready to send every seller photo';
   }
   context = nextContext;
   job = await loadMatchingJob();
