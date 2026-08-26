@@ -5,7 +5,8 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const extensionPath = path.join(root, 'dist', 'chrome');
-const artifacts = path.join(root, 'artifacts', 'acceptance', 'v0.4.2');
+const expectedVersion = String(require(path.join(root, 'package.json')).version);
+const artifacts = path.join(root, 'artifacts', 'acceptance', `v${expectedVersion}`);
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flippah-qol-'));
 const fixtureUrl = 'https://hibid.com/lot/317882346/magcubic-4k-smart-projector--wifi-bt';
 fs.mkdirSync(artifacts, { recursive: true });
@@ -60,7 +61,7 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
       body: fs.readFileSync(path.join(root, 'assets', 'icons', 'flippah-source.png')),
     }));
     await page.goto(fixtureUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await page.waitForFunction(() => document.documentElement.dataset.flippahContentVersion === '0.4.2');
+    await page.waitForFunction((version) => document.documentElement.dataset.flippahContentVersion === version, expectedVersion);
     await page.locator('#fixture-lot-photo').hover();
     const preview = page.locator('#flippah-fullsize-image-preview[data-visible="true"]');
     await preview.waitFor({ timeout: 15_000 });

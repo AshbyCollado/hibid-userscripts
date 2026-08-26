@@ -14,6 +14,7 @@ export interface AuctionRelayAcceptedV1 {
   lot_id: string;
   lot_url: string;
   accepted_at: string;
+  opener_state?: 'pending' | 'resolved' | 'missing' | 'navigated';
 }
 
 export function normalizeAuctionRelayToken(value: unknown): string {

@@ -10,9 +10,8 @@ import { scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js
 import { DealIntelligenceController } from './deal-intelligence.js';
 import { installHibidImagePreview } from './image-preview.js';
 import { installHibidAuctionHandoffAction } from './auction-handoff-action.js';
-import { hydrateHibidLotHandoff, isHibidChallengeDocument } from '../hibid/handoff.js';
-import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
 import { isAnalysisActivityPhase, isScrapeActivityPhase, type ToolbarActivityUpdate } from '../core/activity.js';
+import { runHibidAuctionHandoff } from './auction-handoff-flow.js';
 
 document.documentElement.dataset.flippahContentVersion = chrome.runtime.getManifest().version;
 
@@ -44,15 +43,12 @@ const dealIntelligence = new DealIntelligenceController(() => {
   total: summary.total,
 }));
 const imagePreview = installHibidImagePreview(document, window, false);
-const auctionHandoff = installHibidAuctionHandoffAction(document, window, async (onSending) => {
-  const initiatedAt = new Date().toISOString();
-  if (isHibidChallengeDocument(document)) throw new Error('HiBid is showing a challenge; complete it before sending this lot');
-  const sourceUrl = location.href;
-  const manifest = await hydrateHibidLotHandoff(transport, sourceUrl, { initiatedAt });
-  if (location.href !== sourceUrl) throw new Error('The HiBid page changed during photo enumeration; try again on the current lot');
-  onSending(manifest.pictures.length);
-  return runtimeMessage<AuctionRelayAcceptedV1>('flippah:auction.handoff', { manifest });
-});
+const auctionHandoff = installHibidAuctionHandoffAction(document, window, (onSending) => runHibidAuctionHandoff(
+  document,
+  transport,
+  { send: runtimeMessage, nonce: () => crypto.randomUUID(), currentUrl: () => location.href },
+  onSending,
+));
 
 void getSyncStorage()
   .then((value) => imagePreview.setEnabled(normalizeSettings(value).fullSizeImageHover))

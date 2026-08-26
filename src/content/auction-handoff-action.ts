@@ -18,6 +18,7 @@ export function installHibidAuctionHandoffAction(
   let root: HTMLElement | null = null;
   let style: HTMLStyleElement | null = null;
   let renderedHref = '';
+  let acceptedUrl: string | null = null;
 
   const remove = () => {
     root?.remove();
@@ -26,6 +27,7 @@ export function installHibidAuctionHandoffAction(
     style = null;
     renderedHref = '';
     currentPhase = 'idle';
+    acceptedUrl = null;
   };
 
   const render = () => {
@@ -74,14 +76,26 @@ export function installHibidAuctionHandoffAction(
       container.dataset.phase = phase;
       status.textContent = message;
       status.setAttribute('aria-live', phase === 'failure' ? 'assertive' : 'polite');
-      button.disabled = phase === 'enumerating' || phase === 'sending' || phase === 'accepted';
-      button.textContent = phase === 'accepted' ? 'Opened in Flippah' : 'Analyze books in Flippah';
+      button.disabled = phase === 'enumerating' || phase === 'sending' || (phase === 'accepted' && !acceptedUrl);
+      button.textContent = phase === 'accepted'
+        ? acceptedUrl ? 'Open accepted lot' : 'Opened in Flippah'
+        : 'Analyze books in Flippah';
     };
 
     button.addEventListener('click', () => {
+      if (acceptedUrl) {
+        window.open(acceptedUrl, '_blank', 'noopener,noreferrer');
+        return;
+      }
       setPhase('enumerating', 'Enumerating exact HiBid photos…');
       void analyze((pictureCount) => setPhase('sending', `Sending ${pictureCount} photo${pictureCount === 1 ? '' : 's'} securely…`))
-        .then((result) => setPhase('accepted', `Accepted ${result.lot_id}; Flippah is opening…`))
+        .then((result) => {
+          const needsOwnerOpen = result.opener_state === 'missing' || result.opener_state === 'navigated';
+          acceptedUrl = needsOwnerOpen ? result.lot_url : null;
+          setPhase('accepted', needsOwnerOpen
+            ? `Accepted ${result.lot_id}; use Open accepted lot to view it.`
+            : `Accepted ${result.lot_id}; Flippah is opening…`);
+        })
         .catch((error) => setPhase('failure', error instanceof Error ? error.message : 'Flippah could not analyze this lot'));
     });
   };

@@ -321,6 +321,27 @@ test('lot-page action remounts after a HiBid redraw and resets between lot route
   assert.equal(action.phase(), 'idle');
 });
 
+test('a missing reserved tab requires an explicit owner click and never reimports the lot', async () => {
+  const dom = new JSDOM('<!doctype html><html><head></head><body><h1>Books</h1></body></html>', { url: sourceUrl });
+  let analyzes = 0;
+  let opened = '';
+  Object.defineProperty(dom.window, 'open', { value: (url: string) => { opened = String(url); return null; } });
+  installHibidAuctionHandoffAction(dom.window.document, dom.window as unknown as Window, async () => {
+    analyzes += 1;
+    return { lot_id: 'lot-1', lot_url: 'http://localhost:8080/auction-lots/22222222-2222-4222-8222-222222222222',
+      accepted_at: '2026-08-25T12:00:00Z', opener_state: 'missing' };
+  });
+  const button = dom.window.document.querySelector<HTMLButtonElement>('#flippah-auction-handoff button')!;
+  button.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, 'Open accepted lot');
+  assert.match(dom.window.document.querySelector<HTMLElement>('[data-status]')!.textContent || '', /use Open accepted lot/i);
+  button.click();
+  assert.equal(opened, 'http://localhost:8080/auction-lots/22222222-2222-4222-8222-222222222222');
+  assert.equal(analyzes, 1);
+});
+
 test('lot-page action reports a failed reconciliation as an assertive status', async () => {
   const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url: sourceUrl });
   const action = installHibidAuctionHandoffAction(dom.window.document, dom.window as unknown as Window, async () => { throw new Error('pictureCount did not reconcile'); });

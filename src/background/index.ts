@@ -9,10 +9,16 @@ import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
 import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
 import { DEV_RELOAD_ALARM, installUnpackedAutoReload } from './dev-auto-reload.js';
-import { FLIPPAH_AUCTION_PWA_PORT_KEY, FLIPPAH_AUCTION_RELAY_PORT_KEY, FLIPPAH_AUCTION_RELAY_TOKEN_KEY, postHibidLotToAuctionRelay } from '../core/auction-relay.js';
+import { auctionRelayUrl, FLIPPAH_AUCTION_PWA_PORT_KEY, FLIPPAH_AUCTION_RELAY_PORT_KEY, FLIPPAH_AUCTION_RELAY_TOKEN_KEY, normalizeAuctionRelayToken, postHibidLotToAuctionRelay } from '../core/auction-relay.js';
 import { eventItemIdFromHibidLotUrl, validateHibidLotHandoffV1 } from '../hibid/handoff.js';
 import type { HibidLotHandoffV1 } from '../core/types.js';
 import { isToolbarActivityUpdate, toolbarActivityPresentation, type ToolbarActivityState } from '../core/activity.js';
+import {
+  AuctionPendingTabController,
+  FLIPPAH_AUCTION_PENDING_ALARM_PREFIX,
+  FLIPPAH_AUCTION_PENDING_TTL_MS,
+  type AuctionPendingReservationV1,
+} from '../core/auction-pending-tab.js';
 
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
@@ -22,6 +28,56 @@ let amazonProviderTail: Promise<void> = Promise.resolve();
 const unpackedAutoReload = installUnpackedAutoReload();
 const toolbarActivityByTab = new Map<number, ToolbarActivityState>();
 let endingSoonBadgeCount = 0;
+
+function sessionGetValue(key: string): Promise<unknown> {
+  return new Promise((resolve, reject) => chrome.storage.session.get(key, (value) => {
+    const error = chrome.runtime.lastError;
+    if (error) reject(new Error(error.message)); else resolve(value[key]);
+  }));
+}
+
+function sessionSetValue(key: string, value: AuctionPendingReservationV1): Promise<void> {
+  return new Promise((resolve, reject) => chrome.storage.session.set({ [key]: value }, () => {
+    const error = chrome.runtime.lastError;
+    if (error) reject(new Error(error.message)); else resolve();
+  }));
+}
+
+function sessionRemoveValue(key: string): Promise<void> {
+  return new Promise((resolve, reject) => chrome.storage.session.remove(key, () => {
+    const error = chrome.runtime.lastError;
+    if (error) reject(new Error(error.message)); else resolve();
+  }));
+}
+
+function createTab(properties: chrome.tabs.CreateProperties): Promise<chrome.tabs.Tab> {
+  return new Promise((resolve, reject) => chrome.tabs.create(properties, (tab) => {
+    const error = chrome.runtime.lastError;
+    if (error) reject(new Error(error.message)); else resolve(tab);
+  }));
+}
+
+function getTab(tabId: number): Promise<chrome.tabs.Tab | null> {
+  return new Promise((resolve) => chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError) resolve(null); else resolve(tab);
+  }));
+}
+
+function removeTab(tabId: number): Promise<void> {
+  return new Promise((resolve, reject) => chrome.tabs.remove(tabId, () => {
+    const error = chrome.runtime.lastError;
+    if (error) reject(new Error(error.message)); else resolve();
+  }));
+}
+
+const auctionPendingTabs = new AuctionPendingTabController(
+  {
+    create: (properties) => createTab(properties),
+    get: getTab,
+    remove: removeTab,
+  },
+  { get: sessionGetValue, set: sessionSetValue, remove: sessionRemoveValue },
+);
 
 type RetailLookupStatus = 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'parse_error' | 'low_confidence';
 interface RetailLookupResult {
@@ -410,6 +466,39 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       await applyToolbarPresentation(tabId);
       return { shown: update.active, kind: update.kind };
     }
+    case 'flippah:auction.prepare': {
+      ensureHiBidSender(sender);
+      const extensionBase = chrome.runtime.getURL('');
+      if (!extensionBase.startsWith('chrome-extension://')) throw new Error('Paired auction handoff currently requires the installed Chrome extension');
+      const senderUrl = sender.url || sender.tab?.url || '';
+      const eventItemId = String((message.payload as any)?.eventItemId || '');
+      const nonce = String((message.payload as any)?.nonce || '');
+      const initiatedAt = String((message.payload as any)?.initiatedAt || '');
+      if (eventItemIdFromHibidLotUrl(senderUrl) !== eventItemId) throw new Error('The HiBid page changed before the lot handoff started');
+      const state = await localGetKeys([FLIPPAH_AUCTION_RELAY_TOKEN_KEY, FLIPPAH_AUCTION_RELAY_PORT_KEY, FLIPPAH_AUCTION_PWA_PORT_KEY]);
+      normalizeAuctionRelayToken(state[FLIPPAH_AUCTION_RELAY_TOKEN_KEY]);
+      auctionRelayUrl(state[FLIPPAH_AUCTION_RELAY_PORT_KEY]);
+      const reservation = await auctionPendingTabs.prepare(
+        { sourceTabId: sender.tab!.id!, sourceEventItemId: eventItemId, nonce, initiatedAt },
+        state[FLIPPAH_AUCTION_PWA_PORT_KEY],
+      );
+      void chrome.alarms.create(`${FLIPPAH_AUCTION_PENDING_ALARM_PREFIX}${reservation.nonce}`, {
+        when: Date.parse(reservation.created_at) + FLIPPAH_AUCTION_PENDING_TTL_MS,
+      });
+      return { prepared: true, created_at: reservation.created_at };
+    }
+    case 'flippah:auction.cancel': {
+      ensureHiBidSender(sender);
+      const owner = {
+        sourceTabId: sender.tab!.id!,
+        sourceEventItemId: String((message.payload as any)?.eventItemId || ''),
+        nonce: String((message.payload as any)?.nonce || ''),
+        initiatedAt: String((message.payload as any)?.initiatedAt || ''),
+      };
+      const cancelled = await auctionPendingTabs.cancel(owner);
+      await chrome.alarms.clear(`${FLIPPAH_AUCTION_PENDING_ALARM_PREFIX}${owner.nonce}`);
+      return cancelled;
+    }
     case 'flippah:auction.handoff': {
       ensureHiBidSender(sender);
       const extensionBase = chrome.runtime.getURL('');
@@ -418,15 +507,31 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       validateHibidLotHandoffV1(manifest);
       const senderUrl = sender.url || sender.tab?.url || '';
       if (eventItemIdFromHibidLotUrl(senderUrl) !== manifest.source.provider_event_item_id) throw new Error('The HiBid page changed before the lot handoff was accepted');
+      const owner = {
+        sourceTabId: sender.tab!.id!,
+        sourceEventItemId: String((message.payload as any)?.eventItemId || ''),
+        nonce: String((message.payload as any)?.nonce || ''),
+        initiatedAt: String((message.payload as any)?.initiatedAt || ''),
+      };
+      if (owner.sourceEventItemId !== manifest.source.provider_event_item_id) throw new Error('The prepared lot does not match the hydrated lot');
+      if (owner.initiatedAt !== manifest.initiated_at) throw new Error('The prepared handoff timestamp does not match the hydrated lot');
+      await auctionPendingTabs.assertReady(owner);
       const state = await localGetKeys([FLIPPAH_AUCTION_RELAY_TOKEN_KEY, FLIPPAH_AUCTION_RELAY_PORT_KEY, FLIPPAH_AUCTION_PWA_PORT_KEY]);
-      const accepted = await postHibidLotToAuctionRelay(
-        manifest,
-        state[FLIPPAH_AUCTION_RELAY_TOKEN_KEY],
-        state[FLIPPAH_AUCTION_RELAY_PORT_KEY],
-        state[FLIPPAH_AUCTION_PWA_PORT_KEY],
-      );
-      await chrome.tabs.create({ url: accepted.lot_url, active: true });
-      return accepted;
+      try {
+        const accepted = await postHibidLotToAuctionRelay(
+          manifest,
+          state[FLIPPAH_AUCTION_RELAY_TOKEN_KEY],
+          state[FLIPPAH_AUCTION_RELAY_PORT_KEY],
+          state[FLIPPAH_AUCTION_PWA_PORT_KEY],
+        );
+        const openerState = await auctionPendingTabs.complete(owner, accepted.lot_url);
+        await chrome.alarms.clear(`${FLIPPAH_AUCTION_PENDING_ALARM_PREFIX}${owner.nonce}`);
+        return { ...accepted, opener_state: openerState };
+      } catch (error) {
+        await auctionPendingTabs.cancel(owner).catch(() => undefined);
+        await chrome.alarms.clear(`${FLIPPAH_AUCTION_PENDING_ALARM_PREFIX}${owner.nonce}`);
+        throw error;
+      }
     }
     case 'flippah:job.put': {
       ensureHiBidSender(sender);
@@ -513,6 +618,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === DEV_RELOAD_ALARM) {
     void unpackedAutoReload.check();
+  } else if (alarm.name.startsWith(FLIPPAH_AUCTION_PENDING_ALARM_PREFIX)) {
+    const nonce = alarm.name.slice(FLIPPAH_AUCTION_PENDING_ALARM_PREFIX.length);
+    void auctionPendingTabs.expire(nonce);
   }
 });
 void pruneJobs(20);
