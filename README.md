@@ -9,6 +9,19 @@ The extension is built from one TypeScript source tree into separate Chrome and
 Waterfox packages. HiBid scraping is available from the toolbar popup; the
 in-page calculator remains limited to individual lot pages.
 
+## Browser-extension boundary
+
+This repository owns HiBid capture and the paired local Flippah lot handoff. It
+does not request eBay or Seller Hub host permissions, inject scripts on eBay, or
+ship the authenticated Product Research parser. User-directed eBay Sold links
+remain ordinary research links.
+
+Sold-evidence query correlation, rendered Sold/Completed proof, and Product
+Research parsing belong to the separate `apps/ebay-relay-extension` in the
+[Flippah repository](https://github.com/AshbyCollado/Flippah/issues/84). The
+generated Chrome and Waterfox packages enforce this split with a repository
+boundary regression test.
+
 ## Repository layout
 
 - `src/` - maintainable extension source
