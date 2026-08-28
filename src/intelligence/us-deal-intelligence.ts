@@ -557,6 +557,31 @@ function criticalMissingDiscriminators(missing: string[]): string[] {
   return missing.filter((value) => /^(?:packageCounts|volumes):/.test(value));
 }
 
+function collapseRepeatedQueryTokens(tokens: string[]): string[] {
+  for (let blockLength = 3; blockLength <= Math.floor(tokens.length / 2); blockLength += 1) {
+    if (tokens.length % blockLength !== 0) continue;
+    const repeated = tokens.every((token, index) => token === tokens[index % blockLength]);
+    if (repeated) return tokens.slice(0, blockLength);
+  }
+  return tokens;
+}
+
+const DETACHED_SUFFIX_GUARDS = new Set(['series', 'model', 'size', 'type', 'class', 'grade', 'gen', 'generation', 'lot']);
+const GENERIC_RESEARCH_TOKENS = new Set(['lot', 'item', 'auction', 's']);
+
+function repairDetachedPluralSuffixes(tokens: string[]): string[] {
+  const repaired: string[] = [];
+  for (const token of tokens) {
+    const previous = repaired.at(-1) || '';
+    if (token === 's' && /^[a-z]{3,}$/.test(previous) && !DETACHED_SUFFIX_GUARDS.has(previous)) {
+      repaired[repaired.length - 1] = `${previous}s`;
+    } else {
+      repaired.push(token);
+    }
+  }
+  return repaired;
+}
+
 export function buildProductResearchQuery(title: string | null | undefined): string {
   const original = normalise(title).replace(/\s+/g, ' ').trim();
   if (!original) return '';
@@ -565,7 +590,7 @@ export function buildProductResearchQuery(title: string | null | undefined): str
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/^\s*lot\s*#?\s*[\w-]+\s*[-:|]\s*/i, ' ')
+    .replace(/^\s*lot\s*#?\s*:?\s*[\w.-]+\s*[-:|]\s*/i, ' ')
     .replace(/[()[\]{}]/g, ' ')
     .replace(/\b(?:lot|pair|set|group)\s+of\s+\d+\b/gi, ' ')
     .replace(/\bx\s*\d+\b/gi, ' ')
@@ -574,16 +599,17 @@ export function buildProductResearchQuery(title: string | null | undefined): str
     .replace(/^\s*(?:av|inv(?:entory)?|sku)\s*[-:|]\s*/i, ' ')
     .replace(/[^a-z0-9.+-]+/g, ' ');
 
-  const tokens = query
+  const tokens = collapseRepeatedQueryTokens(repairDetachedPluralSuffixes(query
     .split(/\s+/)
     .map((token) => token.replace(/^[.+-]+|[.-]+$/g, ''))
-    .filter((token) => token && token !== 'x' && !RESEARCH_QUERY_NOISE.has(token));
+    .filter((token) => token && token !== 'x' && !RESEARCH_QUERY_NOISE.has(token))));
   query = tokens.join(' ');
 
   if (query.length > 120) {
     const shortened = query.slice(0, 121).replace(/\s+\S*$/, '').trim();
     query = shortened || query.slice(0, 120).trim();
   }
+  if (!tokens.some((token) => !GENERIC_RESEARCH_TOKENS.has(token))) return '';
   return tokens.length >= 2 ? query : original.slice(0, 120);
 }
 

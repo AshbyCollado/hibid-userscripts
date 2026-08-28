@@ -196,3 +196,33 @@ so every catalog is re-evaluated under the corrected parser.
   missing-parts or unable-to-test evidence through their label and tooltip.
 - The toolbar icon shows a tab-scoped activity badge while Amazon research or
   a catalog scrape is running, then restores the ending-soon watch count.
+
+## v0.4.4 popup-only book analysis
+
+- Removes the book-analysis card from HiBid's lot page so Flippah does not add
+  a large control to the auction content.
+- Individual lot pages expose the same exact-photo handoff in a dedicated
+  `Books` section under the toolbar popup's `Scraper` tab.
+- Exact GraphQL photo reconciliation, challenge detection, local pairing, and
+  route-drift checks remain unchanged.
+
+## v0.4.5 repeated search-query repair
+
+- Collapses complete product identities that HiBid supplies twice in one
+  title before building Amazon or eBay search URLs.
+- Applies the same cleanup to user-saved query overrides and the preserved
+  legacy lot-panel query builder.
+
+## v0.4.6 single catalog cost display
+
+- Removes the original blue `True cost` chip from catalog titles.
+- Keeps the bottom `All-in` amount as the only catalog cost figure and removes
+  the obsolete catalog-chip setting.
+
+## v0.4.7 lot-page query recovery
+
+- Uses the canonical lot URL when HiBid briefly renders a placeholder heading
+  such as `Lot # : S`, preventing saved searches such as `lot s`.
+- Repairs detached plural suffixes such as `monitor s` while preserving real
+  model names such as `Xbox Series S`.
+- Rejects generic saved query overrides and restores the actual lot identity.

@@ -12,7 +12,7 @@ type SettingsState = {
 
 const defaults: SettingsState = {
   stateCode: null, taxPctOverride: null, taxOnPremium: true,
-  ebayFeePct: 13.25, ebayFeeFixedCents: 30, catalogChips: true,
+  ebayFeePct: 13.25, ebayFeeFixedCents: 30, catalogChips: false,
   licenseKey: null, nativeWatchSync: false, taxExempt: false
 };
 
@@ -44,7 +44,7 @@ function normalize(value: unknown): SettingsState {
     taxOnPremium: typeof source.taxOnPremium === 'boolean' ? source.taxOnPremium : defaults.taxOnPremium,
     ebayFeePct: finite(source.ebayFeePct) ?? defaults.ebayFeePct,
     ebayFeeFixedCents: finite(source.ebayFeeFixedCents) ?? defaults.ebayFeeFixedCents,
-    catalogChips: typeof source.catalogChips === 'boolean' ? source.catalogChips : defaults.catalogChips,
+    catalogChips: false,
     licenseKey: typeof source.licenseKey === 'string' ? source.licenseKey : defaults.licenseKey,
     nativeWatchSync: typeof source.nativeWatchSync === 'boolean' ? source.nativeWatchSync : defaults.nativeWatchSync,
     taxExempt: typeof source.taxExempt === 'boolean' ? source.taxExempt : defaults.taxExempt

@@ -79,3 +79,26 @@ test('generated HiBid runtimes exclude the dedicated Product Research parser', a
     }
   }
 });
+
+test('generated packages load one modern runtime containing the visible lot-page action', async () => {
+  for (const target of ['chrome', 'waterfox']) {
+    const manifest = JSON.parse(
+      await readFile(`dist/${target}/manifest.json`, 'utf8'),
+    ) as Manifest;
+    const contentScripts = (manifest.content_scripts ?? []).flatMap(
+      (entry) => entry.js ?? [],
+    );
+    const modernRuntime = await readFile(`dist/${target}/content.js`, 'utf8');
+    const legacyRuntime = await readFile(`dist/${target}/legacy-content.js`, 'utf8');
+
+    assert.equal(
+      contentScripts.filter((scriptPath) => scriptPath === 'content.js').length,
+      1,
+      `${target} must load the modern content runtime exactly once`,
+    );
+    assert.match(modernRuntime, /Analyze books in Flippah/);
+    assert.match(modernRuntime, /flippah-auction-handoff/);
+    assert.doesNotMatch(legacyRuntime, /Analyze books in Flippah/);
+    assert.doesNotMatch(legacyRuntime, /flippah-auction-handoff/);
+  }
+});

@@ -524,3 +524,38 @@ ignored by Git.
 - The browser-action badge shows a blue/green activity spinner while the active
   tab is scraping or researching prices. Scraping takes precedence, activity is
   tab-scoped, and the existing ending-soon count returns when work finishes.
+
+## v0.4.4 book handoff placement
+
+- Book-photo analysis is a toolbar workflow, not HiBid page chrome. Never mount
+  `Analyze books` controls into the auction DOM.
+- On an individual `/lot/*` route, the `Scraper` tab shows a separate `Books`
+  section that triggers `flippah:auction.handoff.start` in the top content
+  script.
+- The content controller still performs challenge detection, exact-item
+  GraphQL hydration, full physical-photo reconciliation, route-drift checks,
+  and the paired local relay handoff.
+
+## v0.4.5 repeated query identities
+
+- HiBid can expose a product identity twice back-to-back in the title/lead
+  input. Search-query normalization must collapse a repeated block of at least
+  three tokens before Amazon/eBay URL construction.
+- Modern annotations, saved query overrides, and the preserved legacy lot
+  panel use the same behavior. Do not broadly deduplicate individual words;
+  legitimate names such as `New York New York` must remain intact.
+
+## v0.4.6 catalog cost ownership
+
+- The preserved legacy bundle must not mount `.lotlens-catalog-chip` or show a
+  blue `True cost` amount beside a lot title.
+- Catalog tiles have one actionable cost display: the modern `All-in` amount
+  beneath HiBid's next-bid control. The lot-page calculator remains available.
+
+## v0.4.7 lot-page query identity
+
+- HiBid lot headings are transient during Angular rendering. A partial heading
+  such as `Lot # : S` is not a product identity; use the canonical `/lot/:id/:slug`
+  fallback until the structured Lead or complete heading is available.
+- Generic overrides such as `lot s` must be ignored. Detached plural suffixes
+  may be repaired, but protect real variants such as `Series S` and `Model S`.

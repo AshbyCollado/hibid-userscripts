@@ -111,6 +111,16 @@ test('lot detail rejects consent CSS and auction-level descriptions', () => {
   assert.ok(!Object.values(record.descriptionFields as Record<string, string>).some((value) => /whole auction|privacy framework/i.test(value)));
 });
 
+test('lot detail falls back to the canonical URL slug while HiBid renders a partial heading', () => {
+  const dom = new JSDOM('<h1>Lot # : S</h1>', {
+    url: 'https://hibid.com/lot/318082473/covidien-endo-clip-iii-auto-suture'
+  });
+  const record = extractHibidLotDetail(dom.window.document, dom.window.location.href)!;
+  assert.equal(record.lot, 'S');
+  assert.equal(record.title, 'covidien endo clip iii auto suture');
+  assert.equal(record.lead, 'covidien endo clip iii auto suture');
+});
+
 test('LLM brief carries complete-only audit and mandatory resale rules', () => {
   const url = 'https://hibid.com/catalog/765226/example';
   const route = resolveHiBidRoute(url);

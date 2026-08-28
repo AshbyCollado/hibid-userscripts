@@ -10,6 +10,7 @@ import { scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js
 import { DealIntelligenceController } from './deal-intelligence.js';
 import { installHibidImagePreview } from './image-preview.js';
 import { installHibidAuctionHandoffAction } from './auction-handoff-action.js';
+import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
 import { isAnalysisActivityPhase, isScrapeActivityPhase, type ToolbarActivityUpdate } from '../core/activity.js';
 import { runHibidAuctionHandoff } from './auction-handoff-flow.js';
 
@@ -43,12 +44,29 @@ const dealIntelligence = new DealIntelligenceController(() => {
   total: summary.total,
 }));
 const imagePreview = installHibidImagePreview(document, window, false);
-const auctionHandoff = installHibidAuctionHandoffAction(document, window, (onSending) => runHibidAuctionHandoff(
+let auctionHandoffInFlight: Promise<AuctionRelayAcceptedV1> | null = null;
+
+function startAuctionHandoff(onSending: (pictureCount: number) => void = () => undefined): Promise<AuctionRelayAcceptedV1> {
+  if (auctionHandoffInFlight) return auctionHandoffInFlight;
+  const operation = runHibidAuctionHandoff(
+    document,
+    transport,
+    { send: runtimeMessage, nonce: () => crypto.randomUUID(), currentUrl: () => location.href },
+    onSending,
+  );
+  auctionHandoffInFlight = operation;
+  operation.then(
+    () => { if (auctionHandoffInFlight === operation) auctionHandoffInFlight = null; },
+    () => { if (auctionHandoffInFlight === operation) auctionHandoffInFlight = null; },
+  );
+  return operation;
+}
+
+const auctionHandoff = installHibidAuctionHandoffAction(
   document,
-  transport,
-  { send: runtimeMessage, nonce: () => crypto.randomUUID(), currentUrl: () => location.href },
-  onSending,
-));
+  window,
+  (onSending) => startAuctionHandoff(onSending),
+);
 
 void getSyncStorage()
   .then((value) => imagePreview.setEnabled(normalizeSettings(value).fullSizeImageHover))
@@ -338,6 +356,13 @@ async function handleMessage(message: MessageEnvelope): Promise<unknown> {
   if (message.type === 'flippah:analysis.clear-cache') {
     await dealIntelligence.clearCache();
     return dealIntelligence.summary();
+  }
+  if (message.type === 'flippah:auction.handoff.start') {
+    const context = pageContext();
+    if (!context.route.supported || context.route.kind !== 'lot') {
+      throw new Error('Book analysis is available only on an individual HiBid lot');
+    }
+    return startAuctionHandoff();
   }
   throw new Error('Unknown page command');
 }

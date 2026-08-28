@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import {
@@ -313,6 +314,8 @@ test('lot-page action remounts after a HiBid redraw and resets between lot route
   const second = dom.window.document.querySelector('#flippah-auction-handoff')!;
   assert.ok(second);
   assert.notEqual(second, first);
+  action.update();
+  assert.equal(dom.window.document.querySelectorAll('#flippah-auction-handoff').length, 1);
   dom.window.history.pushState({}, '', '/lot/317135307/books');
   action.update();
   const third = dom.window.document.querySelector('#flippah-auction-handoff')!;
@@ -351,4 +354,15 @@ test('lot-page action reports a failed reconciliation as an assertive status', a
   assert.equal(action.phase(), 'failure');
   assert.match(status.textContent || '', /did not reconcile/i);
   assert.equal(status.getAttribute('aria-live'), 'assertive');
+});
+
+test('book analysis stays visible on the lot page while the toolbar remains an additional route', () => {
+  const popup = readFileSync('src/popup/index.ts', 'utf8');
+  const content = readFileSync('src/content/index.ts', 'utf8');
+  assert.match(popup, /class="book-tools"/);
+  assert.match(popup, /id="analyze-books"/);
+  assert.match(popup, /context\.route\.kind === 'lot'/);
+  assert.match(content, /flippah:auction\.handoff\.start/);
+  assert.match(content, /installHibidAuctionHandoffAction/);
+  assert.equal(existsSync('src/content/auction-handoff-action.ts'), true);
 });
