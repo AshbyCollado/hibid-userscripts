@@ -62,11 +62,19 @@ function startAuctionHandoff(onSending: (pictureCount: number) => void = () => u
   return operation;
 }
 
-const auctionHandoff = installHibidAuctionHandoffAction(
-  document,
-  window,
-  (onSending) => startAuctionHandoff(onSending),
-);
+let auctionHandoff: ReturnType<typeof installHibidAuctionHandoffAction>;
+try {
+  auctionHandoff = installHibidAuctionHandoffAction(
+    document,
+    window,
+    (onSending) => startAuctionHandoff(onSending),
+  );
+} catch (error) {
+  document.documentElement.dataset.flippahAuctionHandoffError = error instanceof Error
+    ? error.message.slice(0, 160)
+    : 'unknown initialization failure';
+  throw error;
+}
 
 void getSyncStorage()
   .then((value) => imagePreview.setEnabled(normalizeSettings(value).fullSizeImageHover))
