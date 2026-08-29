@@ -53,6 +53,36 @@ test('hydration cannot overwrite a visible realized price with zero', () => {
   assert.equal(mergeHibidVisibleWithHydrated(visible, hydrated).currentBid, 365);
 });
 
+test('GraphQL minBid is not mislabeled as the live next bid', () => {
+  const route = resolveHiBidRoute('https://hibid.com/catalog/771616/example');
+  const record = normalizeHibidLot({
+    eventItemId: 318974846,
+    lotNumber: '69',
+    lead: 'Amazon Basics Leak-Proof Pup Potty Pads 22x22',
+    lotState: { highBid: 6, minBid: 22, status: 'OPEN' },
+  }, { route, sourceUrl: 'https://hibid.com/catalog/771616/example' });
+  assert.equal(record?.currentBid, 6);
+  assert.equal(record?.nextBid, null);
+  assert.equal(record?.minimumBid, 22);
+});
+
+test('visible bid control wins when hydration carries a different minimum value', () => {
+  const visible = {
+    id: '318974846', currentBid: 6, nextBid: 7, bidCount: 2,
+    status: 'Winning', timeLeft: '1m 1s', rawText: 'High Bid: 6.00 USD 2 Bids Bid 7.00 USD',
+  } as any;
+  const hydrated = {
+    id: '318974846', currentBid: 6, nextBid: 22, minimumBid: 22, bidCount: 1,
+    status: 'OPEN', timeLeft: '2m', rawText: '69 | Amazon Basics pads | OPEN',
+  } as any;
+  const merged = mergeHibidVisibleWithHydrated(visible, hydrated);
+  assert.equal(merged.currentBid, 6);
+  assert.equal(merged.nextBid, 7);
+  assert.equal(merged.bidCount, 2);
+  assert.equal(merged.status, 'Winning');
+  assert.equal(merged.timeLeft, '1m 1s');
+});
+
 function lot(id: number) {
   return {
     id,

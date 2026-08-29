@@ -4,7 +4,7 @@ import { calculateDealOutcome, normalizeDealOutcome, outcomeStorageKey, type Dea
 import { routeFingerprint } from '../core/route.js';
 import type { DealAnalysisSummary, HiBidLotRecord, HiBidRoute, HiBidTransport } from '../core/types.js';
 import { hydrateHibidLots, mergeHibidVisibleWithHydrated } from '../hibid/api.js';
-import { extractHiBidVisibleLots, extractHibidLotDetail } from '../hibid/dom.js';
+import { extractHiBidVisibleLots, extractHibidLotDetail, extractHibidTileEventItemId } from '../hibid/dom.js';
 import { runProviderQueue } from '../intelligence/provider-queue.js';
 import {
   auctionStateKey,
@@ -148,7 +148,7 @@ function safeExternalUrl(url: string): string {
 
 export function visibleLotIdSignature(root: ParentNode): string {
   return [...root.querySelectorAll<HTMLElement>('app-lot-tile[id^="lot-"]')]
-    .map((tile) => tile.id.slice(4))
+    .map(extractHibidTileEventItemId)
     .filter(Boolean)
     .sort()
     .join('|');
@@ -161,10 +161,7 @@ function elementForNode(node: Node | null): Element | null {
 }
 
 function lotIdForTile(tile: Element): string {
-  const dataId = tile.getAttribute('data-event-item-id')?.trim();
-  if (dataId) return dataId;
-  const id = tile.getAttribute('id')?.trim() || '';
-  return id.startsWith('lot-') ? id.slice(4) : '';
+  return extractHibidTileEventItemId(tile);
 }
 
 function addElementLotIds(element: Element, ids: Set<string>): void {
@@ -210,7 +207,8 @@ function researchLinks(query: string): { amazon: string; ebay: string; camel: st
 
 function tileFor(id: string): Element | null {
   const escaped = CSS.escape(id);
-  return document.querySelector(`#lot-${escaped}, [data-event-item-id="${escaped}"], .bid-status-border#lot-${escaped}`);
+  const match = document.querySelector(`#lot-${escaped}, [data-event-item-id="${escaped}"], .bid-status-border#lot-${escaped}, a[href*="/lot/${escaped}/"]`);
+  return match?.closest('app-lot-tile') || match;
 }
 
 function installPageStyles(): void {

@@ -259,3 +259,15 @@ so every catalog is re-evaluated under the corrected parser.
   account identity are never read for export.
 - Requires a direct sold-listing evidence ledger before any numeric resale or
   Confirmed Lead, with bounded query and comp stopping rules for large catalogs.
+
+## v0.4.11 live bid authority repair
+
+- Keeps HiBid's visible current bid, next-bid control, bid count, status, and
+  countdown authoritative when GraphQL enrichment adds descriptions and images.
+- Stops treating GraphQL `lotState.minBid` as the live next bid. That field can
+  represent a starting minimum or buyer-side value and previously produced
+  impossible all-in totals such as `$25.30` beside a visible `$7.00` bid.
+- Reads the native `.TileDisplayMinBid` amount directly. A singular count such
+  as `1 Bid 25s` can no longer turn the countdown into a fake `$25` hammer.
+- Uses the canonical event-item ID from the lot URL/status record instead of
+  recycled live-catalog slot IDs such as `lot-10`.

@@ -544,7 +544,12 @@ export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; so
   const currentBid = priceRealized !== null && priceRealized > 0
     ? priceRealized
     : (highBid ?? amount(state.price ?? lot.bidAmount));
-  const nextBid = amount(state.minBid ?? state.nextBid);
+  // HiBid's lotState.minBid is not the live amount displayed by the native
+  // "Bid ..." control. Depending on lot/account state it can be a starting
+  // minimum or a buyer-side value, so treating it as the next bid produces
+  // impossible all-in totals. Only accept an explicitly named next-bid field.
+  const nextBid = amount(state.nextBid ?? state.nextBidAmount ?? lot.nextBid);
+  const minimumBid = amount(state.minBid);
   const categoryRecords = [
     ...(Array.isArray(lot.category) ? lot.category : [lot.category]),
     ...(Array.isArray(lot.categories) ? lot.categories : [lot.categories])
@@ -577,6 +582,7 @@ export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; so
     categories: [...new Set(categories)],
     currentBid,
     nextBid,
+    minimumBid,
     bidCount: amount(state.bidCount ?? lot.bidCount),
     status: text(state.status ?? state.productStatus ?? state.priceRealizedMessage),
     timeLeft: text(state.timeLeft ?? state.timeLeftTitle ?? lot.timeLeft),
@@ -599,11 +605,23 @@ export function mergeHibidVisibleWithHydrated(visible: HiBidLotRecord, hydrated:
     && (hydrated.currentBid === null || hydrated.currentBid === 0)
     && visible.currentBid !== null
     && visible.currentBid > 0;
+  const visibleCurrentBid = typeof visible.currentBid === 'number' && Number.isFinite(visible.currentBid)
+    ? visible.currentBid
+    : null;
+  const visibleNextBid = typeof visible.nextBid === 'number' && Number.isFinite(visible.nextBid) && visible.nextBid > 0
+    ? visible.nextBid
+    : null;
   return {
     ...visible,
     ...hydrated,
-    currentBid: keepVisibleRealized ? visible.currentBid : hydrated.currentBid,
-    status: hydrated.status || visible.status,
+    // Native tile controls are the authority for fast-changing bid state.
+    // Hydration enriches descriptions/images but must not replace those values
+    // with lotState.minBid or a slightly stale API snapshot.
+    currentBid: keepVisibleRealized || visibleCurrentBid !== null ? visibleCurrentBid : hydrated.currentBid,
+    nextBid: visibleNextBid ?? hydrated.nextBid,
+    bidCount: visible.bidCount ?? hydrated.bidCount,
+    status: visible.status || hydrated.status,
+    timeLeft: visible.timeLeft || hydrated.timeLeft,
   };
 }
 

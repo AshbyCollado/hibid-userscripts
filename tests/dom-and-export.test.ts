@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { resolveHiBidRoute, routeFingerprint } from '../src/core/route.js';
-import { extractAccountLots, extractHibidLotDetail, extractPastAuctionGroupState, extractPastAuctionGroups } from '../src/hibid/dom.js';
+import { extractAccountLots, extractHiBidVisibleLots, extractHibidLotDetail, extractPastAuctionGroupState, extractPastAuctionGroups } from '../src/hibid/dom.js';
 import { buildHibidExportPayload, buildHibidLlmBrief } from '../src/hibid/exports.js';
 import { DEFAULT_SETTINGS } from '../src/core/settings.js';
 import { chooseNewestJob, jobMatchesContextAndScope } from '../src/core/job-scope.js';
@@ -18,6 +18,24 @@ const accountHtml = `
   <div class="listing-box-title"><a href="/catalog/999999/b"><strong>Auction B</strong></a><a href="https://maps.google.com/maps?q=Edison,+NJ">Edison, NJ</a></div>
   <app-lot-tile id="lot-9"><a href="/lot/9/other">Lot 9 | Other</a></app-lot-tile>
 </section>`;
+
+test('live tile uses the canonical event ID and native bid control instead of the bid timer', () => {
+  const html = `<app-lot-tile id="lot-10">
+    <a href="/lot/318974879/aliseniors-walker-basket-for-folding-walker"><h2 class="lot-title">Lot 102 | Aliseniors Walker Basket for Folding Walker</h2></a>
+    <span class="lot-high-bid">High Bid: 5.00 USD</span>
+    <a class="lot-bid-history">1 Bid</a><div class="lot-time-left">4m 31s</div>
+    <div data-event-item-id="318974879"></div>
+    <button class="lot-bid-button-bid-amount"><span>Bid</span><span class="TileDisplayMinBid">6.00 USD</span><span class="flippah-allin" data-flippah-owned="true">All-in $4.60</span></button>
+  </app-lot-tile>`;
+  const dom = new JSDOM(html, { url: 'https://hibid.com/livecatalog/771616/example' });
+  const route = resolveHiBidRoute(dom.window.location.href);
+  const records = extractHiBidVisibleLots(dom.window.document, route, dom.window.location.href);
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.id, '318974879');
+  assert.equal(records[0]?.currentBid, 5);
+  assert.equal(records[0]?.nextBid, 6);
+  assert.doesNotMatch(records[0]?.rawText || '', /All-in/);
+});
 
 test('past auction groups stay isolated to the selected account auction', () => {
   const dom = new JSDOM(accountHtml, { url: 'https://hibid.com/account/pastwatchlist' });

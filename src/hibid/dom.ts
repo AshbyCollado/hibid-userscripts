@@ -106,6 +106,22 @@ function imageList(tile: Element): string[] {
   return [...tile.querySelectorAll('img')].map((image) => image.currentSrc || image.src || image.getAttribute('data-src') || '').filter(Boolean);
 }
 
+export function extractHibidTileEventItemId(tile: Element): string {
+  const href = tile.querySelector<HTMLAnchorElement>('a[href*="/lot/"]')?.getAttribute('href') || '';
+  const hrefId = href.match(/\/lot\/(\d+)/i)?.[1] || '';
+  const dataId = tile.getAttribute('data-event-item-id')
+    || tile.querySelector('[data-event-item-id]')?.getAttribute('data-event-item-id')
+    || '';
+  // Live catalogs recycle app-lot-tile IDs such as `lot-10` as viewport slots.
+  // The canonical link and bid-status event ID identify the physical lot.
+  return hrefId || dataId.trim() || (tile.id || '').replace(/^lot-/, '');
+}
+
+function nativeTileMoney(tile: Element, selector: string): number | null {
+  const node = tile.querySelector(selector);
+  return node ? money(clean(visibleText(node))) : null;
+}
+
 export function extractHiBidVisibleLots(root: Document | Element, route: HiBidRoute, locationLike: LocationLike | URL | string): HiBidLotRecord[] {
   const sourceUrl = toUrl(locationLike).href;
   const tiles = [...root.querySelectorAll('app-lot-tile[id^="lot-"], [data-event-item-id], .bid-status-border[id^="lot-"]')];
@@ -114,14 +130,18 @@ export function extractHiBidVisibleLots(root: Document | Element, route: HiBidRo
   for (const tile of tiles) {
     const link = tile.querySelector<HTMLAnchorElement>('a[href*="/lot/"]');
     const href = link ? new URL(link.getAttribute('href') || '', sourceUrl).href : '';
-    const id = (tile.id || '').replace(/^lot-/, '') || href.match(/\/lot\/(\d+)/i)?.[1] || tile.querySelector('[data-event-item-id]')?.getAttribute('data-event-item-id') || '';
+    const id = extractHibidTileEventItemId(tile);
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const raw = clean(visibleText(tile));
     const titleText = clean(tile.querySelector('h1,h2,h3,h4,.title,[class*="title"]')?.textContent) || clean(link?.textContent) || `Lot ${id}`;
     const lot = titleText.match(/\bLot\s*#?\s*([\w.-]+)/i)?.[1] || raw.match(/\bLot\s*#?\s*([\w.-]+)/i)?.[1] || id;
     const title = clean(titleText.replace(/^\s*Lot\s*#?\s*[\w.-]+\s*(?:\||-|:)\s*/i, '')) || titleText;
-    records.push({ source: 'hibid-dom', pageKind: route.kind, id, eventItemId: id, itemId: '', lot, title, lead: title, url: href || `${new URL(sourceUrl).origin}/lot/${id}`, image: imageList(tile)[0] || '', images: imageList(tile), description: '', descriptionHtml: '', category: '', categories: [], currentBid: money(raw.match(/(?:high|current)\s+bid[^\d$]*[\$]?\s*[\d,.]+/i)?.[0] || ''), nextBid: money(raw.match(/\bbid\s+[\$]?\s*[\d,.]+/i)?.[0] || ''), bidCount: Number(raw.match(/(\d+)\s+bids?/i)?.[1] || '') || null, status: /won/i.test(raw) ? 'Won' : (/outbid/i.test(raw) ? 'Outbid' : (/winning/i.test(raw) ? 'Winning' : '')), timeLeft: clean(raw.match(/\b(?:\d+d\s*)?(?:\d+h\s*)?\d+m\b/i)?.[0]), quantity: null, shippingOffered: /shipping/i.test(raw), auctionId: route.auctionId || '', auctionTitle: '', location: '', buyerPremium: '', rawText: raw });
+    const currentBid = nativeTileMoney(tile, '.lot-high-bid, .lot-current-bid')
+      ?? money(raw.match(/(?:high|current)\s+bid[^\d$]*[\$]?\s*[\d,.]+/i)?.[0] || '');
+    const nextBid = nativeTileMoney(tile, '.TileDisplayMinBid, .lot-bid-button-bid-amount [class*="MinBid"]')
+      ?? money(raw.match(/\bbid\s+[\$]?\s*[\d,.]+\s*(?:USD|CAD)\b/i)?.[0] || '');
+    records.push({ source: 'hibid-dom', pageKind: route.kind, id, eventItemId: id, itemId: '', lot, title, lead: title, url: href || `${new URL(sourceUrl).origin}/lot/${id}`, image: imageList(tile)[0] || '', images: imageList(tile), description: '', descriptionHtml: '', category: '', categories: [], currentBid, nextBid, bidCount: Number(raw.match(/(\d+)\s+bids?/i)?.[1] || '') || null, status: /won/i.test(raw) ? 'Won' : (/outbid/i.test(raw) ? 'Outbid' : (/winning/i.test(raw) ? 'Winning' : '')), timeLeft: clean(raw.match(/\b(?:\d+d\s*)?(?:\d+h\s*)?\d+m\b/i)?.[0]), quantity: null, shippingOffered: /shipping/i.test(raw), auctionId: route.auctionId || '', auctionTitle: '', location: '', buyerPremium: '', rawText: raw });
   }
   return records;
 }
