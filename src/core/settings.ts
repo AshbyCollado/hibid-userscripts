@@ -2,6 +2,18 @@ export interface ResearchSettings {
   originLabel: string;
   originZip: string;
   radiusMiles: number;
+  targetProfitUsd: number;
+  minimumRoiPct: number;
+  defaultBuyerPremiumPct: number | null;
+  soldCompTarget: number;
+  auctionPaymentMethod: 'unspecified' | 'card' | 'cash' | 'check';
+  outboundShippingUsd: number;
+  packingReserveUsd: number;
+  promotedListingPct: number;
+  returnReservePct: number;
+  bulkyItemProfitUsd: number | null;
+  resaleChannels: string;
+  transportDescription: string;
   customInstructions: string;
 }
 
@@ -23,9 +35,21 @@ export interface FlippahSettings extends ResearchSettings {
 }
 
 export const DEFAULT_RESEARCH_SETTINGS: ResearchSettings = {
-  originLabel: 'Edison, NJ',
-  originZip: '08817',
+  originLabel: '',
+  originZip: '',
   radiusMiles: 100,
+  targetProfitUsd: 50,
+  minimumRoiPct: 30,
+  defaultBuyerPremiumPct: null,
+  soldCompTarget: 5,
+  auctionPaymentMethod: 'unspecified',
+  outboundShippingUsd: 0,
+  packingReserveUsd: 0,
+  promotedListingPct: 0,
+  returnReservePct: 0,
+  bulkyItemProfitUsd: null,
+  resaleChannels: 'eBay',
+  transportDescription: '',
   customInstructions: ''
 };
 
@@ -77,6 +101,9 @@ export function normalizeSettings(value: unknown): FlippahSettings {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const stateCode = typeof source.stateCode === 'string' ? source.stateCode.trim().toUpperCase() : '';
   const taxPctOverride = finite(source.taxPctOverride);
+  const defaultBuyerPremiumPct = finite(source.defaultBuyerPremiumPct);
+  const bulkyItemProfitUsd = finite(source.bulkyItemProfitUsd);
+  const paymentMethod = typeof source.auctionPaymentMethod === 'string' ? source.auctionPaymentMethod.trim().toLowerCase() : '';
   return {
     stateCode: stateCode && Object.hasOwn(US_STATE_TAX_RATES, stateCode) ? stateCode : null,
     taxPctOverride: taxPctOverride === null ? null : clamp(taxPctOverride, 0, 20),
@@ -92,9 +119,23 @@ export function normalizeSettings(value: unknown): FlippahSettings {
     retailTargetPct: clamp(finite(source.retailTargetPct) ?? DEFAULT_SETTINGS.retailTargetPct, 1, 95),
     retailWarningPct: clamp(finite(source.retailWarningPct) ?? DEFAULT_SETTINGS.retailWarningPct, 1, 95),
     fullSizeImageHover: typeof source.fullSizeImageHover === 'boolean' ? source.fullSizeImageHover : true,
-    originLabel: typeof source.originLabel === 'string' && source.originLabel.trim() ? source.originLabel.trim().slice(0, 120) : DEFAULT_SETTINGS.originLabel,
-    originZip: typeof source.originZip === 'string' && source.originZip.trim() ? source.originZip.trim().slice(0, 20) : DEFAULT_SETTINGS.originZip,
+    originLabel: typeof source.originLabel === 'string' ? source.originLabel.trim().slice(0, 120) : DEFAULT_SETTINGS.originLabel,
+    originZip: typeof source.originZip === 'string' ? source.originZip.trim().slice(0, 20) : DEFAULT_SETTINGS.originZip,
     radiusMiles: Math.round(clamp(finite(source.radiusMiles) ?? DEFAULT_SETTINGS.radiusMiles, 1, 500)),
+    targetProfitUsd: clamp(finite(source.targetProfitUsd) ?? DEFAULT_SETTINGS.targetProfitUsd, 0, 100_000),
+    minimumRoiPct: clamp(finite(source.minimumRoiPct) ?? DEFAULT_SETTINGS.minimumRoiPct, 0, 1_000),
+    defaultBuyerPremiumPct: defaultBuyerPremiumPct === null ? null : clamp(defaultBuyerPremiumPct, 0, 50),
+    soldCompTarget: Math.round(clamp(finite(source.soldCompTarget) ?? DEFAULT_SETTINGS.soldCompTarget, 1, 10)),
+    auctionPaymentMethod: paymentMethod === 'card' || paymentMethod === 'cash' || paymentMethod === 'check' ? paymentMethod : 'unspecified',
+    outboundShippingUsd: clamp(finite(source.outboundShippingUsd) ?? DEFAULT_SETTINGS.outboundShippingUsd, 0, 10_000),
+    packingReserveUsd: clamp(finite(source.packingReserveUsd) ?? DEFAULT_SETTINGS.packingReserveUsd, 0, 10_000),
+    promotedListingPct: clamp(finite(source.promotedListingPct) ?? DEFAULT_SETTINGS.promotedListingPct, 0, 40),
+    returnReservePct: clamp(finite(source.returnReservePct) ?? DEFAULT_SETTINGS.returnReservePct, 0, 100),
+    bulkyItemProfitUsd: bulkyItemProfitUsd === null ? null : clamp(bulkyItemProfitUsd, 0, 100_000),
+    resaleChannels: typeof source.resaleChannels === 'string' && source.resaleChannels.trim()
+      ? source.resaleChannels.trim().slice(0, 240)
+      : DEFAULT_SETTINGS.resaleChannels,
+    transportDescription: typeof source.transportDescription === 'string' ? source.transportDescription.trim().slice(0, 600) : '',
     customInstructions: typeof source.customInstructions === 'string' ? source.customInstructions.trim().slice(0, 4000) : ''
   };
 }

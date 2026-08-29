@@ -130,14 +130,17 @@ test('LLM brief carries complete-only audit and mandatory resale rules', () => {
   const item: any = { id: '1', eventItemId: '1', title: 'Group of electronics', description: 'Model ABC', images: ['https://img/1.jpg'] };
   const payload = buildHibidExportPayload(context, job, [item], DEFAULT_SETTINGS);
   const brief = buildHibidLlmBrief(payload, DEFAULT_SETTINGS);
-  assert.match(brief, /generic group lot may not be marked Garbage/i);
-  assert.match(brief, /VERIFIED EBAY SOLD DATA/i);
-  assert.match(brief, /Ignore auctioneer estimates, stated retail\/MSRP, seller-provided values, and recommended bids/i);
+  assert.match(brief, /generic mixed lot may not be marked Garbage/i);
+  assert.match(brief, /EBAY SOLD EVIDENCE GATE/i);
+  assert.match(brief, /A Confirmed Lead without a matching Evidence row is invalid/i);
   assert.match(brief, /profit_if_won_now/);
-  assert.match(brief, /Mixed Lot \/ Component Review/);
-  assert.match(brief, /field-fidelity metrics/i);
+  assert.match(brief, /Mixed Lot - Component Review/);
+  assert.match(brief, /supplied fidelity metrics/i);
   assert.equal(payload.audit.complete, true);
   assert.equal(payload.audit.fidelity.metrics.description.percent, 100);
+  assert.equal(payload.researchQueue[0]?.mode, 'component-review');
+  assert.equal(payload.researchQueue[0]?.query, '');
+  assert.equal(payload.researchQueue[0]?.ebaySoldUrl, null);
 });
 
 test('private HiBid watch notes are exported only when enabled', () => {

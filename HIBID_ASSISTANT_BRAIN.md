@@ -16,8 +16,9 @@ implemented.
   diagnostics, watch refreshes, alarms, and notifications.
 - `src/popup/` opens on `Watchlist`; the right-side `Scraper` tab provides export controls and the preserved
   `Watchlist` tab.
-- `src/options/` stores calculator, research-origin, radius, custom-instruction,
-  and opt-in debug settings.
+- `src/options/` stores calculator, seller economics, research origin/radius,
+  transport capability, resale goals/channels, custom instructions, and opt-in
+  debug settings.
 - `src/hibid/api.ts` is the authoritative public catalog/search pipeline.
 - `src/hibid/dom.ts` contains dedicated lot and personalized account parsers.
 - `src/intelligence/` contains the US product, condition, Amazon matching,
@@ -46,6 +47,30 @@ their dedicated DOM scopes plus same-origin detail enrichment. They never fall
 back to broad page state. A lot description must come from the lot-information
 scope or a canonical lot-description element; privacy CSS and auction-level
 descriptions are not lot descriptions.
+
+## AI brief rules
+
+- `src/hibid/exports.ts` resolves one immutable `ResaleResearchProfile` from
+  the current sync settings at copy time. The prompt and JSON export must agree.
+- New installs have no location or vehicle assumption. Unconfigured tax,
+  premium, origin, or transport inputs remain `null`/UNVERIFIED and block a
+  Confirmed Lead or final maximum bid.
+- Record-specific auction premium data takes precedence. The configured premium
+  is a labeled fallback only; bidder/account identity is never exported.
+- At copy time the popup reads only the active lots' `flippahDealLotV1:*`
+  records, their `flippahDealAuctionV1:*` records, and the legacy `watchlist`
+  fallback. Relay credentials and unrelated local-storage values are outside
+  the read set and export contract.
+- `savedResearch` carries query/ASIN corrections, confirmed quantity,
+  unverified resale hypotheses, hard maximum-bid ceilings, and auction premium
+  overrides with field-level provenance. Saved resale is never sold proof.
+- Every ordinary lot receives a normalized Sold/Completed URL. Generic mixed
+  lots enter component-review mode instead of searching the bundle title.
+- A numeric resale estimate requires a direct visible sold-listing URL in the
+  Evidence sheet. Search pages, snippets, active listings, auctioneer estimates,
+  and Amazon retail values are not sold proof.
+- Large catalogs use parse-first triage, bounded row batches, at most two query
+  variants per item, and the configured sold-comp target as a stop rule.
 
 ## Browser release gate
 
@@ -559,3 +584,25 @@ ignored by Git.
   fallback until the structured Lead or complete heading is available.
 - Generic overrides such as `lot s` must be ignored. Detached plural suffixes
   may be repaired, but protect real variants such as `Series S` and `Model S`.
+
+## v0.4.8 paired lot handoff
+
+- The source branch restores the local lot handoff through a typed manifest and
+  keeps authenticated eBay Product Research in its separate relay boundary.
+- Handoff manifests retain source identity, full photo ordering, auction
+  economics, and explicit privacy exclusions.
+
+## v0.4.9 AI resale profile and evidence gate
+
+- Generated briefs are seller-configured. Do not reintroduce a personal ZIP,
+  city, vehicle, tax status, buyer premium, fee, profit, or ROI assumption.
+- Options are the source of truth for the immutable profile; lot-specific
+  auction terms override only their matching fallback.
+- User-saved auction premium corrections override parsed premium text. User
+  maximum bids cap, but never raise, a calculated recommendation. User-saved
+  resale estimates remain hypotheses until direct sold evidence verifies them.
+- `researchQueue` must preserve stable lot identity and use the shared product
+  query builder. Mixed lots intentionally have no generic bundle search URL.
+- The prompt must keep an evidence-first workflow, direct-sold-URL gate,
+  deterministic fee/tax formulas, bounded research stop rules, and coverage
+  reconciliation across every supplied source ID.

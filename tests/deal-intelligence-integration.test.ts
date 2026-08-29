@@ -9,7 +9,7 @@ import { shouldReloadExtension } from '../src/background/dev-auto-reload.js';
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.4.8');
+  assert.equal(chrome.version, '0.4.9');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
@@ -144,6 +144,11 @@ test('scraper keeps simple price-check controls below its export actions', async
   assert.ok(popup.indexOf('id="copy-llm"') < popup.indexOf('${analysisHtml}'));
   assert.doesNotMatch(popup, /analysis-counts|Amazon matches|US Deal Intelligence/);
   assert.match(options, /Automatically research Amazon\.com on supported HiBid pages/);
+  assert.match(options, /Target profit per item \(\$\)/);
+  assert.match(options, /Default buyer premium \(%\)/);
+  assert.match(options, /Sold comps requested per lead/);
+  assert.match(options, /Vehicle \/ pickup capability/);
+  assert.match(options, /Seller-paid shipping default \(\$\)/);
   assert.equal(DEFAULT_SETTINGS.amazonAutoLookup, true);
   assert.equal(normalizeSettings({}).retailTargetPct, 50);
   assert.equal(normalizeSettings({}).retailWarningPct, 25);

@@ -7,6 +7,12 @@ import { hydrateHibidLots, mergeHibidVisibleWithHydrated } from '../hibid/api.js
 import { extractHiBidVisibleLots, extractHibidLotDetail } from '../hibid/dom.js';
 import { runProviderQueue } from '../intelligence/provider-queue.js';
 import {
+  auctionStateKey,
+  lotStateKey as stateKey,
+  normalizeStoredLotState as normalizeStored,
+  type StoredLotState,
+} from '../intelligence/deal-storage.js';
+import {
   assessCondition, buildConditionPresentation, buildProductResearchQuery, buildRetailIndicatorTooltip, buildRetailSearchPresentation, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
   detectComparisonCurrency, detectMixedLot, extractProductIdentity, formatUsd,
   explainHibidStatus, extractLotQuantityFromTitle, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
@@ -14,21 +20,10 @@ import {
   type ProductIdentity, type RetailCandidateEvaluation, type RetailIndicator, type UsAllInResult
 } from '../intelligence/us-deal-intelligence.js';
 
-const LOT_STATE_PREFIX = 'flippahDealLotV1:';
-const AUCTION_STATE_PREFIX = 'flippahDealAuctionV1:';
 const STYLE_ID = 'flippah-deal-intelligence-style';
 const LOT_TILE_SELECTOR = 'app-lot-tile[id^="lot-"], [data-event-item-id], .bid-status-border[id^="lot-"]';
 const FLIPPAH_OWNED_SELECTOR = '[data-flippah-owned="true"]';
 const SUPPORTED = new Set(['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid']);
-
-interface StoredLotState {
-  queryOverride: string;
-  amazonOverrideAsin: string;
-  resaleEstimate: number | null;
-  confirmedQuantity: number | null;
-  maxBid: number | null;
-  updatedAt: number;
-}
 
 interface RetailLookupResult {
   status: 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'parse_error' | 'low_confidence';
@@ -79,21 +74,6 @@ function localSet(value: Record<string, unknown>): Promise<void> {
     const error = chrome.runtime.lastError;
     if (error) reject(new Error(error.message)); else resolve();
   }));
-}
-
-function stateKey(id: string): string { return `${LOT_STATE_PREFIX}${id}`; }
-function auctionStateKey(id: string): string { return `${AUCTION_STATE_PREFIX}${id || 'unknown'}`; }
-
-function normalizeStored(value: unknown): StoredLotState {
-  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const finite = (item: unknown) => Number.isFinite(Number(item)) ? Number(item) : null;
-  return {
-    queryOverride: typeof source.queryOverride === 'string' ? source.queryOverride.trim().slice(0, 180) : '',
-    amazonOverrideAsin: typeof source.amazonOverrideAsin === 'string' ? source.amazonOverrideAsin.trim().slice(0, 10) : '',
-    resaleEstimate: finite(source.resaleEstimate), confirmedQuantity: finite(source.confirmedQuantity),
-    maxBid: finite(source.maxBid),
-    updatedAt: finite(source.updatedAt) ?? 0
-  };
 }
 
 async function readStoredLots(ids: string[]): Promise<Map<string, StoredLotState>> {

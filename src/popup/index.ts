@@ -1,4 +1,4 @@
-import { activeTab, getSyncStorage, runtimeMessage, tabMessage } from '../core/browser.js';
+import { activeTab, getLocalStorage, getSyncStorage, runtimeMessage, tabMessage } from '../core/browser.js';
 import { buildCsv } from '../core/csv.js';
 import { getDiagnostic, getJobForFingerprint, getRecords } from '../core/job-db.js';
 import { normalizeSettings } from '../core/settings.js';
@@ -7,6 +7,7 @@ import { calculateDealOutcome, type DealOutcome } from '../core/outcomes.js';
 import type { PageContext, ScrapeJobSummary } from '../core/types.js';
 import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
 import { buildHibidExportPayload, buildHibidLlmBrief } from '../hibid/exports.js';
+import { buildHibidSavedResearchSnapshot, hibidSavedResearchStorageKeys } from '../intelligence/deal-storage.js';
 
 const app = document.querySelector<HTMLElement>('#app')!;
 let currentTabId: number | null = null;
@@ -254,7 +255,9 @@ async function copyCompleted(format: 'json' | 'llm'): Promise<void> {
   if (!context || !job || !jobMatchesSelection()) throw new Error('No completed scrape matches this page and selection');
   const settings = normalizeSettings(await getSyncStorage());
   const items = await getRecords(job.jobId);
-  const payload = buildHibidExportPayload(context, job, items, settings);
+  const savedStorage = await getLocalStorage(hibidSavedResearchStorageKeys(items));
+  const savedResearch = buildHibidSavedResearchSnapshot(items, savedStorage);
+  const payload = buildHibidExportPayload(context, job, items, settings, savedResearch);
   const text = format === 'json' ? JSON.stringify(payload, null, 2) : buildHibidLlmBrief(payload, settings);
   await copyText(text);
   toast = `Copied ${items.length} lot${items.length === 1 ? '' : 's'} · details ${payload.audit.fidelity.metrics.description.percent}% · photos ${payload.audit.fidelity.metrics.images.percent}%`;

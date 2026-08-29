@@ -9,6 +9,16 @@ The extension is built from one TypeScript source tree into separate Chrome and
 Waterfox packages. HiBid scraping is available from the toolbar popup; the
 in-page calculator remains limited to individual lot pages.
 
+Copied AI briefs use the seller's saved research profile rather than a bundled
+location or vehicle assumption. The profile includes tax treatment, buyer
+premium fallback, payment method, eBay fees and reserves, target profit, ROI,
+pickup radius, transport capability, resale channels, and sold-comp target.
+Each exported lot includes a normalized eBay Sold/Completed research URL.
+Saved lot query corrections, confirmed quantities, Amazon ASIN selections,
+resale hypotheses, maximum bids, and auction premium corrections join the
+export by stable HiBid ID with explicit provenance. A saved resale value is not
+sold evidence and cannot create a Confirmed Lead by itself.
+
 ## Browser-extension boundary
 
 This repository owns HiBid capture and the paired local Flippah lot handoff. It
@@ -226,3 +236,26 @@ so every catalog is re-evaluated under the corrected parser.
 - Repairs detached plural suffixes such as `monitor s` while preserving real
   model names such as `Xbox Series S`.
 - Rejects generic saved query overrides and restores the actual lot identity.
+
+## v0.4.8 paired lot handoff
+
+- Restores the authenticated local Flippah lot handoff while retaining the
+  extension boundary that keeps eBay Product Research outside this package.
+- Preserves exact HiBid source identity, full seller-photo ordering, auction
+  economics, and privacy filtering in the handoff manifest.
+
+## v0.4.9 seller-configured AI research brief
+
+- Removes Edison and CT200h assumptions from new-install defaults and generated
+  prompts. Blank location, tax, premium, or transport data remains explicitly
+  unconfigured instead of silently becoming a favorable assumption.
+- Adds clear Options fields for seller economics, profit/ROI goals, pickup
+  logistics, resale channels, and the desired sold-comp count.
+- Adds a normalized eBay Sold/Completed research queue for every searchable lot
+  and component-review mode for generic mixed lots.
+- Carries saved per-lot query corrections, confirmed quantities, ASIN choices,
+  resale hypotheses, maximum-bid ceilings, and per-auction premium corrections
+  into a separate provenance-labeled section. Extension tokens and bidder or
+  account identity are never read for export.
+- Requires a direct sold-listing evidence ledger before any numeric resale or
+  Confirmed Lead, with bounded query and comp stopping rules for large catalogs.

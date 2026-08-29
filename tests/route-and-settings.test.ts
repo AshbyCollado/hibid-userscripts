@@ -70,20 +70,35 @@ test('state portal context extracts only numeric portal children', () => {
 });
 
 test('settings preserve calculator keys and add durable research defaults', () => {
-  assert.equal(DEFAULT_SETTINGS.originZip, '08817');
+  assert.equal(DEFAULT_SETTINGS.originZip, '');
+  assert.equal(DEFAULT_SETTINGS.originLabel, '');
   assert.equal(DEFAULT_SETTINGS.fullSizeImageHover, true);
-  const settings = normalizeSettings({ taxExempt: true, taxOnPremium: false, originZip: '07008', radiusMiles: 50, customInstructions: 'Be strict.' });
+  const settings = normalizeSettings({
+    taxExempt: true, taxOnPremium: false, originZip: '07008', radiusMiles: 50,
+    targetProfitUsd: 73, minimumRoiPct: 44, defaultBuyerPremiumPct: 12,
+    soldCompTarget: 7, auctionPaymentMethod: 'cash', resaleChannels: 'eBay, local pickup',
+    transportDescription: 'Compact SUV; no stairs', customInstructions: 'Be strict.'
+  });
   assert.equal(settings.taxExempt, true);
   assert.equal(settings.taxOnPremium, false);
   assert.equal(settings.originZip, '07008');
   assert.equal(settings.radiusMiles, 50);
+  assert.equal(settings.targetProfitUsd, 73);
+  assert.equal(settings.minimumRoiPct, 44);
+  assert.equal(settings.defaultBuyerPremiumPct, 12);
+  assert.equal(settings.soldCompTarget, 7);
+  assert.equal(settings.auctionPaymentMethod, 'cash');
+  assert.equal(settings.resaleChannels, 'eBay, local pickup');
+  assert.equal(settings.transportDescription, 'Compact SUV; no stairs');
   assert.equal(settings.customInstructions, 'Be strict.');
   assert.equal(normalizeSettings({ fullSizeImageHover: false }).fullSizeImageHover, false);
 });
 
 test('blank nullable numeric settings remain unset instead of becoming zero', () => {
-  const settings = normalizeSettings({ taxPctOverride: null, ebayFeePct: '', radiusMiles: null });
+  const settings = normalizeSettings({ taxPctOverride: null, defaultBuyerPremiumPct: '', bulkyItemProfitUsd: '', ebayFeePct: '', radiusMiles: null });
   assert.equal(settings.taxPctOverride, null);
+  assert.equal(settings.defaultBuyerPremiumPct, null);
+  assert.equal(settings.bulkyItemProfitUsd, null);
   assert.equal(settings.ebayFeePct, DEFAULT_SETTINGS.ebayFeePct);
   assert.equal(settings.radiusMiles, DEFAULT_SETTINGS.radiusMiles);
 });
@@ -92,7 +107,11 @@ test('corrupt synced settings are bounded before they reach fee math or storage'
   const settings = normalizeSettings({
     stateCode: 'xx', taxPctOverride: -9, ebayFeePct: 900, ebayFeeFixedCents: -25,
     radiusMiles: 9999, retailTargetPct: 0, retailWarningPct: 120,
-    originLabel: 'x'.repeat(500), originZip: '9'.repeat(50), customInstructions: 'z'.repeat(10_000)
+    targetProfitUsd: -2, minimumRoiPct: 5000, defaultBuyerPremiumPct: 100,
+    soldCompTarget: 99, auctionPaymentMethod: 'crypto', outboundShippingUsd: 99_999,
+    packingReserveUsd: -5, promotedListingPct: 90, returnReservePct: 101, bulkyItemProfitUsd: 900_000,
+    originLabel: 'x'.repeat(500), originZip: '9'.repeat(50), resaleChannels: 'r'.repeat(500),
+    transportDescription: 'v'.repeat(1000), customInstructions: 'z'.repeat(10_000)
   });
   assert.equal(settings.stateCode, null);
   assert.equal(settings.taxPctOverride, 0);
@@ -101,8 +120,20 @@ test('corrupt synced settings are bounded before they reach fee math or storage'
   assert.equal(settings.radiusMiles, 500);
   assert.equal(settings.retailTargetPct, 1);
   assert.equal(settings.retailWarningPct, 95);
+  assert.equal(settings.targetProfitUsd, 0);
+  assert.equal(settings.minimumRoiPct, 1000);
+  assert.equal(settings.defaultBuyerPremiumPct, 50);
+  assert.equal(settings.soldCompTarget, 10);
+  assert.equal(settings.auctionPaymentMethod, 'unspecified');
+  assert.equal(settings.outboundShippingUsd, 10_000);
+  assert.equal(settings.packingReserveUsd, 0);
+  assert.equal(settings.promotedListingPct, 40);
+  assert.equal(settings.returnReservePct, 100);
+  assert.equal(settings.bulkyItemProfitUsd, 100_000);
   assert.equal(settings.originLabel.length, 120);
   assert.equal(settings.originZip.length, 20);
+  assert.equal(settings.resaleChannels.length, 240);
+  assert.equal(settings.transportDescription.length, 600);
   assert.equal(settings.customInstructions.length, 4000);
   assert.equal(normalizeSettings({ stateCode: 'nj' }).stateCode, 'NJ');
   assert.equal(normalizeSettings({ taxPctOverride: true }).taxPctOverride, null);
