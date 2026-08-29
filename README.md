@@ -6,8 +6,9 @@ from the working `v0.1.0` extension while adding exact, auditable catalog
 exports and automatic Amazon.com deal intelligence.
 
 The extension is built from one TypeScript source tree into separate Chrome and
-Waterfox packages. HiBid and AuctionNinja scraping are available from the toolbar popup; the
-in-page calculator remains limited to individual lot pages.
+Waterfox packages. HiBid and AuctionNinja scraping are available from the toolbar popup;
+individual HiBid lot pages also expose the compact, in-page `Analyze books in
+Flippah` action and the existing calculator.
 
 Copied AI briefs use the seller's saved research profile rather than a bundled
 location or vehicle assumption. The profile includes tax treatment, buyer
@@ -216,6 +217,9 @@ so every catalog is re-evaluated under the corrected parser.
 - Exact GraphQL photo reconciliation, challenge detection, local pairing, and
   route-drift checks remain unchanged.
 
+This was the v0.4.4 behavior. The compact in-page action was restored in
+v0.4.8 after its layout and status behavior were redesigned.
+
 ## v0.4.5 repeated search-query repair
 
 - Collapses complete product identities that HiBid supplies twice in one
@@ -243,6 +247,19 @@ so every catalog is re-evaluated under the corrected parser.
   extension boundary that keeps eBay Product Research outside this package.
 - Preserves exact HiBid source identity, full seller-photo ordering, auction
   economics, and privacy filtering in the handoff manifest.
+- The owner click immediately reserves the Flippah tab, hydrates the exact
+  `eventItemId`, and sends one schema-validated metadata manifest to the paired
+  loopback relay.
+- Preserves every reconciled physical GraphQL picture descriptor from 1 through
+  60, including lazily rendered photos beyond the visible DOM, without applying
+  Flippah's six-photo capture-session boundary at intake.
+- Binds the canonical source URL to the hydrated event-item ID; rejects
+  challenge pages, malformed nested records, and picture-count or fidelity drift.
+- Sends no image bytes, cookies, authorization headers, bidder identity, or
+  private notes. The local host owns allowlisted downloads, hashing, encrypted
+  storage, and linked six-photo processing sessions.
+- Installed Chrome smoke, six live-lot timing evidence, and release screenshots
+  remain mandatory release gates.
 
 ## v0.4.9 seller-configured AI research brief
 

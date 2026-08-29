@@ -21,6 +21,32 @@ Chrome and Waterfox packages.
 All runtime messages are discriminated records with a version, kind, request ID,
 and validated payload. Page-world messages are treated as untrusted input.
 
+## Auction-lot handoff boundary
+
+An individual HiBid lot page may initiate one owner-directed transfer to the
+paired local Flippah host. The content script mounts the accessible action and
+detects route drift or challenge pages. The background runtime hydrates the
+exact GraphQL `eventItemId`, constructs `HibidLotHandoffV1`, validates it, and
+posts it to the configured loopback relay with a separate pairing token.
+
+The manifest is metadata-only. It contains the source identity, timestamped
+private-use attestation, entered auction terms/economics, and one descriptor for
+each reconciled physical seller picture. The descriptor count must equal
+GraphQL `pictureCount`; the supported range is 1 through 60 inclusive. DOM
+image counts do not establish completeness, and the extension never truncates
+the list to the host's six-photo processing-session size. Repeated image URLs
+remain separate seller descriptors so the host can preserve provenance while
+suppressing duplicate image processing by content hash.
+
+The extension transfers no image bytes, cookies, marketplace authorization
+headers, bidder identity, private notes, or account tokens. Image retrieval is
+owned by the paired host: it allowlists HTTPS HiBid media sources, refuses
+off-allowlist redirects, validates MIME/decode/size, computes SHA-256, stores
+through the encrypted object store, and partitions the reconciled manifest into
+linked sessions of no more than six photos. Any picture-count, identity,
+fidelity, challenge, or nested-schema failure stops the handoff without partial
+acceptance.
+
 ## Scrape invariant
 
 For a public catalog or search, a normal export is available only when:

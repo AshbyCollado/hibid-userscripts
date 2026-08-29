@@ -62,30 +62,145 @@ function forbiddenManifestKey(value: unknown, path = ''): string | null {
   return null;
 }
 
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function validTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && !Number.isNaN(Date.parse(value));
+}
+
+function validNullableCents(value: unknown): boolean {
+  return value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 0);
+}
+
+function validNullablePositiveNumber(value: unknown): boolean {
+  return value === null || (typeof value === 'number' && Number.isFinite(value) && value > 0);
+}
+
+function validNullablePositiveInteger(value: unknown): boolean {
+  return value === null || (typeof value === 'number' && Number.isInteger(value) && value > 0);
+}
+
+function requireStringFields(value: Record<string, unknown>, keys: readonly string[], error: string): void {
+  if (keys.some((key) => typeof value[key] !== 'string')) throw new Error(error);
+}
+
+function canonicalEventItemId(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return false;
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric > 0 && String(numeric) === value;
+}
+
 export function validateHibidLotHandoffV1(value: unknown): asserts value is HibidLotHandoffV1 {
-  if (!value || typeof value !== 'object') throw new Error('Malformed HiBid lot handoff');
-  const manifest = value as Partial<HibidLotHandoffV1>;
+  const manifest = record(value);
+  if (!manifest) throw new Error('Malformed HiBid lot handoff');
   if (manifest.schema_version !== 1 || manifest.provider !== 'hibid') throw new Error('Unsupported HiBid lot handoff schema');
-  if (Number.isNaN(Date.parse(manifest.initiated_at || ''))) throw new Error('HiBid handoff has an invalid initiation timestamp');
-  if (!manifest.source || !/^\d+$/.test(manifest.source.provider_event_item_id || '')) throw new Error('HiBid handoff is missing its event-item ID');
-  if (Number.isNaN(Date.parse(manifest.source.observed_at))) throw new Error('HiBid handoff has an invalid observation timestamp');
-  if (manifest.rights_basis?.kind !== 'owner-authorized-private-use' || Number.isNaN(Date.parse(manifest.rights_basis.attested_at))) throw new Error('HiBid handoff is missing its timestamped private-use attestation');
-  const sourceUrl = new URL(manifest.source.source_url);
+  if (!validTimestamp(manifest.initiated_at)) throw new Error('HiBid handoff has an invalid initiation timestamp');
+
+  const source = record(manifest.source);
+  if (!source || !canonicalEventItemId(source.provider_event_item_id)) {
+    throw new Error('HiBid handoff is missing its event-item ID');
+  }
+  requireStringFields(
+    source,
+    ['provider_item_id', 'provider_auction_id', 'lot_number', 'source_url'],
+    'HiBid handoff has malformed source identity fields',
+  );
+  if (!validTimestamp(source.observed_at)) throw new Error('HiBid handoff has an invalid observation timestamp');
+  let sourceUrl: URL;
+  try {
+    sourceUrl = new URL(source.source_url as string);
+  } catch {
+    throw new Error('HiBid handoff source URL is not allowlisted');
+  }
   if (sourceUrl.protocol !== 'https:' || !/(^|\.)hibid\.com$/i.test(sourceUrl.hostname)) throw new Error('HiBid handoff source URL is not allowlisted');
+  let sourceEventItemId: string;
+  try {
+    sourceEventItemId = eventItemIdFromHibidLotUrl(sourceUrl);
+  } catch {
+    throw new Error('HiBid handoff source URL does not identify an exact lot');
+  }
+  if (sourceEventItemId !== source.provider_event_item_id) throw new Error('HiBid handoff source URL does not match its event-item ID');
+
+  const rightsBasis = record(manifest.rights_basis);
+  if (rightsBasis?.kind !== 'owner-authorized-private-use' || !validTimestamp(rightsBasis.attested_at)) {
+    throw new Error('HiBid handoff is missing its timestamped private-use attestation');
+  }
+
+  const lot = record(manifest.lot);
+  if (!lot) throw new Error('HiBid handoff has malformed lot economics');
+  requireStringFields(
+    lot,
+    ['title', 'description', 'category', 'currency', 'status', 'location', 'buyer_premium_raw', 'auction_terms', 'checkout_terms', 'preview_terms'],
+    'HiBid handoff has malformed lot economics',
+  );
+  if (!validNullableCents(lot.current_bid_cents) || !validNullableCents(lot.next_bid_cents)) {
+    throw new Error('HiBid handoff has malformed cent-denominated bid values');
+  }
+  if (!validNullablePositiveInteger(lot.bid_count) && lot.bid_count !== 0) throw new Error('HiBid handoff has a malformed bid count');
+  if (!validNullablePositiveNumber(lot.quantity)) throw new Error('HiBid handoff has a malformed lot quantity');
+  if (typeof lot.shipping_offered !== 'boolean') throw new Error('HiBid handoff has malformed shipping terms');
+  if (!Array.isArray(lot.buyer_premium_variants) || lot.buyer_premium_variants.length > 32) {
+    throw new Error('HiBid handoff has malformed buyer-premium variants');
+  }
+  const paymentMethods = new Set(['cash', 'check', 'card', 'credit', 'unknown']);
+  lot.buyer_premium_variants.forEach((candidate) => {
+    const variant = record(candidate);
+    if (
+      !variant
+      || typeof variant.label !== 'string'
+      || !Number.isInteger(variant.rate_basis_points)
+      || (variant.rate_basis_points as number) < 0
+      || (variant.rate_basis_points as number) > 4_000
+      || typeof variant.payment_method !== 'string'
+      || !paymentMethods.has(variant.payment_method)
+    ) throw new Error('HiBid handoff has a malformed buyer-premium variant');
+  });
+
   if (!Array.isArray(manifest.pictures) || manifest.pictures.length < 1 || manifest.pictures.length > HIBID_HANDOFF_MAX_PICTURES) throw new Error('HiBid handoff has an invalid physical picture count');
-  if (manifest.expected_picture_count !== manifest.pictures.length) throw new Error('HiBid handoff pictureCount does not reconcile');
-  if (!manifest.fidelity?.reconciled || manifest.fidelity.errors.length > 0) throw new Error('HiBid handoff fidelity is not reconciled');
+  if (!Number.isInteger(manifest.expected_picture_count) || manifest.expected_picture_count !== manifest.pictures.length) throw new Error('HiBid handoff pictureCount does not reconcile');
+  const fidelity = record(manifest.fidelity);
+  if (!fidelity) throw new Error('HiBid handoff fidelity is malformed');
+  if (fidelity.enumeration_source !== 'hibid-graphql-exact-item') throw new Error('HiBid handoff has an unsupported picture enumeration source');
+  if (fidelity.reconciled !== true || !Array.isArray(fidelity.errors) || fidelity.errors.some((error) => typeof error !== 'string') || fidelity.errors.length > 0) {
+    throw new Error('HiBid handoff fidelity is not reconciled');
+  }
   for (const key of ['expected_picture_count', 'observed_picture_count', 'descriptor_count'] as const) {
-    if (manifest.fidelity[key] !== manifest.pictures.length) throw new Error(`HiBid handoff ${key} does not reconcile`);
+    if (fidelity[key] !== manifest.pictures.length) throw new Error(`HiBid handoff ${key} does not reconcile`);
+  }
+  if (!Number.isInteger(fidelity.duplicate_url_count) || (fidelity.duplicate_url_count as number) < 0 || (fidelity.duplicate_url_count as number) >= manifest.pictures.length) {
+    throw new Error('HiBid handoff has a malformed duplicate-image count');
   }
   const keys = new Set<string>();
-  manifest.pictures.forEach((picture, index) => {
+  manifest.pictures.forEach((candidate, index) => {
+    const picture = record(candidate);
+    if (!picture) throw new Error(`HiBid picture ${index + 1} descriptor is malformed`);
     if (picture.seller_ordinal !== index + 1) throw new Error('HiBid handoff seller ordinals are not contiguous');
-    if (!picture.source_picture_key || keys.has(picture.source_picture_key)) throw new Error('HiBid handoff picture keys are not unique');
-    keys.add(picture.source_picture_key);
-    if (!picture.full_size_url || !allowedPictureUrl(picture.full_size_url)) throw new Error(`HiBid picture ${picture.seller_ordinal} has no allowlisted full-size image URL`);
-    if (picture.fidelity.usable_url_count < 1) throw new Error(`HiBid picture ${picture.seller_ordinal} has no usable image URL`);
-    for (const url of [picture.full_size_url, picture.hd_thumbnail_url, picture.thumbnail_url].filter((item): item is string => Boolean(item))) {
+    requireStringFields(picture, ['source_picture_key', 'description', 'full_size_url'], `HiBid picture ${index + 1} descriptor is malformed`);
+    if (!picture.source_picture_key || keys.has(picture.source_picture_key as string)) throw new Error('HiBid handoff picture keys are not unique');
+    keys.add(picture.source_picture_key as string);
+    if (!validNullablePositiveInteger(picture.width) || !validNullablePositiveInteger(picture.height)) throw new Error(`HiBid picture ${picture.seller_ordinal} has malformed dimensions`);
+    if (picture.hd_thumbnail_url !== null && typeof picture.hd_thumbnail_url !== 'string') throw new Error(`HiBid picture ${picture.seller_ordinal} descriptor is malformed`);
+    if (picture.thumbnail_url !== null && typeof picture.thumbnail_url !== 'string') throw new Error(`HiBid picture ${picture.seller_ordinal} descriptor is malformed`);
+    if (!picture.full_size_url || !allowedPictureUrl(picture.full_size_url as string)) throw new Error(`HiBid picture ${picture.seller_ordinal} has no allowlisted full-size image URL`);
+    const pictureFidelity = record(picture.fidelity);
+    if (!pictureFidelity) throw new Error(`HiBid picture ${picture.seller_ordinal} fidelity is malformed`);
+    const urls = [picture.full_size_url, picture.hd_thumbnail_url, picture.thumbnail_url].filter((item): item is string => typeof item === 'string' && item.length > 0);
+    const usableUrlCount = new Set(urls.filter(allowedPictureUrl)).size;
+    if (
+      pictureFidelity.has_full_size_url !== true
+      || pictureFidelity.has_dimensions !== (picture.width !== null && picture.height !== null)
+      || pictureFidelity.https_only !== urls.every((url) => {
+        try { return new URL(url).protocol === 'https:'; } catch { return false; }
+      })
+      || pictureFidelity.allowed_hosts !== urls.every(allowedPictureUrl)
+      || pictureFidelity.usable_url_count !== usableUrlCount
+      || usableUrlCount < 1
+    ) throw new Error(`HiBid picture ${picture.seller_ordinal} fidelity is malformed`);
+    for (const url of urls) {
       if (!allowedPictureUrl(url)) throw new Error(`HiBid picture ${picture.seller_ordinal} contains a non-allowlisted image URL`);
     }
   });
@@ -218,7 +333,7 @@ export function eventItemIdFromHibidLotUrl(locationLike: URL | string): string {
   const parts = url.pathname.split('/').filter(Boolean);
   const lotIndex = parts.findIndex((part) => part.toLowerCase() === 'lot');
   const id = lotIndex >= 0 ? text(parts[lotIndex + 1]) : '';
-  if (!/^\d+$/.test(id)) throw new Error('This HiBid lot URL does not contain an exact event-item ID');
+  if (!canonicalEventItemId(id)) throw new Error('This HiBid lot URL does not contain a canonical event-item ID');
   return id;
 }
 
@@ -240,7 +355,7 @@ export function buildHibidLotHandoffV1(
   const state = lot.lotState && typeof lot.lotState === 'object' ? lot.lotState as Record<string, unknown> : {};
   const auction = lot.auction && typeof lot.auction === 'object' ? lot.auction as Record<string, unknown> : {};
   const eventItemId = text(lot.eventItemId ?? lot.id);
-  if (!/^\d+$/.test(eventItemId)) throw new Error('HiBid exact-item hydration did not return a stable event-item ID');
+  if (!canonicalEventItemId(eventItemId)) throw new Error('HiBid exact-item hydration did not return a canonical event-item ID');
   const requestedId = eventItemIdFromHibidLotUrl(sourceUrl);
   if (requestedId !== eventItemId) throw new Error(`HiBid returned event-item ${eventItemId} for requested lot ${requestedId}`);
 

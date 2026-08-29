@@ -14,7 +14,12 @@ export async function runHibidAuctionHandoff(
   runtime: AuctionHandoffRuntime,
   onSending: (pictureCount: number) => void,
 ): Promise<AuctionRelayAcceptedV1> {
-  if (isHibidChallengeDocument(document)) throw new Error('HiBid is showing a challenge; complete it before sending this lot');
+  const assertNoChallenge = () => {
+    if (isHibidChallengeDocument(document)) {
+      throw new Error('HiBid is showing a challenge; complete it before sending this lot');
+    }
+  };
+  assertNoChallenge();
   const sourceUrl = runtime.currentUrl();
   const eventItemId = eventItemIdFromHibidLotUrl(sourceUrl);
   const nonce = runtime.nonce();
@@ -27,8 +32,10 @@ export async function runHibidAuctionHandoff(
     prepared = true;
     await runtime.send('flippah:auction.prepare', owner);
     const manifest = await hydrateHibidLotHandoff(transport, sourceUrl, { initiatedAt });
+    assertNoChallenge();
     if (runtime.currentUrl() !== sourceUrl) throw new Error('The HiBid page changed during photo enumeration; try again on the current lot');
     onSending(manifest.pictures.length);
+    assertNoChallenge();
     const accepted = await runtime.send<AuctionRelayAcceptedV1>('flippah:auction.handoff', { manifest, ...owner });
     prepared = false;
     return accepted;

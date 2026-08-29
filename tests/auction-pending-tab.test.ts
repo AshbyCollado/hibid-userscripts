@@ -254,6 +254,54 @@ test('challenge detection opens no tab and hydration failure requests owned clea
   assert.deepEqual(failureCalls, ['flippah:auction.prepare', 'hydrate', 'flippah:auction.cancel']);
 });
 
+test('a challenge appearing after hydration cancels the reservation without relay handoff', async () => {
+  const dom = new JSDOM('<title>Books | HiBid</title><body>Book lot</body>', { url: sourceUrl });
+  const messages: string[] = [];
+  const transport: HiBidTransport = {
+    searchLots: async () => { throw new Error('search is not used'); },
+    hydrateLots: async () => {
+      dom.window.document.title = 'Just a moment...';
+      dom.window.document.body.textContent = 'Verify you are human';
+      return { data: { lotSearch: { pagedResults: { results: [rawLot()] } } } };
+    },
+  };
+  await assert.rejects(
+    runHibidAuctionHandoff(dom.window.document, transport, {
+      send: async <T>(type: string) => {
+        messages.push(type);
+        return undefined as T;
+      },
+      nonce: () => 'challenge-after-hydration',
+      currentUrl: () => sourceUrl,
+    }, () => undefined),
+    /challenge/i,
+  );
+  assert.deepEqual(messages, ['flippah:auction.prepare', 'flippah:auction.cancel']);
+});
+
+test('a challenge appearing immediately before handoff cancels without sending the manifest', async () => {
+  const dom = new JSDOM('<title>Books | HiBid</title><body>Book lot</body>', { url: sourceUrl });
+  const messages: string[] = [];
+  await assert.rejects(
+    runHibidAuctionHandoff(dom.window.document, {
+      searchLots: async () => { throw new Error('search is not used'); },
+      hydrateLots: async () => ({ data: { lotSearch: { pagedResults: { results: [rawLot()] } } } }),
+    }, {
+      send: async <T>(type: string) => {
+        messages.push(type);
+        return undefined as T;
+      },
+      nonce: () => 'challenge-before-send',
+      currentUrl: () => sourceUrl,
+    }, () => {
+      dom.window.document.title = 'Attention required';
+      dom.window.document.body.textContent = 'captcha';
+    }),
+    /challenge/i,
+  );
+  assert.deepEqual(messages, ['flippah:auction.prepare', 'flippah:auction.cancel']);
+});
+
 test('a lost prepare response still cancels the exact nonce for restart-safe cleanup', async () => {
   const ordinary = new JSDOM('<title>Books</title><body>Book lot</body>', { url: sourceUrl });
   const calls: string[] = [];

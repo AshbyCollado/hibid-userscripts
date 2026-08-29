@@ -67,10 +67,12 @@ function rawLot(count = 9, patch: Record<string, unknown> = {}) {
 test('individual lot URLs yield the exact event-item ID, including state portals', () => {
   assert.equal(eventItemIdFromHibidLotUrl(sourceUrl), '317135308');
   assert.equal(eventItemIdFromHibidLotUrl('https://hibid.com/newjersey/lot/123/books'), '123');
-  assert.throws(() => eventItemIdFromHibidLotUrl('https://hibid.com/catalog/123/books'), /exact event-item ID/i);
+  assert.throws(() => eventItemIdFromHibidLotUrl('https://hibid.com/catalog/123/books'), /canonical event-item ID/i);
+  assert.throws(() => eventItemIdFromHibidLotUrl('https://hibid.com/lot/0317135308/books'), /canonical event-item ID/i);
+  assert.throws(() => eventItemIdFromHibidLotUrl('https://hibid.com/lot/9007199254740992/books'), /canonical event-item ID/i);
 });
 
-for (const count of [7, 8, 9]) {
+for (const count of [7, 8, 9, 60]) {
   test(`physical GraphQL picture descriptors reconcile ${count}/${count} without a six-photo truncation`, () => {
     const manifest = buildHibidLotHandoffV1(rawLot(count), sourceUrl, '2026-08-25T12:00:00.000Z');
     assert.equal(manifest.expected_picture_count, count);
@@ -356,13 +358,51 @@ test('lot-page action reports a failed reconciliation as an assertive status', a
   assert.equal(status.getAttribute('aria-live'), 'assertive');
 });
 
-test('book analysis is available only from the Scraper tab', () => {
+test('manifest validation binds the exact source lot ID to the hydrated event-item ID', () => {
+  const manifest = buildHibidLotHandoffV1(rawLot(1), sourceUrl);
+  assert.throws(
+    () => validateHibidLotHandoffV1({
+      ...manifest,
+      source: { ...manifest.source, source_url: 'https://hibid.com/lot/317135307/books?ref=catalog' },
+    }),
+    /source URL does not match its event-item ID/i,
+  );
+  assert.throws(
+    () => validateHibidLotHandoffV1({
+      ...manifest,
+      source: { ...manifest.source, provider_event_item_id: '0317135308' },
+    }),
+    /event-item ID/i,
+  );
+});
+
+test('manifest validation fails closed with domain errors for malformed nested records', () => {
+  const manifest = buildHibidLotHandoffV1(rawLot(1), sourceUrl);
+  const malformed: unknown[] = [
+    { ...manifest, source: { ...manifest.source, observed_at: 1 } },
+    { ...manifest, rights_basis: null },
+    { ...manifest, lot: null },
+    { ...manifest, lot: { ...manifest.lot, current_bid_cents: 12.5 } },
+    { ...manifest, lot: { ...manifest.lot, buyer_premium_variants: [{ label: 'impossible', rate_basis_points: 4_001, payment_method: 'card' }] } },
+    { ...manifest, fidelity: { ...manifest.fidelity, errors: 'none' } },
+    { ...manifest, pictures: [{ ...manifest.pictures[0], fidelity: null }] },
+    { ...manifest, pictures: [{ ...manifest.pictures[0], hd_thumbnail_url: 42 }] },
+  ];
+  malformed.forEach((candidate) => {
+    assert.throws(
+      () => validateHibidLotHandoffV1(candidate),
+      (error: unknown) => error instanceof Error && error.name === 'Error' && /^HiBid|^Malformed HiBid|^Unsupported HiBid/.test(error.message),
+    );
+  });
+});
+
+test('book analysis stays visible on the lot page while the toolbar remains an additional route', () => {
   const popup = readFileSync('src/popup/index.ts', 'utf8');
   const content = readFileSync('src/content/index.ts', 'utf8');
   assert.match(popup, /class="book-tools"/);
   assert.match(popup, /id="analyze-books"/);
   assert.match(popup, /context\.route\.kind === 'lot'/);
   assert.match(content, /flippah:auction\.handoff\.start/);
-  assert.doesNotMatch(content, /installHibidAuctionHandoffAction/);
+  assert.match(content, /installHibidAuctionHandoffAction/);
   assert.equal(existsSync('src/content/auction-handoff-action.ts'), true);
 });
