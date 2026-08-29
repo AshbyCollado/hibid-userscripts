@@ -45,10 +45,10 @@ test('generated packages cannot acquire eBay origins or inject Seller Hub script
       false,
       `${target} must not inject a content script on eBay`,
     );
+    assert.ok(contentScriptMatches.length > 0, `${target} must inject a supported auction runtime`);
     assert.ok(
-      contentScriptMatches.length > 0 &&
-        contentScriptMatches.every((pattern) => /hibid\.com/i.test(pattern)),
-      `${target} content scripts must remain scoped to HiBid`,
+      contentScriptMatches.every((pattern) => /(?:hibid|auctionninja)\.com/i.test(pattern)),
+      `${target} content scripts must remain scoped to HiBid and AuctionNinja`,
     );
   }
 });
@@ -89,6 +89,7 @@ test('generated packages load one modern runtime containing the visible lot-page
       (entry) => entry.js ?? [],
     );
     const modernRuntime = await readFile(`dist/${target}/content.js`, 'utf8');
+    const auctionNinjaRuntime = await readFile(`dist/${target}/auctionninja-content.js`, 'utf8');
     const legacyRuntime = await readFile(`dist/${target}/legacy-content.js`, 'utf8');
 
     assert.equal(
@@ -100,5 +101,12 @@ test('generated packages load one modern runtime containing the visible lot-page
     assert.match(modernRuntime, /flippah-auction-handoff/);
     assert.doesNotMatch(legacyRuntime, /Analyze books in Flippah/);
     assert.doesNotMatch(legacyRuntime, /flippah-auction-handoff/);
+    assert.equal(
+      contentScripts.filter((scriptPath) => scriptPath === 'auctionninja-content.js').length,
+      1,
+      `${target} must load the AuctionNinja runtime exactly once`,
+    );
+    assert.match(auctionNinjaRuntime, /AuctionNinja/);
+    assert.doesNotMatch(auctionNinjaRuntime, /Analyze books in Flippah|flippah-auction-handoff/);
   }
 });

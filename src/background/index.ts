@@ -2,7 +2,7 @@ import { HIBID_GRAPHQL_ENDPOINT, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QU
 import { failure, isEnvelope, payloadBytes, success, type MessageEnvelope } from '../core/messages.js';
 import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, putRecordBatch } from '../core/job-db.js';
 import { collectStoredOutcomes } from '../core/outcomes.js';
-import type { HiBidLotRecord, ScrapeJobSummary } from '../core/types.js';
+import type { ScrapeJobSummary, ScrapeStoredRecord } from '../core/types.js';
 import { clearRetailCache, getRetailCache, putRetailCache } from '../core/retail-db.js';
 import { detectProductKind, evaluateAmazonCandidateEvidence, evaluateRetailCandidate, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
 import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '../intelligence/amazon-document-parser.js';
@@ -190,6 +190,13 @@ function ensureHiBidSender(sender: chrome.runtime.MessageSender): void {
   if (!sender.tab || sender.frameId !== 0) throw new Error('HiBid operation rejected outside the top page frame');
   const url = new URL(sender.url || sender.tab.url || 'https://invalid.invalid');
   if (url.protocol !== 'https:' || !/(^|\.)hibid\.com$/i.test(url.hostname)) throw new Error('HiBid operation rejected for this host');
+}
+
+function ensureResearchPageSender(sender: chrome.runtime.MessageSender): void {
+  if (!sender.tab || sender.frameId !== 0) throw new Error('Flippah operation rejected outside the top page frame');
+  const url = new URL(sender.url || sender.tab.url || 'https://invalid.invalid');
+  const supported = /(^|\.)hibid\.com$/i.test(url.hostname) || /(^|\.)auctionninja\.com$/i.test(url.hostname);
+  if (url.protocol !== 'https:' || !supported) throw new Error('Flippah operation rejected for this host');
 }
 
 function retailQuery(value: unknown): string {
@@ -447,14 +454,14 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       return postJson(endpoint, { ...incoming, query: HIBID_LOT_SEARCH_QUERY }, 'include');
     }
     case 'flippah:retail.lookup':
-      ensureHiBidSender(sender);
+      ensureResearchPageSender(sender);
       return lookupAmazonNow(validateRetailIdentity((message.payload as any)?.identity));
     case 'flippah:retail.cache.clear':
-      ensureHiBidSender(sender);
+      ensureResearchPageSender(sender);
       await clearRetailCache();
       return { cleared: true };
     case 'flippah:activity.set': {
-      ensureHiBidSender(sender);
+      ensureResearchPageSender(sender);
       const update = (message.payload as any) as unknown;
       if (!isToolbarActivityUpdate(update) || !sender.tab?.id) throw new Error('Invalid toolbar activity update');
       const tabId = sender.tab.id;
@@ -534,7 +541,7 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       }
     }
     case 'flippah:job.put': {
-      ensureHiBidSender(sender);
+      ensureResearchPageSender(sender);
       const job = (message.payload as any)?.job as ScrapeJobSummary;
       if (!job?.jobId || (job.tabId !== null && job.tabId !== sender.tab?.id)) throw new Error('Invalid scrape job owner');
       const stored = { ...job, tabId: sender.tab!.id! };
@@ -542,10 +549,10 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       return { stored: accepted.revision === stored.revision, job: accepted };
     }
     case 'flippah:job.records': {
-      ensureHiBidSender(sender);
+      ensureResearchPageSender(sender);
       const { jobId, records, replace } = (message.payload as any) || {};
       if (!jobId || !Array.isArray(records) || records.length > MAX_RECORD_BATCH) throw new Error('Invalid record checkpoint');
-      await putRecordBatch(String(jobId), records as HiBidLotRecord[], Boolean(replace));
+      await putRecordBatch(String(jobId), records as ScrapeStoredRecord[], Boolean(replace));
       return { stored: records.length };
     }
     case 'flippah:job.get': {
@@ -554,7 +561,7 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       return getJobForFingerprint(Number.isInteger(tabId) ? tabId : null, String(fingerprint || ''));
     }
     case 'flippah:diagnostic.store': {
-      ensureHiBidSender(sender);
+      ensureResearchPageSender(sender);
       const diagnostic = safeDiagnostic((message.payload as any)?.diagnostic);
       const jobId = String((message.payload as any)?.jobId || 'unknown');
       await putDiagnostic(jobId, diagnostic);

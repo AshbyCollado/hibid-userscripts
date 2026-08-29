@@ -4,10 +4,12 @@ import { getDiagnostic, getJobForFingerprint, getRecords } from '../core/job-db.
 import { normalizeSettings } from '../core/settings.js';
 import { jobMatchesContextAndScope } from '../core/job-scope.js';
 import { calculateDealOutcome, type DealOutcome } from '../core/outcomes.js';
-import type { PageContext, ScrapeJobSummary } from '../core/types.js';
+import type { HiBidLotRecord, PageContext, ScrapeJobSummary } from '../core/types.js';
 import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
 import { buildHibidExportPayload, buildHibidLlmBrief } from '../hibid/exports.js';
 import { buildHibidSavedResearchSnapshot, hibidSavedResearchStorageKeys } from '../intelligence/deal-storage.js';
+import { buildAuctionNinjaExportPayload, buildAuctionNinjaLlmBrief, type AuctionNinjaExportContext, type AuctionNinjaExportRecord } from '../auctionninja/exports.js';
+import { resolveAuctionNinjaPage } from '../auctionninja/route.js';
 
 const app = document.querySelector<HTMLElement>('#app')!;
 let currentTabId: number | null = null;
@@ -89,7 +91,11 @@ function routeLabel(): string {
   const labels: Record<string, string> = {
     catalog: 'Auction catalog', livecatalog: 'Live catalog', search: 'Lot search', lot: 'Single lot',
     watchlist: 'Watchlist', 'currentbids-winning': 'Winning bids', 'currentbids-outbid': 'Outbid bids',
-    pastbids: 'Past bids', pastwatchlist: 'Past watchlist'
+    pastbids: 'Past bids', pastwatchlist: 'Past watchlist',
+    'sale-catalog': 'AuctionNinja sale', 'category-search': 'AuctionNinja category',
+    'item-detail': 'AuctionNinja item', 'followed-items': 'AuctionNinja followed items',
+    'items-won': 'AuctionNinja won items', 'bid-history': 'AuctionNinja bid history',
+    'auction-search': 'AuctionNinja auctions'
   };
   return labels[context.route.kind] || context.route.kind;
 }
@@ -124,7 +130,7 @@ function analysisStatusText(analysis: PageContext['analysis']): string {
 }
 
 function currentHtml(): string {
-  if (!context?.supported) return `<section class="panel"><div class="card"><div class="eyebrow">Scraper</div><h1>Open a HiBid research page</h1><p class="route">Catalogs, searches, watchlists, and bid pages can be copied here.</p></div></section>`;
+  if (!context?.supported) return `<section class="panel"><div class="card"><div class="eyebrow">Scraper</div><h1>Open a supported auction page</h1><p class="route">HiBid and AuctionNinja catalogs, searches, item pages, and account lists can be copied here.</p></div></section>`;
   const count = job?.expectedTotal ?? context.visibleExpectedTotal;
   const current = job?.hydratedCount || job?.enumeratedCount || 0;
   const percent = count && count > 0 ? Math.min(100, Math.round(current / count * 100)) : (job?.phase === 'completed' ? 100 : 0);
@@ -134,10 +140,10 @@ function currentHtml(): string {
   const complete = jobMatchesSelection() && job?.phase === 'completed';
   const analysis = context.analysis;
   const analysisPercent = analysis.total > 0 ? Math.min(100, Math.round(analysis.analyzed / analysis.total * 100)) : 0;
-  const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid'].includes(context.route.kind)
+  const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid', 'sale-catalog', 'category-search', 'item-detail', 'followed-items', 'items-won', 'bid-history'].includes(context.route.kind)
     ? `<div class="analysis"><div class="analysis-head"><strong>Price research</strong><span>${escapeHtml(analysisStatusText(analysis))}</span></div>${analysis.phase === 'scanning' || analysis.phase === 'retail' ? `<div class="progress"><i style="width:${analysisPercent}%"></i></div>` : ''}<div class="actions compact"><button id="rerun-analysis" class="button" ${analysis.phase === 'scanning' || analysis.phase === 'retail' ? 'disabled' : ''}>Check again</button><button id="clear-retail-cache" class="button">Clear saved prices</button></div></div>`
     : '';
-  const booksHtml = context.route.kind === 'lot'
+  const booksHtml = context.route.kind === 'lot' && /(^|\.)hibid\.com$/i.test(new URL(context.url).hostname)
     ? `<div class="book-tools"><div class="analysis-head"><strong>Books</strong><span>Complete photo handoff</span></div><p class="section-copy">Send this lot and every seller photo to the local book analyzer.</p><div class="actions compact"><button id="analyze-books" class="button" ${bookHandoffBusy ? 'disabled' : ''}>${bookHandoffBusy ? 'Sending photos…' : 'Analyze this lot'}</button></div><div class="section-status ${bookHandoffFailed ? 'failed' : ''}" role="status" aria-live="${bookHandoffFailed ? 'assertive' : 'polite'}">${escapeHtml(bookHandoffStatus)}</div></div>`
     : '';
   return `<section class="panel"><div class="card"><div class="eyebrow">Scraper</div><h1>${escapeHtml(routeLabel())}</h1>${groupSelect}<div class="status ${statusClass()}"><span class="dot"></span><span>${escapeHtml(scrapeStatusText(current, count))}</span></div>${busy() || job?.phase === 'completed' ? `<div class="progress"><i style="width:${percent}%"></i></div>` : ''}<div class="actions"><button id="copy-llm" class="button primary" ${!canStart && !complete ? 'disabled' : ''}>Copy for AI</button><button id="copy-json" class="button" ${!canStart && !complete ? 'disabled' : ''}>Copy JSON</button>${busy() ? '<button id="stop" class="button danger">Stop</button>' : ''}${job?.phase === 'failed' || job?.phase === 'stale' || job?.phase === 'stopped' ? '<button id="retry" class="button">Try again</button>' : ''}</div><div class="toast">${escapeHtml(toast)}</div>${analysisHtml}${booksHtml}${debugHtml()}</div></section>`;
@@ -200,7 +206,7 @@ function bind(): void {
 }
 
 async function analyzeBooks(): Promise<void> {
-  if (currentTabId === null || context?.route.kind !== 'lot' || bookHandoffBusy) return;
+  if (currentTabId === null || context?.route.kind !== 'lot' || !/(^|\.)hibid\.com$/i.test(new URL(context.url).hostname) || bookHandoffBusy) return;
   bookHandoffBusy = true;
   bookHandoffFailed = false;
   bookHandoffStatus = 'Reading and reconciling seller photos…';
@@ -257,8 +263,24 @@ async function copyCompleted(format: 'json' | 'llm'): Promise<void> {
   const items = await getRecords(job.jobId);
   const savedStorage = await getLocalStorage(hibidSavedResearchStorageKeys(items));
   const savedResearch = buildHibidSavedResearchSnapshot(items, savedStorage);
-  const payload = buildHibidExportPayload(context, job, items, settings, savedResearch);
-  const text = format === 'json' ? JSON.stringify(payload, null, 2) : buildHibidLlmBrief(payload, settings);
+  const auctionNinja = /(^|\.)auctionninja\.com$/i.test(new URL(context.url).hostname);
+  const payload = auctionNinja
+    ? buildAuctionNinjaExportPayload({
+      source: 'AuctionNinja',
+      pageKind: context.route.kind as AuctionNinjaExportContext['pageKind'],
+      url: context.url,
+      title: context.title,
+      fingerprint: context.fingerprint,
+      expectedTotal: context.visibleExpectedTotal,
+      scopeId: null,
+      route: resolveAuctionNinjaPage(context.url),
+    } as AuctionNinjaExportContext, job, items as unknown as AuctionNinjaExportRecord[], settings, savedResearch)
+    : buildHibidExportPayload(context, job, items as unknown as HiBidLotRecord[], settings, savedResearch);
+  const text = format === 'json'
+    ? JSON.stringify(payload, null, 2)
+    : auctionNinja
+      ? buildAuctionNinjaLlmBrief(payload as ReturnType<typeof buildAuctionNinjaExportPayload>, settings)
+      : buildHibidLlmBrief(payload as ReturnType<typeof buildHibidExportPayload>, settings);
   await copyText(text);
   toast = `Copied ${items.length} lot${items.length === 1 ? '' : 's'} · details ${payload.audit.fidelity.metrics.description.percent}% · photos ${payload.audit.fidelity.metrics.images.percent}%`;
 }

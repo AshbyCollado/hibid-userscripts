@@ -425,6 +425,16 @@ test('replacement bowls and remotes cannot impersonate the primary appliance or 
   );
 });
 
+test('trim kits and wall plates cannot impersonate the primary thermostat', () => {
+  const identity = extractProductIdentity('Google Nest Thermostat (Charcoal, Model: GA02081-US)', '');
+  const accessory = evaluateRetailCandidate(
+    'Nest Thermostat Trim Kit - Wall Plate for Google Nest Thermostat 2020 (Fits GA01334-US, GA02082-US, GA02081-US)',
+    identity,
+  );
+  assert.equal(accessory.accepted, false);
+  assert.ok(accessory.rejectionReasons.includes('accessory-or-component'));
+});
+
 test('connector counts are hard product attributes', () => {
   const inverter = extractProductIdentity('POTEK 3000W Power Inverter 4 USB Black');
   assert.equal(

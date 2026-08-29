@@ -52,7 +52,7 @@ export interface HiBidPageState {
 }
 
 export interface HiBidLotRecord {
-  source: 'hibid-api' | 'hibid-dom';
+  source: 'hibid-api' | 'hibid-dom' | 'auctionninja-dom';
   pageKind: HiBidRouteKind | string;
   id: string;
   eventItemId: string;
@@ -79,6 +79,13 @@ export interface HiBidLotRecord {
   location: string;
   buyerPremium: string;
   rawText: string;
+  [key: string]: unknown;
+}
+
+export interface ScrapeStoredRecord {
+  id: string;
+  source: string;
+  auctionId?: string;
   [key: string]: unknown;
 }
 
@@ -227,7 +234,7 @@ export interface ScrapeJobSummary {
   tabId: number | null;
   sourceUrl: string;
   fingerprint: string;
-  routeKind: HiBidRouteKind;
+  routeKind: string;
   scopeId: string | null;
   phase: JobPhase;
   revision: number;
@@ -253,7 +260,7 @@ export interface PageContext {
   supported: boolean;
   url: string;
   title: string;
-  route: HiBidRoute;
+  route: HiBidRoute | { supported: boolean; source?: string; kind: string; host?: string; reason?: string };
   fingerprint: string;
   visibleExpectedTotal: number | null;
   noMatches: boolean;

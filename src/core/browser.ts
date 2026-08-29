@@ -77,6 +77,7 @@ export function setLocalStorage(items: Record<string, unknown>): Promise<void> {
 }
 
 export function activeTab(): Promise<chrome.tabs.Tab | null> {
+  const isSupportedAuctionUrl = (value: unknown) => /^(?:https:\/\/)?(?:[^/]+\.)?(?:hibid|auctionninja)\.com\//i.test(String(value || ''));
   const query = (queryInfo: chrome.tabs.QueryInfo) => new Promise<chrome.tabs.Tab[]>((resolve, reject) => {
     chrome.tabs.query(queryInfo, (tabs) => {
       const error = chrome.runtime.lastError;
@@ -91,13 +92,13 @@ export function activeTab(): Promise<chrome.tabs.Tab | null> {
       { active: true }
     ] satisfies chrome.tabs.QueryInfo[]) {
       const tabs = await query(queryInfo);
-      const supported = tabs.find((tab) => /^(?:https:\/\/)?(?:[^/]+\.)?hibid\.com\//i.test(String(tab.url || '')));
+      const supported = tabs.find((tab) => isSupportedAuctionUrl(tab.url));
       if (supported) return supported;
       const webTab = tabs.find((tab) => /^https?:\/\//i.test(String(tab.url || '')));
       if (webTab) return webTab;
     }
     const supported = (await query({}))
-      .filter((tab) => /^(?:https:\/\/)?(?:[^/]+\.)?hibid\.com\//i.test(String(tab.url || '')))
+      .filter((tab) => isSupportedAuctionUrl(tab.url))
       .sort((left, right) => Number(right.lastAccessed || 0) - Number(left.lastAccessed || 0));
     if (supported[0]) return supported[0];
     return null;

@@ -1,5 +1,3 @@
-import type { HiBidLotRecord } from '../core/types.js';
-
 export const DEAL_LOT_STATE_PREFIX = 'flippahDealLotV1:';
 export const DEAL_AUCTION_STATE_PREFIX = 'flippahDealAuctionV1:';
 
@@ -70,7 +68,7 @@ export function normalizeStoredLotState(value: unknown): StoredLotState {
   };
 }
 
-export function hibidSavedResearchStorageKeys(items: readonly Pick<HiBidLotRecord, 'id' | 'auctionId'>[]): string[] {
+export function hibidSavedResearchStorageKeys(items: ReadonlyArray<{ id: string; auctionId?: string }>): string[] {
   const keys = new Set<string>(['watchlist']);
   for (const item of items) {
     if (item.id) keys.add(lotStateKey(item.id));
@@ -84,7 +82,7 @@ export function emptyHibidSavedResearchSnapshot(): HibidSavedResearchSnapshot {
 }
 
 export function buildHibidSavedResearchSnapshot(
-  items: readonly Pick<HiBidLotRecord, 'id' | 'auctionId'>[],
+  items: ReadonlyArray<{ id: string; auctionId?: string }>,
   storage: Record<string, unknown>,
 ): HibidSavedResearchSnapshot {
   const snapshot = emptyHibidSavedResearchSnapshot();
@@ -128,7 +126,8 @@ export function buildHibidSavedResearchSnapshot(
     if (Object.keys(values).length) snapshot.lots[item.id] = { ...values, sources };
   }
 
-  for (const auctionId of new Set(items.map((item) => item.auctionId).filter(Boolean))) {
+  const auctionIds = items.map((item) => item.auctionId).filter((id): id is string => Boolean(id));
+  for (const auctionId of new Set(auctionIds)) {
     const source = storage[auctionStateKey(auctionId)];
     const premiumPct = finite(object(source) ? source.premiumPct : null, 0, 30);
     if (premiumPct !== null) {

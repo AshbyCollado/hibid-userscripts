@@ -3,20 +3,27 @@ import test from 'node:test';
 import { readFile, readdir } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
-import { mutationAffectedLotIds, visibleLotIdSignature } from '../src/content/deal-intelligence.js';
-import { shouldReloadExtension } from '../src/background/dev-auto-reload.js';
+import { canReuseRetailEvidence, mutationAffectedLotIds, visibleLotIdSignature } from '../src/content/deal-intelligence.js';
+import {
+  DEV_RELOAD_PENDING_MAX_AGE_MS,
+  shouldConsumePendingPageRefresh,
+  shouldRefreshSupportedTab,
+  shouldReloadExtension,
+} from '../src/background/dev-auto-reload.js';
 
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.4.11');
+  assert.equal(chrome.version, '0.5.5');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
+  assert.ok(chrome.host_permissions.includes('https://*.auctionninja.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
   assert.equal(chrome.permissions.includes('offscreen'), false);
   assert.equal(chrome.permissions.includes('declarativeNetRequest'), false);
   assert.equal(waterfox.permissions.includes('offscreen'), false);
   assert.equal(waterfox.permissions.includes('declarativeNetRequest'), false);
   assert.equal(chrome.content_scripts.some((entry: any) => entry.matches?.includes('https://www.amazon.com/*')), false);
+  assert.equal(chrome.content_scripts.some((entry: any) => entry.matches?.some((value: string) => /auctionninja\.com/i.test(value)) && entry.js?.includes('auctionninja-content.js')), true);
   assert.equal(chrome.content_scripts.some((entry: any) => entry.matches?.some((value: string) => /ebay/i.test(value))), false);
   assert.equal(chrome.host_permissions.some((value: string) => /bestbuy|amazon\.ca/i.test(value)), false);
   assert.deepEqual(chrome.host_permissions, waterfox.host_permissions);
@@ -34,6 +41,20 @@ test('unpacked builds self-reload only when the installed semantic version chang
   assert.equal(shouldReloadExtension('0.3.51', '0.3.51'), false);
   assert.equal(shouldReloadExtension('0.4.1', '0.4.2'), true);
   assert.equal(shouldReloadExtension('0.3.51', 'not-a-version'), false);
+});
+
+test('extension reload refreshes only supported auction pages once for the new version', () => {
+  assert.equal(shouldRefreshSupportedTab('https://hibid.com/livecatalog/771616/example'), true);
+  assert.equal(shouldRefreshSupportedTab('https://subdomain.hibid.com/catalog/1/example'), true);
+  assert.equal(shouldRefreshSupportedTab('https://www.auctionninja.com/category/electronics'), true);
+  assert.equal(shouldRefreshSupportedTab('https://www.ebay.com/sh/lst/active'), false);
+  assert.equal(shouldRefreshSupportedTab('chrome://extensions'), false);
+
+  const now = 1_000_000;
+  const pending = { requestedAt: now - 1_000, fromVersion: '0.5.1', toVersion: '0.5.2' };
+  assert.equal(shouldConsumePendingPageRefresh(pending, '0.5.2', now), true);
+  assert.equal(shouldConsumePendingPageRefresh(pending, '0.5.1', now), false);
+  assert.equal(shouldConsumePendingPageRefresh({ ...pending, requestedAt: now - DEV_RELOAD_PENDING_MAX_AGE_MS - 1 }, '0.5.2', now), false);
 });
 
 test('HiBid redraws with the same stable lot IDs do not look like a new catalog', () => {
@@ -61,6 +82,23 @@ test('same-ID native watch redraws request annotation repair without reacting to
   const ownedRecords = observer.takeRecords() as unknown as MutationRecord[];
   assert.deepEqual(mutationAffectedLotIds(ownedRecords), []);
   observer.disconnect();
+});
+
+test('live redraws retain conclusive Amazon evidence but retry transient failures or changed queries', async () => {
+  const matched = {
+    query: 'Vicks Sinus Steam Inhaler', amazonOverrideAsin: '',
+    result: { status: 'matched', query: 'Vicks Sinus Steam Inhaler', match: null, candidates: [], fetchedAt: 1, cached: true, message: 'matched' },
+  } as any;
+  assert.equal(canReuseRetailEvidence(matched, matched.query, ''), true);
+  assert.equal(canReuseRetailEvidence({ ...matched, result: { ...matched.result, status: 'no_match' } }, matched.query, ''), true);
+  assert.equal(canReuseRetailEvidence({ ...matched, result: { ...matched.result, status: 'network_error' } }, matched.query, ''), false);
+  assert.equal(canReuseRetailEvidence(matched, 'Different product', ''), false);
+  assert.equal(canReuseRetailEvidence(matched, matched.query, 'B000TEST'), false);
+
+  const source = await readFile('src/content/deal-intelligence.ts', 'utf8');
+  assert.match(source, /min-height:52px/);
+  assert.match(source, /flippahRenderSignature/);
+  assert.match(source, /retailEvidence = new Map/);
 });
 
 test('personalized watchlist exports use the account DOM and never extension-origin GraphQL', async () => {

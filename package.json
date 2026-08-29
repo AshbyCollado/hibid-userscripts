@@ -1,9 +1,9 @@
 {
   "name": "flippah-extension",
-  "version": "0.4.11",
+  "version": "0.5.5",
   "private": true,
   "type": "module",
-  "description": "Flippah browser extension source and HiBid scraper core.",
+  "description": "Flippah browser extension source for HiBid and AuctionNinja research.",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "npm run typecheck && node build.mjs",

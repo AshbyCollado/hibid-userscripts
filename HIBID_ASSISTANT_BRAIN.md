@@ -606,3 +606,29 @@ ignored by Git.
 - The prompt must keep an evidence-first workflow, direct-sold-URL gate,
   deterministic fee/tax formulas, bounded research stop rules, and coverage
   reconciliation across every supplied source ID.
+
+## v0.5.5 AuctionNinja parity and live redraw stability
+
+- AuctionNinja category pages may expose the authoritative count only as
+  `<number> results`; auction search fragments may call the count `<number>
+  sales`. Both are valid completeness totals and must drive deterministic page
+  enumeration even when no `Showing X-Y of Z` range exists.
+- Release verification covered a 229-item category (`20 x 11 + 9`), a 47-sale
+  auction search (`12 + 12 + 12 + 11`), and a 274-item sale catalog
+  (`20 x 13 + 14`). Every run reconciled expected, collected, and unique stable
+  IDs with zero failed pages or detail requests.
+- Chrome unpacked-extension updates use a one-shot persisted marker. The old
+  worker records the requested version before reloading; the new worker clears
+  the marker before hard-refreshing supported tabs. This avoids loops while
+  preventing an old page content script from surviving an extension update.
+- On HiBid live pages, native visible current bid, next bid, bid count, status,
+  and countdown remain authoritative. GraphQL `minBid` is never substituted for
+  the displayed next bid when calculating all-in cost.
+- Live HiBid redraws can briefly expose incomplete tile placeholders. Keep
+  conclusive Amazon evidence (`matched`, `no_match`, or `low_confidence`) keyed
+  by stable lot ID plus normalized query and ASIN override. Transient network
+  failures remain retryable; manual rerun and cache clear intentionally discard
+  retained evidence.
+- Indicator DOM is replaced only when its render signature changes, and the
+  strip reserves a stable two-line height. Countdown/redraw traffic must not
+  alternate a priced lot back to a search pill or shift the auction grid.

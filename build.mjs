@@ -19,11 +19,11 @@ const commonManifest = {
   name: 'Flippah by ALOS',
   short_name: 'Flippah',
   version,
-  description: 'Auction research, true-cost analysis, watchlists, and verified HiBid exports for smarter flips.',
+  description: 'Auction research, true-cost analysis, watchlists, and verified HiBid and AuctionNinja exports for smarter flips.',
   author: 'ALOS',
   homepage_url: 'https://github.com/AshbyCollado/hibid-userscripts',
   permissions: ['storage', 'alarms', 'tabs', 'activeTab', 'downloads', 'clipboardWrite'],
-  host_permissions: ['https://hibid.com/*', 'https://*.hibid.com/*', 'https://hibid-api.io/*', 'https://www.amazon.com/*', 'http://127.0.0.1/*'],
+  host_permissions: ['https://hibid.com/*', 'https://*.hibid.com/*', 'https://hibid-api.io/*', 'https://auctionninja.com/*', 'https://*.auctionninja.com/*', 'https://www.amazon.com/*', 'http://127.0.0.1/*'],
   action: {
     default_icon: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' },
     default_popup: 'popup/index.html',
@@ -36,12 +36,19 @@ const commonManifest = {
     128: 'icons/icon-128.png'
   },
   options_page: 'options/index.html',
-  content_scripts: [{
-    matches: ['https://hibid.com/*', 'https://*.hibid.com/*'],
-    css: ['assets/index-uNBN1arP.css'],
-    js: ['content.js', 'legacy-content.js'],
-    run_at: 'document_idle'
-  }],
+  content_scripts: [
+    {
+      matches: ['https://hibid.com/*', 'https://*.hibid.com/*'],
+      css: ['assets/index-uNBN1arP.css'],
+      js: ['content.js', 'legacy-content.js'],
+      run_at: 'document_idle'
+    },
+    {
+      matches: ['https://auctionninja.com/*', 'https://*.auctionninja.com/*'],
+      js: ['auctionninja-content.js'],
+      run_at: 'document_idle'
+    }
+  ],
 };
 
 for (const target of targets) {
@@ -62,6 +69,7 @@ for (const target of targets) {
     entryPoints: {
       background: path.join(root, 'src', 'background', 'index.ts'),
       content: path.join(root, 'src', 'content', 'index.ts'),
+      'auctionninja-content': path.join(root, 'src', 'content', 'auctionninja-index.ts'),
       'popup/popup': path.join(root, 'src', 'popup', 'index.ts'),
       'options/options': path.join(root, 'src', 'options', 'index.ts')
     },

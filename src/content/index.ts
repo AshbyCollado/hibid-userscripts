@@ -340,9 +340,10 @@ async function handleMessage(message: MessageEnvelope): Promise<unknown> {
     if ((context.route.kind === 'pastbids' || context.route.kind === 'pastwatchlist') && !selectedGroup) throw new Error('Select one past auction first');
     controller?.abort();
     controller = new AbortController();
-    activeJob = nowSummary(context.route, context.fingerprint, selectedGroup?.id || null);
+    const route = context.route as HiBidRoute;
+    activeJob = nowSummary(route, context.fingerprint, selectedGroup?.id || null);
     await saveJob({ phase: 'queued' });
-    void runJob(context.route);
+    void runJob(route);
     return activeJob;
   }
   if (message.type === 'flippah:job.stop') {

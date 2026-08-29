@@ -1,12 +1,12 @@
 # Flippah by ALOS
 
-Flippah is a read-only browser extension for HiBid research. It preserves the
+Flippah is a read-only browser extension for HiBid and AuctionNinja research. It preserves the
 true-cost calculator, eBay Sold research links, watchlist, notes, and alerts
 from the working `v0.1.0` extension while adding exact, auditable catalog
 exports and automatic Amazon.com deal intelligence.
 
 The extension is built from one TypeScript source tree into separate Chrome and
-Waterfox packages. HiBid scraping is available from the toolbar popup; the
+Waterfox packages. HiBid and AuctionNinja scraping are available from the toolbar popup; the
 in-page calculator remains limited to individual lot pages.
 
 Copied AI briefs use the seller's saved research profile rather than a bundled
@@ -21,7 +21,7 @@ sold evidence and cannot create a Confirmed Lead by itself.
 
 ## Browser-extension boundary
 
-This repository owns HiBid capture and the paired local Flippah lot handoff. It
+This repository owns HiBid and AuctionNinja capture plus the paired local Flippah lot handoff. It
 does not request eBay or Seller Hub host permissions, inject scripts on eBay, or
 ship the authenticated Product Research parser. User-directed eBay Sold links
 remain ordinary research links.
@@ -133,7 +133,7 @@ development package.
 
 A source build is not a finished release. After every build that changes the
 extension, update the stable installed Chrome copy, confirm the popup shows the
-intended version, run real HiBid exports, and parse the copied JSON.
+intended version, run real HiBid and AuctionNinja exports, and parse the copied JSON.
 For pages with an authoritative API total, `expectedCount`, item count, and
 unique `eventItemId` count must match before the release is accepted.
 
@@ -271,3 +271,46 @@ so every catalog is re-evaluated under the corrected parser.
   as `1 Bid 25s` can no longer turn the countdown into a fake `$25` hammer.
 - Uses the canonical event-item ID from the lot URL/status record instead of
   recycled live-catalog slot IDs such as `lot-10`.
+
+## v0.5.0 AuctionNinja parity
+
+- Adds route-aware AuctionNinja support for sale catalogs, category results,
+  individual items, auction search, followed items, won items, and bid history.
+- Enumerates deterministic pages by canonical product or sale identity,
+  enriches lot details with four bounded same-origin requests, retries failures
+  three times, and refuses exports when totals, identities, or route filters drift.
+- Adds the same additive Amazon, eBay Sold/Completed, condition, and current
+  all-in indicators used on HiBid without moving or replacing AuctionNinja UI.
+- Reuses Flippah's paced Amazon provider, local research settings, toolbar
+  activity indicator, persistent scrape jobs, sanitized diagnostics, and popup
+  JSON/AI export flow.
+- Handles AuctionNinja's duplicate image/title anchors, truncated visible
+  headings, account pages that render all items at once, and JSON-fragment
+  auction-search pagination without reading account tokens or invoking bid,
+  follow, checkout, payment, or other mutation controls.
+
+## v0.5.1 live AuctionNinja hardening
+
+- Enriches visible AuctionNinja cards from their same-origin detail pages with
+  four bounded workers, three retries, exact product-ID checks, and a 12-hour
+  in-memory detail cache before automatic retail matching.
+- Ignores one-second countdown mutations unless a product card or Flippah
+  annotation actually needs repair, preventing needless catalog rescans.
+- Rejects thermostat trim kits and wall plates as accessories instead of
+  accepting them as the primary thermostat's Amazon match.
+
+## v0.5.5 live-route and redraw hardening
+
+- Completes AuctionNinja category, auction-search, and sale pagination from
+  each route's authoritative result total, including headers that say
+  `229 results` or `47 sales` instead of a conventional range.
+- Reloads supported HiBid and AuctionNinja tabs once after an unpacked Chrome
+  extension update so the page runtime cannot silently remain on an older
+  content-script version.
+- Keeps HiBid's native visible next-bid amount authoritative over stale
+  GraphQL minimum-bid fields when calculating all-in cost.
+- Retains conclusive Amazon evidence by stable lot ID, query, and override
+  across live-catalog redraws. Placeholder scans can no longer erase a known
+  price or no-match result, and unchanged indicators are not rebuilt.
+- Reserves a stable two-line indicator area so condition text and Amazon
+  refreshes do not move the live auction grid vertically.

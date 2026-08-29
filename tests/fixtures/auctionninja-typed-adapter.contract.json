@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Contract fixture for a future typed AuctionNinja adapter.",
+  "sourceEvidence": "legacy/tampermonkey/fixtures/auctionninja-network.sanitized.json",
+  "legacyTestEvidence": "legacy/tampermonkey/tests/hibid-unified-assistant.test.mjs",
+  "routes": [
+    {
+      "url": "https://www.auctionninja.com/clearinghouseestatesales/sales/details/example-sale--17395.html",
+      "kind": "sale-catalog",
+      "scope": "one seller and sale id"
+    },
+    {
+      "url": "https://www.auctionninja.com/category/electronics?Page=5&srt=Distance&miles=50&zip=07008",
+      "kind": "category-search",
+      "scope": "one category and preserved location filters"
+    },
+    {
+      "url": "https://www.auctionninja.com/nj/carteret/07008?Page=2&miles=50&shipping=s&pickup=p",
+      "kind": "auction-search",
+      "scope": "nearby auction search"
+    },
+    {
+      "url": "https://www.auctionninja.com/followed-items",
+      "kind": "followed-items",
+      "scope": "account route; authenticated data required"
+    },
+    {
+      "url": "https://www.auctionninja.com/items-won",
+      "kind": "items-won",
+      "scope": "account route; authenticated data required"
+    },
+    {
+      "url": "https://www.auctionninja.com/bid-history",
+      "kind": "bid-history",
+      "scope": "account route; authenticated data required"
+    },
+    {
+      "url": "https://www.auctionninja.com/testseller/product/portable-receiver--123456.html",
+      "kind": "item-detail",
+      "scope": "one canonical product"
+    },
+    {
+      "url": "https://www.auctionninja.com/account",
+      "kind": "unsupported",
+      "scope": "generic account route must remain blocked"
+    },
+    {
+      "url": "https://www.auctionninja.com/checkout",
+      "kind": "unsupported",
+      "scope": "mutation and payment route must remain blocked"
+    }
+  ],
+  "expectedExports": {
+    "saleCatalog": {
+      "expectedTotal": 106,
+      "pageCounts": [20, 20, 20, 20, 20, 6],
+      "uniqueIdentity": "canonical product id from the product URL",
+      "mustReject": ["duplicate product ids", "missing page", "total drift", "route drift"]
+    },
+    "category": {
+      "expectedTotal": 94,
+      "pageCounts": [20, 20, 20, 20, 14],
+      "mustPreserveFilters": ["category", "srt", "miles", "zip"]
+    },
+    "auctionSearch": {
+      "expectedTotal": 118,
+      "pageCounts": [12, 12, 12, 12, 12, 12, 12, 12, 12, 10],
+      "stableIdentity": "canonical target hostname plus pathname",
+      "mustIgnore": "promotional cards outside the result container"
+    }
+  },
+  "coverageCases": [
+    {
+      "name": "exact sale coverage",
+      "expectedTotal": 106,
+      "enumeratedCount": 106,
+      "hydratedCount": 106,
+      "uniqueCount": 106,
+      "complete": true
+    },
+    {
+      "name": "duplicate identity",
+      "expectedTotal": 2,
+      "enumeratedIds": ["2436754", "2436754", "2436755"],
+      "hydratedIds": ["2436754", "2436755"],
+      "complete": false,
+      "reason": "duplicate-stable-id"
+    },
+    {
+      "name": "short export",
+      "expectedTotal": 106,
+      "enumeratedCount": 105,
+      "hydratedCount": 105,
+      "uniqueCount": 105,
+      "complete": false,
+      "reason": "count-mismatch"
+    },
+    {
+      "name": "unexpected hydrated identity",
+      "expectedTotal": 2,
+      "enumeratedIds": ["2436754", "2436755"],
+      "hydratedIds": ["2436754", "2436755", "9999999"],
+      "complete": false,
+      "reason": "unexpected-stable-id"
+    },
+    {
+      "name": "route fingerprint drift",
+      "expectedTotal": 1,
+      "enumeratedCount": 1,
+      "hydratedCount": 1,
+      "uniqueCount": 1,
+      "startFingerprint": "auctionninja|category|electronics|zip=07008",
+      "endFingerprint": "auctionninja|category|jewelry|zip=07008",
+      "complete": false,
+      "reason": "route-fingerprint-changed"
+    },
+    {
+      "name": "filter drift",
+      "expectedTotal": 1,
+      "enumeratedCount": 1,
+      "hydratedCount": 1,
+      "uniqueCount": 1,
+      "startFingerprint": "auctionninja|category|electronics|miles=50|zip=07008",
+      "endFingerprint": "auctionninja|category|electronics|miles=100|zip=07008",
+      "complete": false,
+      "reason": "route-fingerprint-changed"
+    }
+  ],
+  "detailHtml": "<!doctype html><html><head><link rel=\"canonical\" href=\"https://www.auctionninja.com/testseller/product/portable-receiver--123456.html\"></head><body><h1>Portable Receiver</h1><div class=\"product-detail\"><div class=\"lot-number\">Lot # 7</div><div class=\"description\">Condition: Used - Very Good\nFunctional: Unable to Test\nMissing Parts: Yes</div><img src=\"https://cdn.example/receiver-1.jpg\" data-src=\"https://cdn.example/receiver-2.jpg\"><picture><source srcset=\"https://cdn.example/receiver-3.jpg 1x, https://cdn.example/receiver-3-large.jpg 2x\"></picture></div></body></html>",
+  "accountHtml": "<!doctype html><html><body><main><article class=\"account-item\"><a href=\"https://www.auctionninja.com/testseller/product/portable-receiver--123456.html?an=private-value\">Portable Receiver</a><span>Won $25</span><span>Bidder: private-alias</span><span>Contact: private@example.invalid</span></article></main></body></html>",
+  "expectedDetail": {
+    "stableProductId": "123456",
+    "lot": "7",
+    "title": "Portable Receiver",
+    "descriptionContains": ["Condition: Used - Very Good", "Functional: Unable to Test", "Missing Parts: Yes"],
+    "images": [
+      "https://cdn.example/receiver-1.jpg",
+      "https://cdn.example/receiver-2.jpg",
+      "https://cdn.example/receiver-3.jpg",
+      "https://cdn.example/receiver-3-large.jpg"
+    ],
+    "mustExclude": ["private-value", "private-alias", "private@example.invalid"]
+  },
+  "conditionCases": [
+    { "text": "Damaged: No\\nMissing Parts: No\\nFunctional: Yes", "expected": "usable" },
+    { "text": "Condition: Used - Very Good\\nFunctional: Unable to Test\\nMissing Parts: Yes", "expected": "review" },
+    { "text": "Condition: For Parts or Not Working\\nDamaged: Yes", "expected": "parts-only" },
+    { "text": "Condition: N/A", "expected": "unknown" }
+  ],
+  "accountPrivacy": {
+    "mustPreserve": ["canonical product id", "title", "public price", "public status"],
+    "mustRemove": ["an query parameter", "bidder alias", "email", "phone", "street address", "invoice", "payment"]
+  },
+  "expectedContractExports": {
+    "indexOrDom": [
+      "resolveAuctionNinjaRoute",
+      "extractAuctionNinjaItemDetail",
+      "validateAuctionNinjaCoverage",
+      "sanitizeAuctionNinjaAccountExport"
+    ],
+    "index": [
+      "scrapeAuctionNinjaSaleCatalog",
+      "scrapeAuctionNinjaCategory",
+      "scrapeAuctionNinjaAuctionSearch"
+    ]
+  }
+}

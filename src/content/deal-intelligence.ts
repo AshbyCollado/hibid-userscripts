@@ -54,6 +54,25 @@ interface AnalysisRecord {
   outcome: DealOutcome | null;
 }
 
+interface RetainedRetailEvidence {
+  query: string;
+  amazonOverrideAsin: string;
+  result: RetailLookupResult;
+}
+
+const REUSABLE_RETAIL_STATUSES = new Set<RetailLookupResult['status']>(['matched', 'no_match', 'low_confidence']);
+
+export function canReuseRetailEvidence(
+  evidence: RetainedRetailEvidence | null | undefined,
+  query: string,
+  amazonOverrideAsin: string | null | undefined,
+): evidence is RetainedRetailEvidence {
+  return Boolean(evidence
+    && evidence.query === query
+    && evidence.amazonOverrideAsin === String(amazonOverrideAsin || '')
+    && REUSABLE_RETAIL_STATUSES.has(evidence.result.status));
+}
+
 function emptySummary(): DealAnalysisSummary {
   return {
     phase: 'idle', routeFingerprint: '', total: 0, analyzed: 0, retailMatched: 0, retailUnmatched: 0,
@@ -216,7 +235,7 @@ function installPageStyles(): void {
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-    .flippah-deal-strip{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 10px;min-height:24px;margin:5px 0;padding:3px 5px;font:700 11px/1.2 system-ui,sans-serif;letter-spacing:0}
+    .flippah-deal-strip{display:flex;align-items:center;align-content:center;justify-content:center;flex-wrap:wrap;gap:6px 10px;min-height:52px;box-sizing:border-box;margin:5px 0;padding:3px 5px;font:700 11px/1.2 system-ui,sans-serif;letter-spacing:0}
     .flippah-deal-pill{display:inline-flex;align-items:center;gap:5px;min-height:20px;color:#475569;white-space:nowrap}
     a.flippah-deal-pill{text-decoration:none;cursor:pointer}a.flippah-deal-pill:hover{text-decoration:underline}a.flippah-deal-pill:focus-visible{outline:2px solid #2563eb;outline-offset:2px;text-decoration:none}
     .flippah-deal-dot{display:inline-block;width:9px;height:9px;border:1px solid #64748b;border-radius:50%;background:#94a3b8;flex:0 0 9px}
@@ -279,6 +298,22 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
   const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-')) && record.allIn
     ? computeAccountVerdict({ status: record.lot.status || record.lot.rawText, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice })
     : null;
+  const renderSignature = JSON.stringify([
+    record.identity.query,
+    record.currency,
+    amazonPrice,
+    record.amazon?.status || '',
+    record.amazon?.match?.candidate.asin || '',
+    record.amazonIndicator.cls,
+    ebayPrice,
+    record.ebayIndicator.cls,
+    condition.label,
+    condition.tone,
+    record.allIn?.total ?? null,
+    verdict?.kind || '',
+  ]);
+  if (strip.dataset.flippahRenderSignature === renderSignature) return;
+  strip.dataset.flippahRenderSignature = renderSignature;
   strip.replaceChildren();
   const add = (text: string, cls: string, title: string, href = '', showDot = true, brand = '') => {
     const pill = document.createElement(href ? 'a' : 'span'); pill.className = `flippah-deal-pill ${cls}${brand ? ` search ${brand}` : ''}`; pill.title = title; pill.setAttribute('aria-label', title);
@@ -605,6 +640,7 @@ export class DealIntelligenceController {
   private annotationRepairTimer: number | null = null;
   private pendingAnnotationRepairIds = new Set<string>();
   private records = new Map<string, AnalysisRecord>();
+  private retailEvidence = new Map<string, RetainedRetailEvidence>();
   private visibleLotSignature = '';
 
   constructor(
@@ -641,6 +677,7 @@ export class DealIntelligenceController {
   handleLocationChange(): void {
     this.generation += 1;
     this.records.clear();
+    this.retailEvidence.clear();
     this.visibleLotSignature = '';
     this.update(emptySummary());
     this.pendingAnnotationRepairIds.clear();
@@ -650,10 +687,32 @@ export class DealIntelligenceController {
   }
 
   async clearCache(): Promise<void> {
-    await runtimeMessage('flippah:retail.cache.clear', {}); this.records.clear(); void this.run();
+    await runtimeMessage('flippah:retail.cache.clear', {}); this.records.clear(); this.retailEvidence.clear(); void this.run();
   }
 
-  async rerun(): Promise<void> { this.records.clear(); void this.run(); }
+  async rerun(): Promise<void> { this.records.clear(); this.retailEvidence.clear(); void this.run(); }
+
+  private retainKnownEvidence(record: AnalysisRecord, previous?: AnalysisRecord): AnalysisRecord {
+    if (previous && !record.lot.description && previous.lot.id === record.lot.id) {
+      record.lot.description = previous.lot.description;
+      record.lot.descriptionHtml = previous.lot.descriptionHtml;
+      record.lot.descriptionFields = previous.lot.descriptionFields;
+      record.lot.category = previous.lot.category;
+      record.lot.categories = previous.lot.categories;
+      record.lot.images = record.lot.images.length ? record.lot.images : previous.lot.images;
+      record.lot.image = record.lot.image || previous.lot.image;
+      record.condition = previous.condition;
+      record.mixed = previous.mixed;
+      record.needsQuantity = previous.needsQuantity;
+      if (record.identity.query === previous.identity.query) record.identity = previous.identity;
+    }
+    const evidence = this.retailEvidence.get(record.lot.id);
+    if (!canReuseRetailEvidence(evidence, record.identity.query, record.state.amazonOverrideAsin)) return record;
+    record.amazon = evidence.result;
+    const price = amazonMarketValue(record);
+    record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price }).amazon;
+    return record;
+  }
 
   private schedule(delay: number): void {
     if (this.rerunTimer !== null) window.clearTimeout(this.rerunTimer);
@@ -686,6 +745,7 @@ export class DealIntelligenceController {
     if (!route.supported || !SUPPORTED.has(route.kind)) { this.update({ phase: 'idle', message: 'Not available on this page', total: 0, analyzed: 0 }); return; }
     const fingerprint = routeFingerprint(route, location.href);
     const generation = ++this.generation;
+    const previousRecords = this.records;
     this.update({ phase: 'scanning', routeFingerprint: fingerprint, total: 0, analyzed: 0, retailMatched: 0, retailUnmatched: 0, mixedLots: 0, quantityReview: 0, message: 'Reading visible lots' });
     try {
       const settings = normalizeSettings(await getSyncStorage());
@@ -694,7 +754,8 @@ export class DealIntelligenceController {
       const stored = await readStoredLots(lots.map((lot) => lot.id));
       const outcomes = await readStoredOutcomes(lots.map((lot) => lot.id));
       let auctionPremiums = await readAuctionPremiums(lots.map((lot) => lot.auctionId));
-      const quickRecords = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings);
+      const quickRecords = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings)
+        .map((record) => this.retainKnownEvidence(record, previousRecords.get(record.lot.id)));
       this.records = new Map(quickRecords.map((record) => [record.lot.id, record]));
       quickRecords.forEach((record) => {
         applyTileAnnotation(record, route);
@@ -724,7 +785,9 @@ export class DealIntelligenceController {
       }
       if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
       auctionPremiums = await readAuctionPremiums(lots.map((lot) => lot.auctionId));
-      const preliminary = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings);
+      const quickById = new Map(quickRecords.map((record) => [record.lot.id, record]));
+      const preliminary = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings)
+        .map((record) => this.retainKnownEvidence(record, quickById.get(record.lot.id)));
       this.records = new Map(preliminary.map((record) => [record.lot.id, record]));
       const stillCurrent = () => generation === this.generation && fingerprint === routeFingerprint(this.getRoute(), location.href);
       const repaint = (record: AnalysisRecord) => {
@@ -735,10 +798,12 @@ export class DealIntelligenceController {
         }
       };
       preliminary.forEach(repaint);
-      const eligible = preliminary.filter((record) => record.currency !== 'CAD' && !record.mixed.mixed && !record.needsQuantity && Boolean(record.identity.query));
-      const skipped = preliminary.length - eligible.length;
-      let amazonAnalyzed = settings.amazonAutoLookup ? skipped : preliminary.length;
-      const amazonMatchedIds = new Set<string>();
+      const researchable = preliminary.filter((record) => record.currency !== 'CAD' && !record.mixed.mixed && !record.needsQuantity && Boolean(record.identity.query));
+      const eligible = researchable.filter((record) => !canReuseRetailEvidence(this.retailEvidence.get(record.lot.id), record.identity.query, record.state.amazonOverrideAsin));
+      const retained = researchable.length - eligible.length;
+      const skipped = preliminary.length - researchable.length;
+      let amazonAnalyzed = settings.amazonAutoLookup ? skipped + retained : preliminary.length;
+      const amazonMatchedIds = new Set(preliminary.filter((record) => amazonMarketValue(record) !== null && record.amazon?.status === 'matched').map((record) => record.lot.id));
       const updateProgress = () => {
         this.update({
           analyzed: amazonAnalyzed,
@@ -784,6 +849,13 @@ export class DealIntelligenceController {
                 }
               }
               record.amazon = result;
+              if (REUSABLE_RETAIL_STATUSES.has(result.status)) {
+                this.retailEvidence.set(record.lot.id, {
+                  query: record.identity.query,
+                  amazonOverrideAsin: String(record.state.amazonOverrideAsin || ''),
+                  result,
+                });
+              }
               const price = amazonMarketValue(record);
               record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price }).amazon;
               amazonAnalyzed += 1;

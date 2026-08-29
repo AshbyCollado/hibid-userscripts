@@ -1,4 +1,4 @@
-import type { HiBidLotRecord, ScrapeJobSummary } from './types.js';
+import type { ScrapeJobSummary, ScrapeStoredRecord } from './types.js';
 import { chooseNewestJob } from './job-scope.js';
 
 const DB_NAME = 'flippah-scraper';
@@ -103,7 +103,7 @@ export async function getJobForFingerprint(tabId: number | null, fingerprint: st
   });
 }
 
-export async function replaceRecords(jobId: string, records: HiBidLotRecord[]): Promise<void> {
+export async function replaceRecords(jobId: string, records: ScrapeStoredRecord[]): Promise<void> {
   const db = await openDb();
   const tx = db.transaction('records', 'readwrite');
   const store = tx.objectStore('records');
@@ -119,7 +119,7 @@ export async function replaceRecords(jobId: string, records: HiBidLotRecord[]): 
   db.close();
 }
 
-export async function putRecordBatch(jobId: string, records: HiBidLotRecord[], replace = false): Promise<void> {
+export async function putRecordBatch(jobId: string, records: ScrapeStoredRecord[], replace = false): Promise<void> {
   const db = await openDb();
   const tx = db.transaction('records', 'readwrite');
   const store = tx.objectStore('records');
@@ -141,13 +141,13 @@ export async function putRecordBatch(jobId: string, records: HiBidLotRecord[], r
   db.close();
 }
 
-export async function getRecords(jobId: string): Promise<HiBidLotRecord[]> {
+export async function getRecords(jobId: string): Promise<ScrapeStoredRecord[]> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const request = db.transaction('records').objectStore('records').index('jobId').getAll(IDBKeyRange.only(jobId));
     request.onsuccess = () => {
       db.close();
-      resolve((request.result as Array<HiBidLotRecord & { jobId?: string }>).map(({ jobId: _jobId, ...record }) => record as HiBidLotRecord));
+      resolve((request.result as Array<ScrapeStoredRecord & { jobId?: string }>).map(({ jobId: _jobId, ...record }) => record as ScrapeStoredRecord));
     };
     request.onerror = () => { db.close(); reject(request.error); };
   });
