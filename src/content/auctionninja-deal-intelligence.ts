@@ -158,6 +158,23 @@ function structuredDescription(item: AuctionNinjaAnalysisSource): string {
   return [item.description || '', ...fields].filter(Boolean).join('\n');
 }
 
+export function auctionNinjaConditionInput(title: string, description: string): string {
+  if (/(?:^|\n)\s*condition\s*:/i.test(description)) return description;
+  const source = String(title || '');
+  const inferred = /\b(?:factory[\s-]*sealed|new[\s-]*sealed|sealed)\b/i.test(source)
+    ? 'New - Factory Sealed'
+    : /\b(?:brand[\s-]*new|new\s+in\s+box|\bnib\b)\b/i.test(source)
+      ? 'New'
+      : /\bopen[\s-]*box\b/i.test(source)
+        ? 'Open Box'
+        : /\blike[\s-]*new\b/i.test(source)
+          ? 'Like New'
+          : /\bused\b/i.test(source)
+            ? 'Used'
+            : '';
+  return [inferred ? `Condition: ${inferred}` : '', source, description].filter(Boolean).join('\n');
+}
+
 function itemQuantity(item: AuctionNinjaAnalysisSource): number | null {
   const fromFields = Object.entries(item.descriptionFields || {})
     .filter(([key]) => /quantity|count|set size/i.test(key))
@@ -175,7 +192,7 @@ export function buildAuctionNinjaAnalysis(
   const description = structuredDescription(item);
   const identity = extractProductIdentity(item.title, description);
   if (state.queryOverride) identity.query = buildProductResearchQuery(state.queryOverride) || identity.query;
-  const condition = assessCondition(description);
+  const condition = assessCondition(auctionNinjaConditionInput(item.title, description));
   const mixed = detectMixedLot(item.title, description);
   const quantity = itemQuantity(item);
   const needsQuantity = requiresQuantityConfirmation(quantity, mixed.mixed, state.confirmedQuantity);
@@ -281,12 +298,20 @@ function installStyles(doc: Document): void {
   const style = doc.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-    .flippah-an-deal-strip{display:flex;align-items:center;flex-wrap:wrap;gap:5px 7px;margin:6px 0;padding:3px 0;font:700 11px/1.25 system-ui,sans-serif;letter-spacing:0}
-    .flippah-an-pill{display:inline-flex;align-items:center;gap:4px;min-height:22px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#475569;white-space:nowrap}
+    .flippah-an-deal-strip{display:flex;align-items:center;align-content:center;justify-content:center;flex-wrap:wrap;gap:6px 10px;min-height:52px;box-sizing:border-box;margin:5px 0;padding:3px 5px;font:700 11px/1.2 system-ui,sans-serif;letter-spacing:0}
+    .flippah-an-pill{display:inline-flex;align-items:center;gap:5px;min-height:22px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#475569;white-space:nowrap}
     a.flippah-an-pill{text-decoration:none;cursor:pointer}.flippah-an-pill:hover{text-decoration:underline}.flippah-an-pill:focus-visible{outline:2px solid #2563eb;outline-offset:2px;text-decoration:none}
-    .flippah-an-pill.amazon{border-color:#f59e0b;color:#111827;font-family:Arial,sans-serif}.flippah-an-pill.ebay{border-color:#93c5fd;color:#3665f3;font-family:Arial,sans-serif}
-    .flippah-an-pill.green{border-color:#86efac;background:#f0fdf4;color:#166534}.flippah-an-pill.yellow{border-color:#fcd34d;background:#fffbeb;color:#92400e}.flippah-an-pill.orange{border-color:#fdba74;background:#fff7ed;color:#9a3412}.flippah-an-pill.red{border-color:#fca5a5;background:#fef2f2;color:#991b1b}.flippah-an-pill.black{border-color:#9ca3af;background:#f3f4f6;color:#111827}
-    .flippah-an-allin{color:#1d4ed8;font-weight:800}.flippah-an-panel{margin:12px 0;padding:9px;border:1px solid #d7ddd9;border-radius:6px;background:#fff;color:#202522;font:12px/1.4 system-ui,sans-serif}.flippah-an-panel *{box-sizing:border-box}.flippah-an-panel h2{margin:0;font-size:13px}.flippah-an-panel .row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:7px}.flippah-an-panel label{display:grid;gap:3px;margin-top:7px;color:#475569}.flippah-an-panel input{min-height:30px;width:100%;border:1px solid #cfd4d0;border-radius:5px;background:#fff;padding:5px 7px}.flippah-an-panel a{color:#1d4ed8;font-weight:700}.flippah-an-panel .muted{color:#64748b}
+    .flippah-an-pill.amazon{border-color:#f59e0b;color:#111827;font-family:Arial,sans-serif;font-weight:800}.flippah-an-pill.ebay{border-color:#93c5fd;color:#3665f3;font-family:Arial,sans-serif;font-weight:800}
+    .flippah-an-pill.green,.flippah-an-pill.yellow,.flippah-an-pill.orange,.flippah-an-pill.red,.flippah-an-pill.black{border-color:transparent;background:transparent;padding-left:2px;padding-right:2px}
+    .flippah-an-pill.green::before,.flippah-an-pill.yellow::before,.flippah-an-pill.orange::before,.flippah-an-pill.red::before,.flippah-an-pill.black::before{content:"";width:9px;height:9px;border:1px solid #64748b;border-radius:50%;background:#94a3b8;flex:0 0 9px}
+    .flippah-an-pill.green::before{border-color:#3f6212;background:#65a30d}.flippah-an-pill.yellow::before{border-color:#854d0e;background:#eab308}.flippah-an-pill.orange::before{border-color:#9a3412;background:#f97316}.flippah-an-pill.red::before{border-color:#991b1b;background:#dc2626}.flippah-an-pill.black::before{border-color:#111827;background:#111827}
+    .flippah-an-pill.condition-good{border-color:#86efac;background:#f0fdf4;color:#166534}.flippah-an-pill.condition-warning{border-color:#fcd34d;background:#fffbeb;color:#92400e}.flippah-an-pill.condition-danger{border-color:#fca5a5;background:#fef2f2;color:#991b1b}.flippah-an-pill.condition-unknown{background:#f8fafc;color:#64748b}
+    .flippah-an-allin{border-color:transparent;background:transparent;color:#1d4ed8;font-weight:800}
+    .flippah-an-panel{width:100%;max-width:380px;margin:14px 0;padding:12px;border:1px solid #d7e0ea;border-left:4px solid #2563eb;border-radius:6px;background:#fff;color:#202522;box-shadow:0 4px 14px rgba(15,23,42,.08);font:12px/1.4 system-ui,sans-serif;letter-spacing:0}
+    .flippah-an-panel *{box-sizing:border-box}.flippah-an-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.flippah-an-brand{display:flex;align-items:center;gap:8px;min-width:0}.flippah-an-brand-dot{width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 3px #dcfce7;flex:0 0 10px}.flippah-an-brand-copy{display:grid;gap:1px;min-width:0}.flippah-an-brand-copy strong{font-size:13px;color:#0f172a}.flippah-an-brand-copy span{color:#64748b;font-size:10px;font-weight:700}
+    .flippah-an-panel-allin{flex:0 0 auto;border:1px solid #bfdbfe;border-radius:999px;background:#eff6ff;color:#1d4ed8;padding:3px 8px;font-size:11px;font-weight:800}.flippah-an-retail{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:10px}.flippah-an-condition-line{margin-top:8px}.flippah-an-match-title{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;margin-top:8px;color:#64748b;font-size:10px;line-height:1.35}
+    .flippah-an-panel details{margin-top:10px;border-top:1px solid #e2e8f0;padding-top:8px}.flippah-an-panel summary{cursor:pointer;color:#334155;font-weight:800}.flippah-an-panel summary:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.flippah-an-panel label{display:grid;gap:3px;margin-top:8px;color:#475569;font-size:11px;font-weight:700}.flippah-an-panel input{min-height:32px;width:100%;border:1px solid #cfd4d0;border-radius:5px;background:#fff;padding:5px 7px;color:#111827;font:12px/1.3 system-ui,sans-serif}.flippah-an-panel a{font-weight:800}
+    @media (max-width:760px){.flippah-an-panel{max-width:none}.flippah-an-panel-head{align-items:flex-start}.flippah-an-panel-allin{white-space:nowrap}}
   `;
   (doc.head || doc.documentElement).append(style);
 }
@@ -350,17 +375,25 @@ export function renderAuctionNinjaCardAnnotation(card: Element, record: AuctionN
     ? links.ebay.title
     : `${buildRetailIndicatorTooltip({ providerName: 'eBay', indicator: record.ebayIndicator, allIn: record.allIn?.total, marketPrice: ebay, evidenceSource: 'your saved manual resale estimate' })} Open Sold and Completed results to verify.`;
   strip.replaceChildren(
-    createPill(doc, amazon === null ? links.amazon.label : `Amazon ${formatUsd(amazon)}`, amazonTitle, amazon === null ? 'amazon' : `amazon ${record.amazonIndicator.cls}`, amazon === null ? links.amazon.href : record.amazon?.match?.candidate.url || links.amazon.href),
-    createPill(doc, ebay === null ? 'eBay Sold + Completed search' : `eBay Sold + Completed ${formatUsd(ebay)}`, ebayTitle, ebay === null ? 'ebay' : `ebay ${record.ebayIndicator.cls}`, links.ebay.href),
+    createPill(doc, amazon === null ? 'Amazon ↗' : `Amazon ${formatUsd(amazon)}`, amazonTitle, amazon === null ? 'amazon' : `amazon ${record.amazonIndicator.cls}`, amazon === null ? links.amazon.href : record.amazon?.match?.candidate.url || links.amazon.href),
+    createPill(doc, ebay === null ? 'eBay ↗' : `eBay ${formatUsd(ebay)}`, ebayTitle, ebay === null ? 'ebay' : `ebay ${record.ebayIndicator.cls}`, links.ebay.href),
     createPill(doc, condition.label, condition.title, `condition-${condition.tone}`),
     createPill(doc, record.allIn ? `All-in ${formatUsd(record.allIn.total)}` : 'All-in unavailable', allInTitle, 'flippah-an-allin'),
   );
   return strip;
 }
 
-function renderDetailPanel(record: AuctionNinjaAnalysisRecord, onChange: (patch: Partial<StoredLotState>) => void): HTMLElement | null {
-  const doc = document;
-  const host = doc.querySelector<HTMLElement>('.item-detail-main, .item-detail-box-main, .product-detail') || doc.body;
+export function resolveAuctionNinjaDetailPanelMount(root: Document): { host: HTMLElement; anchor: Element | null } {
+  const detailColumn = root.querySelector<HTMLElement>('.item-detail-box-right');
+  if (detailColumn) return { host: detailColumn, anchor: detailColumn.querySelector('.item-detail-btn') };
+  return {
+    host: root.querySelector<HTMLElement>('.item-detail-box-main, .product-detail, .item-detail-main') || root.body,
+    anchor: null,
+  };
+}
+
+export function renderAuctionNinjaDetailPanel(record: AuctionNinjaAnalysisRecord, onChange: (patch: Partial<StoredLotState>) => void, doc: Document = document): HTMLElement | null {
+  const { host, anchor } = resolveAuctionNinjaDetailPanelMount(doc);
   if (!host) return null;
   installStyles(doc);
   const id = record.item.stableId || record.item.id || '';
@@ -370,8 +403,9 @@ function renderDetailPanel(record: AuctionNinjaAnalysisRecord, onChange: (patch:
     panel.className = 'flippah-an-panel';
     panel.dataset.flippahOwned = 'true';
     panel.dataset.flippahDealFor = id;
-    host.append(panel);
   }
+  if (anchor) anchor.insertAdjacentElement('afterend', panel);
+  else if (panel.parentElement !== host) host.append(panel);
   const query = doc.createElement('input');
   query.type = 'text'; query.value = record.state.queryOverride || record.identity.query; query.setAttribute('aria-label', 'Research query');
   const resale = doc.createElement('input');
@@ -382,18 +416,29 @@ function renderDetailPanel(record: AuctionNinjaAnalysisRecord, onChange: (patch:
   resale.addEventListener('change', () => onChange({ resaleEstimate: numberFrom(resale.value) }));
   quantity.addEventListener('change', () => onChange({ confirmedQuantity: numberFrom(quantity.value) }));
   const label = (text: string, input: HTMLInputElement): HTMLLabelElement => { const node = doc.createElement('label'); node.append(doc.createTextNode(text), input); return node; };
-  const head = doc.createElement('div'); head.className = 'row';
-  const title = doc.createElement('h2'); title.textContent = 'Flippah Deal Intelligence';
-  const allIn = doc.createElement('strong'); allIn.textContent = record.allIn ? `All-in ${formatUsd(record.allIn.total)}` : 'All-in unavailable'; allIn.title = record.allIn ? `Current bid plus ${record.premiumPct}% buyer premium and estimated tax.` : 'Current bid and fee data are unavailable.';
-  head.append(title, allIn);
-  const condition = doc.createElement('div'); condition.className = 'row'; condition.append(createPill(doc, buildConditionPresentation(record.condition).label, buildConditionPresentation(record.condition).title, `condition-${buildConditionPresentation(record.condition).tone}`));
-  const retail = doc.createElement('div'); retail.className = 'row';
+  const head = doc.createElement('div'); head.className = 'flippah-an-panel-head';
+  const brand = doc.createElement('div'); brand.className = 'flippah-an-brand';
+  const brandDot = doc.createElement('span'); brandDot.className = 'flippah-an-brand-dot'; brandDot.setAttribute('aria-hidden', 'true');
+  const brandCopy = doc.createElement('div'); brandCopy.className = 'flippah-an-brand-copy';
+  const title = doc.createElement('strong'); title.textContent = 'Flippah';
+  const subtitle = doc.createElement('span'); subtitle.textContent = 'Deal check';
+  brandCopy.append(title, subtitle); brand.append(brandDot, brandCopy);
+  const allIn = doc.createElement('strong'); allIn.className = 'flippah-an-panel-allin'; allIn.textContent = record.allIn ? `All-in ${formatUsd(record.allIn.total)}` : 'All-in unavailable'; allIn.title = record.allIn ? `Current bid plus ${record.premiumPct}% buyer premium and estimated tax.` : 'Current bid and fee data are unavailable.';
+  head.append(brand, allIn);
+  const conditionPresentation = buildConditionPresentation(record.condition);
+  const condition = doc.createElement('div'); condition.className = 'flippah-an-condition-line'; condition.append(createPill(doc, conditionPresentation.label, conditionPresentation.title, `condition-${conditionPresentation.tone}`));
+  const retail = doc.createElement('div'); retail.className = 'flippah-an-retail';
   const amazon = amazonPrice(record);
-  const amazonLink = createPill(doc, amazon === null ? 'Amazon search' : `Amazon ${formatUsd(amazon)}`, amazon === null ? buildRetailSearchPresentation('amazon', record.identity.query).title : record.amazon?.match?.candidate.title || 'Verified Amazon match', amazon === null ? 'amazon' : `amazon ${record.amazonIndicator.cls}`, amazon === null ? buildRetailSearchPresentation('amazon', record.identity.query).href : record.amazon?.match?.candidate.url);
+  const amazonLink = createPill(doc, amazon === null ? 'Amazon ↗' : `Amazon ${formatUsd(amazon)}`, amazon === null ? buildRetailSearchPresentation('amazon', record.identity.query).title : record.amazon?.match?.candidate.title || 'Verified Amazon match', amazon === null ? 'amazon' : `amazon ${record.amazonIndicator.cls}`, amazon === null ? buildRetailSearchPresentation('amazon', record.identity.query).href : record.amazon?.match?.candidate.url);
   const ebaySearch = buildRetailSearchPresentation('ebay', record.identity.query);
-  const ebayLink = createPill(doc, record.state.resaleEstimate === null ? 'eBay Sold + Completed search' : `eBay Sold + Completed ${formatUsd(record.state.resaleEstimate)}`, ebaySearch.title, 'ebay', ebaySearch.href);
+  const ebayLink = createPill(doc, record.state.resaleEstimate === null ? 'eBay Sold ↗' : `eBay ${formatUsd(record.state.resaleEstimate)}`, ebaySearch.title, record.state.resaleEstimate === null ? 'ebay' : `ebay ${record.ebayIndicator.cls}`, ebaySearch.href);
   retail.append(amazonLink, ebayLink);
-  panel.replaceChildren(head, condition, retail, label('Research query', query), label('eBay resale estimate (USD)', resale), label('Confirmed quantity', quantity));
+  const matchedTitle = doc.createElement('div'); matchedTitle.className = 'flippah-an-match-title';
+  matchedTitle.textContent = record.amazon?.match?.candidate.title ? `Amazon match: ${record.amazon.match.candidate.title}` : 'No verified Amazon match yet. Use the search action to review results.';
+  const details = doc.createElement('details');
+  const summary = doc.createElement('summary'); summary.textContent = 'Research details';
+  details.append(summary, label('Search query', query), label('eBay resale estimate (USD)', resale), label('Confirmed quantity', quantity));
+  panel.replaceChildren(head, retail, condition, matchedTitle, details);
   return panel;
 }
 
@@ -581,7 +626,9 @@ export class AuctionNinjaDealIntelligenceController {
       const items = this.itemsForRoute(route);
       this.visibleSignature = auctionNinjaIdentitySignature(items);
       const stored = await readAuctionNinjaState(items, route);
-      const salePremium = route.kind === 'sale-catalog' ? parseAuctionNinjaBuyerPremium((document.body?.textContent || '').match(/Buyer'?s Premium[\s\S]{0,80}/i)?.[0]) : null;
+      const salePremium = route.kind === 'sale-catalog' || route.kind === 'item-detail'
+        ? parseAuctionNinjaBuyerPremium((document.body?.textContent || '').match(/Buyer'?s Premium[\s\S]{0,80}/i)?.[0])
+        : null;
       const analyze = (sourceItems: AuctionNinjaAnalysisSource[]) => sourceItems.map((item) => {
         const saleId = saleIdForItem(item, route);
         return buildAuctionNinjaAnalysis(item, { settings, state: stored.lots.get(item.stableId || item.id || ''), buyerPremiumPct: stored.premiums.get(saleId) ?? salePremium });
@@ -591,7 +638,7 @@ export class AuctionNinjaDealIntelligenceController {
       preliminary.forEach((record) => {
         const card = cardForRecord(record);
         if (card) renderAuctionNinjaCardAnnotation(card, record);
-        if (route.kind === 'item-detail') renderDetailPanel(record, (patch) => { void this.saveState(record.item.stableId || record.item.id || '', patch); });
+        if (route.kind === 'item-detail') renderAuctionNinjaDetailPanel(record, (patch) => { void this.saveState(record.item.stableId || record.item.id || '', patch); });
       });
       const enrichedItems = await this.enrichVisibleItems(items, route, abort.signal);
       if (!current()) return;
@@ -634,7 +681,7 @@ export class AuctionNinjaDealIntelligenceController {
             if (result.status === 'matched' && amazonPrice(record) !== null) matchedIds.add(record.item.stableId || record.item.id || '');
             const card = cardForRecord(record);
             if (card) renderAuctionNinjaCardAnnotation(card, record);
-            if (route.kind === 'item-detail') renderDetailPanel(record, (patch) => { void this.saveState(record.item.stableId || record.item.id || '', patch); });
+            if (route.kind === 'item-detail') renderAuctionNinjaDetailPanel(record, (patch) => { void this.saveState(record.item.stableId || record.item.id || '', patch); });
             progress();
           },
         });

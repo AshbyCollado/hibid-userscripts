@@ -39,6 +39,8 @@ export interface ProductIdentity {
 
 export interface ProductDiscriminators {
   capacities: string[];
+  cubicCapacities: string[];
+  weightLimits: string[];
   resolutions: string[];
   dimensions: string[];
   platformVariants: string[];
@@ -129,6 +131,7 @@ export interface AmazonCandidate {
   used: boolean;
   sponsored: boolean;
   url: string;
+  detailEnriched?: boolean;
 }
 
 export interface AmazonCandidateMatch {
@@ -245,7 +248,7 @@ const GENERIC_MODEL_RE = /^(?:n\/?a|none|null|nil|unknown|unspecified|various|as
 const CONDITION_PARTS_RE = /\b(for\s*parts|parts\s*only|salvage|broken|not\s*working|non[\s-]*functional|defective|scrap|damaged\s*beyond)\b/i;
 const CONDITION_GOOD_RE = /\b(brand\s*new|new|sealed|excellent|like\s*new|mint|open\s*box|good|very\s*good)\b/i;
 const POSITIVE_RE = /\b(tested\s*(?:and\s*)?working|works?\s*(?:great|well|fine|perfectly)|fully\s*functional|brand\s*new|sealed|new\s*in\s*box|nib\b)/i;
-const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|cord|charger|adapter|mount|holder|stand|arm|topper|strap|band|bumper|shell|film|dock|lanyard|clip|controller|game|spray|cloth|cloths|pads?|wipes?|filters?|valves?|sensor\s*wires?|disc\s+drive|remote(?:\s+control)?|bowl|jar|lid|blade|baffle|shield|backplate|back\s*plate|faceplate|wall\s*plate|trim\s*kit|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert)s?\b/i;
+const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|cord|charger|adapter|mount|holder|stand|arm|topper|strap|band|belt|bumper|shell|film|dock|lanyard|clip|controller|game|spray|cloth|cloths|pads?|wipes?|filters?|valves?|sensor\s*wires?|disc\s+drive|remote(?:\s+control)?|bowl|jar|lid|blade|baffle|shield|backplate|back\s*plate|build\s*plate|magnetic\s+plate|pei\s+(?:sheet|plate)|flexi(?:ble)?\s+steel(?:\s+sheet)?|chisels?|drill\s+bits?|bit\s+sets?|faceplate|wall\s*plate|trim\s*kit|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert|pizza\s+pan|baking\s+pan|crumb\s+tray|replacement\s+tray|plant\s+food|descal(?:er|ing)\s+tablets?|cleaning\s+tablets?|photo\s+prop|display\s+decoration)s?\b/i;
 const ACCESSORY_MARKER_RE = /\b(compatible\s+with|replacement\s+for|replacement\s+parts?\s+only|designed\s+for|made\s+for|for\s+use\s+with|fits?\s+for|fits\s+(?:the\s+)?[A-Z0-9])/i;
 const FOR_PRODUCT_VERBS = 'compatible\\s+with|replacement\\s+(?:part\\s+)?for|designed\\s+for|made\\s+for|for\\s+use\\s+with|fits|suitable\\s+for|upgrade\\s+for';
 const TITLE_PREFIX_RE = /^\s*(?:\(?\s*(?:open\s*box|openbox|refurbished|refurb|renewed|used|pre[\s-]?owned)[^-|:]*\)?\s*[-|:]\s*)+/i;
@@ -320,6 +323,17 @@ const BRAND_FAMILIES: ReadonlyArray<readonly [string, RegExp]> = [
   ['meta', /\b(?:meta|oculus)\b/i],
   ['western-digital', /\b(?:western\s+digital|wd)\b/i],
   ['hewlett-packard', /\b(?:hewlett[\s-]+packard|hp)\b/i],
+  ['amazon-basics', /\bamazon\s+basics\b/i],
+  ['hamilton-beach', /\bhamilton\s+beach\b/i],
+  ['black-and-decker', /\bblack\s*(?:\+|&|and)?\s*decker\b/i],
+  ['jbl', /\bjbl\b/i],
+  ['logitech', /\blogitech\b/i],
+  ['kitchenaid', /\bkitchen\s*aid\b/i],
+  ['breville', /\bbreville\b/i],
+  ['keurig', /\bkeurig\b/i],
+  ['oster', /\boster\b/i],
+  ['bissell', /\bbissell\b/i],
+  ['crosley', /\bcrosley\b/i],
 ];
 
 function normalise(value: unknown): string {
@@ -397,6 +411,11 @@ export function extractProductDiscriminators(value: string | null | undefined): 
     [...source.matchAll(pattern)].map(normalize);
   const allCapacities = collect(/\b(\d+(?:\.\d+)?)[\s-]*(tb|gb|mb|kb)\b/gi, (match) => `${match[1]}${match[2]}`.toLowerCase());
   const capacities = allCapacities.length ? [allCapacities.sort((left, right) => capacityMagnitude(right) - capacityMagnitude(left))[0]!] : [];
+  const cubicCapacities = collect(/\b(\d+(?:\.\d+)?)[\s-]*(?:cu(?:bic)?\.?\s*ft\.?|cubic\s+(?:feet|foot))\b/gi, (match) => `${Number(match[1])}cuft`);
+  const weightLimits = [
+    ...collect(/\b(\d+(?:\.\d+)?)[\s-]*(?:lb|lbs|pounds?)[\s-]*(?:max(?:imum)?|capacity|limit)\b/gi, (match) => `${Number(match[1])}lb`),
+    ...collect(/\b(?:max(?:imum)?|capacity|limit)[\s:-]*(\d+(?:\.\d+)?)[\s-]*(?:lb|lbs|pounds?)\b/gi, (match) => `${Number(match[1])}lb`),
+  ];
   const resolutions = collect(/\b(8k|5k|4k|2160p|1440p|1080p|720p)\b/gi, (match) => canonicalResolution(String(match[1])));
   const dimensions = [
     ...collect(/\b(\d+(?:\.\d+)?)[\s-]*(?:inch(?:es)?|in\.?|\")(?=\s|$|[),/])/gi, (match) => `${match[1]}in`),
@@ -474,6 +493,8 @@ export function extractProductDiscriminators(value: string | null | undefined): 
   const unique = (items: string[]) => [...new Set(items)];
   return {
     capacities: unique(capacities),
+    cubicCapacities: unique(cubicCapacities),
+    weightLimits: unique(weightLimits),
     resolutions: unique(resolutions),
     dimensions: unique(dimensions),
     platformVariants: unique(platformVariants),
@@ -504,8 +525,9 @@ export function extractProductDiscriminators(value: string | null | undefined): 
 function matchesProductDiscriminators(candidateTitle: string, product: ProductIdentity): { matches: boolean; matchedCount: number; conflicts: string[]; missing: string[] } {
   const expected = product.discriminators || extractProductDiscriminators(product.name);
   const actual = extractProductDiscriminators(candidateTitle);
+  const exactModel = Boolean(product.model && modelMatches(candidateTitle, product.model));
   const groups: Array<keyof ProductDiscriminators> = [
-    'capacities', 'resolutions', 'dimensions', 'platformVariants', 'memoryTypes', 'frequencies',
+    'capacities', 'cubicCapacities', 'weightLimits', 'resolutions', 'dimensions', 'platformVariants', 'memoryTypes', 'frequencies',
     'refreshRates', 'storageTypes', 'networkStandards', 'editions', 'seriesSignatures',
     'voltages', 'wattages', 'batteryCapacities', 'lensRanges', 'gpuModels', 'cpuModels',
     'packageCounts', 'colors', 'materials', 'productFamilies', 'variantLabels',
@@ -523,6 +545,7 @@ function matchesProductDiscriminators(candidateTitle: string, product: ProductId
     return expectedVariant !== 'base' && (actualVariant === 'base' || expectedVariant.split('-').includes(actualVariant));
   };
   for (const group of groups) {
+    if (group === 'variantLabels' && exactModel) continue;
     if (!expected[group].length) continue;
     const absent = expected[group].filter((value) => !actual[group].includes(value));
     if (absent.length) {
@@ -554,7 +577,7 @@ function matchesProductDiscriminators(candidateTitle: string, product: ProductId
 }
 
 function criticalMissingDiscriminators(missing: string[]): string[] {
-  return missing.filter((value) => /^(?:packageCounts|volumes):/.test(value));
+  return missing.filter((value) => /^(?:packageCounts|volumes|cubicCapacities|weightLimits):/.test(value));
 }
 
 function collapseRepeatedQueryTokens(tokens: string[]): string[] {
@@ -794,20 +817,26 @@ export function buildConditionPresentation(assessment: ConditionAssessment): Con
     tone = 'good';
   } else if (assessment.cautions.length) {
     const caution = assessment.cautions[0]!.replace(/^condition:\s*/i, '').trim();
-    label = caution ? caution.replace(/^./, (value) => value.toUpperCase()).slice(0, 24) : 'Review condition';
+    const compact = /expected\s+wear\s*(?:&|and)\s*tear\s+for\s+age/i.test(caution)
+      ? 'Normal age wear'
+      : caution.replace(/^./, (value) => value.toUpperCase());
+    label = compact.length > 24 ? compact.slice(0, 25).replace(/\s+\S*$/, '').trim() : compact || 'Review condition';
     tone = 'warning';
   } else if (assessment.positive) {
     label = 'Functional';
     tone = 'good';
   } else if (stated) {
-    label = stated.slice(0, 24);
+    label = stated.length > 24 ? stated.slice(0, 25).replace(/\s+\S*$/, '').trim() : stated;
     tone = 'warning';
   }
 
   if (!assessment.partsOnly && !assessment.damaged && missingParts) {
     label = `${label} · parts missing`;
     tone = 'danger';
-  } else if (!assessment.partsOnly && !assessment.damaged && /\b(?:unable\s+to\s+test|untested|not\s*tested)\b/i.test(functionalText)) {
+  } else if (!assessment.partsOnly && !assessment.damaged && (
+    /\b(?:unable\s+to\s+test|untested|not\s*tested)\b/i.test(functionalText)
+    || assessment.cautions.some((value) => /\b(?:unable\s+to\s+test|untested|not\s*tested)\b/i.test(value))
+  )) {
     label = `${label} · untested`;
     if (tone === 'good' || tone === 'unknown') tone = 'warning';
   }
@@ -889,11 +918,20 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   if (name.length < 3) name = lead || normalise(sourceDescription).split('\n')[0]?.trim() || '';
   const rawTokens = tokeniseIdentity(name);
   const tokens = rawTokens.filter((token) => !NOISE_WORDS.has(token.toLowerCase()) && !/^\$?[\d.,]+$/.test(token));
-  const titleBrand = tokens[0] || '';
+  const titleBrand = tokens.find((token) => !GENERIC_BRAND_RE.test(token)) || tokens[0] || '';
   const statedBrand = (fieldValue(parsed.fields, 'brand', 'manufacturer', 'make') ?? '').trim();
   const statedBrandAppearsInTitle = statedBrand && new RegExp(`\\b${escapeRegExp(statedBrand)}\\b`, 'i').test(name);
   const brand = statedBrand && (!titleBrand || GENERIC_BRAND_RE.test(titleBrand) || statedBrandAppearsInTitle) ? statedBrand : titleBrand;
   const statedModel = (fieldValue(parsed.fields, 'model', 'model #', 'model number', 'mpn') ?? '').trim();
+  const explicitTitleModel = name.match(/\b(?:model|mpn)\s*(?:no\.?|number|#)?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9+.-]{1,23})\b/i)?.[1] || '';
+  const hashNumericModel = name.match(/(?:^|[^A-Za-z0-9])#\s*(\d{3,8})\b/i)?.[1] || '';
+  const parenthesizedNumber = name.match(/\(\s*(?:model\s*)?#\s*(\d{3,8})\s*\)/i)?.[1] || '';
+  const modelAfterProductWord = name.match(/\bmodel\s+[A-Za-z][A-Za-z-]{2,20}\s+(\d{3,8})\b/i)?.[1] || '';
+  const familyNumericSuffix = name.match(/\b([A-Za-z][A-Za-z0-9-]{2,15})\s+(\d{1,4})\s+([A-Z]{2,6})\b/) || [];
+  const familyNumericModel = familyNumericSuffix[1]
+    && !/^(?:PCS?|PACK|COUNT|CT|GB|TB|MB|KB|IN|INCH|OZ|LB|W|V|LED|LCD|USB|HDMI)$/i.test(familyNumericSuffix[3] || '')
+    ? `${familyNumericSuffix[1]}${familyNumericSuffix[2]}${familyNumericSuffix[3]}`
+    : '';
   // Numeric manufacturer models such as Pelican 1490 are meaningful identity,
   // even though a bare number elsewhere in a title usually is not. Restrict the
   // inference to the token immediately after a credible leading brand and keep
@@ -902,9 +940,11 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   const numericAfterBrand = brandTokenIndex >= 0 ? rawTokens[brandTokenIndex + 1] || '' : '';
   const numericBrandModel = /^\d{3,6}$/.test(numericAfterBrand)
     && !/^(?:19|20)\d{2}$/.test(numericAfterBrand) ? numericAfterBrand : null;
+  const numericLeadingModel = [...tokens].reverse().find((token) => /^\d{3,8}[A-Z]{2,8}$/.test(token) && !CAPACITY_RE.test(token)) || null;
   const titleModelBase = tokens.find((token) => MODEL_RE.test(token) && !/^\d+$/.test(token) && !GENERIC_MODEL_RE.test(token))
     ?? tokens.find((token) => TITLE_MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token))
     ?? rawTokens.find((token) => PART_NUMBER_RE.test(token))
+    ?? numericLeadingModel
     ?? numericBrandModel;
   const titleModelIndex = titleModelBase ? rawTokens.findIndex((token) => token.toLowerCase() === titleModelBase.toLowerCase()) : -1;
   const titleModelSuffix = titleModelIndex >= 0 ? rawTokens[titleModelIndex + 1] || '' : '';
@@ -912,7 +952,8 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
     && !/^(?:GPU|CPU|USB|LED|LCD|SSD|HDD|RAM|WIFI|HDMI|OC)$/i.test(titleModelSuffix)
     ? `${titleModelBase}${titleModelSuffix}`
     : titleModelBase;
-  const model = (looksLikeModel(statedModel) && modelMatches(name, statedModel) ? statedModel : null) || titleModel || (looksLikeModel(statedModel) ? statedModel : null);
+  const explicitModel = [explicitTitleModel, hashNumericModel, parenthesizedNumber, modelAfterProductWord, familyNumericModel].find((value) => looksLikeModel(value)) || null;
+  const model = (looksLikeModel(statedModel) && modelMatches(name, statedModel) ? statedModel : null) || explicitModel || titleModel || (looksLikeModel(statedModel) ? statedModel : null);
   const model2 = tokens.find((token) => token !== model && token.toLowerCase() !== String(model ?? '').toLowerCase() && token.toLowerCase() !== brand.toLowerCase() && TITLE_MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token)) ?? null;
   const capacities = [...new Set(tokens.filter((token) => CAPACITY_RE.test(token)))];
   let query = buildProductResearchQuery(name);
@@ -968,6 +1009,7 @@ export function detectMixedLot(title: string | null | undefined, description = '
     ['title', /\b(?:group|assorted|various|mixed|collection|contents|equipment|rack|cabinet)\b/i, 'group or mixed-lot wording'],
     ['title', /\b(?:bundle|lot)\s+of\s+(?:different|assorted|mixed|various)\b/i, 'mixed bundle wording'],
     ['title', /\bwith\s+(?:components?|contents?|assorted\s+items?|mixed\s+items?|equipment)\b/i, 'explicit component or contents wording'],
+    ['title', /\b(?:amp|amplifier|receiver)\b\s*,\s*[^,;]{0,60}\b(?:tuner|turntable|cd\s+player|cassette\s+player)\b/i, 'separate audio components'],
     ['description', /\b(?:assorted|mixed|various)\s+(?:items?|components?|equipment|contents)\b/i, 'description identifies assorted components'],
     ['description', /\blot\s+of\s*\(?\s*(?:[2-9]|\d{2,})\s*\)?\s+consisting\s+of\b/i, 'description identifies multiple lot components'],
   ];
@@ -1178,12 +1220,14 @@ const RETAIL_IDENTITY_NOISE = new Set([
   ...NOISE_WORDS,
   'adult', 'adults', 'black', 'blue', 'clear', 'green', 'grey', 'gray', 'kids',
   'large', 'medium', 'pink', 'purple', 'red', 'small', 'white', 'wooden',
+  'bluetooth', 'cordless', 'portable', 'rechargeable', 'smart', 'wireless',
   'computer', 'computers', 'custom', 'desktop', 'desktops', 'pc', 'tower', 'workstation', 'workstations',
   'card', 'cards', 'geforce', 'gpu', 'gpus', 'graphics', 'gtx', 'radeon', 'rtx', 'video',
+  'box', 'lightly', 'tested', 'untested', 'used', 'working',
 ]);
 
 function retailIdentityTokens(product: ProductIdentity): string[] {
-  return [...new Set(product.tokens
+  return [...new Set(compactTokens(product.name)
     .map((token) => token.toLowerCase().replace(/[^a-z0-9]+/g, ''))
     .filter((token) => token.length > 2 && !RETAIL_IDENTITY_NOISE.has(token) && !/^\d+$/.test(token)))];
 }
@@ -1208,6 +1252,7 @@ function primaryKindIndex(title: string, kind: ProductKind | null): number {
 }
 
 function sourceIsAccessoryProduct(product: ProductIdentity): boolean {
+  if (/\bstand\s+mixers?\b/i.test(product.name)) return false;
   const noun = ACCESSORY_NOUN_RE.exec(product.name);
   if (!noun) return false;
   const before = product.name.slice(Math.max(0, noun.index - 24), noun.index);
@@ -1220,6 +1265,9 @@ export function isAccessoryListing(title: string | null | undefined, product: Pr
   if (/\breplacement\s+parts?\s+only\b|\bnot\s+a\s+complete\b/i.test(candidateTitle)) return true;
   const noun = ACCESSORY_NOUN_RE.exec(candidateTitle);
   if (!noun || sourceIsAccessoryProduct(product)) return false;
+  const beforeNoun = candidateTitle.slice(Math.max(0, noun.index - 24), noun.index);
+  const strictComponent = /^(?:build\s*plate|magnetic\s*plate|pei\s+(?:sheet|plate)|flexi(?:ble)?\s+steel)/i.test(noun[0]);
+  if (strictComponent && !/(?:\bwith|\bw\s*\/|\bincludes?|\bincluding|\bbundle)\s*$/i.test(beforeNoun)) return true;
   const identity = [product.brand, product.model, product.model2].filter(Boolean).map((value) => escapeRegExp(String(value)).replace(/[-\s]/g, '[-\\s]?')).join('|');
   if (identity) {
     const forProduct = new RegExp(`\\b(?:${FOR_PRODUCT_VERBS})\\s+(?:the\\s+)?[^,;.]{0,40}?(?:${identity})`, 'i');
@@ -1262,6 +1310,10 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
   // rejection protects a primary product from its add-ons; it must not reject
   // an auction lot whose product is itself the accessory.
   if (!sourceIsAccessoryProduct(product) && isAccessoryListing(candidateTitle, product)) rejectionReasons.push('accessory-or-component');
+  const sourceLensModels = [...new Set(product.name.match(/\b\d{2,3}\s*-\s*\d{2,3}(?:mm)?\b/gi) || [])];
+  if (sourceLensModels.length === 1 && /\b(?:dual|two|2)[\s-]+lens\s+kit\b/i.test(candidateTitle)) {
+    rejectionReasons.push('attribute-conflict:lensCount:1!=2');
+  }
   const exactModel = product.model ? modelMatches(candidateTitle, product.model) : false;
   const discriminators = matchesProductDiscriminators(candidateTitle, product);
   if (discriminators.conflicts.length) rejectionReasons.push(...discriminators.conflicts.map((value) => `attribute-conflict:${value}`));
@@ -1270,7 +1322,7 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
   const candidateKind = detectProductKind(candidateTitle);
   const sourceFamily = canonicalBrandFamily(`${product.brand} ${product.name}`);
   const candidateFamily = canonicalBrandFamily(candidateTitle);
-  if (sourceFamily && candidateFamily && sourceFamily !== candidateFamily) rejectionReasons.push(`brand-mismatch:${sourceFamily}`);
+  if (sourceFamily && candidateFamily !== sourceFamily) rejectionReasons.push(`brand-mismatch:${sourceFamily}`);
   if (!sourceFamily && brand.expected && !brand.matches) {
     rejectionReasons.push(`brand-mismatch:${brand.label}`);
   }
@@ -1279,7 +1331,11 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
   const overlap = candidateTokenOverlap(candidateTitle, product);
   const structuredEvidence = exactModel || brand.matches || (Boolean(product.kind) && candidateKind === product.kind) || discriminators.matchedCount > 0;
   if (!structuredEvidence && (overlap.hits < 3 || overlap.ratio < 0.6)) rejectionReasons.push(`weak-title-overlap:${overlap.hits}/${overlap.total}`);
-  if (structuredEvidence && !exactModel && (overlap.hits < 2 || overlap.ratio <= 0.5) && discriminators.matchedCount === 0) rejectionReasons.push(`weak-title-overlap:${overlap.hits}/${overlap.total}`);
+  const longNamedSourceMismatch = overlap.total >= 7 && overlap.hits < 4 && overlap.ratio <= 0.5;
+  if (structuredEvidence && !exactModel
+    && (((overlap.hits < 2 || overlap.ratio <= 0.5) && discriminators.matchedCount === 0) || longNamedSourceMismatch)) {
+    rejectionReasons.push(`weak-title-overlap:${overlap.hits}/${overlap.total}`);
+  }
   if (rejectionReasons.length) return { accepted: false, score: 0, rejectionReasons: [...new Set(rejectionReasons)], matchedEvidence };
 
   let score = 0;
@@ -1307,6 +1363,16 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
 export function evaluateAmazonCandidateEvidence(candidate: AmazonCandidate, product: ProductIdentity): RetailCandidateEvaluation {
   const titleEvaluation = evaluateRetailCandidate(candidate.title, product);
   if (titleEvaluation.accepted || !candidate.matchText || candidate.matchText === candidate.title) return titleEvaluation;
+  const hardReasons = titleEvaluation.rejectionReasons.filter((reason) => /^(?:insufficient-source-identity|accessory-or-component|attribute-conflict|attribute-missing|kind-mismatch|model-mismatch|brand-mismatch)/.test(reason));
+  const visibleFirstToken = candidate.title.replace(TITLE_PREFIX_RE, '').trim().match(/[A-Za-z0-9][A-Za-z0-9.&'+-]*/)?.[0] || '';
+  const missingVisibleBrandOnly = hardReasons.length > 0
+    && hardReasons.every((reason) => reason.startsWith('brand-mismatch:'))
+    && GENERIC_BRAND_RE.test(visibleFirstToken)
+    && Boolean(product.brand && literalBrandMatches(candidate.matchText, product.brand));
+  const detailCanResolve = Boolean(candidate.detailEnriched)
+    && hardReasons.length > 0
+    && hardReasons.every((reason) => /^(?:attribute-(?:missing|conflict):|model-mismatch:|weak-title-overlap:)/.test(reason));
+  if (hardReasons.length && !missingVisibleBrandOnly && !detailCanResolve) return titleEvaluation;
   return evaluateRetailCandidate(candidate.matchText, product);
 }
 
@@ -1340,8 +1406,8 @@ export function matchAmazonCandidates(candidates: AmazonCandidate[], product: Pr
   const scored = candidates
     .filter((candidate) => !candidate.sponsored && !candidate.used && candidate.price != null && candidate.price > 0)
     .map((candidate) => {
-      const titleScore = scoreRetailCandidate(candidate.title, product);
-      return { candidate, score: titleScore || scoreRetailCandidate(candidate.matchText || candidate.title, product) };
+      const evaluation = evaluateAmazonCandidateEvidence(candidate, product);
+      return { candidate, score: evaluation.accepted ? Math.max(evaluation.score, scoreRetailCandidate(candidate.title, product)) : 0 };
     })
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score);

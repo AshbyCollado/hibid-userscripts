@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFile, readdir } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
-import { canReuseRetailEvidence, mutationAffectedLotIds, visibleLotIdSignature } from '../src/content/deal-intelligence.js';
+import { canReuseRetailEvidence, mutationAffectedLotIds, reserveTileAnnotationSpace, shouldRenderProvisionalDealAnnotations, visibleLotIdSignature } from '../src/content/deal-intelligence.js';
 import {
   DEV_RELOAD_PENDING_MAX_AGE_MS,
   shouldConsumePendingPageRefresh,
@@ -14,7 +14,7 @@ import {
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.5.5');
+  assert.equal(chrome.version, '0.5.16');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.ok(chrome.host_permissions.includes('https://*.auctionninja.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
@@ -84,6 +84,31 @@ test('same-ID native watch redraws request annotation repair without reacting to
   observer.disconnect();
 });
 
+test('new live cards reserve the complete evidence row before hydration', () => {
+  const dom = new JSDOM('<app-lot-tile id="lot-188"><div class="lot-lead-heading">Gemmy Nativity</div><div class="lot-tile-content"></div></app-lot-tile>');
+  const previousDocument = (globalThis as any).document;
+  const previousCss = (globalThis as any).CSS;
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).CSS = { escape: (value: string) => value };
+  try {
+    assert.equal(reserveTileAnnotationSpace('188'), true);
+    const strip = dom.window.document.querySelector<HTMLElement>('[data-flippah-retail-for="188"]')!;
+    assert.ok(strip);
+    assert.equal(strip.getAttribute('aria-busy'), 'true');
+    assert.equal(strip.getAttribute('aria-label'), 'Checking product prices');
+    assert.match(strip.textContent || '', /Checking prices/);
+    assert.equal(strip.dataset.flippahRenderSignature, 'pending');
+    assert.equal(dom.window.document.querySelectorAll('[data-flippah-retail-for="188"]').length, 1);
+    assert.equal(reserveTileAnnotationSpace('188'), true);
+    assert.equal(dom.window.document.querySelectorAll('[data-flippah-retail-for="188"]').length, 1);
+  } finally {
+    if (previousDocument === undefined) delete (globalThis as any).document;
+    else (globalThis as any).document = previousDocument;
+    if (previousCss === undefined) delete (globalThis as any).CSS;
+    else (globalThis as any).CSS = previousCss;
+  }
+});
+
 test('live redraws retain conclusive Amazon evidence but retry transient failures or changed queries', async () => {
   const matched = {
     query: 'Vicks Sinus Steam Inhaler', amazonOverrideAsin: '',
@@ -97,8 +122,26 @@ test('live redraws retain conclusive Amazon evidence but retry transient failure
 
   const source = await readFile('src/content/deal-intelligence.ts', 'utf8');
   assert.match(source, /min-height:52px/);
+  assert.match(source, /affectedIds\.filter\(\(id\) => !this\.records\.has\(id\)\)\.forEach\(reserveTileAnnotationSpace\)/);
+  assert.match(source, /if \(!strip\) \{[\s\S]*applyTileAnnotation\(record, route\)/);
   assert.match(source, /flippahRenderSignature/);
   assert.match(source, /retailEvidence = new Map/);
+  const locationHandler = source.match(/handleLocationChange\(\): void \{[\s\S]*?\n  \}/)?.[0] || '';
+  assert.doesNotMatch(locationHandler, /retailEvidence\.clear/);
+  assert.match(source, /record\.state\.queryOverride === previous\.state\.queryOverride/);
+});
+
+test('list and live-account rows wait for hydration and cached evidence before their first annotation paint', async () => {
+  assert.equal(shouldRenderProvisionalDealAnnotations({ kind: 'lot' }), true);
+  for (const kind of ['catalog', 'livecatalog', 'search', 'watchlist', 'currentbids-winning', 'currentbids-outbid']) {
+    assert.equal(shouldRenderProvisionalDealAnnotations({ kind } as any), false, kind);
+  }
+
+  const source = await readFile('src/content/deal-intelligence.ts', 'utf8');
+  assert.match(source, /if \(shouldRenderProvisionalDealAnnotations\(route\)\) applyTileAnnotation\(record, route\)/);
+  const preliminaryRestore = source.indexOf('await this.restoreCachedEvidence(preliminary)');
+  const preliminaryPaint = source.indexOf('preliminary.forEach(repaint)');
+  assert.ok(preliminaryRestore > 0 && preliminaryRestore < preliminaryPaint);
 });
 
 test('personalized watchlist exports use the account DOM and never extension-origin GraphQL', async () => {
@@ -112,6 +155,8 @@ test('retail transport returns normalized lookups and never exposes raw HTML or 
   const background = await readFile('src/background/index.ts', 'utf8');
   const policy = await readFile('src/intelligence/retail-policy.ts', 'utf8');
   assert.match(background, /flippah:retail\.lookup/);
+  assert.match(background, /flippah:retail\.peek/);
+  assert.match(background, /lookupAmazonCached/);
   assert.doesNotMatch(background, /flippah:retail\.amazon-search|flippah:retail\.cache\.get|flippah:retail\.cache\.set/);
   assert.match(background, /fetch\(url\.href/);
   assert.match(background, /AMAZON_BODY_LIMIT/);
@@ -120,7 +165,8 @@ test('retail transport returns normalized lookups and never exposes raw HTML or 
   assert.doesNotMatch(background, /flippah:ebay\.lookup/);
   assert.doesNotMatch(background, /const retailQueue:/);
   assert.doesNotMatch(background, /source\.statedRetail/);
-  assert.match(background, /rejectionReasons\.every\(\(reason\) => \/\^attribute-/);
+  assert.match(background, /evaluateAmazonCandidateEvidence/);
+  assert.match(background, /model-mismatch:\|weak-title-overlap:/);
   assert.doesNotMatch(background, /evaluation\.matchedEvidence\.length >=/);
 });
 
@@ -139,8 +185,8 @@ test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid 
   assert.match(content, /explainHibidStatus/);
   assert.doesNotMatch(content, /Amazon: --|eBay: --/);
   assert.match(content, /content\.insertAdjacentElement\('beforebegin', strip\)/);
-  assert.match(content, /if \(!strip\.isConnected\) return/);
-  assert.match(content, /tileFor\(record\.lot\.id\)/);
+  assert.match(content, /return strip\.isConnected \? \{ tile, strip \} : null/);
+  assert.match(content, /tileFor\(id\)/);
   assert.match(content, /links\.amazon/);
   assert.match(content, /links\.ebay/);
   assert.match(content, /Sold and Completed results to verify/);

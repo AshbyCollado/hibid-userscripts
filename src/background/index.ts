@@ -4,7 +4,7 @@ import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, 
 import { collectStoredOutcomes } from '../core/outcomes.js';
 import type { ScrapeJobSummary, ScrapeStoredRecord } from '../core/types.js';
 import { clearRetailCache, getRetailCache, putRetailCache } from '../core/retail-db.js';
-import { detectProductKind, evaluateAmazonCandidateEvidence, evaluateRetailCandidate, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
+import { detectProductKind, evaluateAmazonCandidateEvidence, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
 import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '../intelligence/amazon-document-parser.js';
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
 import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
@@ -327,10 +327,10 @@ async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupR
     let result = evaluateProviderSnapshot(identity, provider.snapshot, provider.cached);
     if (result.status === 'no_match' && provider.snapshot.status === 'ok') {
       const candidates = provider.snapshot.candidates
-        .map((candidate) => ({ candidate, evaluation: evaluateRetailCandidate(candidate.matchText || candidate.title, identity) }))
+        .map((candidate) => ({ candidate, evaluation: evaluateAmazonCandidateEvidence(candidate, identity) }))
         .filter(({ candidate, evaluation }) => !candidate.sponsored && !candidate.used && candidate.price != null
           && evaluation.rejectionReasons.length > 0
-          && evaluation.rejectionReasons.every((reason) => /^attribute-(?:missing|conflict):/.test(reason)))
+          && evaluation.rejectionReasons.every((reason) => /^(?:attribute-(?:missing|conflict):|model-mismatch:|weak-title-overlap:)/.test(reason)))
         .slice(0, 2);
       if (candidates.length) {
         const enrichedByAsin = new Map<string, ReturnType<typeof enrichAmazonCandidateFromDetail>>();
@@ -361,6 +361,14 @@ async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupR
     const retryAfterMs = await markProviderFailure('amazon', 'network-error', 5_000);
     return { status: 'network_error', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, retryAfterMs, message: error instanceof Error ? error.message : String(error) };
   }
+}
+
+async function lookupAmazonCached(identity: ProductIdentity): Promise<RetailLookupResult | null> {
+  const query = retailQuery(identity.query);
+  const cached = await getRetailCache<RetailProviderSnapshot>(retailProviderCacheKey(query));
+  return cached && reusableRetailSnapshot(cached.status)
+    ? evaluateProviderSnapshot(identity, cached, true)
+    : null;
 }
 
 function validateSearchBody(body: any): void {
@@ -456,6 +464,12 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
     case 'flippah:retail.lookup':
       ensureResearchPageSender(sender);
       return lookupAmazonNow(validateRetailIdentity((message.payload as any)?.identity));
+    case 'flippah:retail.peek': {
+      ensureResearchPageSender(sender);
+      const identities = (message.payload as any)?.identities;
+      if (!Array.isArray(identities) || identities.length > 100) throw new Error('Invalid retail cache request');
+      return Promise.all(identities.map((identity) => lookupAmazonCached(validateRetailIdentity(identity))));
+    }
     case 'flippah:retail.cache.clear':
       ensureResearchPageSender(sender);
       await clearRetailCache();

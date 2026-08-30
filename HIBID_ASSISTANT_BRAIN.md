@@ -632,3 +632,41 @@ ignored by Git.
 - Indicator DOM is replaced only when its render signature changes, and the
   strip reserves a stable two-line height. Countdown/redraw traffic must not
   alternate a priced lot back to a search pill or shift the auction grid.
+
+## v0.5.16 evidence-before-paint and AuctionNinja visual parity
+
+- List surfaces must not render a provisional Flippah annotation from partial
+  DOM identity. This applies to HiBid catalog, livecatalog, search, Watchlist,
+  Winning, and Outbid routes. Hydrate first, restore reusable evidence second,
+  then paint once. Individual lot pages may render immediately because their
+  complete detail DOM is the source.
+- Whole-card live replacements are repaired synchronously when retained
+  evidence exists. For a newly discovered stable ID, reserve the complete 52 px
+  evidence row immediately with an accessible loading state; do not leave the
+  row absent while hydration runs, because inserting it later shifts the grid.
+- Retained Amazon evidence is reusable only when stable lot ID, normalized
+  query, ASIN override, and a conclusive status all agree. Network, parse,
+  challenge, and rate-limit failures remain retryable and cannot replace a
+  known price with a missing-price action.
+- AuctionNinja visual parity means a compact card in `.item-detail-box-right`
+  after `.item-detail-btn`, plus a stable 52 px catalog evidence strip. Preserve
+  native actions, typography scale, and page flow; keep manual query, resale,
+  and quantity controls collapsed under Research details.
+- Parse only the AuctionNinja `Item Description` and `Condition` sections for
+  product evidence. Seller, pickup, auction, shipping, and buyer-premium prose
+  is context, not item condition.
+- A richer Amazon detail page may resolve a missing attribute, but it may not
+  override a hard visible-title mismatch. Model numbers, package counts,
+  dimensions, capacities, product family, and primary-vs-accessory identity
+  remain rejection gates.
+- Real-browser release proof is product-level: exact AuctionNinja source,
+  exact Amazon evidence, visibly Sold eBay evidence, and screenshots for ten
+  distinct products. Tests and code inspection do not substitute for this gate.
+- Chrome acceptance passed on August 29, 2026. Ten high-frequency live runs
+  covered about 25 seconds and lot turnover with zero missing annotation-row
+  frames and zero Amazon price-to-search regressions; the native Winning filter
+  rendered 12 scoped account rows.
+- The ten-product AuctionNinja matrix, exact Amazon pages, explicitly Sold eBay
+  samples, and 30 raw screenshots are recorded in
+  `docs/flippah-v0.5.16-auctionninja-proof.md` and the ignored local
+  `artifacts/auctionninja-proof-v0.5.16/` directory.

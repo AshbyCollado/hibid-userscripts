@@ -126,6 +126,24 @@ test('future adapter detail extraction retains descriptions and every image desc
   for (const forbidden of fixture.expectedDetail.mustExclude) assert.doesNotMatch(JSON.stringify(result), new RegExp(escapeRegExp(forbidden)));
 });
 
+test('AuctionNinja detail extraction excludes seller and shipping boilerplate from item condition', async (t) => {
+  const extractDetail = await optionalExport(t, ['extractAuctionNinjaItemDetail']);
+  if (!extractDetail) return;
+  const dom = new JSDOM(`<!doctype html><html><head><link rel="canonical" href="https://www.auctionninja.com/testseller/product/bostitch-btfp12233--4130688.html"></head><body>
+    <main class="item-detail-main"><h1 class="item-detail-box-title">Bostitch BTFP12233 Brad Nailer Kit</h1>
+      <div class="item-description-deta">
+        <div class="item-description-title">Item Description</div><p>New pneumatic nailer kit. View photos before bidding.</p>
+        <div class="item-description-title">Condition</div><p>New</p>
+        <div class="responsive-auction-seller-box">Seller is not responsible for lost or damaged items once shipped. Broken pickup appointments are forfeited.</div>
+        <div class="item-description-title">Auction Manager</div><p>Private seller contact</p>
+      </div>
+    </main></body></html>`, { url: 'https://www.auctionninja.com/testseller/product/bostitch-btfp12233--4130688.html' });
+  const result = await extractDetail(dom.window.document, dom.window.location);
+  assert.match(result.description, /New pneumatic nailer kit/);
+  assert.match(result.description, /Condition: New/);
+  assert.doesNotMatch(result.description, /damaged items|Broken pickup|Private seller contact/);
+});
+
 test('future adapter account export removes private account data without dropping public fields', async (t) => {
   const sanitize = await optionalExport(t, ['sanitizeAuctionNinjaAccountExport']);
   if (!sanitize) return;

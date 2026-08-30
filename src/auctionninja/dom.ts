@@ -426,6 +426,25 @@ export function extractAuctionNinjaFollowedItems(root: DomRoot, locationLike: Au
 export function extractAuctionNinjaWonItems(root: DomRoot, locationLike: AuctionNinjaLocationLike): AuctionNinjaAccountItem[] { return extractAuctionNinjaAccountItems(root, locationLike, 'items-won'); }
 export function extractAuctionNinjaBidHistoryItems(root: DomRoot, locationLike: AuctionNinjaLocationLike): AuctionNinjaAccountItem[] { return extractAuctionNinjaAccountItems(root, locationLike, 'bid-history'); }
 
+function auctionNinjaDetailSection(container: Element | null, label: string): Element[] {
+  if (!container) return [];
+  const heading = [...container.children].find((child) => child.classList.contains('item-description-title')
+    && new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i').test(textOf(child)));
+  if (!heading) return [];
+  const nodes: Element[] = [];
+  let sibling = heading.nextElementSibling;
+  while (sibling && !sibling.classList.contains('item-description-title')) {
+    if (/(?:seller|pickup|auction|manager)/i.test(sibling.className)) break;
+    nodes.push(sibling);
+    sibling = sibling.nextElementSibling;
+  }
+  return nodes;
+}
+
+function auctionNinjaDetailSectionText(container: Element | null, label: string): string {
+  return auctionNinjaDetailSection(container, label).map(rawTextOf).filter(Boolean).join('\n').trim();
+}
+
 export function extractAuctionNinjaItemDetail(root: DomRoot, locationLike: AuctionNinjaLocationLike): AuctionNinjaDetailRecord | null {
   const requested = toAuctionNinjaUrl(locationLike);
   const canonical = firstHref(root, ['link[rel="canonical"]', 'meta[property="og:url"]', 'meta[name="twitter:url"]'], requested.href) || requested.href;
@@ -438,8 +457,16 @@ export function extractAuctionNinjaItemDetail(root: DomRoot, locationLike: Aucti
   const id = route.productId || productIdFromAuctionNinjaUrl(pageUrl.href);
   if (!id || !title) return null;
   const images = imageUrls(detailRoot, pageUrl.href);
-  const descriptionNode = rootElement(root).querySelector('.item-description-deta, .product-description, .item-description, .description, #description');
-  const description = rawTextOf(descriptionNode) || cardDescription(detailRoot);
+  const descriptionContainer = rootElement(root).querySelector('.item-description-deta');
+  const sectionDescription = auctionNinjaDetailSectionText(descriptionContainer, 'Item Description');
+  const sectionCondition = auctionNinjaDetailSectionText(descriptionContainer, 'Condition');
+  const descriptionNode = sectionDescription
+    ? null
+    : rootElement(root).querySelector('.product-description, .item-description, .description, #description');
+  const description = [sectionDescription || rawTextOf(descriptionNode) || cardDescription(detailRoot), sectionCondition ? `Condition: ${sectionCondition}` : ''].filter(Boolean).join('\n');
+  const descriptionHtml = sectionDescription
+    ? auctionNinjaDetailSection(descriptionContainer, 'Item Description').map((node) => node.outerHTML).join('')
+    : descriptionNode?.innerHTML || '';
   const bid = parseBid(raw);
   const saleLink = rootElement(root).querySelector('a[href*="/sales/details/"]');
   const lotText = textOf(detailRoot.querySelector('.lot-number, [class*="lot-number"], [data-lot-number]'));
@@ -449,7 +476,7 @@ export function extractAuctionNinjaItemDetail(root: DomRoot, locationLike: Aucti
   const result: AuctionNinjaDetailRecord = {
     source: 'AuctionNinja', pageKind: 'item-detail', id, stableId: id, url: canonicalAuctionNinjaProductUrl(pageUrl.href) || pageUrl.href, title,
     lot, image: images[0] || '', images,
-    description, descriptionHtml: descriptionNode?.innerHTML || '', descriptionFields: extractDescriptionFields(description),
+    description, descriptionHtml, descriptionFields: extractDescriptionFields(description),
     category: textOf(rootElement(root).querySelector('.breadcrumb, .breadcrumbs')),
     saleTitle: normalizeTitle(textOf(saleLink)), saleUrl: canonicalAuctionNinjaSaleUrl(absoluteUrl(controlHref(saleLink), pageUrl.href)), seller: '', sellerUrl: '',
     location: parseLocation(raw), shippingText: parseShipping(raw), pickupText: parsePickup(raw), highBid: bid.label, highBidAmount: bid.amount, currentBid: bid.amount,

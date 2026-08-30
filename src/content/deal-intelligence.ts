@@ -62,6 +62,13 @@ interface RetainedRetailEvidence {
 
 const REUSABLE_RETAIL_STATUSES = new Set<RetailLookupResult['status']>(['matched', 'no_match', 'low_confidence']);
 
+export function shouldRenderProvisionalDealAnnotations(route: Pick<HiBidRoute, 'kind'>): boolean {
+  // List and account pages are hydrated immediately after the DOM pass. Painting
+  // their incomplete identity first makes a verified price flash into a search
+  // pill while HiBid replaces live rows.
+  return route.kind === 'lot';
+}
+
 export function canReuseRetailEvidence(
   evidence: RetainedRetailEvidence | null | undefined,
   query: string,
@@ -247,6 +254,10 @@ function installPageStyles(): void {
     .flippah-deal-pill.condition{min-height:20px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-weight:800}
     .flippah-deal-pill.condition-good{border-color:#86efac;background:#f0fdf4;color:#166534}.flippah-deal-pill.condition-warning{border-color:#fcd34d;background:#fffbeb;color:#92400e}
     .flippah-deal-pill.condition-danger{border-color:#fca5a5;background:#fef2f2;color:#991b1b}.flippah-deal-pill.condition-unknown{color:#64748b}
+    .flippah-deal-loading{display:inline-flex;align-items:center;gap:7px;min-height:22px;color:#64748b;font-weight:700}
+    .flippah-deal-loading-spinner{width:12px;height:12px;border:2px solid #cbd5e1;border-top-color:#2563eb;border-radius:50%;animation:flippah-deal-spin .8s linear infinite}
+    @keyframes flippah-deal-spin{to{transform:rotate(360deg)}}
+    @media (prefers-reduced-motion:reduce){.flippah-deal-loading-spinner{animation:none;border-top-color:#cbd5e1;background:#2563eb}}
   `;
   document.documentElement.append(style);
 }
@@ -259,10 +270,44 @@ function ebayMarketValue(record: AnalysisRecord): number | null {
   return record.state.resaleEstimate;
 }
 
-function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
-  const tile = tileFor(record.lot.id);
-  if (!tile) return;
+function ensureTileAnnotationStrip(id: string): { tile: Element; strip: HTMLElement } | null {
+  const tile = tileFor(id);
+  if (!tile) return null;
   installPageStyles();
+  let strip = tile.querySelector<HTMLElement>(`:scope .flippah-deal-strip[data-flippah-retail-for="${CSS.escape(id)}"]`);
+  if (!strip) {
+    strip = document.createElement('div'); strip.className = 'flippah-deal-strip'; strip.dataset.flippahRetailFor = id; strip.dataset.flippahOwned = 'true';
+    const content = tile.querySelector('.lot-tile-content');
+    const heading = tile.querySelector('.lot-lead-heading');
+    const bidControl = [...tile.querySelectorAll<HTMLElement>('button,a')].find((element) => /^\s*Bid\s+\$?\s*[\d,.]+/i.test(element.textContent || ''));
+    if (content) content.insertAdjacentElement('beforebegin', strip);
+    else if (heading) heading.insertAdjacentElement('afterend', strip);
+    else if (bidControl) bidControl.insertAdjacentElement('beforebegin', strip);
+    else tile.append(strip);
+  }
+  return strip.isConnected ? { tile, strip } : null;
+}
+
+export function reserveTileAnnotationSpace(id: string): boolean {
+  const target = ensureTileAnnotationStrip(id);
+  if (!target) return false;
+  const { strip } = target;
+  if (strip.dataset.flippahRenderSignature) return true;
+  strip.dataset.flippahRenderSignature = 'pending';
+  strip.setAttribute('aria-busy', 'true');
+  strip.setAttribute('aria-label', 'Checking product prices');
+  const loading = document.createElement('span'); loading.className = 'flippah-deal-loading';
+  const spinner = document.createElement('span'); spinner.className = 'flippah-deal-loading-spinner'; spinner.setAttribute('aria-hidden', 'true');
+  const label = document.createElement('span'); label.textContent = 'Checking prices';
+  loading.append(spinner, label);
+  strip.replaceChildren(loading);
+  return true;
+}
+
+function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean {
+  const target = ensureTileAnnotationStrip(record.lot.id);
+  if (!target) return false;
+  const { tile, strip } = target;
   const bidControl = [...tile.querySelectorAll<HTMLElement>('button,a')].find((element) => /^\s*Bid\s+\$?\s*[\d,.]+/i.test(element.textContent || ''));
   if (bidControl && record.allIn) {
     let allIn = bidControl.querySelector<HTMLElement>(':scope > .flippah-allin');
@@ -270,17 +315,6 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
     allIn.textContent = `All-in ${formatUsd(record.allIn.total)}`;
     allIn.title = 'Current/next bid plus buyer premium and estimated US sales tax';
   }
-  let strip = tile.querySelector<HTMLElement>(`:scope .flippah-deal-strip[data-flippah-retail-for="${CSS.escape(record.lot.id)}"]`);
-  if (!strip) {
-    strip = document.createElement('div'); strip.className = 'flippah-deal-strip'; strip.dataset.flippahRetailFor = record.lot.id; strip.dataset.flippahOwned = 'true';
-    const content = tile.querySelector('.lot-tile-content');
-    const heading = tile.querySelector('.lot-lead-heading');
-    if (content) content.insertAdjacentElement('beforebegin', strip);
-    else if (heading) heading.insertAdjacentElement('afterend', strip);
-    else if (bidControl) bidControl.insertAdjacentElement('beforebegin', strip);
-    else tile.append(strip);
-  }
-  if (!strip.isConnected) return;
   const amazonPrice = amazonMarketValue(record);
   const ebayPrice = ebayMarketValue(record);
   const condition = buildConditionPresentation(record.condition);
@@ -312,8 +346,10 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
     record.allIn?.total ?? null,
     verdict?.kind || '',
   ]);
-  if (strip.dataset.flippahRenderSignature === renderSignature) return;
+  if (strip.dataset.flippahRenderSignature === renderSignature) return true;
   strip.dataset.flippahRenderSignature = renderSignature;
+  strip.removeAttribute('aria-busy');
+  strip.removeAttribute('aria-label');
   strip.replaceChildren();
   const add = (text: string, cls: string, title: string, href = '', showDot = true, brand = '') => {
     const pill = document.createElement(href ? 'a' : 'span'); pill.className = `flippah-deal-pill ${cls}${brand ? ` search ${brand}` : ''}`; pill.title = title; pill.setAttribute('aria-label', title);
@@ -324,7 +360,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
     if (showDot) {
       const dot = document.createElement('span'); dot.className = 'flippah-deal-dot'; dot.setAttribute('aria-hidden', 'true'); pill.append(dot);
     }
-    pill.append(label); strip!.append(pill);
+    pill.append(label); strip.append(pill);
   };
   const amazonSpecialTitle = record.currency === 'CAD'
     ? 'CAD listing: Flippah does not compare a Canadian-dollar lot against US-dollar Amazon prices.'
@@ -358,6 +394,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): void {
   }
   add(condition.label, `condition condition-${condition.tone}`, condition.title, '', false);
   if (verdict) add(verdict.label, verdict.cls, `${explainHibidStatus(record.lot.status)} Flippah: ${verdict.advice}`);
+  return true;
 }
 
 function lotPanelStyles(): string {
@@ -654,9 +691,20 @@ export class DealIntelligenceController {
   start(): void { this.schedule(250); }
 
   handleMutations(mutations: MutationRecord[]): void {
-    if (!SUPPORTED.has(this.getRoute().kind)) return;
+    const route = this.getRoute();
+    if (!SUPPORTED.has(route.kind)) return;
     const affectedIds = mutationAffectedLotIds(mutations);
     const cachedIds = affectedIds.filter((id) => this.records.has(id));
+    cachedIds.forEach((id) => {
+      const tile = tileFor(id);
+      const strip = tile?.querySelector<HTMLElement>(`:scope .flippah-deal-strip[data-flippah-retail-for="${CSS.escape(id)}"]`);
+      if (strip) return;
+      const record = this.records.get(id);
+      if (record) applyTileAnnotation(record, route);
+    });
+    if (!shouldRenderProvisionalDealAnnotations(route)) {
+      affectedIds.filter((id) => !this.records.has(id)).forEach(reserveTileAnnotationSpace);
+    }
     if (cachedIds.length) this.scheduleAnnotationRepair(cachedIds);
     const hasLotPanelMount = mutations.some((mutation) => [...mutation.addedNodes].some((node) => {
       const element = elementForNode(node);
@@ -677,7 +725,6 @@ export class DealIntelligenceController {
   handleLocationChange(): void {
     this.generation += 1;
     this.records.clear();
-    this.retailEvidence.clear();
     this.visibleLotSignature = '';
     this.update(emptySummary());
     this.pendingAnnotationRepairIds.clear();
@@ -704,7 +751,7 @@ export class DealIntelligenceController {
       record.condition = previous.condition;
       record.mixed = previous.mixed;
       record.needsQuantity = previous.needsQuantity;
-      if (record.identity.query === previous.identity.query) record.identity = previous.identity;
+      if (record.state.queryOverride === previous.state.queryOverride) record.identity = previous.identity;
     }
     const evidence = this.retailEvidence.get(record.lot.id);
     if (!canReuseRetailEvidence(evidence, record.identity.query, record.state.amazonOverrideAsin)) return record;
@@ -712,6 +759,37 @@ export class DealIntelligenceController {
     const price = amazonMarketValue(record);
     record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price }).amazon;
     return record;
+  }
+
+  private async restoreCachedEvidence(records: AnalysisRecord[]): Promise<void> {
+    const pending = records.filter((record) => record.currency !== 'CAD'
+      && !record.mixed.mixed
+      && !record.needsQuantity
+      && Boolean(record.identity.query)
+      && !canReuseRetailEvidence(this.retailEvidence.get(record.lot.id), record.identity.query, record.state.amazonOverrideAsin));
+    if (!pending.length) return;
+    const cached = await runtimeMessage<Array<RetailLookupResult | null>>('flippah:retail.peek', {
+      identities: pending.map((record) => record.identity),
+    });
+    pending.forEach((record, index) => {
+      const result = cached[index];
+      if (!result || !REUSABLE_RETAIL_STATUSES.has(result.status)) return;
+      if (record.state.amazonOverrideAsin) {
+        const candidate = result.candidates.find((item) => item.asin === record.state.amazonOverrideAsin);
+        if (candidate) {
+          result.match = { candidate, score: 100 };
+          result.status = 'matched';
+          result.message = `Manual Amazon match: ${candidate.title}`;
+        }
+      }
+      this.retailEvidence.set(record.lot.id, {
+        query: record.identity.query,
+        amazonOverrideAsin: String(record.state.amazonOverrideAsin || ''),
+        result,
+      });
+      record.amazon = result;
+      record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: amazonMarketValue(record) }).amazon;
+    });
   }
 
   private schedule(delay: number): void {
@@ -756,9 +834,11 @@ export class DealIntelligenceController {
       let auctionPremiums = await readAuctionPremiums(lots.map((lot) => lot.auctionId));
       const quickRecords = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings)
         .map((record) => this.retainKnownEvidence(record, previousRecords.get(record.lot.id)));
+      if (settings.amazonAutoLookup) await this.restoreCachedEvidence(quickRecords);
+      if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
       this.records = new Map(quickRecords.map((record) => [record.lot.id, record]));
       quickRecords.forEach((record) => {
-        applyTileAnnotation(record, route);
+        if (shouldRenderProvisionalDealAnnotations(route)) applyTileAnnotation(record, route);
         if (route.kind === 'lot') {
           const rerun = () => this.schedule(0);
           if (!renderLotPanel(record, rerun)) window.setTimeout(() => renderLotPanel(record, rerun), 500);
@@ -788,8 +868,10 @@ export class DealIntelligenceController {
       const quickById = new Map(quickRecords.map((record) => [record.lot.id, record]));
       const preliminary = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings)
         .map((record) => this.retainKnownEvidence(record, quickById.get(record.lot.id)));
-      this.records = new Map(preliminary.map((record) => [record.lot.id, record]));
       const stillCurrent = () => generation === this.generation && fingerprint === routeFingerprint(this.getRoute(), location.href);
+      if (settings.amazonAutoLookup) await this.restoreCachedEvidence(preliminary);
+      if (!stillCurrent()) return;
+      this.records = new Map(preliminary.map((record) => [record.lot.id, record]));
       const repaint = (record: AnalysisRecord) => {
         applyTileAnnotation(record, route);
         if (route.kind === 'lot') {
@@ -879,6 +961,9 @@ export class DealIntelligenceController {
       });
     } catch (error) {
       if (generation !== this.generation) return;
+      if (!shouldRenderProvisionalDealAnnotations(route)) {
+        this.records.forEach((record) => applyTileAnnotation(record, route));
+      }
       this.update({ phase: 'error', message: error instanceof Error ? error.message : String(error) });
     }
   }

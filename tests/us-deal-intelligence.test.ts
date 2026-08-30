@@ -13,6 +13,7 @@ import {
   detectComparisonCurrency,
   detectMixedLot,
   explainHibidStatus,
+  evaluateAmazonCandidateEvidence,
   evaluateRetailCandidate,
   extractLotQuantityFromTitle,
   extractProductDiscriminators,
@@ -52,10 +53,14 @@ test('condition pills summarize structured evidence without treating negative qu
   assert.match(sealed.title, /Functional: Yes/);
 
   const untested = buildConditionPresentation(assessLotCondition({ description: 'Condition: Used\nNotes: Untested' }));
-  assert.deepEqual({ label: untested.label, tone: untested.tone }, { label: 'Used', tone: 'warning' });
+  assert.deepEqual({ label: untested.label, tone: untested.tone }, { label: 'Used · untested', tone: 'warning' });
 
   const damaged = buildConditionPresentation(assessLotCondition({ description: 'Condition: Fair\nDamaged?: Yes' }));
   assert.deepEqual({ label: damaged.label, tone: damaged.tone }, { label: 'Damaged', tone: 'danger' });
+
+  const normalWear = buildConditionPresentation(assessLotCondition({ description: 'Condition: Expected wear & tear for age' }));
+  assert.deepEqual({ label: normalWear.label, tone: normalWear.tone }, { label: 'Normal age wear', tone: 'warning' });
+  assert.match(normalWear.title, /Expected wear & tear for age/);
 });
 
 test('Amazon matching ignores auctioneer-stated retail price floors', () => {
@@ -216,13 +221,13 @@ test('inventory prefixes do not become brands for consoles and storage', () => {
 
 test('product discriminator families generalize across capacities, resolutions, sizes, and platforms', () => {
   assert.deepEqual(extractProductDiscriminators('Samsung 55 inch 4K TV'), {
-    capacities: [], resolutions: ['4k'], dimensions: ['55in'], platformVariants: [], memoryTypes: [],
+    capacities: [], cubicCapacities: [], weightLimits: [], resolutions: ['4k'], dimensions: ['55in'], platformVariants: [], memoryTypes: [],
     frequencies: [], refreshRates: [], storageTypes: [], networkStandards: [], voltages: [], wattages: [],
     batteryCapacities: [], lensRanges: [], gpuModels: [], cpuModels: [], editions: [], seriesSignatures: [],
     packageCounts: [], colors: [], materials: [], productFamilies: [], variantLabels: [], volumes: [], modeCounts: [], featureCounts: [],
   });
   assert.deepEqual(extractProductDiscriminators('Microsoft Xbox Series X 1TB Console'), {
-    capacities: ['1tb'], resolutions: [], dimensions: [], platformVariants: ['xbox:seriesx'], memoryTypes: [],
+    capacities: ['1tb'], cubicCapacities: [], weightLimits: [], resolutions: [], dimensions: [], platformVariants: ['xbox:seriesx'], memoryTypes: [],
     frequencies: [], refreshRates: [], storageTypes: [], networkStandards: [], voltages: [], wattages: [],
     batteryCapacities: [], lensRanges: [], gpuModels: [], cpuModels: [], editions: [], seriesSignatures: [],
     packageCounts: [], colors: [], materials: [], productFamilies: [], variantLabels: [], volumes: [], modeCounts: [], featureCounts: [],
@@ -328,6 +333,26 @@ test('candidate evaluation distinguishes a complete product from accessories wit
   assert.ok(controller.rejectionReasons.includes('accessory-or-component'));
   assert.equal(drive.accepted, false);
   assert.ok(drive.rejectionReasons.includes('accessory-or-component'));
+
+  const printerIdentity = extractProductIdentity('Ender 3 S1 Plus 3D Printer');
+  const buildPlate = evaluateRetailCandidate('Ender 3 S1 Plus PEI Flexi Steel Magnetic Build Plate 310 x 315mm', printerIdentity);
+  assert.equal(buildPlate.accepted, false);
+  assert.ok(buildPlate.rejectionReasons.includes('accessory-or-component'));
+});
+
+test('single-lens camera kits cannot inherit a dual-lens package price', () => {
+  const identity = extractProductIdentity('Nikon D5300 18-55 VR II Kit Camera New In Box');
+  const dual = evaluateRetailCandidate('Nikon D5300 Digital SLR Camera Dual Lens Kit', identity);
+  assert.equal(dual.accepted, false);
+  assert.ok(dual.rejectionReasons.includes('attribute-conflict:lensCount:1!=2'));
+});
+
+test('numeric-leading manufacturer models reject same-brand tool accessories', () => {
+  const identity = extractProductIdentity('Bosch SDS-Max 14-Amp 1-9/16 Demolition Hammer 11316EVS BRAND NEW');
+  assert.equal(identity.model, '11316EVS');
+  const chisel = evaluateRetailCandidate('Bosch HS19R2PK 2 pc. SDS-max R-Tec Self-Sharpening Chisel Set', identity);
+  assert.equal(chisel.accepted, false);
+  assert.ok(chisel.rejectionReasons.some((reason) => /model-mismatch|accessory-or-component/.test(reason)));
 });
 
 test('descriptive hyphenated prose cannot impersonate a model and match a different product', () => {
@@ -455,6 +480,7 @@ test('ordinary Amazon liquidation products do not require a model or a narrow pr
     ['LISEN 15W MagSafe Car Mount Charger', 'LISEN 15W MagSafe Car Mount Charger for iPhone'],
     ['ErGear Dual Monitor Arm 13 32 VESA 100x100', 'ErGear Dual Monitor Arm for 13 to 32 Inch Screens VESA 100x100'],
     ['Toast Touchscreen POS System', 'Toast Flex Touchscreen POS System Terminal'],
+    ['Keurig K-Compact Single-Serve Coffee Maker, New In Box', 'Keurig K-Compact Single-Serve K-Cup Pod Coffee Maker, Black'],
   ] as const;
   for (const [source, candidate] of cases) {
     const identity = extractProductIdentity(source);
@@ -812,6 +838,23 @@ test('Amazon detail enrichment restores hard attributes omitted by a search card
   assert.match(enriched.matchText, /20 mm/);
 });
 
+test('Amazon detail enrichment can prove a model omitted from the search card', () => {
+  const identity = extractProductIdentity('Google Nest Thermostat Charcoal Model GA02081-US');
+  const source = {
+    asin: 'B08HRPDBFF', title: 'Google Nest Thermostat - Smart Thermostat for Home, Charcoal',
+    matchText: 'Google Nest Thermostat - Smart Thermostat for Home, Charcoal', price: 89.99,
+    used: false, sponsored: false, url: 'https://www.amazon.com/dp/B08HRPDBFF',
+  };
+  assert.equal(matchAmazonCandidates([source], identity), null);
+  const enriched = enrichAmazonCandidateFromDetail(source, `
+    <span id="productTitle">Google Nest Thermostat - Smart Thermostat for Home, Charcoal</span>
+    <div id="detailBullets_feature_div">Item model number: GA02081-US</div>
+  `);
+  const detailEvaluation = evaluateRetailCandidate(enriched.matchText, identity);
+  assert.equal(detailEvaluation.accepted, true, JSON.stringify(detailEvaluation));
+  assert.equal(matchAmazonCandidates([enriched], identity)?.candidate.asin, 'B08HRPDBFF');
+});
+
 test('Amazon matching rejects accessories and unrelated models while retaining the real product', () => {
   const product = extractProductIdentity('Sony WF-1000XM5 Earbuds');
   const badTitles = [
@@ -829,11 +872,117 @@ test('Amazon matching rejects accessories and unrelated models while retaining t
   assert.equal(match?.candidate.asin, 'B000000004');
 });
 
+test('Amazon visible-title conflicts cannot be hidden by contaminated match text', () => {
+  const cases = [
+    {
+      source: 'Red JBL Endurance Peak Wireless Sport Headphones',
+      title: 'Sony MDR-XB50AP Extra Bass In-Ear Headphones',
+      matchText: 'Red JBL Endurance Peak Wireless Sport Headphones Sony MDR-XB50AP Extra Bass In-Ear Headphones',
+    },
+    {
+      source: 'KitchenAid KSM3311 Artisan Mini Stand Mixer',
+      title: 'Dust Cover Compatible with KitchenAid KSM3311 Stand Mixer',
+      matchText: 'KitchenAid KSM3311 Artisan Mini Stand Mixer Dust Cover Compatible with KitchenAid KSM3311',
+    },
+    {
+      source: 'Keurig K-Slim Single Serve Coffee Maker',
+      title: 'Descaler Cleaning Tablets Compatible with Keurig K-Slim Coffee Makers',
+      matchText: 'Keurig K-Slim Single Serve Coffee Maker Descaler Cleaning Tablets Compatible with Keurig K-Slim',
+    },
+    {
+      source: 'Breville BOV845 Smart Oven Pro',
+      title: 'Nonstick Pizza Pan Compatible with Breville BOV845 Smart Oven Pro',
+      matchText: 'Breville BOV845 Smart Oven Pro Nonstick Pizza Pan Compatible with Breville BOV845',
+    },
+  ] as const;
+  for (const item of cases) {
+    const identity = extractProductIdentity(item.source);
+    assert.equal(matchAmazonCandidates([{
+      asin: 'B0BADMATCH1', title: item.title, matchText: item.matchText, price: 19.99,
+      used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0BADMATCH1',
+    }], identity), null, item.source);
+  }
+});
+
+test('Amazon matching treats cubic capacity, weight limits, and canonical brands as hard evidence', () => {
+  const safe = extractProductIdentity('Amazon Basics Steel Home Security Safe with Keypad, 1.52 Cubic Feet');
+  assert.equal(
+    evaluateRetailCandidate('Amazon Basics Steel Home Security Safe with Keypad, 1.2 Cubic Feet', safe).accepted,
+    false,
+  );
+
+  const scale = extractProductIdentity('Amazon Basics Luggage Scale, 65 lb Max');
+  assert.equal(
+    evaluateRetailCandidate('Amazon Basics Digital Kitchen Scale, 11 lb Max', scale).accepted,
+    false,
+  );
+
+  const patioCover = extractProductIdentity('Amazon Basics Patio Chair Cover');
+  assert.equal(
+    evaluateRetailCandidate('Easy-Going Waterproof Patio Chair Cover', patioCover).accepted,
+    false,
+  );
+});
+
 test('Amazon matching accepts an exact accessory when the auction lot is itself that accessory', () => {
   const product = extractProductIdentity('JSAUX 4ft Aux to RCA Male Male Y Cord Grey');
   const result = evaluateRetailCandidate('RCA to 3.5mm Cable 4ft by JSAUX, Aux to RCA Male Y Splitter Grey', product);
   assert.equal(result.accepted, true);
   assert.doesNotMatch(result.rejectionReasons.join(' '), /accessory-or-component/);
+});
+
+test('primary products reject belts and vague brand-only identities', () => {
+  const turntable = extractProductIdentity('Yamaha Full Automatic Turntable Model YP-B4');
+  assert.equal(evaluateRetailCandidate('Turntable Belt for Yamaha Model YP-B4', turntable).accepted, false);
+
+  const vagueSpeaker = extractProductIdentity('JBL Portable Speaker');
+  assert.equal(hasSufficientRetailIdentity(vagueSpeaker), false);
+  assert.equal(evaluateRetailCandidate('JBL Go 4 Portable Bluetooth Speaker', vagueSpeaker).accepted, false);
+});
+
+test('separate amplifier and tuner titles require mixed-component review', () => {
+  const result = detectMixedLot('Yamaha Natural Sound Direct DC Stereo Amp, Yamaha Natural Sound Stereo Tuner');
+  assert.equal(result.mixed, true);
+  assert.ok(result.reasons.includes('separate audio components'));
+});
+
+test('explicit catalog model numbers reject same-brand but different Amazon products', () => {
+  const cases = [
+    {
+      source: '1991 Nutcracker Musical Ballerina Barbie (model 5472)',
+      model: '5472',
+      wrong: 'Barbie Signature 2025 Holiday Doll, Model JBJ96',
+    },
+    {
+      source: 'Melissa & Doug Fold & Go Fire Station (#1847)',
+      model: '1847',
+      wrong: 'Melissa & Doug Fire Chief Role Play Costume Set',
+    },
+    {
+      source: 'Vintage Rivarossi Model Train 2409 - Item 209',
+      model: '2409',
+      wrong: 'Rivarossi HR2888 HO Scale Steam Locomotive',
+    },
+  ] as const;
+  for (const item of cases) {
+    const identity = extractProductIdentity(item.source);
+    assert.equal(identity.model, item.model, item.source);
+    assert.equal(evaluateRetailCandidate(item.wrong, identity).accepted, false, item.source);
+  }
+});
+
+test('AeroGarden systems reject consumable plant-food listings', () => {
+  const identity = extractProductIdentity('AeroGarden Harvest Indoor Garden System');
+  const candidate = 'AeroGarden Liquid Plant Food Nutrients for Indoor Gardens, 3 oz';
+  assert.equal(evaluateRetailCandidate(candidate, identity).accepted, false);
+});
+
+test('same-brand and same-size evidence cannot substitute for a different named product', () => {
+  const identity = extractProductIdentity('EuroGraphics Manarola, Cinque-Terre - Mediterranean Oasis, Italy 1000-Piece Jigsaw Puzzle');
+  const candidate = 'EuroGraphics Map of Europe Puzzle (1000 Piece)';
+  const result = evaluateRetailCandidate(candidate, identity);
+  assert.equal(result.accepted, false);
+  assert.ok(result.rejectionReasons.some((reason) => reason.startsWith('weak-title-overlap:')));
 });
 
 test('Amazon matching tolerates a concatenated LED feature suffix on an inferred brand', () => {
@@ -848,6 +997,38 @@ test('numeric manufacturer models reject a same-brand but different product', ()
   assert.equal(product.model, '1490');
   assert.equal(evaluateRetailCandidate('Pelican Adventurer Laptop Bag Case 14.2 Inch Black', product).accepted, false);
   assert.equal(evaluateRetailCandidate('Pelican 1490 Protector Laptop Case, Black', product).accepted, true);
+});
+
+test('hash-prefixed numeric models remain mandatory after Amazon detail enrichment', () => {
+  const product = extractProductIdentity('Oster 2-Slice Toaster #6325. In Box, Not Tested, Used');
+  assert.equal(product.model, '6325');
+
+  const candidate = enrichAmazonCandidateFromDetail({
+    asin: 'B00F5NUOH6',
+    title: 'Oster 2 Slice Bread Bagel Toaster Metallic Grey',
+    matchText: 'Oster 2 Slice Bread Bagel Toaster Metallic Grey',
+    price: 39.87,
+    used: false,
+    sponsored: false,
+    url: 'https://www.amazon.com/dp/B00F5NUOH6',
+  }, `
+    <span id="productTitle">Oster 2 Slice Bread Bagel Toaster Metallic Grey</span>
+    <div id="feature-bullets">Extra-wide slots and seven shade settings.</div>
+  `);
+
+  assert.equal(evaluateAmazonCandidateEvidence(candidate, product).accepted, false);
+  assert.match(evaluateAmazonCandidateEvidence(candidate, product).rejectionReasons.join(','), /model-mismatch:6325/);
+});
+
+test('family-number-suffix models reject a larger variant in the same product series', () => {
+  const product = extractProductIdentity('KEF Kube Series Powered Subwoofer - Kube 8 MIE');
+  assert.equal(product.model, 'Kube8MIE');
+  assert.equal(evaluateRetailCandidate('KEF Kube 8 MIE 8 Inch Powered Subwoofer', product).accepted, true);
+  assert.equal(evaluateRetailCandidate('KEF Kube 12 MIE 12 Inch Powered Subwoofer', product).accepted, false);
+  assert.match(
+    evaluateRetailCandidate('KEF Kube 12 MIE 12 Inch Powered Subwoofer', product).rejectionReasons.join(','),
+    /model-mismatch:Kube8MIE/,
+  );
 });
 
 test('Amazon indicator shares the donor thresholds in USD', () => {

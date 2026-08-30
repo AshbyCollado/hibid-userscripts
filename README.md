@@ -314,3 +314,32 @@ so every catalog is re-evaluated under the corrected parser.
   price or no-match result, and unchanged indicators are not rebuilt.
 - Reserves a stable two-line indicator area so condition text and Amazon
   refreshes do not move the live auction grid vertically.
+
+## v0.5.16 live stability and AuctionNinja presentation
+
+- HiBid catalog, live-catalog, Watchlist, Winning, and Outbid rows now wait for
+  complete lot hydration and reusable Amazon evidence before their first
+  Flippah evidence paint. A HiBid redraw can no longer flash a verified price
+  back to a search pill or move the grid while research is restored.
+- When HiBid replaces a whole live card, Flippah restores an existing priced
+  row in the mutation callback before the next repaint. A genuinely new card
+  reserves the same 52 px row with a compact `Checking prices` spinner, so
+  hydration cannot change the card height.
+- AuctionNinja item pages place one compact deal card in the native right-hand
+  action column. Catalog cards reserve a fixed-height, centered evidence strip
+  with the same color dot, Amazon, eBay Sold, condition, and all-in language as
+  HiBid without moving or replacing AuctionNinja controls.
+- AuctionNinja condition extraction stops at seller, pickup, buyer-premium, and
+  auction boilerplate. Title condition such as `New in box` is used only when
+  the item has no structured condition section.
+- Amazon matching now fails closed on observed near matches including printer
+  build plates, tool bits and chisels, dual-lens substitutions, numeric and
+  hash-prefixed model conflicts, and adjacent family sizes such as Kube 8 vs.
+  Kube 12. Amazon detail enrichment cannot erase a hard visible-title conflict.
+- Release acceptance requires ten distinct AuctionNinja products. Each proof
+  records the AuctionNinja page, exact Amazon product and price, a relevant
+  eBay result visibly marked Sold, and screenshots from the installed Chrome
+  extension; plausible active listings do not count.
+- Chrome acceptance passed on August 29, 2026 with zero live HiBid annotation
+  gaps or price regressions and ten complete AuctionNinja/Amazon/eBay Sold
+  screenshot triplets. See `docs/flippah-v0.5.16-auctionninja-proof.md`.

@@ -2,14 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import { normalizeSettings } from '../src/core/settings.js';
+import { buildConditionPresentation } from '../src/intelligence/us-deal-intelligence.js';
 import {
   auctionNinjaIdentitySignature,
+  auctionNinjaConditionInput,
   auctionNinjaMutationAffectedIds,
   auctionNinjaMutationChangesProducts,
   buildAuctionNinjaAnalysis,
   calculateAuctionNinjaAllIn,
   parseAuctionNinjaBuyerPremium,
   renderAuctionNinjaCardAnnotation,
+  renderAuctionNinjaDetailPanel,
+  resolveAuctionNinjaDetailPanelMount,
 } from '../src/content/auctionninja-deal-intelligence.js';
 
 test('AuctionNinja premium and all-in helpers use current bid, premium, and tax', () => {
@@ -36,6 +40,17 @@ test('AuctionNinja analysis reuses shared condition, quantity, identity, and sav
   assert.equal(record.ebayNet, 161.7);
 });
 
+test('AuctionNinja title condition wins only when the detail has no structured condition', () => {
+  assert.match(auctionNinjaConditionInput('Brand New Coffee Maker New In Box', 'Seller boilerplate says items are used'), /^Condition: New\n/);
+  assert.match(auctionNinjaConditionInput('Oster Toaster Used, Not Tested', ''), /^Condition: Used\n/);
+  assert.equal(auctionNinjaConditionInput('Brand New Coffee Maker', 'Condition: Used - Good'), 'Condition: Used - Good');
+
+  const newRecord = buildAuctionNinjaAnalysis({ id: '1', title: 'Brand New Coffee Maker New In Box', description: 'All property is sold used' });
+  assert.equal(buildConditionPresentation(newRecord.condition).label, 'New');
+  const usedRecord = buildAuctionNinjaAnalysis({ id: '2', title: 'Oster Toaster Used, Not Tested', description: '' });
+  assert.equal(buildConditionPresentation(usedRecord.condition).label, 'Used · untested');
+});
+
 test('card annotations are additive, idempotent, linked, and accessible', () => {
   const dom = new JSDOM('<article class="search-catalog-item-box"><a href="https://www.auctionninja.com/seller/product/headphones--1001.html">Lot # 1 Headphones</a><button>Bid Now</button></article>');
   const card = dom.window.document.querySelector('article')!;
@@ -45,10 +60,44 @@ test('card annotations are additive, idempotent, linked, and accessible', () => 
   assert.equal(card.querySelectorAll('[data-flippah-owned="true"]').length, 1);
   assert.equal(card.querySelectorAll('button').length, 1);
   assert.match(card.textContent || '', /Amazon/);
-  assert.match(card.textContent || '', /eBay Sold \+ Completed/);
+  assert.match(card.textContent || '', /eBay/);
   assert.match(card.textContent || '', /All-in/);
   assert.equal(card.querySelector('.flippah-an-pill.amazon')?.getAttribute('target'), '_blank');
+  const ebayHref = card.querySelector<HTMLAnchorElement>('.flippah-an-pill.ebay')?.href || '';
+  assert.match(ebayHref, /LH_Sold=1/);
+  assert.match(ebayHref, /LH_Complete=1/);
   assert.ok(card.querySelector('.flippah-an-pill')?.getAttribute('aria-label'));
+});
+
+test('detail panel mounts in the native item sidebar and keeps manual fields collapsed', () => {
+  const dom = new JSDOM(`
+    <main class="item-detail-box-main">
+      <section class="item-detail-box-left">Photos</section>
+      <aside class="item-detail-box-right">
+        <h1 class="item-detail-box-title">Logitech S150 USB Stereo Speakers</h1>
+        <div class="item-detail-btn"><button>Bid Now</button></div>
+        <div class="responsive-hide-pickup">Pickup</div>
+      </aside>
+    </main>
+  `);
+  const doc = dom.window.document;
+  const mount = resolveAuctionNinjaDetailPanelMount(doc);
+  assert.equal(mount.host.className, 'item-detail-box-right');
+  assert.equal(mount.anchor?.className, 'item-detail-btn');
+
+  const record = buildAuctionNinjaAnalysis({
+    id: '201707', stableId: '201707', title: 'Logitech S150 USB Stereo Speakers',
+    description: 'Condition: New', rawText: 'Starting Bid $2.00', currentBid: 2, buyerPremium: '18%',
+  }, { settings: normalizeSettings({ taxExempt: true }) });
+  const panel = renderAuctionNinjaDetailPanel(record, () => undefined, doc);
+  assert.ok(panel);
+  assert.equal(panel?.parentElement?.className, 'item-detail-box-right');
+  assert.equal(panel?.previousElementSibling?.className, 'item-detail-btn');
+  assert.equal(panel?.querySelectorAll('.row').length, 0);
+  assert.equal(panel?.querySelector('details')?.hasAttribute('open'), false);
+  assert.match(panel?.textContent || '', /FlippahDeal checkAll-in \$2\.36/);
+  assert.match(panel?.textContent || '', /Amazon/);
+  assert.match(panel?.textContent || '', /eBay Sold/);
 });
 
 test('identity signatures and mutation filtering ignore Flippah-owned DOM', () => {

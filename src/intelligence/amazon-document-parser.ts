@@ -163,5 +163,6 @@ export function enrichAmazonCandidateFromDetail(candidate: AmazonCandidate, html
     title,
     matchText: `${title} ${evidence}`.replace(/\s+/g, ' ').trim().slice(0, 4_000),
     used: candidate.used || USED_RE.test(`${title} ${evidence}`),
+    detailEnriched: true,
   };
 }
