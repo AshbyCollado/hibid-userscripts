@@ -142,6 +142,24 @@ function localGetKeys(keys: string[]): Promise<Record<string, unknown>> {
   }));
 }
 
+async function flipTrackerBridgeToken(): Promise<string> {
+  const settings = await localGetKeys(['flipTrackerBridgeToken']);
+  const saved = typeof settings.flipTrackerBridgeToken === 'string'
+    ? settings.flipTrackerBridgeToken.trim().slice(0, 512)
+    : '';
+  if (saved) return saved;
+  try {
+    const response = await fetch(chrome.runtime.getURL('flipcentral-config.json'), { cache: 'no-store' });
+    if (!response.ok) return '';
+    const config = await response.json() as { flipTrackerBridgeToken?: unknown };
+    return typeof config.flipTrackerBridgeToken === 'string'
+      ? config.flipTrackerBridgeToken.trim().slice(0, 512)
+      : '';
+  } catch {
+    return '';
+  }
+}
+
 function downloadText(text: string, filename: string): Promise<void> {
   const blobUrl = typeof URL.createObjectURL === 'function'
     ? URL.createObjectURL(new Blob([text], { type: 'application/json;charset=utf-8' }))
@@ -471,8 +489,7 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
       const envelope = (message.payload as any)?.envelope as EbayLifecycleEnvelope;
       assertEbayLifecycleEnvelope(envelope, route.pageKind!);
       if (payloadBytes(envelope) > 5_000_000) throw new Error('eBay lifecycle envelope exceeds the size limit');
-      const settings = await localGetKeys(['flipTrackerBridgeToken']);
-      const token = typeof settings.flipTrackerBridgeToken === 'string' ? settings.flipTrackerBridgeToken.slice(0, 512) : '';
+      const token = await flipTrackerBridgeToken();
       return deliverEbayLifecycleEnvelope(envelope, token, postEbayLifecycle, downloadText);
     }
     default:
