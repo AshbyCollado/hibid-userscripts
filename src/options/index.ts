@@ -15,11 +15,16 @@ function replaceMarkup(target: Element, markup: string): void {
 
 async function init(): Promise<void> {
   const settings = normalizeSettings(await getSyncStorage());
+  const localSettings = await new Promise<Record<string, unknown>>((resolve, reject) => chrome.storage.local.get(['flipTrackerBridgeToken'], (value) => {
+    const error = chrome.runtime.lastError;
+    if (error) reject(new Error(error.message)); else resolve(value);
+  }));
+  const bridgeTokenConfigured = typeof localSettings.flipTrackerBridgeToken === 'string' && localSettings.flipTrackerBridgeToken.length > 0;
   const markup = `<header class="header"><div class="brand">Flippah by ALOS</div><div class="subtitle">True cost, US deal intelligence, watchlist, and HiBid export settings.</div></header><form id="settings-form"><section class="section"><h2>Purchase costs</h2><div class="grid"><label>Tax state<select name="stateCode">${states.map((state) => `<option value="${state}" ${settings.stateCode === state ? 'selected' : ''}>${state || 'No state selected'}</option>`).join('')}</select></label><label>Tax override (%)<input name="taxPctOverride" type="number" min="0" max="20" step="0.01" value="${settings.taxPctOverride ?? ''}"></label><label>eBay fee (%)<input name="ebayFeePct" type="number" min="0" max="40" step="0.01" value="${settings.ebayFeePct}"></label><label>eBay fixed fee (cents)<input name="ebayFeeFixedCents" type="number" min="0" max="1000" step="1" value="${settings.ebayFeeFixedCents}"></label></div><p><label class="check"><input name="taxOnPremium" type="checkbox" ${settings.taxOnPremium ? 'checked' : ''}>Apply tax to buyer premium</label></p><p><label class="check"><input name="taxExempt" type="checkbox" ${settings.taxExempt ? 'checked' : ''}>Tax-exempt purchases</label></p></section><section class="section"><h2>US deal intelligence</h2><p><label class="check"><input name="amazonAutoLookup" type="checkbox" ${settings.amazonAutoLookup ? 'checked' : ''}>Automatically check Amazon.com and verified eBay Sold results</label></p><div class="grid"><label>Target all-in (% of new retail)<input name="retailTargetPct" type="number" min="1" max="95" step="1" value="${settings.retailTargetPct}"></label><label>Strong-warning floor (%)<input name="retailWarningPct" type="number" min="1" max="95" step="1" value="${settings.retailWarningPct}"></label></div><p class="hint">Checks run at a paced rate. Genuine CAD listings are left unconverted and receive no USD comparison.</p></section><section class="section"><h2>HiBid behavior</h2><p><label class="check"><input name="catalogChips" type="checkbox" ${settings.catalogChips ? 'checked' : ''}>Show true-cost chips on catalog tiles</label></p><p><label class="check"><input name="fullSizeImageHover" type="checkbox" ${settings.fullSizeImageHover ? 'checked' : ''}>Show full-size lot photos on hover</label></p><p><label class="check"><input name="nativeWatchSync" type="checkbox" ${settings.nativeWatchSync ? 'checked' : ''}>Mirror native HiBid watch actions into Flippah</label></p><p><label class="check"><input name="includePrivateWatchNotes" type="checkbox" ${settings.includePrivateWatchNotes ? 'checked' : ''}>Include private watch notes in exports</label></p></section><section class="section"><h2>Research defaults</h2><div class="grid"><label>Origin label<input name="originLabel" value="${escapeHtml(settings.originLabel)}"></label><label>Origin ZIP<input name="originZip" inputmode="numeric" value="${escapeHtml(settings.originZip)}"></label><label>Radius (miles)<input name="radiusMiles" type="number" min="1" max="500" value="${settings.radiusMiles}"></label></div><label style="margin-top:14px">Additional LLM instructions<textarea name="customInstructions">${escapeHtml(settings.customInstructions)}</textarea></label></section><section class="section"><h2>Diagnostics</h2><label class="check"><input name="debugMode" type="checkbox" ${settings.debugMode ? 'checked' : ''}>Enable verbose Flippah diagnostics</label></section><div class="actions"><button type="submit">Save settings</button><span id="status" role="status"></span></div></form>`;
   replaceMarkup(app, markup.replace(
     'Automatically check Amazon.com and verified eBay Sold results',
     'Automatically research Amazon.com on supported HiBid pages'
-  ));
+  ).replace('<section class="section"><h2>Diagnostics</h2>', `<section class="section"><h2>FlipTracker bridge</h2><label>Bridge token<input name="flipTrackerBridgeToken" type="password" autocomplete="new-password" maxlength="512" placeholder="${bridgeTokenConfigured ? 'Configured; enter a new token to replace' : 'Not configured'}"></label><p><label class="check"><input name="clearFlipTrackerBridgeToken" type="checkbox">Remove configured bridge token</label></p><p class="hint">Stored only in this browser profile. Lifecycle exports fall back to an exact JSON download when the local bridge is unavailable.</p></section><section class="section"><h2>Diagnostics</h2>`));
   document.querySelector<HTMLFormElement>('#settings-form')!.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget as HTMLFormElement);
@@ -39,6 +44,14 @@ async function init(): Promise<void> {
     const status = document.querySelector<HTMLElement>('#status')!;
     try {
       await setSyncStorage(next as unknown as Record<string, unknown>);
+      const bridgeToken = String(form.get('flipTrackerBridgeToken') || '').trim().slice(0, 512);
+      const clearBridgeToken = checkbox('clearFlipTrackerBridgeToken');
+      if (bridgeToken || clearBridgeToken) {
+        await new Promise<void>((resolve, reject) => chrome.storage.local.set({ flipTrackerBridgeToken: clearBridgeToken ? '' : bridgeToken }, () => {
+          const error = chrome.runtime.lastError;
+          if (error) reject(new Error(error.message)); else resolve();
+        }));
+      }
       status.textContent = 'Saved';
       window.setTimeout(() => { status.textContent = ''; }, 1800);
     } catch (error) {

@@ -6,18 +6,27 @@ import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
 import { mutationAffectedLotIds, visibleLotIdSignature } from '../src/content/deal-intelligence.js';
 import { shouldReloadExtension } from '../src/background/dev-auto-reload.js';
 
-test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
+test('manifests keep Amazon background-only and eBay lifecycle access narrowly scoped', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
   assert.equal(chrome.version, '0.4.2');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
-  assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
+  assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), true);
+  assert.equal(chrome.host_permissions.includes('http://127.0.0.1:8468/*'), true);
   assert.equal(chrome.permissions.includes('offscreen'), false);
   assert.equal(chrome.permissions.includes('declarativeNetRequest'), false);
   assert.equal(waterfox.permissions.includes('offscreen'), false);
   assert.equal(waterfox.permissions.includes('declarativeNetRequest'), false);
   assert.equal(chrome.content_scripts.some((entry: any) => entry.matches?.includes('https://www.amazon.com/*')), false);
-  assert.equal(chrome.content_scripts.some((entry: any) => entry.matches?.some((value: string) => /ebay/i.test(value))), false);
+  const ebayMatches = chrome.content_scripts.flatMap((entry: any) => entry.matches || []).filter((value: string) => /ebay/i.test(value));
+  assert.deepEqual(ebayMatches, [
+    'https://www.ebay.com/sh/lst/active*',
+    'https://www.ebay.com/sh/lst/ended*',
+    'https://www.ebay.com/mys/active*',
+    'https://www.ebay.com/mys/sold*',
+    'https://www.ebay.com/mes/transactionlist*'
+  ]);
+  assert.equal(ebayMatches.some((value: string) => /\/sch\/|research|terapeak/i.test(value)), false);
   assert.equal(chrome.host_permissions.some((value: string) => /bestbuy|amazon\.ca/i.test(value)), false);
   assert.deepEqual(chrome.host_permissions, waterfox.host_permissions);
   const background = await readFile('src/background/index.ts', 'utf8');

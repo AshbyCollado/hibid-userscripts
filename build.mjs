@@ -23,7 +23,7 @@ const commonManifest = {
   author: 'ALOS',
   homepage_url: 'https://github.com/AshbyCollado/hibid-userscripts',
   permissions: ['storage', 'alarms', 'notifications', 'tabs', 'activeTab', 'downloads', 'clipboardWrite'],
-  host_permissions: ['https://hibid.com/*', 'https://*.hibid.com/*', 'https://hibid-api.io/*', 'https://www.amazon.com/*'],
+  host_permissions: ['https://hibid.com/*', 'https://*.hibid.com/*', 'https://hibid-api.io/*', 'https://www.amazon.com/*', 'https://www.ebay.com/*', 'http://127.0.0.1:8468/*'],
   action: {
     default_icon: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' },
     default_popup: 'popup/index.html',
@@ -40,6 +40,16 @@ const commonManifest = {
     matches: ['https://hibid.com/*', 'https://*.hibid.com/*'],
     css: ['assets/index-uNBN1arP.css'],
     js: ['content.js', 'legacy-content.js'],
+    run_at: 'document_idle'
+  }, {
+    matches: [
+      'https://www.ebay.com/sh/lst/active*',
+      'https://www.ebay.com/sh/lst/ended*',
+      'https://www.ebay.com/mys/active*',
+      'https://www.ebay.com/mys/sold*',
+      'https://www.ebay.com/mes/transactionlist*'
+    ],
+    js: ['ebay-content.js'],
     run_at: 'document_idle'
   }],
 };
@@ -62,6 +72,7 @@ for (const target of targets) {
     entryPoints: {
       background: path.join(root, 'src', 'background', 'index.ts'),
       content: path.join(root, 'src', 'content', 'index.ts'),
+      'ebay-content': path.join(root, 'src', 'ebay', 'content.ts'),
       'popup/popup': path.join(root, 'src', 'popup', 'index.ts'),
       'options/options': path.join(root, 'src', 'options', 'index.ts')
     },

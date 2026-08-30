@@ -10,6 +10,8 @@ import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
 import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
 import { DEV_RELOAD_ALARM, installUnpackedAutoReload } from './dev-auto-reload.js';
+import { deliverEbayLifecycleEnvelope } from '../ebay/delivery.js';
+import { assertEbayLifecycleEnvelope, resolveEbayLifecycleRoute, type EbayLifecycleEnvelope } from '../ebay/lifecycle.js';
 
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
@@ -124,6 +126,52 @@ function ensureHiBidSender(sender: chrome.runtime.MessageSender): void {
   if (!sender.tab || sender.frameId !== 0) throw new Error('HiBid operation rejected outside the top page frame');
   const url = new URL(sender.url || sender.tab.url || 'https://invalid.invalid');
   if (!/(^|\.)hibid\.com$/i.test(url.hostname)) throw new Error('HiBid operation rejected for this host');
+}
+
+function ensureEbayLifecycleSender(sender: chrome.runtime.MessageSender): ReturnType<typeof resolveEbayLifecycleRoute> {
+  if (!sender.tab || sender.frameId !== 0) throw new Error('eBay lifecycle operation rejected outside the top page frame');
+  const route = resolveEbayLifecycleRoute(sender.url || sender.tab.url || 'https://invalid.invalid');
+  if (!route.supported || !route.pageKind) throw new Error('eBay lifecycle operation rejected for this route');
+  return route;
+}
+
+function localGetKeys(keys: string[]): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => chrome.storage.local.get(keys, (value) => {
+    const error = chrome.runtime.lastError;
+    if (error) reject(new Error(error.message)); else resolve(value);
+  }));
+}
+
+function downloadText(text: string, filename: string): Promise<void> {
+  const blobUrl = typeof URL.createObjectURL === 'function'
+    ? URL.createObjectURL(new Blob([text], { type: 'application/json;charset=utf-8' }))
+    : '';
+  const url = blobUrl || `data:application/json;charset=utf-8,${encodeURIComponent(text)}`;
+  return new Promise((resolve, reject) => chrome.downloads.download({ url, filename, saveAs: false }, () => {
+    const error = chrome.runtime.lastError;
+    if (error) {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      reject(new Error(error.message));
+      return;
+    }
+    if (blobUrl) setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    resolve();
+  }));
+}
+
+async function postEbayLifecycle(serialized: string, token: string): Promise<{ ok: boolean; status: number; duplicate?: boolean; reason?: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch('http://127.0.0.1:8468/ingest', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-FlipTracker-Token': token },
+      body: serialized, cache: 'no-store', redirect: 'error', signal: controller.signal
+    });
+    let payload: Record<string, unknown> = {};
+    try { payload = await response.json() as Record<string, unknown>; } catch { /* response body is optional */ }
+    return { ok: response.ok, status: response.status, duplicate: payload.duplicate === true,
+      reason: response.ok ? '' : String(payload.error || `HTTP ${response.status}`).slice(0, 300) };
+  } finally { clearTimeout(timeout); }
 }
 
 function retailQuery(value: unknown): string {
@@ -417,6 +465,15 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
     case 'flippah:diagnostic.download': {
       const diagnostic = safeDiagnostic((message.payload as any)?.diagnostic);
       return { downloadId: await downloadDiagnostic(diagnostic) };
+    }
+    case 'flippah:ebay.lifecycle.ingest': {
+      const route = ensureEbayLifecycleSender(sender);
+      const envelope = (message.payload as any)?.envelope as EbayLifecycleEnvelope;
+      assertEbayLifecycleEnvelope(envelope, route.pageKind!);
+      if (payloadBytes(envelope) > 5_000_000) throw new Error('eBay lifecycle envelope exceeds the size limit');
+      const settings = await localGetKeys(['flipTrackerBridgeToken']);
+      const token = typeof settings.flipTrackerBridgeToken === 'string' ? settings.flipTrackerBridgeToken.slice(0, 512) : '';
+      return deliverEbayLifecycleEnvelope(envelope, token, postEbayLifecycle, downloadText);
     }
     default:
       throw new Error('Unknown Flippah message');
