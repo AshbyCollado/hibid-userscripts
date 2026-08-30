@@ -343,3 +343,68 @@ so every catalog is re-evaluated under the corrected parser.
 - Chrome acceptance passed on August 29, 2026 with zero live HiBid annotation
   gaps or price regressions and ten complete AuctionNinja/Amazon/eBay Sold
   screenshot triplets. See `docs/flippah-v0.5.16-auctionninja-proof.md`.
+
+## v0.5.17 title and research-link reliability
+
+- Search identity is tested against a deterministic 3,000-lot public fixture
+  selected from 3,717 distinct real HiBid lots. The fixture is privacy-bounded,
+  gzip-compressed, content-addressed, and reproducible from the ignored raw
+  capture.
+- Modern and preserved legacy query builders share exact oracles for Unicode,
+  repeated phrases, inventory prefixes, partial headings, detached plurals,
+  dimensions, quantities, condition wrappers, long titles, and empty/generic
+  fallbacks.
+- Amazon candidates must retain hard source identity including model and part
+  numbers, ISBNs, editions, volumes, grading identifiers, capacities,
+  dimensions, GPU/CPU variants, and explicit bundle components. Incomplete
+  bundles and conflicting variants fail closed.
+- eBay links remain research seeds, always include Sold and Completed filters,
+  and cannot become verified sold evidence from an active result or a manually
+  entered resale estimate.
+- Amazon result parsing ignores ratings and installment amounts, scopes
+  condition and sponsorship to the correct result card, and prefers an organic
+  new offer with a valid purchase price when an ASIN is duplicated.
+- Release proof includes adversarial fixtures, 13 rare-product families,
+  deterministic mutation replay, scaling measurements, an owner-stopped
+  7.619-hour soak, and installed-Chrome checks across public lots, the
+  signed-in Watchlist, historical failures, and catalog pagination. See
+  `docs/flippah-v0.5.17-title-reliability-proof.md`.
+
+## v0.5.18 eBay sold-comp verification
+
+- Adds a typed, testable development verifier for eBay Seller Hub Product
+  Research and public Sold+Completed result pages. It records source URL,
+  query, observation time, item ID, sold price, shipping, currency, condition,
+  format, and sold provenance for every parsed row.
+- Seller Hub Product Research is the primary truth source. Public Sold and
+  Completed search is a fallback; a hidden accepted Best Offer is retained as
+  a sold event with unknown price and can never enter price statistics.
+- Active or ambiguously filtered pages, challenges, incomplete pagination,
+  wrong models, accessories, replacement parts, manuals, packaging-only rows,
+  quantity mismatches, condition conflicts, mixed variants, duplicate item
+  IDs, and non-USD rows fail closed.
+- A market value requires at least three comparable, actual-price sold records
+  by default. A completed search may still end as `insufficient`; this is a
+  truthful result, not a parser failure. Variant-mixed evidence is likewise
+  `insufficient` and never receives a top-level `verified` label.
+- The verifier remains a source-level acceptance tool in this repository. The
+  generated extension still requests no eBay/Seller Hub host permissions and
+  does not automate a signed-in account. See
+  `docs/flippah-v0.5.18-ebay-sold-verification.md`.
+- The final hostile sold-evidence review covers trusted provenance, explicit
+  Sold markers, hidden Best Offers, complete pagination, model generations,
+  quantities, bundles, locks, duplicate conflicts, currency, and zero-dollar
+  rows. The focused sold/query/identity suite passes 261/261 tests.
+- Book intake remains confined to the toolbar popup's `Scraper` tab; the
+  generated content script no longer mounts a page-level book-analysis card.
+
+## v0.5.19 installed-runtime refresh
+
+- Ships the final sold-evidence hardening and toolbar-only book-intake
+  boundary under a new semantic version so Chrome's unpacked-extension watcher
+  reloads the actual installed runtime instead of retaining an older
+  `v0.5.18` content-script instance.
+- Signed-in Product Research acceptance traversed a 104-row RTX history across
+  50/50/4 pages and correctly withheld its mixed-variant median, retained the
+  Onkyo 2/3 result as insufficient, and verified six clean SteelSeries sales at
+  a $90.00 median.

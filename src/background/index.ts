@@ -4,10 +4,19 @@ import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, 
 import { collectStoredOutcomes } from '../core/outcomes.js';
 import type { ScrapeJobSummary, ScrapeStoredRecord } from '../core/types.js';
 import { clearRetailCache, getRetailCache, putRetailCache } from '../core/retail-db.js';
-import { detectProductKind, evaluateAmazonCandidateEvidence, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
+import { canAmazonDetailEnrichmentResolve, detectProductKind, evaluateAmazonCandidateEvidence, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
 import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '../intelligence/amazon-document-parser.js';
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
-import { isAmazonChallengeHtml, joinInflight, retailCacheTtl, retailProviderCacheKey, reusableRetailSnapshot } from '../intelligence/retail-policy.js';
+import {
+  AMAZON_EXACT_MATCH_SCORE,
+  classifyAmazonNoMatch,
+  classifyAmazonProviderPage,
+  isAmazonChallengeHtml,
+  joinInflight,
+  retailCacheTtl,
+  retailProviderCacheKey,
+  reusableRetailSnapshot,
+} from '../intelligence/retail-policy.js';
 import { DEV_RELOAD_ALARM, installUnpackedAutoReload } from './dev-auto-reload.js';
 import { auctionRelayUrl, FLIPPAH_AUCTION_PWA_PORT_KEY, FLIPPAH_AUCTION_RELAY_PORT_KEY, FLIPPAH_AUCTION_RELAY_TOKEN_KEY, normalizeAuctionRelayToken, postHibidLotToAuctionRelay } from '../core/auction-relay.js';
 import { eventItemIdFromHibidLotUrl, validateHibidLotHandoffV1 } from '../hibid/handoff.js';
@@ -82,6 +91,7 @@ const auctionPendingTabs = new AuctionPendingTabController(
 type RetailLookupStatus = 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'parse_error' | 'low_confidence';
 interface RetailLookupResult {
   status: RetailLookupStatus;
+  reason?: string;
   query: string;
   match: ReturnType<typeof matchAmazonCandidates>;
   candidates: ReturnType<typeof parseAmazonCandidates>;
@@ -94,6 +104,7 @@ interface RetailLookupResult {
 
 interface RetailProviderSnapshot {
   status: 'ok' | 'no_results' | 'blocked' | 'rate_limited' | 'parse_error' | 'network_error';
+  reason?: string;
   query: string;
   candidates: ReturnType<typeof parseAmazonCandidates>;
   fetchedAt: number;
@@ -246,25 +257,41 @@ async function readResponseText(response: Response): Promise<string> {
 function evaluateProviderSnapshot(identity: ProductIdentity, snapshot: RetailProviderSnapshot, cached: boolean): RetailLookupResult {
   if (snapshot.status !== 'ok') {
     const status: RetailLookupStatus = snapshot.status === 'no_results' ? 'no_match' : snapshot.status;
-    return { status, query: snapshot.query, match: null, candidates: snapshot.candidates.slice(0, 8), fetchedAt: snapshot.fetchedAt, cached, message: snapshot.message, retryAfterMs: snapshot.retryAfterMs };
+    const reason = snapshot.reason || (snapshot.status === 'no_results' ? 'explicit_no_results' : snapshot.status);
+    return { status, reason, query: snapshot.query, match: null, candidates: snapshot.candidates.slice(0, 8), fetchedAt: snapshot.fetchedAt, cached, message: snapshot.message, retryAfterMs: snapshot.retryAfterMs };
   }
-  const candidateAudit = snapshot.candidates.slice(0, 8).map((candidate) => ({
-    asin: candidate.asin,
-    title: candidate.title,
-    ...evaluateAmazonCandidateEvidence(candidate, identity),
+  const evaluatedCandidates = snapshot.candidates.map((candidate) => ({
+    candidate,
+    evaluation: evaluateAmazonCandidateEvidence(candidate, identity),
+  }));
+  const candidateAudit = evaluatedCandidates.slice(0, 8).map(({ candidate, evaluation }) => ({
+    asin: candidate.asin, title: candidate.title, ...evaluation,
   }));
   const match = matchAmazonCandidates(snapshot.candidates, identity);
-  const status: RetailLookupStatus = match ? (match.score >= 3 ? 'matched' : 'low_confidence') : 'no_match';
+  const noMatch = classifyAmazonNoMatch(evaluatedCandidates.map(({ candidate, evaluation }) => ({
+    accepted: evaluation.accepted,
+    score: evaluation.score,
+    price: candidate.price,
+    sponsored: candidate.sponsored,
+    used: candidate.used,
+  })));
+  const status: RetailLookupStatus = match ? (match.score >= AMAZON_EXACT_MATCH_SCORE ? 'matched' : 'low_confidence') : noMatch.status;
+  const reason = match ? (status === 'matched' ? 'matched_candidate' : 'low_confidence_candidate') : noMatch.reason;
   const topRejection = candidateAudit.find((entry) => entry.rejectionReasons.length)?.rejectionReasons[0];
   return {
     status,
+    reason,
     query: snapshot.query,
     match,
     candidates: snapshot.candidates.slice(0, 8),
     candidateAudit,
     fetchedAt: snapshot.fetchedAt,
     cached,
-    message: match ? `Matched ${match.candidate.title}` : `No conservative Amazon.com match${topRejection ? ` (${topRejection})` : ''}`,
+    message: match
+      ? `Matched ${match.candidate.title}`
+      : reason === 'exact_candidate_missing_purchase_price'
+        ? 'Exact Amazon.com candidate found, but it has no purchase price'
+        : `No conservative Amazon.com match${topRejection ? ` (${topRejection})` : ''}`,
   };
 }
 
@@ -291,26 +318,38 @@ async function providerSnapshot(query: string): Promise<{ snapshot: RetailProvid
       });
       const finalUrl = new URL(response.url || url.href);
       if (!/(^|\.)amazon\.com$/i.test(finalUrl.hostname)) throw new Error('Amazon lookup redirected outside Amazon.com');
-      if (response.status === 429 || response.status === 503) {
-        return { status: 'rate_limited', query, candidates: [], fetchedAt: Date.now(), message: `Amazon.com returned HTTP ${response.status}` };
+      const throttleResponse = response.status === 429 || response.status === 503;
+      const htmlResponse = /text\/html|application\/xhtml\+xml/i.test(response.headers.get('content-type') || '');
+      if (throttleResponse && !htmlResponse) {
+        return { status: 'rate_limited', reason: `http_${response.status}`, query, candidates: [], fetchedAt: Date.now(), message: `Amazon.com returned HTTP ${response.status}` };
       }
-      if (!response.ok) throw new Error(`Amazon.com returned HTTP ${response.status}`);
-      const html = await readResponseText(response);
-      if (isAmazonChallengeHtml(html)) {
-        return { status: 'blocked', query, candidates: [], fetchedAt: Date.now(), message: 'Amazon.com returned a challenge page' };
+      if (!response.ok && !htmlResponse) throw new Error(`Amazon.com returned HTTP ${response.status}`);
+      let html: string;
+      try {
+        html = await readResponseText(response);
+      } catch (error) {
+        if (throttleResponse) {
+          return { status: 'rate_limited', reason: `http_${response.status}`, query, candidates: [], fetchedAt: Date.now(), message: `Amazon.com returned HTTP ${response.status}` };
+        }
+        throw error;
       }
       const candidates = parseAmazonDocumentCandidates(html).slice(0, 30);
-      const explicitNoResults = /(?:did not match any products|no results for|try checking your spelling)/i.test(html);
-      const status: RetailProviderSnapshot['status'] = candidates.length ? 'ok' : explicitNoResults ? 'no_results' : 'parse_error';
+      const classification = classifyAmazonProviderPage(html, candidates.length);
+      if (classification.status === 'blocked') {
+        return { ...classification, query, candidates: [], fetchedAt: Date.now() };
+      }
+      if (throttleResponse) {
+        return { status: 'rate_limited', reason: `http_${response.status}`, query, candidates: [], fetchedAt: Date.now(), message: `Amazon.com returned HTTP ${response.status}` };
+      }
+      if (!response.ok) throw new Error(`Amazon.com returned HTTP ${response.status}`);
       const result: RetailProviderSnapshot = {
-        status, query, candidates, fetchedAt: Date.now(),
-        message: status === 'ok' ? `Parsed ${candidates.length} Amazon.com candidate(s)` : status === 'no_results' ? 'Amazon.com returned no product results' : 'Amazon.com results could not be parsed; no no-match decision was made',
+        ...classification, query, candidates, fetchedAt: Date.now(),
       };
-      await putRetailCache(providerKey, result, retailCacheTtl(status === 'ok' ? 'matched' : status));
+      await putRetailCache(providerKey, result, retailCacheTtl(classification.status === 'ok' ? 'matched' : classification.status));
       return result;
     } catch (error) {
       return {
-        status: 'network_error', query, candidates: [], fetchedAt: Date.now(),
+        status: 'network_error', reason: 'request_error', query, candidates: [], fetchedAt: Date.now(),
         message: error instanceof Error ? error.message : String(error),
       };
     } finally {
@@ -329,8 +368,7 @@ async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupR
       const candidates = provider.snapshot.candidates
         .map((candidate) => ({ candidate, evaluation: evaluateAmazonCandidateEvidence(candidate, identity) }))
         .filter(({ candidate, evaluation }) => !candidate.sponsored && !candidate.used && candidate.price != null
-          && evaluation.rejectionReasons.length > 0
-          && evaluation.rejectionReasons.every((reason) => /^(?:attribute-(?:missing|conflict):|model-mismatch:|weak-title-overlap:)/.test(reason)))
+          && canAmazonDetailEnrichmentResolve(evaluation.rejectionReasons))
         .slice(0, 2);
       if (candidates.length) {
         const enrichedByAsin = new Map<string, ReturnType<typeof enrichAmazonCandidateFromDetail>>();
@@ -359,7 +397,7 @@ async function lookupAmazonNow(identity: ProductIdentity): Promise<RetailLookupR
     return result;
   } catch (error) {
     const retryAfterMs = await markProviderFailure('amazon', 'network-error', 5_000);
-    return { status: 'network_error', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, retryAfterMs, message: error instanceof Error ? error.message : String(error) };
+    return { status: 'network_error', reason: 'request_error', query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, retryAfterMs, message: error instanceof Error ? error.message : String(error) };
   }
 }
 

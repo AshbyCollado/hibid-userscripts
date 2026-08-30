@@ -14,7 +14,7 @@ import {
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.5.16');
+  assert.equal(chrome.version, '0.5.19');
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.ok(chrome.host_permissions.includes('https://*.auctionninja.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
@@ -166,7 +166,7 @@ test('retail transport returns normalized lookups and never exposes raw HTML or 
   assert.doesNotMatch(background, /const retailQueue:/);
   assert.doesNotMatch(background, /source\.statedRetail/);
   assert.match(background, /evaluateAmazonCandidateEvidence/);
-  assert.match(background, /model-mismatch:\|weak-title-overlap:/);
+  assert.match(background, /canAmazonDetailEnrichmentResolve\(evaluation\.rejectionReasons\)/);
   assert.doesNotMatch(background, /evaluation\.matchedEvidence\.length >=/);
 });
 

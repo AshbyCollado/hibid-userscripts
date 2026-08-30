@@ -356,13 +356,13 @@ test('lot-page action reports a failed reconciliation as an assertive status', a
   assert.equal(status.getAttribute('aria-live'), 'assertive');
 });
 
-test('book analysis stays visible on the lot page while the toolbar remains an additional route', () => {
+test('book analysis is available only from the Scraper tab', () => {
   const popup = readFileSync('src/popup/index.ts', 'utf8');
   const content = readFileSync('src/content/index.ts', 'utf8');
   assert.match(popup, /class="book-tools"/);
   assert.match(popup, /id="analyze-books"/);
   assert.match(popup, /context\.route\.kind === 'lot'/);
   assert.match(content, /flippah:auction\.handoff\.start/);
-  assert.match(content, /installHibidAuctionHandoffAction/);
+  assert.doesNotMatch(content, /installHibidAuctionHandoffAction/);
   assert.equal(existsSync('src/content/auction-handoff-action.ts'), true);
 });

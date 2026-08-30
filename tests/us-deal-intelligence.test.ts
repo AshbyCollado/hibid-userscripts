@@ -8,6 +8,7 @@ import {
   buildRetailIndicatorTooltip,
   buildRetailLinks,
   buildRetailSearchPresentation,
+  canAmazonDetailEnrichmentResolve,
   calculateAllInCost,
   chooseAmazonMatch,
   detectComparisonCurrency,
@@ -219,6 +220,35 @@ test('inventory prefixes do not become brands for consoles and storage', () => {
   assert.equal(scoreRetailCandidate('Western Digital 8TB External Hard Drive', seagate), 0);
 });
 
+test('structured brand and model fields disambiguate warehouse batch prefixes', () => {
+  const grille = extractProductIdentity({
+    title: 'J3 18 x 18 in. Steel Return Air Grille, White',
+    description: 'Brand: Everbilt\nModel: E17018X18\nTitle: J3 18 x 18 in. Steel Return Air Grille, White',
+  });
+  assert.equal(grille.name, '18 x 18 in. Steel Return Air Grille, White');
+  assert.equal(grille.brand, 'Everbilt');
+  assert.equal(grille.model, 'E17018X18');
+  assert.match(grille.query, /^everbilt 18 x 18 in steel return air grille white e17018x18$/);
+  assert.doesNotMatch(grille.query, /\bj3\b/i);
+
+  const wrench = extractProductIdentity({
+    title: 'V6 VEVOR Torque Wrench 3/8" Drive 10-150ft.lb',
+    description: 'Brand: VEVOR\nModel: 17080FTLB',
+  });
+  assert.equal(wrench.name, 'VEVOR Torque Wrench 3/8" Drive 10-150ft.lb');
+  assert.equal(wrench.model, '17080FTLB');
+  assert.match(wrench.query, /17080ftlb$/);
+  assert.doesNotMatch(wrench.query, /\bv6\b/i);
+
+  const genuineModel = extractProductIdentity({
+    title: 'BMW X3 Cargo Liner',
+    description: 'Brand: BMW\nModel: X3',
+  });
+  assert.equal(genuineModel.name, 'BMW X3 Cargo Liner');
+  assert.equal(genuineModel.model, 'X3');
+  assert.match(genuineModel.query, /\bx3\b/);
+});
+
 test('product discriminator families generalize across capacities, resolutions, sizes, and platforms', () => {
   assert.deepEqual(extractProductDiscriminators('Samsung 55 inch 4K TV'), {
     capacities: [], cubicCapacities: [], weightLimits: [], resolutions: ['4k'], dimensions: ['55in'], platformVariants: [], memoryTypes: [],
@@ -240,6 +270,21 @@ test('product discriminator families generalize across capacities, resolutions, 
   assert.ok(scoreRetailCandidate('Samsung 55-Inch 4K UHD Smart Television', television) > 0);
   assert.equal(scoreRetailCandidate('Samsung 65-Inch 4K UHD Smart Television', television), 0);
   assert.equal(scoreRetailCandidate('Samsung 55-Inch 1080p Smart Television', television), 0);
+});
+
+test('equal-capacity memory kits retain their module count configuration', () => {
+  const kit = extractProductIdentity('Corsair Vengeance DDR5 2x16GB 6000MHz Memory Kit');
+  assert.deepEqual(kit.discriminators.capacities, ['32gb']);
+  assert.deepEqual(kit.discriminators.packageCounts, ['2']);
+  assert.equal(evaluateRetailCandidate('Corsair Vengeance DDR5 32GB (2x16GB) 6000MHz Memory Kit', kit).accepted, true);
+
+  const oneModule = evaluateRetailCandidate('Corsair Vengeance DDR5 32GB (1x32GB) 6000MHz Memory Module', kit);
+  assert.equal(oneModule.accepted, false);
+  assert.match(oneModule.rejectionReasons.join(' '), /packageCounts/);
+
+  const unspecifiedModules = evaluateRetailCandidate('Corsair Vengeance DDR5 32GB 6000MHz Memory Kit', kit);
+  assert.equal(unspecifiedModules.accepted, false);
+  assert.match(unspecifiedModules.rejectionReasons.join(' '), /attribute-missing:packageCounts:2/);
 });
 
 test('candidate evaluation rejects near matches generically across unrelated product families', () => {
@@ -450,6 +495,33 @@ test('replacement bowls and remotes cannot impersonate the primary appliance or 
   );
 });
 
+test('exact-model documentation cannot impersonate the physical product', () => {
+  const receiver = extractProductIdentity('Onkyo TX-SR304 Multi-Channel AV Receiver');
+  const manual = evaluateRetailCandidate('Onkyo TX-SR304 Service Manual Digital PDF', receiver);
+  assert.equal(manual.accepted, false);
+  assert.ok(manual.rejectionReasons.includes('accessory-or-component'));
+  assert.equal(evaluateRetailCandidate('Onkyo TX-SR304 AV Receiver Tested Working', receiver).accepted, true);
+});
+
+test('console editions, platform brands, and headset series stay distinct', () => {
+  const playstation = extractProductIdentity('Sony PlayStation 5 Disc Console');
+  assert.equal(evaluateRetailCandidate('Sony PlayStation 5 Disc Edition Console', playstation).accepted, true);
+  assert.equal(evaluateRetailCandidate('Sony PlayStation 5 Digital Edition Console', playstation).accepted, false);
+
+  const headset = extractProductIdentity('SteelSeries Arctis Nova 7 Wireless Xbox');
+  assert.equal(evaluateRetailCandidate('SteelSeries Arctis Nova 7X Wireless Gaming Headset for Xbox', headset).accepted, true);
+  assert.equal(evaluateRetailCandidate('SteelSeries Arctis Nova 7 Wireless Gaming Headset for Xbox Series X', headset).accepted, true);
+  assert.equal(evaluateRetailCandidate('SteelSeries Arctis Nova 5X Wireless Gaming Headset for Xbox', headset).accepted, false);
+  assert.equal(evaluateRetailCandidate('SteelSeries Arctis Nova Pro Wireless Headset', headset).accepted, false);
+});
+
+test('equivalent plus, ampersand, and and spellings preserve compound brands', () => {
+  const identity = extractProductIdentity('Smith+Nephew Dyonics InteliJet Suction Supply Unit');
+  assert.equal(evaluateRetailCandidate('Smith & Nephew Dyonics IntelliJet Suction Supply Unit', identity).accepted, true);
+  assert.equal(evaluateRetailCandidate('Smith and Nephew Dyonics IntelliJet Suction Supply Unit', identity).accepted, true);
+  assert.equal(evaluateRetailCandidate('Dyonics Power II Control Unit', identity).accepted, false);
+});
+
 test('trim kits and wall plates cannot impersonate the primary thermostat', () => {
   const identity = extractProductIdentity('Google Nest Thermostat (Charcoal, Model: GA02081-US)', '');
   const accessory = evaluateRetailCandidate(
@@ -657,7 +729,10 @@ test('multi-unit and mixed lots require an explicit confirmed quantity', () => {
 test('lot quantities embedded in titles require confirmation', () => {
   assert.equal(extractLotQuantityFromTitle('LOT OF 3: WESTERN DIGITAL 2 TB HARD DRIVES'), 3);
   assert.equal(extractLotQuantityFromTitle('(4) x SPORTS CARDS'), 4);
+  assert.equal(extractLotQuantityFromTitle('Seagate Backup Plus Hub 8TB External Hard Drive Tested Qty 2'), 2);
+  assert.equal(extractLotQuantityFromTitle('GE Dinamap Vital Signs Monitor 3 units'), 3);
   assert.equal(extractLotQuantityFromTitle('4K HDMI Cable 10 ft'), null);
+  assert.equal(extractLotQuantityFromTitle('Seagate Backup Plus Hub 8TB External Hard Drive'), null);
 });
 
 test('genuine Canadian evidence blocks USD comparison', () => {
@@ -870,6 +945,92 @@ test('Amazon matching rejects accessories and unrelated models while retaining t
     { asin: 'B000000004', title: 'Sony WF-1000XM5 Wireless Earbuds with Charging Case', price: 278, used: false, sponsored: false, url: '' },
   ], product);
   assert.equal(match?.candidate.asin, 'B000000004');
+});
+
+test('Amazon matching keeps bundled accessories from disabling primary-product guards', () => {
+  const earbuds = extractProductIdentity('Sony WF-1000XM5 Earbuds with Charging Case');
+  const caseListing = evaluateRetailCandidate('Spigen Case for Sony WF-1000XM5 Earbuds', earbuds);
+  assert.equal(caseListing.accepted, false);
+  assert.match(caseListing.rejectionReasons.join(' '), /accessory-or-component/);
+
+  const tool = extractProductIdentity('DeWalt DCF887 20V Impact Driver');
+  const battery = evaluateRetailCandidate('DeWalt DCF887 20V Replacement Battery for Impact Driver', tool);
+  assert.equal(battery.accepted, false);
+  assert.match(battery.rejectionReasons.join(' '), /accessory-or-component/);
+
+  const modelBrandedBattery = evaluateRetailCandidate('DeWalt DCF887 20V Battery', tool);
+  assert.equal(modelBrandedBattery.accepted, false);
+  assert.match(modelBrandedBattery.rejectionReasons.join(' '), /accessory-or-component/);
+
+  const batteryPoweredTool = extractProductIdentity('DeWalt DCD791 Battery Powered Cordless Drill');
+  const replacementPack = evaluateRetailCandidate('DeWalt DCD791 Replacement Battery Pack', batteryPoweredTool);
+  assert.equal(replacementPack.accepted, false);
+  assert.match(replacementPack.rejectionReasons.join(' '), /accessory-or-component/);
+});
+
+test('Amazon detail enrichment accepts only failures that richer item evidence can resolve', () => {
+  assert.equal(canAmazonDetailEnrichmentResolve(['identity-code-missing:abc']), true);
+  assert.equal(canAmazonDetailEnrichmentResolve(['identity-missing:isbn:9780262033848']), true);
+  assert.equal(canAmazonDetailEnrichmentResolve(['bundle-component-missing:charging-cable']), true);
+  assert.equal(canAmazonDetailEnrichmentResolve(['accessory-or-component']), false);
+  assert.equal(canAmazonDetailEnrichmentResolve(['brand-mismatch:sony']), false);
+  assert.equal(canAmazonDetailEnrichmentResolve(['identity-conflict:isbn:9780262033848']), false);
+});
+
+test('feature specifications cannot outrank a real model token', () => {
+  const mouse = extractProductIdentity('Logitech M100 Optical Mouse 1200DPI');
+  assert.equal(mouse.model, 'M100');
+  assert.equal(evaluateRetailCandidate('Logitech M100 USB Optical Mouse', mouse).accepted, true);
+
+  const appliance = extractProductIdentity('Ninja X500 3-in-1 Food Processor');
+  assert.equal(appliance.model, 'X500');
+});
+
+test('marketing features after with are not mandatory bundle components', () => {
+  const headphones = extractProductIdentity('Sony WH-1000XM5 Headphones with Bluetooth and Alexa Voice Control');
+  const candidate = evaluateRetailCandidate('Sony WH-1000XM5 Wireless Noise Canceling Headphones', headphones);
+  assert.equal(candidate.accepted, true, JSON.stringify(candidate));
+  assert.doesNotMatch(candidate.rejectionReasons.join(' '), /bundle-component-missing/);
+});
+
+test('strict book and collectible identities tolerate equivalent marketplace formatting', () => {
+  const book = extractProductIdentity('Introduction to Algorithms ISBN 9780262033848 Third Edition');
+  assert.equal(
+    evaluateRetailCandidate('Introduction to Algorithms 978-0-262-03384-8 3rd Edition', book).accepted,
+    true,
+  );
+
+  const card = extractProductIdentity('1986 Topps #161 Jerry Rice PSA 9 Rookie Card');
+  assert.equal(evaluateRetailCandidate('1986 Topps No. 161 Jerry Rice Rookie Card PSA 9', card).accepted, true);
+
+  const coin = extractProductIdentity('1881-S Morgan Dollar PCGS MS64');
+  assert.equal(evaluateRetailCandidate('1881 S Morgan Silver Dollar PCGS MS 64', coin).accepted, true);
+});
+
+test('truncated title recovery requires ordered whole-token agreement', () => {
+  const unrelated = extractProductIdentity({
+    title: 'GE...',
+    description: 'Large antique oak table with carved legs',
+  });
+  assert.doesNotMatch(unrelated.query, /large|antique|table/);
+
+  const recovered = extractProductIdentity({
+    title: 'GE Dinamap Vital...',
+    description: 'GE Dinamap Vital Signs Monitor Model 8100',
+  });
+  assert.match(recovered.query, /^ge dinamap vital signs monitor/);
+});
+
+test('Amazon matching requires identity-defining capacities and lens kits', () => {
+  const phone = extractProductIdentity('Apple iPhone 15 Pro 256GB');
+  const missingCapacity = evaluateRetailCandidate('Apple iPhone 15 Pro Smartphone', phone);
+  assert.equal(missingCapacity.accepted, false);
+  assert.match(missingCapacity.rejectionReasons.join(' '), /attribute-missing:capacities:256gb/);
+
+  const camera = extractProductIdentity('Nikon D5300 18-55mm Camera Kit');
+  const bodyOnly = evaluateRetailCandidate('Nikon D5300 Camera Body Only', camera);
+  assert.equal(bodyOnly.accepted, false);
+  assert.match(bodyOnly.rejectionReasons.join(' '), /attribute-missing:lensRanges:18-55mm/);
 });
 
 test('Amazon visible-title conflicts cannot be hidden by contaminated match text', () => {

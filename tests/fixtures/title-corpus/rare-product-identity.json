@@ -1,0 +1,611 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "medical-stryker-1188-camera-head",
+      "category": "medical",
+      "sourceTitle": "Lot M-101 | Stryker 1188-010-000 1188 HD Medical Camera Head - Used",
+      "queryIncludes": ["stryker", "1188-010-000", "camera head"],
+      "queryExcludes": ["lot m-101", "used"],
+      "acceptedCandidates": ["Stryker 1188 HD Medical Camera Head, Model 1188-010-000"],
+      "rejectedCandidates": ["Stryker 1288 HD Medical Camera Head, Model 1288-210-105"]
+    },
+    {
+      "id": "medical-welch-allyn-420tb-monitor",
+      "category": "medical",
+      "sourceTitle": "Lot M-102 | Welch Allyn 420TB Spot Vital Signs Monitor - Tested Working",
+      "queryIncludes": ["welch allyn", "420tb", "vital signs monitor"],
+      "queryExcludes": ["lot m-102", "tested working"],
+      "acceptedCandidates": ["Welch Allyn 420TB Spot Vital Signs Monitor with Stand"],
+      "rejectedCandidates": ["Welch Allyn Connex Spot Monitor 4400"]
+    },
+    {
+      "id": "medical-datex-ohmeda-3800-oximeter",
+      "category": "medical",
+      "sourceTitle": "Lot M-103 | Datex-Ohmeda 3800 Pulse Oximeter - Used",
+      "queryIncludes": ["datex-ohmeda", "3800", "pulse oximeter"],
+      "queryExcludes": ["lot m-103", "used"],
+      "acceptedCandidates": ["Datex-Ohmeda 3800 Pulse Oximeter Patient Monitor"],
+      "rejectedCandidates": ["Datex-Ohmeda 3900 Pulse Oximeter Patient Monitor"]
+    },
+    {
+      "id": "medical-medtronic-1898001-ipc-console",
+      "category": "medical",
+      "sourceTitle": "Lot M-104 | Medtronic Xomed 1898001 IPC Surgical Console - Used",
+      "queryIncludes": ["medtronic", "1898001", "ipc surgical console"],
+      "queryExcludes": ["lot m-104", "used"],
+      "acceptedCandidates": ["Medtronic Xomed IPC System Surgical Console 1898001"],
+      "rejectedCandidates": ["Medtronic Xomed IPC Foot Control 1898430"]
+    },
+    {
+      "id": "medical-olympus-clv-s40-light-source",
+      "category": "medical",
+      "sourceTitle": "Lot M-105 | Olympus CLV-S40 EVIS Xenon Light Source - Used",
+      "queryIncludes": ["olympus", "clv-s40", "xenon light source"],
+      "queryExcludes": ["lot m-105", "used"],
+      "acceptedCandidates": ["Olympus EVIS CLV-S40 Xenon Light Source"],
+      "rejectedCandidates": ["Olympus EVIS EXERA III CLV-190 Xenon Light Source"]
+    },
+
+    {
+      "id": "industrial-allen-bradley-1756-l83e",
+      "category": "industrial-controls",
+      "sourceTitle": "Lot I-201 | Allen-Bradley 1756-L83E ControlLogix 5580 Controller - Used",
+      "queryIncludes": ["allen-bradley", "1756-l83e", "controllogix 5580"],
+      "queryExcludes": ["lot i-201", "used"],
+      "acceptedCandidates": ["Allen-Bradley 1756-L83E ControlLogix 5580 Ethernet Controller"],
+      "rejectedCandidates": ["Allen-Bradley 1756-L81E ControlLogix 5580 Controller"]
+    },
+    {
+      "id": "industrial-siemens-315-2eh14-cpu",
+      "category": "industrial-controls",
+      "sourceTitle": "Lot I-202 | Siemens 6ES7 315-2EH14-0AB0 SIMATIC S7-300 CPU Module - Used",
+      "queryIncludes": ["siemens", "315-2eh14-0ab0", "simatic s7-300"],
+      "queryExcludes": ["lot i-202", "used"],
+      "acceptedCandidates": ["Siemens SIMATIC S7-300 CPU 315-2 PN/DP 6ES7 315-2EH14-0AB0"],
+      "rejectedCandidates": ["Siemens SIMATIC S7-300 CPU 315-2 DP 6ES7 315-2AG10-0AB0"]
+    },
+    {
+      "id": "industrial-omron-cj2m-cpu33",
+      "category": "industrial-controls",
+      "sourceTitle": "Lot I-203 | Omron CJ2M-CPU33 PLC CPU Unit - Used",
+      "queryIncludes": ["omron", "cj2m-cpu33", "plc cpu unit"],
+      "queryExcludes": ["lot i-203", "used"],
+      "acceptedCandidates": ["Omron CJ2M-CPU33 Programmable Controller CPU Unit"],
+      "rejectedCandidates": ["Omron CJ2M-CPU31 Programmable Controller CPU Unit"]
+    },
+    {
+      "id": "industrial-schneider-bmxp342020",
+      "category": "industrial-controls",
+      "sourceTitle": "Lot I-204 | Schneider Electric BMXP342020 Modicon M340 Processor - Used",
+      "queryIncludes": ["schneider electric", "bmxp342020", "modicon m340"],
+      "queryExcludes": ["lot i-204", "used"],
+      "acceptedCandidates": ["Schneider Electric Modicon M340 Processor BMXP342020"],
+      "rejectedCandidates": ["Schneider Electric Modicon M340 Processor BMXP341000"]
+    },
+    {
+      "id": "industrial-abb-acs355-drive",
+      "category": "industrial-controls",
+      "sourceTitle": "Lot I-205 | ABB ACS355-03U-07A5-4 Variable Frequency Drive - Used",
+      "queryIncludes": ["abb", "acs355-03u-07a5-4", "variable frequency drive"],
+      "queryExcludes": ["lot i-205", "used"],
+      "acceptedCandidates": ["ABB ACS355-03U-07A5-4 AC Variable Frequency Drive"],
+      "rejectedCandidates": ["ABB ACS355-03U-05A6-4 AC Variable Frequency Drive"]
+    },
+
+    {
+      "id": "lab-agilent-g1312a-binary-pump",
+      "category": "lab-equipment",
+      "sourceTitle": "Lot L-301 | Agilent G1312A 1100 Series Binary HPLC Pump - Used",
+      "queryIncludes": ["agilent", "g1312a", "binary hplc pump"],
+      "queryExcludes": ["lot l-301", "used"],
+      "acceptedCandidates": ["Agilent 1100 Series G1312A Binary HPLC Pump"],
+      "rejectedCandidates": ["Agilent 1100 Series G1311A Quaternary HPLC Pump"]
+    },
+    {
+      "id": "lab-eppendorf-5424-r-centrifuge",
+      "category": "lab-equipment",
+      "sourceTitle": "Lot L-302 | Eppendorf 5424 R Refrigerated Microcentrifuge - Used",
+      "queryIncludes": ["eppendorf", "5424 r", "refrigerated microcentrifuge"],
+      "queryExcludes": ["lot l-302", "used"],
+      "acceptedCandidates": ["Eppendorf 5424 R Refrigerated Microcentrifuge with Rotor"],
+      "rejectedCandidates": ["Eppendorf 5424 Non-Refrigerated Microcentrifuge with Rotor"]
+    },
+    {
+      "id": "lab-biorad-powerpac-hc-1645052",
+      "category": "lab-equipment",
+      "sourceTitle": "Lot L-303 | Bio-Rad PowerPac HC Electrophoresis Power Supply Model 1645052 - Used",
+      "queryIncludes": ["bio-rad", "powerpac hc", "1645052"],
+      "queryExcludes": ["lot l-303", "used"],
+      "acceptedCandidates": ["Bio-Rad PowerPac HC High-Current Power Supply 1645052"],
+      "rejectedCandidates": ["Bio-Rad PowerPac Basic Power Supply 1645050"]
+    },
+    {
+      "id": "lab-heidolph-hei-vap-036000041",
+      "category": "lab-equipment",
+      "sourceTitle": "Lot L-304 | Heidolph Hei-VAP Value G3 Rotary Evaporator Model 036000041 - Used",
+      "queryIncludes": ["heidolph", "hei-vap value g3", "036000041"],
+      "queryExcludes": ["lot l-304", "used"],
+      "acceptedCandidates": ["Heidolph Hei-VAP Value G3 Rotary Evaporator 036000041"],
+      "rejectedCandidates": ["Heidolph Hei-VAP Expert Control Rotary Evaporator 036001130"]
+    },
+    {
+      "id": "lab-mettler-toledo-s220-ph-meter",
+      "category": "lab-equipment",
+      "sourceTitle": "Lot L-305 | Mettler Toledo SevenCompact S220 pH Meter - Used",
+      "queryIncludes": ["mettler toledo", "sevencompact s220", "ph meter"],
+      "queryExcludes": ["lot l-305", "used"],
+      "acceptedCandidates": ["Mettler Toledo SevenCompact S220 Benchtop pH Meter"],
+      "rejectedCandidates": ["Mettler Toledo SevenCompact S230 Conductivity Meter"]
+    },
+
+    {
+      "id": "restaurant-robot-coupe-r2n",
+      "category": "restaurant-equipment",
+      "sourceTitle": "Lot R-401 | Robot Coupe R2N 3 Qt Commercial Food Processor - Used",
+      "queryIncludes": ["robot coupe", "r2n", "3 qt"],
+      "queryExcludes": ["lot r-401", "used"],
+      "acceptedCandidates": ["Robot Coupe R2N 3 Quart Continuous-Feed Food Processor"],
+      "rejectedCandidates": ["Robot Coupe R2 3 Quart Bowl Food Processor"]
+    },
+    {
+      "id": "restaurant-hobart-84145-chopper",
+      "category": "restaurant-equipment",
+      "sourceTitle": "Lot R-402 | Hobart 84145 Buffalo Chopper Food Cutter - Used",
+      "queryIncludes": ["hobart", "84145", "buffalo chopper"],
+      "queryExcludes": ["lot r-402", "used"],
+      "acceptedCandidates": ["Hobart 84145 Commercial Buffalo Chopper Food Cutter"],
+      "rejectedCandidates": ["Hobart 8186 Commercial Buffalo Chopper Food Cutter"]
+    },
+    {
+      "id": "restaurant-bunn-vpr-2gd-brewer",
+      "category": "restaurant-equipment",
+      "sourceTitle": "Lot R-403 | BUNN 33200.0015 VPR-2GD Pourover Coffee Brewer - Used",
+      "queryIncludes": ["bunn", "33200.0015", "vpr-2gd"],
+      "queryExcludes": ["lot r-403", "used"],
+      "acceptedCandidates": ["BUNN VPR-2GD 12-Cup Pourover Coffee Brewer 33200.0015"],
+      "rejectedCandidates": ["BUNN VPR-APS Airpot Pourover Coffee Brewer 33200.0014"]
+    },
+    {
+      "id": "restaurant-vitamix-62825-vita-prep",
+      "category": "restaurant-equipment",
+      "sourceTitle": "Lot R-404 | Vitamix 62825 Vita-Prep 3 Commercial Blender - Used",
+      "queryIncludes": ["vitamix", "62825", "vita-prep 3"],
+      "queryExcludes": ["lot r-404", "used"],
+      "acceptedCandidates": ["Vitamix Vita-Prep 3 Commercial Blender Model 62825"],
+      "rejectedCandidates": ["Vitamix Drink Machine Advance Commercial Blender Model 62824"]
+    },
+    {
+      "id": "restaurant-waring-wfp14s-processor",
+      "category": "restaurant-equipment",
+      "sourceTitle": "Lot R-405 | Waring WFP14S 3.5 Qt Commercial Food Processor - Used",
+      "queryIncludes": ["waring", "wfp14s", "3.5 qt"],
+      "queryExcludes": ["lot r-405", "used"],
+      "acceptedCandidates": ["Waring Commercial WFP14S 3.5 Quart Food Processor"],
+      "rejectedCandidates": ["Waring Commercial WFP11S 2.5 Quart Food Processor"]
+    },
+
+    {
+      "id": "automotive-denso-234-9051-sensor",
+      "category": "automotive",
+      "sourceTitle": "Lot A-501 | Denso 234-9051 Air Fuel Ratio Sensor - New In Box",
+      "queryIncludes": ["denso", "234-9051", "air fuel ratio sensor"],
+      "queryExcludes": ["lot a-501", "new in box"],
+      "acceptedCandidates": ["Denso 234-9051 Air/Fuel Ratio Sensor"],
+      "rejectedCandidates": ["Denso 234-9009 Oxygen Sensor"]
+    },
+    {
+      "id": "automotive-ford-jl3z-13404-c-tail-lamp",
+      "category": "automotive",
+      "sourceTitle": "Lot A-502 | Ford JL3Z-13404-C F-150 Passenger Tail Lamp Assembly - New In Box",
+      "queryIncludes": ["ford", "jl3z-13404-c", "f-150 passenger tail lamp"],
+      "queryExcludes": ["lot a-502", "new in box"],
+      "acceptedCandidates": ["Ford OEM F-150 Right Passenger Tail Lamp JL3Z-13404-C"],
+      "rejectedCandidates": ["Ford OEM F-150 Left Driver Tail Lamp JL3Z-13405-C"]
+    },
+    {
+      "id": "automotive-acdelco-13598771-tpms",
+      "category": "automotive",
+      "sourceTitle": "Lot A-503 | ACDelco 13598771 GM Tire Pressure Monitoring Sensor - New In Box",
+      "queryIncludes": ["acdelco", "13598771", "tire pressure monitoring sensor"],
+      "queryExcludes": ["lot a-503", "new in box"],
+      "acceptedCandidates": ["ACDelco GM Original Equipment 13598771 TPMS Sensor"],
+      "rejectedCandidates": ["ACDelco GM Original Equipment 13598772 TPMS Sensor"]
+    },
+    {
+      "id": "automotive-toyota-89661-0c780-ecu",
+      "category": "automotive",
+      "sourceTitle": "Lot A-504 | Toyota 89661-0C780 Engine Control Module - Used",
+      "queryIncludes": ["toyota", "89661-0c780", "engine control module"],
+      "queryExcludes": ["lot a-504", "used"],
+      "acceptedCandidates": ["Toyota OEM Engine Computer Control Module ECU 89661-0C780"],
+      "rejectedCandidates": ["Toyota OEM Engine Computer Control Module ECU 89661-0C781"]
+    },
+    {
+      "id": "automotive-snap-on-eems341-modis",
+      "category": "automotive",
+      "sourceTitle": "Lot A-505 | Snap-on EEMS341 MODIS Edge Diagnostic Scanner - Used",
+      "queryIncludes": ["snap-on", "eems341", "modis edge"],
+      "queryExcludes": ["lot a-505", "used"],
+      "acceptedCandidates": ["Snap-on MODIS Edge Automotive Diagnostic Scanner EEMS341"],
+      "rejectedCandidates": ["Snap-on SOLUS Edge Automotive Diagnostic Scanner EESC320"]
+    },
+
+    {
+      "id": "book-clrs-9780262033848-third-edition",
+      "category": "books-isbns",
+      "sourceTitle": "Lot B-601 | Introduction to Algorithms Third Edition Cormen ISBN 978-0-262-03384-8 Hardcover - Used",
+      "queryIncludes": ["introduction to algorithms", "third edition", "978-0-262-03384-8"],
+      "queryExcludes": ["lot b-601", "used"],
+      "acceptedCandidates": ["Introduction to Algorithms, 3rd Edition by Cormen, Hardcover, ISBN 978-0-262-03384-8"],
+      "rejectedCandidates": ["Introduction to Algorithms, 4th Edition by Cormen, Hardcover, ISBN 978-0262046305"]
+    },
+    {
+      "id": "book-oed-9780198611868-twenty-volume",
+      "category": "books-isbns",
+      "sourceTitle": "Lot B-602 | Oxford English Dictionary Second Edition 20-Volume Set ISBN 978-0198611868 - Used",
+      "queryIncludes": ["oxford english dictionary", "20-volume set", "978-0198611868"],
+      "queryExcludes": ["lot b-602", "used"],
+      "acceptedCandidates": ["The Oxford English Dictionary Second Edition, Complete 20 Volume Set, ISBN 978-0198611868"],
+      "rejectedCandidates": ["The Compact Oxford English Dictionary Second Edition, One Volume, ISBN 978-0198612582"]
+    },
+    {
+      "id": "book-grays-anatomy-42nd-isbn",
+      "category": "books-isbns",
+      "sourceTitle": "Lot B-603 | Gray's Anatomy 42nd Edition ISBN 978-0702077050 Hardcover - Used",
+      "queryIncludes": ["grays anatomy", "42nd edition", "978-0702077050"],
+      "queryExcludes": ["lot b-603", "used"],
+      "acceptedCandidates": ["Gray's Anatomy: The Anatomical Basis of Clinical Practice, 42nd Edition, ISBN 978-0702077050"],
+      "rejectedCandidates": ["Gray's Anatomy: The Anatomical Basis of Clinical Practice, 41st Edition, ISBN 978-0702052309"]
+    },
+    {
+      "id": "book-taocp-volume-one-isbn",
+      "category": "books-isbns",
+      "sourceTitle": "Lot B-604 | The Art of Computer Programming Volume 1 Third Edition Knuth ISBN 978-0201896831 - Used",
+      "queryIncludes": ["art of computer programming", "volume 1", "978-0201896831"],
+      "queryExcludes": ["lot b-604", "used"],
+      "acceptedCandidates": ["The Art of Computer Programming Volume 1, 3rd Edition by Donald Knuth, ISBN 978-0201896831"],
+      "rejectedCandidates": ["The Art of Computer Programming Volume 2, 3rd Edition by Donald Knuth, ISBN 978-0201896848"]
+    },
+    {
+      "id": "book-dsm-5-tr-9780890425756",
+      "category": "books-isbns",
+      "sourceTitle": "Lot B-605 | Diagnostic and Statistical Manual of Mental Disorders DSM-5-TR ISBN 978-0890425756 - Used",
+      "queryIncludes": ["diagnostic and statistical manual", "dsm-5-tr", "978-0890425756"],
+      "queryExcludes": ["lot b-605", "used"],
+      "acceptedCandidates": ["Diagnostic and Statistical Manual of Mental Disorders DSM-5-TR, ISBN 978-0890425756"],
+      "rejectedCandidates": ["Diagnostic and Statistical Manual of Mental Disorders DSM-5, ISBN 978-0890425558"]
+    },
+
+    {
+      "id": "collectible-topps-161-rice-psa9",
+      "category": "collectibles",
+      "sourceTitle": "Lot C-701 | 1986 Topps #161 Jerry Rice Rookie Card PSA 9 - Used",
+      "queryIncludes": ["1986 topps", "161", "jerry rice rookie card"],
+      "queryExcludes": ["lot c-701", "used"],
+      "acceptedCandidates": ["1986 Topps Jerry Rice Rookie Card #161 PSA 9 Mint"],
+      "rejectedCandidates": ["1986 Topps Jerry Rice Rookie Card #161 PSA 8 NM-MT"]
+    },
+    {
+      "id": "collectible-charizard-4-102-first-edition",
+      "category": "collectibles",
+      "sourceTitle": "Lot C-702 | Pokemon Charizard 4/102 Base Set 1st Edition Holo PSA 9 - Used",
+      "queryIncludes": ["pokemon charizard 4/102", "1st edition", "psa 9"],
+      "queryExcludes": ["lot c-702", "used"],
+      "acceptedCandidates": ["Pokemon Base Set 1st Edition Charizard Holo 4/102 PSA 9 Mint"],
+      "rejectedCandidates": ["Pokemon Base Set Unlimited Charizard Holo 4/102 PSA 9 Mint"]
+    },
+    {
+      "id": "collectible-funko-darth-vader-01",
+      "category": "collectibles",
+      "sourceTitle": "Lot C-703 | Funko Pop Star Wars #01 Darth Vader Blue Box Vinyl Figure - Used",
+      "queryIncludes": ["funko pop star wars", "01", "darth vader"],
+      "queryExcludes": ["lot c-703", "used"],
+      "acceptedCandidates": ["Funko Pop Star Wars Darth Vader #01 Blue Box Vinyl Figure"],
+      "rejectedCandidates": ["Funko Pop Star Wars C-3PO #02 Blue Box Vinyl Figure"]
+    },
+    {
+      "id": "collectible-morgan-1881-s-ms64",
+      "category": "collectibles",
+      "sourceTitle": "Lot C-704 | 1881-S Morgan Silver Dollar NGC MS64 - Used",
+      "queryIncludes": ["1881-s", "morgan silver dollar", "ngc ms64"],
+      "queryExcludes": ["lot c-704", "used"],
+      "acceptedCandidates": ["1881-S Morgan Silver Dollar NGC MS 64"],
+      "rejectedCandidates": ["1881-O Morgan Silver Dollar NGC MS 64"]
+    },
+    {
+      "id": "collectible-lego-10179-ucs-falcon",
+      "category": "collectibles",
+      "sourceTitle": "Lot C-705 | LEGO 10179 Ultimate Collector Millennium Falcon Sealed - Used",
+      "queryIncludes": ["lego", "10179", "millennium falcon"],
+      "queryExcludes": ["lot c-705", "used"],
+      "acceptedCandidates": ["LEGO Star Wars 10179 UCS Millennium Falcon Factory Sealed"],
+      "rejectedCandidates": ["LEGO Star Wars 75192 UCS Millennium Falcon Factory Sealed"]
+    },
+
+    {
+      "id": "pc-nvidia-rtx-a6000-48gb",
+      "category": "gpus-pc-parts",
+      "sourceTitle": "Lot P-801 | NVIDIA RTX A6000 48GB GDDR6 Workstation Graphics Card - Used",
+      "queryIncludes": ["nvidia", "rtx a6000", "48gb gddr6"],
+      "queryExcludes": ["lot p-801", "used"],
+      "acceptedCandidates": ["NVIDIA RTX A6000 48GB GDDR6 Professional Graphics Card"],
+      "rejectedCandidates": ["NVIDIA RTX 6000 Ada Generation 48GB GDDR6 Graphics Card"]
+    },
+    {
+      "id": "pc-amd-ryzen-7950x3d",
+      "category": "gpus-pc-parts",
+      "sourceTitle": "Lot P-802 | AMD Ryzen 9 7950X3D 16-Core Desktop Processor - Used",
+      "queryIncludes": ["amd ryzen 9 7950x3d", "16-core", "desktop processor"],
+      "queryExcludes": ["lot p-802", "used"],
+      "acceptedCandidates": ["AMD Ryzen 9 7950X3D 16-Core AM5 Desktop Processor"],
+      "rejectedCandidates": ["AMD Ryzen 9 7950X 16-Core AM5 Desktop Processor"]
+    },
+    {
+      "id": "pc-asus-rtx4070-ti-super-16gb",
+      "category": "gpus-pc-parts",
+      "sourceTitle": "Lot P-803 | ASUS ProArt GeForce RTX 4070 Ti SUPER 16GB Graphics Card - Used",
+      "queryIncludes": ["asus proart", "rtx 4070 ti super", "16gb"],
+      "queryExcludes": ["lot p-803", "used"],
+      "acceptedCandidates": ["ASUS ProArt GeForce RTX 4070 Ti SUPER OC Edition 16GB Graphics Card"],
+      "rejectedCandidates": ["ASUS TUF Gaming GeForce RTX 4070 Ti 12GB Graphics Card"]
+    },
+    {
+      "id": "pc-samsung-990-pro-4tb",
+      "category": "gpus-pc-parts",
+      "sourceTitle": "Lot P-804 | Samsung 990 PRO 4TB NVMe SSD MZ-V9P4T0B/AM - Used",
+      "queryIncludes": ["samsung 990 pro", "4tb nvme ssd", "mz-v9p4t0b/am"],
+      "queryExcludes": ["lot p-804", "used"],
+      "acceptedCandidates": ["Samsung 990 PRO SSD 4TB PCIe 4.0 NVMe MZ-V9P4T0B/AM"],
+      "rejectedCandidates": ["Samsung 990 PRO SSD 2TB PCIe 4.0 NVMe MZ-V9P2T0B/AM"]
+    },
+    {
+      "id": "pc-corsair-cmk64gx5m2b6000c30",
+      "category": "gpus-pc-parts",
+      "sourceTitle": "Lot P-805 | Corsair CMK64GX5M2B6000C30 Vengeance 64GB DDR5-6000 Memory Kit - Used",
+      "queryIncludes": ["corsair", "cmk64gx5m2b6000c30", "64gb ddr5-6000"],
+      "queryExcludes": ["lot p-805", "used"],
+      "acceptedCandidates": ["Corsair Vengeance DDR5 64GB 6000MHz Kit CMK64GX5M2B6000C30"],
+      "rejectedCandidates": ["Corsair Vengeance DDR5 32GB 6000MHz Kit CMK32GX5M2B6000C30"]
+    },
+
+    {
+      "id": "appliance-miele-g7566scvisf-dishwasher",
+      "category": "appliances",
+      "sourceTitle": "Lot H-901 | Miele G7566SCViSF Fully Integrated Dishwasher - Used",
+      "queryIncludes": ["miele", "g7566scvisf", "integrated dishwasher"],
+      "queryExcludes": ["lot h-901", "used"],
+      "acceptedCandidates": ["Miele G7566SCViSF 24 Inch Fully Integrated Dishwasher"],
+      "rejectedCandidates": ["Miele G7366SCViSF 24 Inch Fully Integrated Dishwasher"]
+    },
+    {
+      "id": "appliance-subzero-bi36uo-refrigerator",
+      "category": "appliances",
+      "sourceTitle": "Lot H-902 | Sub-Zero BI-36U/O 36 Inch Over-Under Refrigerator - Used",
+      "queryIncludes": ["sub-zero", "bi-36u/o", "over-under refrigerator"],
+      "queryExcludes": ["lot h-902", "used"],
+      "acceptedCandidates": ["Sub-Zero BI-36U/O 36 Inch Built-In Over-and-Under Refrigerator"],
+      "rejectedCandidates": ["Sub-Zero BI-42U/O 42 Inch Built-In Over-and-Under Refrigerator"]
+    },
+    {
+      "id": "appliance-speed-queen-tr7003wn-washer",
+      "category": "appliances",
+      "sourceTitle": "Lot H-903 | Speed Queen TR7003WN Top Load Washer - Used",
+      "queryIncludes": ["speed queen", "tr7003wn", "top load washer"],
+      "queryExcludes": ["lot h-903", "used"],
+      "acceptedCandidates": ["Speed Queen TR7003WN 26 Inch Top Load Washer"],
+      "rejectedCandidates": ["Speed Queen DR7004WE 27 Inch Electric Dryer"]
+    },
+    {
+      "id": "appliance-bosch-shpm78z55n-dishwasher",
+      "category": "appliances",
+      "sourceTitle": "Lot H-904 | Bosch SHPM78Z55N 800 Series Dishwasher - Used",
+      "queryIncludes": ["bosch", "shpm78z55n", "800 series dishwasher"],
+      "queryExcludes": ["lot h-904", "used"],
+      "acceptedCandidates": ["Bosch 800 Series SHPM78Z55N Stainless Steel Dishwasher"],
+      "rejectedCandidates": ["Bosch 500 Series SHPM65Z55N Stainless Steel Dishwasher"]
+    },
+    {
+      "id": "appliance-ge-ziss480dnss-refrigerator",
+      "category": "appliances",
+      "sourceTitle": "Lot H-905 | GE Monogram ZISS480DNSS 48 Inch Built-In Refrigerator - Used",
+      "queryIncludes": ["ge monogram", "ziss480dnss", "48 inch"],
+      "queryExcludes": ["lot h-905", "used"],
+      "acceptedCandidates": ["GE Monogram ZISS480DNSS 48 Inch Side-by-Side Built-In Refrigerator"],
+      "rejectedCandidates": ["GE Monogram ZISS420DNSS 42 Inch Side-by-Side Built-In Refrigerator"]
+    },
+
+    {
+      "id": "audio-mcintosh-c2600-preamplifier",
+      "category": "audio",
+      "sourceTitle": "Lot U-1001 | McIntosh C2600 Vacuum Tube Preamplifier - Used",
+      "queryIncludes": ["mcintosh", "c2600", "tube preamplifier"],
+      "queryExcludes": ["lot u-1001", "used"],
+      "acceptedCandidates": ["McIntosh C2600 Two-Channel Vacuum Tube Preamplifier"],
+      "rejectedCandidates": ["McIntosh C2700 Two-Channel Vacuum Tube Preamplifier"]
+    },
+    {
+      "id": "audio-neumann-u87ai-microphone",
+      "category": "audio",
+      "sourceTitle": "Lot U-1002 | Neumann U87Ai Large Diaphragm Condenser Microphone - Used",
+      "queryIncludes": ["neumann", "u87ai", "condenser microphone"],
+      "queryExcludes": ["lot u-1002", "used"],
+      "acceptedCandidates": ["Neumann U 87 Ai Large-Diaphragm Studio Condenser Microphone"],
+      "rejectedCandidates": ["Neumann U 67 Large-Diaphragm Tube Condenser Microphone"]
+    },
+    {
+      "id": "audio-nagra-iv-s-recorder",
+      "category": "audio",
+      "sourceTitle": "Lot U-1003 | Nagra IV-S Stereo Reel-to-Reel Tape Recorder - Used",
+      "queryIncludes": ["nagra", "iv-s", "tape recorder"],
+      "queryExcludes": ["lot u-1003", "used"],
+      "acceptedCandidates": ["Nagra IV-S Stereo Reel to Reel Tape Recorder"],
+      "rejectedCandidates": ["Nagra IV-L Mono Reel to Reel Tape Recorder"]
+    },
+    {
+      "id": "audio-studer-a807-recorder",
+      "category": "audio",
+      "sourceTitle": "Lot U-1004 | Studer A807 Two-Track Reel-to-Reel Tape Recorder - Used",
+      "queryIncludes": ["studer", "a807", "two-track"],
+      "queryExcludes": ["lot u-1004", "used"],
+      "acceptedCandidates": ["Studer A807 Two Track Professional Reel to Reel Tape Recorder"],
+      "rejectedCandidates": ["Studer A810 Two Track Professional Reel to Reel Tape Recorder"]
+    },
+    {
+      "id": "audio-kef-kube-8-mie-subwoofer",
+      "category": "audio",
+      "sourceTitle": "Lot U-1005 | KEF Kube Series Powered Subwoofer Kube 8 MIE - Used",
+      "queryIncludes": ["kef", "kube 8 mie", "powered subwoofer"],
+      "queryExcludes": ["lot u-1005", "used"],
+      "acceptedCandidates": ["KEF Kube 8 MIE 8 Inch Powered Subwoofer"],
+      "rejectedCandidates": ["KEF Kube 12 MIE 12 Inch Powered Subwoofer"]
+    },
+
+    {
+      "id": "camera-leica-m11-p-rangefinder",
+      "category": "cameras",
+      "sourceTitle": "Lot K-1101 | Leica M11-P 60MP Digital Rangefinder Camera - Used",
+      "queryIncludes": ["leica", "m11-p", "60mp"],
+      "queryExcludes": ["lot k-1101", "used"],
+      "acceptedCandidates": ["Leica M11-P 60MP Full-Frame Digital Rangefinder Camera"],
+      "rejectedCandidates": ["Leica M11 60MP Full-Frame Digital Rangefinder Camera"]
+    },
+    {
+      "id": "camera-hasselblad-x2d-100c",
+      "category": "cameras",
+      "sourceTitle": "Lot K-1102 | Hasselblad X2D 100C Medium Format Mirrorless Camera - Used",
+      "queryIncludes": ["hasselblad", "x2d 100c", "medium format"],
+      "queryExcludes": ["lot k-1102", "used"],
+      "acceptedCandidates": ["Hasselblad X2D 100C Medium Format Mirrorless Camera Body"],
+      "rejectedCandidates": ["Hasselblad X1D II 50C Medium Format Mirrorless Camera Body"]
+    },
+    {
+      "id": "camera-phase-one-iq4-150mp",
+      "category": "cameras",
+      "sourceTitle": "Lot K-1103 | Phase One XF IQ4 150MP Medium Format Camera System - Used",
+      "queryIncludes": ["phase one", "iq4", "150mp"],
+      "queryExcludes": ["lot k-1103", "used"],
+      "acceptedCandidates": ["Phase One XF IQ4 150MP Medium Format Camera System"],
+      "rejectedCandidates": ["Phase One XF IQ3 100MP Medium Format Camera System"]
+    },
+    {
+      "id": "camera-fujifilm-gfx100-ii",
+      "category": "cameras",
+      "sourceTitle": "Lot K-1104 | Fujifilm GFX100 II 102MP Medium Format Camera - Used",
+      "queryIncludes": ["fujifilm", "gfx100 ii", "102mp"],
+      "queryExcludes": ["lot k-1104", "used"],
+      "acceptedCandidates": ["Fujifilm GFX100 II 102MP Medium Format Mirrorless Camera"],
+      "rejectedCandidates": ["Fujifilm GFX100S II 102MP Medium Format Mirrorless Camera"]
+    },
+    {
+      "id": "camera-canon-cn-e-50mm-t13",
+      "category": "cameras",
+      "sourceTitle": "Lot K-1105 | Canon CN-E 50mm T1.3 L F Cinema Prime Lens - Used",
+      "queryIncludes": ["canon", "cn-e", "50mm t1.3"],
+      "queryExcludes": ["lot k-1105", "used"],
+      "acceptedCandidates": ["Canon CN-E 50mm T1.3 L F Cinema Prime Lens EF Mount"],
+      "rejectedCandidates": ["Canon CN-E 85mm T1.3 L F Cinema Prime Lens EF Mount"]
+    },
+
+    {
+      "id": "tool-hilti-te60-atc-avr",
+      "category": "tools",
+      "sourceTitle": "Lot T-1201 | Hilti TE60-ATC-AVR SDS Max Combihammer - Used",
+      "queryIncludes": ["hilti", "te60-atc-avr", "combihammer"],
+      "queryExcludes": ["lot t-1201", "used"],
+      "acceptedCandidates": ["Hilti TE 60-ATC-AVR SDS Max Combination Hammer"],
+      "rejectedCandidates": ["Hilti TE 70-ATC-AVR SDS Max Combination Hammer"]
+    },
+    {
+      "id": "tool-festool-ts55febq-plunge-saw",
+      "category": "tools",
+      "sourceTitle": "Lot T-1202 | Festool TS55FEBQ-Plus Plunge Cut Track Saw - Used",
+      "queryIncludes": ["festool", "ts55febq-plus", "plunge cut"],
+      "queryExcludes": ["lot t-1202", "used"],
+      "acceptedCandidates": ["Festool TS 55 FEBQ-Plus Plunge-Cut Track Saw"],
+      "rejectedCandidates": ["Festool TS 60 KEBQ-Plus Plunge-Cut Track Saw"]
+    },
+    {
+      "id": "tool-fluke-754-calibrator",
+      "category": "tools",
+      "sourceTitle": "Lot T-1203 | Fluke 754 Documenting Process Calibrator - Used",
+      "queryIncludes": ["fluke", "754", "process calibrator"],
+      "queryExcludes": ["lot t-1203", "used"],
+      "acceptedCandidates": ["Fluke 754 Documenting Process Calibrator with HART"],
+      "rejectedCandidates": ["Fluke 753 Documenting Process Calibrator"]
+    },
+    {
+      "id": "tool-ridgid-seesnake-compact2",
+      "category": "tools",
+      "sourceTitle": "Lot T-1204 | RIDGID SeeSnake Compact2 CS6x Versa Inspection Camera - Used",
+      "queryIncludes": ["ridgid seesnake", "compact2", "cs6x versa"],
+      "queryExcludes": ["lot t-1204", "used"],
+      "acceptedCandidates": ["RIDGID SeeSnake Compact2 Camera System with CS6x Versa Monitor"],
+      "rejectedCandidates": ["RIDGID SeeSnake Mini Pro Camera System with CS6x Versa Monitor"]
+    },
+    {
+      "id": "tool-greenlee-855gx-bender",
+      "category": "tools",
+      "sourceTitle": "Lot T-1205 | Greenlee 855GX IntelliBENDER Electric Conduit Bender - Used",
+      "queryIncludes": ["greenlee", "855gx", "intellibender"],
+      "queryExcludes": ["lot t-1205", "used"],
+      "acceptedCandidates": ["Greenlee 855GX IntelliBENDER Electric Conduit Bending Machine"],
+      "rejectedCandidates": ["Greenlee 854DX Electric Conduit Bending Machine"]
+    },
+
+    {
+      "id": "bundle-sony-wh1000xm5-case-cable",
+      "category": "ambiguous-bundles",
+      "sourceTitle": "Lot X-1301 | Sony WH-1000XM5 Headphones with OEM Carrying Case and Charging Cable - Used",
+      "queryIncludes": ["sony", "wh-1000xm5", "headphones"],
+      "queryExcludes": ["lot x-1301", "used"],
+      "acceptedCandidates": ["Sony WH-1000XM5 Wireless Headphones with Carrying Case and USB Charging Cable"],
+      "rejectedCandidates": ["Geekria Carrying Case and Charging Cable Bundle for Sony WH-1000XM5 Headphones"]
+    },
+    {
+      "id": "bundle-dewalt-dcf887b-battery-kit",
+      "category": "ambiguous-bundles",
+      "sourceTitle": "Lot X-1302 | DeWalt DCF887B 20V Impact Driver with DCB205 5Ah Battery and Charger - Used",
+      "queryIncludes": ["dewalt", "dcf887b", "dcb205 5ah"],
+      "queryExcludes": ["lot x-1302", "used"],
+      "acceptedCandidates": ["DeWalt DCF887B 20V MAX XR Impact Driver Kit with DCB205 5Ah Battery and Charger"],
+      "rejectedCandidates": [
+        "DeWalt DCB205 5Ah Battery and Charger Kit for DCF887B Impact Driver",
+        "DeWalt DCF887B 20V MAX XR Impact Driver Tool Only"
+      ]
+    },
+    {
+      "id": "bundle-nikon-d5300-dual-lens-kit",
+      "category": "ambiguous-bundles",
+      "sourceTitle": "Lot X-1303 | Nikon D5300 Camera with 18-55mm and 70-300mm Dual Lens Kit - Used",
+      "queryIncludes": ["nikon", "d5300", "18-55mm"],
+      "queryExcludes": ["lot x-1303", "used"],
+      "acceptedCandidates": ["Nikon D5300 DSLR Camera Dual Lens Kit with 18-55mm and 70-300mm Lenses"],
+      "rejectedCandidates": [
+        "Nikon D5300 DSLR Camera Body Only",
+        "Nikon D5300 DSLR Camera with 18-55mm Single Lens Kit"
+      ]
+    },
+    {
+      "id": "bundle-switch-oled-mario-kart-case",
+      "category": "ambiguous-bundles",
+      "sourceTitle": "Lot X-1304 | Nintendo Switch OLED HEG-001 Console with Mario Kart 8 Deluxe and Carrying Case - Used",
+      "queryIncludes": ["nintendo switch oled", "heg-001", "mario kart 8"],
+      "queryExcludes": ["lot x-1304", "used"],
+      "acceptedCandidates": ["Nintendo Switch OLED HEG-001 Console Bundle with Mario Kart 8 Deluxe and Carrying Case"],
+      "rejectedCandidates": [
+        "Mario Kart 8 Deluxe Game and Carrying Case Bundle for Nintendo Switch OLED",
+        "Nintendo Switch OLED HEG-001 Console Only"
+      ]
+    },
+    {
+      "id": "bundle-shure-slxd24d-sm58-dual-system",
+      "category": "ambiguous-bundles",
+      "sourceTitle": "Lot X-1305 | Shure SLXD24D/SM58 Dual Wireless System with Two Handheld Transmitters - Used",
+      "queryIncludes": ["shure", "slxd24d/sm58", "dual wireless system"],
+      "queryExcludes": ["lot x-1305", "used"],
+      "acceptedCandidates": ["Shure SLXD24D/SM58 Dual-Channel Wireless System with Two SM58 Handheld Transmitters"],
+      "rejectedCandidates": ["Shure SLXD4D Dual Receiver Only for SLXD24D Wireless System"]
+    }
+  ]
+}

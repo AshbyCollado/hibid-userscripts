@@ -152,8 +152,30 @@ export function requiresQuantityConfirmation(quantity: number | null | undefined
 
 export function extractLotQuantityFromTitle(title: string | null | undefined): number | null {
   const source = normalise(title).trim();
+  if (/\bpair\s+of\b/i.test(source)) return 2;
+  if (/\btwin[\s-]+(?:pack|set)\b/i.test(source)) return 2;
+  const wordValues: Record<string, number> = {
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+  };
+  const wordMatch = source.match(/\b(?:lot|group|set|pack|qty|quantity)\s+(?:of\s+)?(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i)
+    || source.match(/\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[\s-]+(?:pack|pk|units?|items?|pieces?|pcs|count|ct)\b/i)
+    || source.match(/^\s*(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+.+\b[a-z]{3,}s\b/i);
+  if (wordMatch) return wordValues[wordMatch[1]!.toLocaleLowerCase('en-US')] ?? null;
   const match = source.match(/\b(?:lot|group|set)\s+of\s+(\d{1,4})\b/i)
-    || source.match(/^\s*\(?\s*(\d{1,4})\s*\)?\s*[x×]\s+/i);
+    || source.match(/^\s*\(?\s*(\d{1,4})\s*\)?\s*[x×]\s+/i)
+    || source.match(/\b(?:qty|quantity)\s*[:#-]?\s*(\d{1,4})\b/i)
+    || source.match(/\b(\d{1,4})\s+(?:units?|items?|pieces?|pcs)\b/i)
+    || source.match(/\b(\d{1,4})[\s-]*(?:pack|pk)\b/i);
   const quantity = match ? Number(match[1]) : 0;
   return Number.isInteger(quantity) && quantity > 1 ? quantity : null;
 }
@@ -223,7 +245,8 @@ const STRUCTURED_FIELD_LABELS = [
   'Damage Description', 'Damage Details', 'Damage Desct', 'Damage Desc',
   'Is Item Functional', 'Item Functional', 'Is Item Damaged', 'Item Damaged',
   'In Packaging', 'Missing Parts', 'Functional', 'Condition', 'Damaged',
-  'Quantity', 'Model', 'VIN #', 'Year', 'Make', 'Notes', 'Note',
+  'Quantity', 'Product Name', 'Product', 'Title', 'Lead', 'Manufacturer', 'Brand',
+  'Model Number', 'Model #', 'Model', 'MPN', 'VIN #', 'Year', 'Make', 'Notes', 'Note',
 ] as const;
 const STRUCTURED_FIELD_MARKER_SOURCE = STRUCTURED_FIELD_LABELS
   .slice()
@@ -242,33 +265,32 @@ const PART_NUMBER_RE = /^(?=.{8,32}$)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]+(?:-[A-Za
 // Title prose such as "anti-fog" or "heavy-duty" is not a model. A
 // letter-only hyphenated title token must look like an uppercase manufacturer
 // code (for example NT-USB+); explicitly stated Model fields stay permissive.
-const TITLE_MODEL_ALT_RE = /^(?=[A-Z0-9+.-]*[A-Z]{2})[A-Z0-9]{1,8}-[A-Z0-9+.]{2,14}$/;
+const TITLE_MODEL_ALT_RE = /^(?=[A-Z0-9+.-]*[A-Z]{2})[A-Z0-9]{1,8}-[A-Z0-9+.]{1,14}$/;
+const DIGIT_LED_MODEL_RE = /^(?=.{4,24}$)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/;
+const NUMERIC_PART_RE = /^\d{2,8}(?:-\d{2,8})+$/;
 const CAPACITY_RE = /^(?:\d+(?:\.\d+)?\s*[xX]\s*)?\d+(?:\.\d+)?(?:gb|tb|mb|kb)$/i;
 const GENERIC_MODEL_RE = /^(?:n\/?a|none|null|nil|unknown|unspecified|various|assorted|misc(?:ellaneous)?|standard|generic|regular|default|see\s+(?:photos?|pictures?|description)|no\s+model|model|[a-z]\s*-?\s*series|series|multiple|ddr[345](?:l|x)?|wi[\s-]*fi\s*[5-7]e?|bluetooth\s*\d+(?:\.\d+)?|bt\s*\d+(?:\.\d+)?|usb\s*\d+(?:\.\d+)?|hdmi\s*\d+(?:\.\d+)?)$/i;
 const CONDITION_PARTS_RE = /\b(for\s*parts|parts\s*only|salvage|broken|not\s*working|non[\s-]*functional|defective|scrap|damaged\s*beyond)\b/i;
 const CONDITION_GOOD_RE = /\b(brand\s*new|new|sealed|excellent|like\s*new|mint|open\s*box|good|very\s*good)\b/i;
 const POSITIVE_RE = /\b(tested\s*(?:and\s*)?working|works?\s*(?:great|well|fine|perfectly)|fully\s*functional|brand\s*new|sealed|new\s*in\s*box|nib\b)/i;
-const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|cord|charger|adapter|mount|holder|stand|arm|topper|strap|band|belt|bumper|shell|film|dock|lanyard|clip|controller|game|spray|cloth|cloths|pads?|wipes?|filters?|valves?|sensor\s*wires?|disc\s+drive|remote(?:\s+control)?|bowl|jar|lid|blade|baffle|shield|backplate|back\s*plate|build\s*plate|magnetic\s+plate|pei\s+(?:sheet|plate)|flexi(?:ble)?\s+steel(?:\s+sheet)?|chisels?|drill\s+bits?|bit\s+sets?|faceplate|wall\s*plate|trim\s*kit|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert|pizza\s+pan|baking\s+pan|crumb\s+tray|replacement\s+tray|plant\s+food|descal(?:er|ing)\s+tablets?|cleaning\s+tablets?|photo\s+prop|display\s+decoration)s?\b/i;
+const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|cord|charger|adapter|mount|holder|stand|arm|topper|strap|band|belt|bumper|shell|film|dock|lanyard|clip|controller|game|spray|cloth|cloths|pads?|wipes?|filters?|valves?|sensor\s*wires?|disc\s+drive|remote(?:\s+control)?|bowl|jar|lid|blade|baffle|shield|backplate|back\s*plate|build\s*plate|magnetic\s+plate|pei\s+(?:sheet|plate)|flexi(?:ble)?\s+steel(?:\s+sheet)?|chisels?|drill\s+bits?|bit\s+sets?|faceplate|wall\s*plate|trim\s*kit|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert|lamps?|bulbs?|footswitch(?:es)?|foot\s+switch(?:es)?|pedals?|cartridges?|probes?|camera\s+heads?|pizza\s+pan|baking\s+pan|crumb\s+tray|replacement\s+tray|plant\s+food|descal(?:er|ing)\s+tablets?|cleaning\s+tablets?|photo\s+prop|display\s+decoration)s?\b/i;
 const ACCESSORY_MARKER_RE = /\b(compatible\s+with|replacement\s+for|replacement\s+parts?\s+only|designed\s+for|made\s+for|for\s+use\s+with|fits?\s+for|fits\s+(?:the\s+)?[A-Z0-9])/i;
 const FOR_PRODUCT_VERBS = 'compatible\\s+with|replacement\\s+(?:part\\s+)?for|designed\\s+for|made\\s+for|for\\s+use\\s+with|fits|suitable\\s+for|upgrade\\s+for';
 const TITLE_PREFIX_RE = /^\s*(?:\(?\s*(?:open\s*box|openbox|refurbished|refurb|renewed|used|pre[\s-]?owned)[^-|:]*\)?\s*[-|:]\s*)+/i;
 const USED_RE = /\b(open\s*box|openbox|refurbished|refurb|renewed|pre[\s-]?owned|used|for\s+parts)\b/i;
 const GENERIC_BRAND_RE = /^(?:wireless|smart|portable|professional|digital|electric|electronic|gaming|bluetooth|usb|4k|8k|hd|full|mini|new|vintage|built[\s-]?in|multifunction|automatic|cordless|rechargeable|custom|workstation|tower|desktop|computer|system|inch|external|drive|console|receiver|headset|headphones?|monitor|television|tv|camera|printer|speaker|router|vacuum|couch|crystal|pink|beach|tandem|heated|wooden|steam|solar|royal|black|white|clear|low|compact|dried|calming|extra|girls|baby|hallway|mold|linen|cat|king|prone|creativity|countertop)$/i;
-const RESEARCH_QUERY_NOISE = new Set([
-  'nice', 'estate', 'untested', 'working', 'approx', 'approximate',
-  'damage', 'damaged', 'read', 'look', 'wow', 'rare',
-]);
+const RESEARCH_QUERY_NOISE = new Set<string>();
 const PRODUCT_KIND_PATTERNS: Array<[ProductKind, RegExp]> = [
   ['game-console', /\b(?:(?:playstation\s*[2-6]|ps\s*[2-6]|xbox(?:\s+(?:one|series\s*[sx]))?|nintendo\s+switch)[^,;]{0,35}\b(?:consoles?|systems?)|game\s+consoles?)\b/i],
   ['graphics-card', /\b(?:graphics|video)\s+cards?\b|\b(?:geforce\s+)?rtx\s*\d{3,4}\b|\bradeon\s+rx\s*\d{3,4}\b/i],
   ['memory', /\b(?:ram|memory\s+(?:kits?|modules?)|ddr[345])\b/i],
-  ['processor', /\b(?:cpus?|processors?|core\s+i[3579][\s-]*\d{4,5}[a-z]*|ryzen\s+[3579]\s+\d{4}[a-z]*)\b/i],
+  ['processor', /\b(?:cpus?|(?:computer|desktop|server)\s+processors?|core\s+i[3579][\s-]*\d{4,5}[a-z]*|ryzen\s+[3579]\s+\d{4}[a-z]*)\b/i],
   ['smartwatch', /\b(?:smart\s*watches?|apple\s+watch|galaxy\s+watch|pixel\s+watch)\b/i],
   ['power-tool', /\b(?:impact\s+drivers?|hammer\s+drills?|cordless\s+drills?|circular\s+saws?|reciprocating\s+saws?|angle\s+grinders?|nail\s+guns?)\b/i],
   ['storage', /\b(?:external|portable)\s+(?:hard\s+)?drives?\b|\b(?:hard\s+drives?|ssds?|hdds?)\b/i],
   ['projector', /\bprojectors?\b/i],
-  ['monitor', /\b(?:computer\s+)?monitors?\b/i],
-  ['television', /\b(?:televisions?|tvs?|qled|oled)\b/i],
+  ['monitor', /\b(?:computer|gaming|lcd|led)?\s*monitors?\b/i],
+  ['television', /\b(?:televisions?|tvs?|(?:qled|oled)\s+(?:tvs?|televisions?|displays?))\b/i],
   ['receiver', /\b(?:a\/?v\s+)?receivers?\b|\bamplifiers?\b/i],
   ['headphones', /\b(?:headphones?|headsets?|earbuds?|earphones?)\b/i],
   ['microphone', /\b(?:microphones?|mics?)\b/i],
@@ -301,6 +323,14 @@ const PRODUCT_FAMILY_PATTERNS: Array<[string, RegExp]> = [
   ['cleaning-cloth', /\b(?:microfiber\s+cloths?|steam\s+cleaner\s+pads?)\b/i],
   ['irrigation-system', /\b(?:drip\s+irrigation\s+(?:kit|system)|irrigation\s+timer)\b/i],
   ['replacement-parts', /\b(?:replacement\s+(?:parts?|kit)|parts?\s+only)\b/i],
+  ['wd-my-passport', /\b(?:western\s+digital|wd)\s+my\s+passport\b/i],
+  ['wd-purple', /\b(?:western\s+digital|wd)\s+purple\b/i],
+  ['wd-red', /\b(?:western\s+digital|wd)\s+red\b/i],
+  ['wd-blue', /\b(?:western\s+digital|wd)\s+blue\b/i],
+  ['wd-black', /\b(?:western\s+digital|wd)\s+black\b/i],
+  ['seagate-backup-plus', /\bseagate\s+backup\s+plus\b/i],
+  ['seagate-expansion', /\bseagate\s+expansion\b/i],
+  ['seagate-barracuda', /\bseagate\s+barra(?:cuda)?\b/i],
   ['vase', /\bvases?\b/i],
   ['planter', /\b(?:planters?|flower\s+pots?)\b/i],
 ];
@@ -322,6 +352,9 @@ const BRAND_FAMILIES: ReadonlyArray<readonly [string, RegExp]> = [
   ['google', /\b(?:google|pixel)\b/i],
   ['meta', /\b(?:meta|oculus)\b/i],
   ['western-digital', /\b(?:western\s+digital|wd)\b/i],
+  ['b-braun', /\bb\.?\s*braun\b/i],
+  ['bowers-wilkins', /\b(?:bowers\s*(?:&|and)\s*wilkins|b\s*&\s*w)\b/i],
+  ['bang-olufsen', /\b(?:bang\s*(?:&|and)\s*olufsen|b\s*&\s*o)\b/i],
   ['hewlett-packard', /\b(?:hewlett[\s-]+packard|hp)\b/i],
   ['amazon-basics', /\bamazon\s+basics\b/i],
   ['hamilton-beach', /\bhamilton\s+beach\b/i],
@@ -336,8 +369,14 @@ const BRAND_FAMILIES: ReadonlyArray<readonly [string, RegExp]> = [
   ['crosley', /\bcrosley\b/i],
 ];
 
+const NAMED_HTML_ENTITIES: Record<string, string> = {
+  amp: '&', apos: "'", copy: '', gt: '>', hellip: '...', lt: '<', nbsp: ' ', quot: '"',
+  reg: '', times: 'x', trade: '',
+};
+
 function normalise(value: unknown): string {
   return String(value ?? '')
+    .replace(/&([a-z]+);/gi, (entity, name: string) => NAMED_HTML_ENTITIES[name.toLowerCase()] ?? entity)
     .replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (entity, hex: string | undefined, decimal: string | undefined) => {
       const codePoint = Number.parseInt(hex || decimal || '', hex ? 16 : 10);
       try {
@@ -348,10 +387,15 @@ function normalise(value: unknown): string {
         return entity;
       }
     })
+    .normalize('NFKC')
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, '')
+    .replace(/[Øø]/g, (character) => character === 'Ø' ? 'O' : 'o')
+    .replace(/[Łł]/g, (character) => character === 'Ł' ? 'L' : 'l')
     .replace(/\r\n?/g, '\n')
     .replace(/[‘’ʼ′]/g, "'")
     .replace(/[“”]/g, '"')
-    .replace(/[–—]/g, '-')
+    .replace(/[‐‑‒–—−]/g, '-')
+    .replace(/×/g, 'x')
     .replace(/[\u00a0\u2007\u202f]/g, ' ');
 }
 
@@ -409,7 +453,11 @@ export function extractProductDiscriminators(value: string | null | undefined): 
   const source = normalise(value).toLowerCase();
   const collect = (pattern: RegExp, normalize: (match: RegExpMatchArray) => string) =>
     [...source.matchAll(pattern)].map(normalize);
-  const allCapacities = collect(/\b(\d+(?:\.\d+)?)[\s-]*(tb|gb|mb|kb)\b/gi, (match) => `${match[1]}${match[2]}`.toLowerCase());
+  const unitCapacityConfigurations = [...source.matchAll(/\b(\d{1,2})\s*[x×]\s*(\d+(?:\.\d+)?)\s*(gb|mb)\b/gi)];
+  const allCapacities = [
+    ...collect(/\b(\d+(?:\.\d+)?)[\s-]*(tb|gb|mb|kb)\b/gi, (match) => `${match[1]}${match[2]}`.toLowerCase()),
+    ...unitCapacityConfigurations.map((match) => `${Number(match[1]) * Number(match[2])}${String(match[3]).toLowerCase()}`),
+  ];
   const capacities = allCapacities.length ? [allCapacities.sort((left, right) => capacityMagnitude(right) - capacityMagnitude(left))[0]!] : [];
   const cubicCapacities = collect(/\b(\d+(?:\.\d+)?)[\s-]*(?:cu(?:bic)?\.?\s*ft\.?|cubic\s+(?:feet|foot))\b/gi, (match) => `${Number(match[1])}cuft`);
   const weightLimits = [
@@ -426,6 +474,9 @@ export function extractProductDiscriminators(value: string | null | undefined): 
     ...collect(/\bxbox\s+(one|series\s*[sx])\b/gi, (match) => `xbox:${String(match[1]).replace(/\s+/g, '')}`),
     ...collect(/\bnintendo\s+switch(?:\s+(2|oled|lite))?\b/gi, (match) => `switch:${match[1] || 'standard'}`),
   ];
+  if (/\bxbox\b/i.test(source) && !platformVariants.some((value) => value.startsWith('xbox:'))) {
+    platformVariants.push('xbox:compatible');
+  }
   const memoryTypes = collect(/\b(ddr[345](?:l|x)?)\b/gi, (match) => String(match[1]).toLowerCase());
   const frequencies = collect(/\b(\d+(?:\.\d+)?)[\s-]*(mhz|ghz)\b/gi, (match) => `${match[1]}${match[2]}`.toLowerCase());
   const refreshRates = collect(/\b(\d{2,3})[\s-]*hz\b/gi, (match) => `${match[1]}hz`);
@@ -450,17 +501,22 @@ export function extractProductDiscriminators(value: string | null | undefined): 
   }
   const cpuModels = [
     ...collect(/\bcore\s+i([3579])[\s-]*(\d{4,5})([a-z]{0,2})\b/gi, (match) => `intel:i${match[1]}:${match[2]}:${match[3] || 'base'}`.toLowerCase()),
-    ...collect(/\bryzen\s+([3579])\s+(\d{4})([a-z]{0,3})\b/gi, (match) => `amd:ryzen${match[1]}:${match[2]}:${match[3] || 'base'}`.toLowerCase()),
+    ...collect(/\bryzen\s+([3579])\s+(\d{4})([a-z0-9]{0,3})\b/gi, (match) => `amd:ryzen${match[1]}:${match[2]}:${match[3] || 'base'}`.toLowerCase()),
     ...collect(/\bapple\s+m([1-9])(?:\s*(pro|max|ultra))?\b/gi, (match) => `apple:m${match[1]}:${match[2] || 'base'}`.toLowerCase()),
   ];
   const editions = [
-    ...collect(/\b(all[\s-]*digital|digital\s+edition|disc\s+edition|disc\s+version)\b/gi, (match) => /digital/i.test(match[1]!) ? 'digital' : 'disc'),
+    ...collect(/\b(all[\s-]*digital|digital\s+(?:edition|console)|disc\s+(?:edition|version|console))\b/gi, (match) => /digital/i.test(match[1]!) ? 'digital' : 'disc'),
     ...collect(/\b(oled|lite|slim)\s+(?:edition|model|console)\b/gi, (match) => String(match[1]).toLowerCase()),
+  ];
+  const explicitSeriesSignatures = [
+    ...collect(/\barctis\s+nova\s+(\d+)(?:[xp])?\b/gi, (match) => `arctis-nova:${match[1]}`),
+    ...collect(/\barctis\s+nova\s+(pro)\b/gi, (match) => `arctis-nova:${match[1]}`),
   ];
   const packageCounts = [
     ...collect(/\b(\d{1,4})[\s-]*(?:pack|pk|count|ct|pcs?|pieces?)\b/gi, (match) => String(Number(match[1]))),
     ...collect(/\b(?:pack|set)\s+of\s+(\d{1,4})\b/gi, (match) => String(Number(match[1]))),
     ...collect(/\b(\d{1,4})\s*[x×]\s*\d+(?:\.\d+)?\s*(?:fl\s*oz|oz|ounces?|qt|quarts?|ml|liters?|litres?|l|cups?)\b/gi, (match) => String(Number(match[1]))),
+    ...unitCapacityConfigurations.map((match) => String(Number(match[1]))),
   ];
   let colors = COLOR_WORDS.filter((color) => new RegExp(`\\b${color}\\b`, 'i').test(source)).map((color) => color === 'gray' ? 'grey' : color);
   // In phrases such as "clear blue glass", clear describes transparency rather
@@ -510,7 +566,10 @@ export function extractProductDiscriminators(value: string | null | undefined): 
     gpuModels: unique(gpuModels),
     cpuModels: unique(cpuModels),
     editions: unique(editions),
-    seriesSignatures: platformVariants.length ? [] : extractSeriesSignatures(source),
+    seriesSignatures: unique([
+      ...explicitSeriesSignatures,
+      ...(platformVariants.length ? [] : extractSeriesSignatures(source)),
+    ]),
     packageCounts: unique(packageCounts),
     colors: unique(colors),
     materials: unique(materials),
@@ -544,10 +603,23 @@ function matchesProductDiscriminators(candidateTitle: string, product: ProductId
     const actualVariant = actualParts.at(-1) || '';
     return expectedVariant !== 'base' && (actualVariant === 'base' || expectedVariant.split('-').includes(actualVariant));
   };
+  const valueMatches = (group: keyof ProductDiscriminators, expectedValue: string, actualValue: string): boolean => {
+    if (expectedValue === actualValue) return true;
+    if (group === 'capacities') {
+      const expectedMagnitude = capacityMagnitude(expectedValue);
+      const actualMagnitude = capacityMagnitude(actualValue);
+      return expectedMagnitude > 0 && actualMagnitude > 0
+        && Math.abs(expectedMagnitude - actualMagnitude) / Math.max(expectedMagnitude, actualMagnitude) <= 0.03;
+    }
+    if (group === 'platformVariants' && expectedValue.endsWith(':compatible')) {
+      return actualValue.startsWith(`${expectedValue.split(':')[0]}:`);
+    }
+    return false;
+  };
   for (const group of groups) {
     if (group === 'variantLabels' && exactModel) continue;
     if (!expected[group].length) continue;
-    const absent = expected[group].filter((value) => !actual[group].includes(value));
+    const absent = expected[group].filter((value) => !actual[group].some((candidate) => valueMatches(group, value, candidate)));
     if (absent.length) {
       if (actual[group].length) conflicts.push(`${group}:${absent.join(',')}`);
       else missing.push(`${group}:${absent.join(',')}`);
@@ -566,6 +638,8 @@ function matchesProductDiscriminators(candidateTitle: string, product: ProductId
     ['neck-fan', 'handheld-fan'],
     ['steam-cleaner', 'cleaning-cloth'],
     ['irrigation-system', 'replacement-parts'],
+    ['wd-my-passport', 'wd-purple', 'wd-red', 'wd-blue', 'wd-black'],
+    ['seagate-backup-plus', 'seagate-expansion', 'seagate-barracuda'],
   ];
   for (const family of exclusiveFamilies) {
     const expectedFamily = family.find((value) => expected.productFamilies.includes(value));
@@ -577,26 +651,176 @@ function matchesProductDiscriminators(candidateTitle: string, product: ProductId
 }
 
 function criticalMissingDiscriminators(missing: string[]): string[] {
-  return missing.filter((value) => /^(?:packageCounts|volumes|cubicCapacities|weightLimits):/.test(value));
+  return missing.filter((value) => /^(?:capacities|packageCounts|volumes|cubicCapacities|weightLimits|batteryCapacities|lensRanges|editions|platformVariants):/.test(value));
 }
 
 function collapseRepeatedQueryTokens(tokens: string[]): string[] {
-  for (let blockLength = 3; blockLength <= Math.floor(tokens.length / 2); blockLength += 1) {
-    if (tokens.length % blockLength !== 0) continue;
-    const repeated = tokens.every((token, index) => token === tokens[index % blockLength]);
-    if (repeated) return tokens.slice(0, blockLength);
+  let output = [...tokens];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let blockLength = Math.floor(output.length / 2); blockLength >= 3 && !changed; blockLength -= 1) {
+      for (let start = 0; start + (blockLength * 2) <= output.length; start += 1) {
+        const left = output.slice(start, start + blockLength);
+        const right = output.slice(start + blockLength, start + (blockLength * 2));
+        if (left.every((token, index) => token === right[index])) {
+          output = [...output.slice(0, start + blockLength), ...output.slice(start + (blockLength * 2))];
+          changed = true;
+          break;
+        }
+      }
+    }
   }
-  return tokens;
+  if (output.length === 4 && output[0] === output[2] && output[1] === output[3]) {
+    return output.slice(0, 2);
+  }
+  return output;
+}
+
+function collapseBoundaryQueryTokens(tokens: string[]): string[] {
+  const output = [...tokens];
+  const maxWidth = Math.min(6, Math.floor((output.length - 2) / 2));
+  for (let width = maxWidth; width >= 2; width -= 1) {
+    const prefix = output.slice(0, width);
+    const exactStart = output.length - width;
+    if (exactStart > width && prefix.every((token, index) => token === output[exactStart + index])) {
+      return output.slice(0, exactStart);
+    }
+    const truncatedStart = output.length - width - 1;
+    const trailingFragment = output.at(-1) || '';
+    if (truncatedStart > width
+      && trailingFragment.length === 1
+      && prefix.every((token, index) => token === output[truncatedStart + index])) {
+      return output.slice(0, truncatedStart);
+    }
+  }
+  return output;
 }
 
 const DETACHED_SUFFIX_GUARDS = new Set(['series', 'model', 'size', 'type', 'class', 'grade', 'gen', 'generation', 'lot']);
-const GENERIC_RESEARCH_TOKENS = new Set(['lot', 'item', 'auction', 's']);
+const DETACHED_PLURAL_NOUNS = new Set([
+  'adapter', 'book', 'bowl', 'cable', 'camera', 'card', 'charger', 'console', 'controller',
+  'cup', 'dish', 'doppler', 'drive', 'earbud', 'game', 'headphone', 'lamp', 'lens', 'light',
+  'microphone', 'module', 'monitor', 'plate', 'printer', 'projector', 'receiver', 'router',
+  'scanner', 'scrub', 'sensor', 'speaker', 'stand', 'switch', 'tablet', 'tool', 'unit', 'watch',
+]);
+const GENERIC_RESEARCH_TOKENS = new Set([
+  'assorted', 'auction', 'description', 'estate', 'info', 'information', 'item', 'lot',
+  'misc', 'miscellaneous', 'no', 'only', 'pickup', 'preview', 'reserve', 's', 'sale', 'see',
+  'stock', 'tba', 'unknown', 'various',
+]);
+
+function stripResearchPrefixes(value: string): string {
+  let output = value.trim();
+  const patterns = [
+    /^\s*\{?\s*(?:each|ea)\b\s*\}?\s*/i,
+    /^\s*(?:lot|item)\s+(?=(?:stock|sku|inventory|inv)\s*[:#])/i,
+    /^\s*(?:online\s+)?auction\s+(?:item|lot)\s*(?:(?:no\.?|number)\s+|#\s*)[a-z0-9.-]+\s*(?:[:|]\s*|-\s+)?/i,
+    /^\s*(?:online\s+)?auction\s+(?:item|lot)\s+(?=[a-z0-9.-]*\d)[a-z0-9.-]+\s*(?:[:|]\s*|-\s+)/i,
+    /^\s*(?:lot|item)\s*#\s*:\s*[a-z0-9.-]+\s*(?:[:|]\s*|-\s+)/i,
+    /^\s*(?:lot|item)\s+(?:(?:no\.?|number)\s+|#\s*)[a-z0-9.-]+\s*(?:[:|]\s*|-\s+)?/i,
+    /^\s*(?:lot|item)\s+(?=[a-z0-9.-]*\d)[a-z0-9.-]+\s*(?:[:|]\s*|-\s+)/i,
+    /^\s*(?:stock|sku|inventory|inv)\s*(?:#\s*|:\s*)[a-z0-9.-]+\s*(?:[:|]\s*|-\s+)/i,
+    /^\s*(?:stock|sku|inventory|inv)\s+(?=[a-z0-9.-]*\d)[a-z0-9.-]+\s*(?:[:|]\s*|-\s+)/i,
+    /^\s*(?:lot|item)\s+(?!(?:1[89]\d{2}|20\d{2})\s)\d{1,4}\s+(?!(?:case|count|ct|pack|pair|pcs?|pieces?|pk|rolls?|set|units?|x)\b)(?=[a-z])/i,
+    /^\s*(?:lot|item)\s+(?!(?:of|no\.?|number)\b|#)/i,
+    /^\s*(?:lot|item)\s*:\s*/i,
+    /^\s*#\s*[a-z0-9.-]+\s*(?:[:|]\s*|-\s+)/i,
+    /^\s*(?:av|inventory|inv|sku)\s*(?:[:|]\s*|-\s+)(?!\s*[a-z0-9.-]+\s*(?:[:|]|-\s+))\s*/i,
+    /^\s*[a-z]{1,3}\d{1,2}\s+(?=\$\s*[\d,]+)/i,
+    /^\s*(?:(?:lot|group)\s+of\s+\(?\d{1,4}\)?|\(?\d{1,4}\)?\s*x)\s*[-:|]?\s+/i,
+    /^\s*(?:qty|quantity)\s*[:#]?\s*\d{1,4}\s*[-:|]?\s+/i,
+    /^\s*(?:retail|msrp|est\.?\s*retail(?:\s*price)?|value)\s*[:\-]?\s*\$?\s*[\d,]+(?:\.\d+)?\s*(?:[-:|]\s*)?/i,
+    /^\s*\$(?!\s*\d+\s*\/)\s*[\d,]+(?:\.\d+)?\s*(?:[-:|]\s*)?/i,
+    /^\s*\(?\s*(?:open\s*box|refurbished|refurb|renewed|pre[\s-]?owned|used|brand\s+new|new\s+in\s+box)\s*\)?(?:\s*[-:|]\s*|\s+)/i,
+  ];
+  for (let pass = 0; pass < 8; pass += 1) {
+    const previous = output;
+    // Remove presentation quotes and collapse a repeated raw title before
+    // stripping its first inventory prefix. Otherwise only the first copy
+    // loses prefixes such as "Vv3 $56", leaving the second copy as query noise.
+    output = collapseExactRepeatedRawText(output.replace(/^["']+|["']+$/g, '').trim());
+    output = output.replace(/^\s*([A-Za-z])([A-Za-z])\d{1,2}\s+/, (match, first: string, second: string) => (
+      first !== second && first.toLowerCase() === second.toLowerCase() ? '' : match
+    ));
+    for (const pattern of patterns) {
+      output = collapseExactRepeatedRawText(output.replace(pattern, '').trim());
+    }
+    if (output === previous) break;
+  }
+  return output;
+}
+
+function stripResearchSuffixes(value: string): string {
+  let output = value.trim();
+  const suffix = /(?:\s*(?:[-|,;]\s*)|\s+)\(?\s*(?:tested(?:\s+and)?\s+working|not\s+tested|working|untested|open\s*box|brand\s+new\s+in\s+box|brand\s+new|new\s+in\s+box|in\s+box|nib|used|refurbished|refurb|renewed|pre[\s-]?owned|for\s+parts(?:\s+only)?|parts\s+only|as[\s-]*is|damaged|pickup\s+only|local\s+pickup\s+only|see\s+(?:photos?|pictures?|description)|read\s+description|no\s+reserve|online\s+only\s+auction|lot\s*#?\s*\d+)\s*\)?\s*$/i;
+  for (let pass = 0; pass < 12; pass += 1) {
+    const next = collapseExactRepeatedRawText(output.replace(suffix, '').trim());
+    if (next === output) break;
+    output = next;
+  }
+  return output;
+}
+
+function collapseExactRepeatedRawText(value: string): string {
+  let words = value.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  let changed = false;
+  let found = true;
+  while (found) {
+    found = false;
+    for (let blockLength = Math.floor(words.length / 2); blockLength >= 3 && !found; blockLength -= 1) {
+      for (let start = 0; start + (blockLength * 2) <= words.length; start += 1) {
+        const left = words.slice(start, start + blockLength);
+        const right = words.slice(start + blockLength, start + (blockLength * 2));
+        if (!left.every((word, index) => word === right[index])) continue;
+        words = [...words.slice(0, start + blockLength), ...words.slice(start + (blockLength * 2))];
+        changed = true;
+        found = true;
+        break;
+      }
+    }
+  }
+  return changed ? words.join(' ') : value;
+}
+
+function capResearchQueryTokens(tokens: string[], maxLength = 120): string[] {
+  const usable = tokens.filter((token) => token.length <= maxLength);
+  if (usable.join(' ').length <= maxLength) return usable;
+  const essential = new Set<number>();
+  usable.slice(0, 3).forEach((_, index) => essential.add(index));
+  usable.slice(-2).forEach((_, index) => essential.add(Math.max(0, usable.length - 2 + index)));
+  usable.forEach((token, index) => {
+    if (/\d/.test(token) || /[+/]/.test(token)) essential.add(index);
+  });
+  const selected = [...essential].sort((left, right) => left - right);
+  const lengthOf = (indexes: number[]) => indexes.reduce((total, index) => total + usable[index]!.length, 0) + Math.max(0, indexes.length - 1);
+  while (selected.length > 1 && lengthOf(selected) > maxLength) {
+    const removable = selected.findIndex((index, position) => position > 1 && position < selected.length - 2 && !/\d/.test(usable[index]!));
+    selected.splice(removable >= 0 ? removable : selected.length - 2, 1);
+  }
+  for (let index = 0; index < usable.length; index += 1) {
+    if (selected.includes(index)) continue;
+    const candidate = [...selected, index].sort((left, right) => left - right);
+    if (lengthOf(candidate) <= maxLength) selected.splice(0, selected.length, ...candidate);
+  }
+  return selected.map((index) => usable[index]!);
+}
+
+function isWeakResearchTitle(value: string): boolean {
+  const clean = normalise(value).replace(/\s+/g, ' ').trim();
+  if (!clean || /(?:\.{3}|…)\s*$/.test(clean)) return true;
+  if (/^(?:lot|item)(?:\s*#?\s*:?\s*[\w.-]+)?$/i.test(clean)) return true;
+  if (/^(?:see\s+(?:photos?|pictures?|description)|misc(?:ellaneous)?|various|assorted|unknown|n\/?a|tba|tv)$/i.test(clean)) return true;
+  return buildProductResearchQuery(clean).split(/\s+/).filter((token) => !GENERIC_RESEARCH_TOKENS.has(token)).length < 2;
+}
 
 function repairDetachedPluralSuffixes(tokens: string[]): string[] {
   const repaired: string[] = [];
   for (const token of tokens) {
     const previous = repaired.at(-1) || '';
-    if (token === 's' && /^[a-z]{3,}$/.test(previous) && !DETACHED_SUFFIX_GUARDS.has(previous)) {
+    if (token === 's'
+      && DETACHED_PLURAL_NOUNS.has(previous)
+      && !DETACHED_SUFFIX_GUARDS.has(previous)) {
       repaired[repaired.length - 1] = `${previous}s`;
     } else {
       repaired.push(token);
@@ -609,31 +833,28 @@ export function buildProductResearchQuery(title: string | null | undefined): str
   const original = normalise(title).replace(/\s+/g, ' ').trim();
   if (!original) return '';
 
-  let query = original
+  let cleaned = collapseExactRepeatedRawText(original);
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = collapseExactRepeatedRawText(stripResearchPrefixes(stripResearchSuffixes(cleaned)));
+    if (next === cleaned) break;
+    cleaned = next;
+  }
+  let query = cleaned
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\b([A-Za-z]{2,})'s\b/g, '$1s')
     .toLowerCase()
-    .replace(/^\s*lot\s*#?\s*:?\s*[\w.-]+\s*[-:|]\s*/i, ' ')
     .replace(/[()[\]{}]/g, ' ')
-    .replace(/\b(?:lot|pair|set|group)\s+of\s+\d+\b/gi, ' ')
-    .replace(/\bx\s*\d+\b/gi, ' ')
-    .replace(/\b\d+\s*pcs?\b/gi, ' ')
-    .replace(/\b(?:online\s+)?auction\s+(?:item|lot)\b.*$/i, ' ')
-    .replace(/^\s*(?:av|inv(?:entory)?|sku)\s*[-:|]\s*/i, ' ')
-    .replace(/[^a-z0-9.+-]+/g, ' ');
+    .replace(/[^a-z0-9.+\/-]+/g, ' ');
 
-  const tokens = collapseRepeatedQueryTokens(repairDetachedPluralSuffixes(query
+  const tokens = capResearchQueryTokens(collapseBoundaryQueryTokens(collapseRepeatedQueryTokens(repairDetachedPluralSuffixes(query
     .split(/\s+/)
-    .map((token) => token.replace(/^[.+-]+|[.-]+$/g, ''))
-    .filter((token) => token && token !== 'x' && !RESEARCH_QUERY_NOISE.has(token))));
+    .map((token) => token.replace(/^[.+\/-]+|[.\/-]+$/g, ''))
+    .filter((token) => token && !RESEARCH_QUERY_NOISE.has(token))))));
   query = tokens.join(' ');
 
-  if (query.length > 120) {
-    const shortened = query.slice(0, 121).replace(/\s+\S*$/, '').trim();
-    query = shortened || query.slice(0, 120).trim();
-  }
   if (!tokens.some((token) => !GENERIC_RESEARCH_TOKENS.has(token))) return '';
-  return tokens.length >= 2 ? query : original.slice(0, 120);
+  return query;
 }
 
 function firstNumber(value: string): number | null {
@@ -890,7 +1111,229 @@ function tokeniseIdentity(value: string): string[] {
 
 export function detectProductKind(value: string | null | undefined): ProductKind | null {
   const source = normalise(value);
+  if (/\b(?:vital\s+signs?|patient)\s+monitors?\b/i.test(source)) return null;
+  if (/\bfood\s+processors?\b/i.test(source)) return null;
+  if (/^\s*(?:nintendo\s+)?switch(?:\s+oled)?\b/i.test(source)
+    && !/\b(?:case|cover|game|replacement|screen\s+protector)\b/i.test(source)) return 'game-console';
   return PRODUCT_KIND_PATTERNS.find(([, pattern]) => pattern.test(source))?.[0] ?? null;
+}
+
+function descriptionIdentityCandidate(parsed: StructuredDescription): string {
+  const statedProduct = fieldValue(parsed.fields, 'product name', 'product', 'title', 'lead') || '';
+  const statedBrand = fieldValue(parsed.fields, 'brand', 'manufacturer', 'make') || '';
+  const statedModel = fieldValue(parsed.fields, 'model', 'model #', 'model number', 'mpn') || '';
+  const structured = [statedBrand, statedProduct, statedModel]
+    .map((value) => value.trim())
+    .filter((value, index, values) => value && values.findIndex((candidate) => candidate.toLowerCase() === value.toLowerCase()) === index)
+    .join(' ')
+    .trim();
+  if (structured.length >= 3) return structured;
+  const prose = parsed.freeText
+    .split(/\n|(?<=[.!?])\s+/)
+    .map((value) => value.replace(/\s+/g, ' ').trim())
+    .find((value) => value.length >= 3 && !/^(?:condition|notes?|shelf|pickup|shipping|payment)\b/i.test(value));
+  return (prose || '').slice(0, 500);
+}
+
+function knownLeadingBrand(value: string): string | null {
+  return value.match(/^(?:Allen[\s-]Bradley|Amazon\s+Basics|B\.?\s*Braun|Bang\s*(?:&|and)\s*Olufsen|Black\s*(?:\+|&|and)\s*Decker|Bowers\s*(?:&|and)\s*Wilkins|Hamilton\s+Beach|Hewlett[\s-]Packard|Robot\s+Coupe|Smith\s*\+\s*Nephew|Square\s+D|Western\s+Digital)\b/i)?.[0] || null;
+}
+
+function compactIdentityText(value: string): string {
+  return compactTokens(value).join('');
+}
+
+function isIsbnLikeToken(value: string): boolean {
+  const digits = value.replace(/[^0-9Xx]/g, '');
+  return digits.length === 10 || (digits.length === 13 && /^97[89]/.test(digits));
+}
+
+function isMeasurementLikeModelToken(value: string): boolean {
+  return /^\d+(?:\.\d+)?(?:-\d+(?:\.\d+)?)?[\s-]*(?:v|w|kw|a|amp|amps|ah|mah|hz|mhz|ghz|mm|cm|in|ft|oz|lb|gb|tb|mb|mp|dpi|ppi|rpm|pa|psi|btu|lm|lumen|lumens|core|cores|ct|pk|pack|piece|pieces|volume|volumes)$/i.test(value)
+    || /^\d+(?:\.\d+)?x\d+(?:\.\d+)?$/i.test(value)
+    || /^\d+x\d+(?:\.\d+)?(?:fl?oz|oz|ml|l|qt|gb|tb|mb)$/i.test(value)
+    || /^\d+[\s-]*in[\s-]*\d+$/i.test(value)
+    || /^ddr[345](?:l|x)?-?\d{3,5}$/i.test(value)
+    || /^\d+(?:st|nd|rd|th)$/i.test(value)
+    || /^(?:19|20)\d{2}$/.test(value)
+    || /^(?:19|20)\d{2}-\d{1,2}-\d{1,2}$/.test(value);
+}
+
+function inferredModelTokenScore(value: string): number {
+  const token = value.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9+.-]+$/g, '');
+  if (!token || token.length > 24 || isIsbnLikeToken(token) || isMeasurementLikeModelToken(token) || GENERIC_MODEL_RE.test(token)) return -1;
+  const separators = (token.match(/[-.]/g) || []).length;
+  if (NUMERIC_PART_RE.test(token)) return 100 + (separators * 8) + Math.min(token.length, 20);
+  if (/^\d{6,9}$/.test(token)) return 96 + token.length;
+  if (/^[IVXLCDM]{2,}-[A-Z]$/i.test(token)) return 94 + token.length;
+  if (MODEL_RE.test(token) || TITLE_MODEL_ALT_RE.test(token) || PART_NUMBER_RE.test(token)) {
+    return 86 + (separators * 8) + Math.min(token.length, 20);
+  }
+  if (DIGIT_LED_MODEL_RE.test(token)) return 78 + (separators * 8) + Math.min(token.length, 20);
+  return -1;
+}
+
+function rankedInferredModelTokens(values: string[]): string[] {
+  const unique = [...new Map(values
+    .map((value, index) => ({ value, index, score: inferredModelTokenScore(value) }))
+    .filter((entry) => entry.score >= 0)
+    .map((entry) => [entry.value.toLowerCase(), entry] as const)).values()];
+  return unique
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((entry) => entry.value);
+}
+
+interface StrictIdentitySignatures {
+  modelCodes: string[];
+  isbns: string[];
+  editions: string[];
+  volumes: string[];
+  grades: string[];
+  catalogNumbers: string[];
+  mintMarks: string[];
+  bundleComponents: string[][];
+}
+
+const NUMBER_WORDS: Readonly<Record<string, string>> = {
+  one: '1', first: '1', two: '2', second: '2', three: '3', third: '3', four: '4', fourth: '4',
+  five: '5', fifth: '5', six: '6', sixth: '6', seven: '7', seventh: '7', eight: '8', eighth: '8',
+  nine: '9', ninth: '9', ten: '10', tenth: '10', eleven: '11', eleventh: '11', twelve: '12', twelfth: '12',
+  thirteen: '13', thirteenth: '13', fourteen: '14', fourteenth: '14', fifteen: '15', fifteenth: '15',
+  sixteen: '16', sixteenth: '16', seventeen: '17', seventeenth: '17', eighteen: '18', eighteenth: '18',
+  nineteen: '19', nineteenth: '19', twenty: '20', twentieth: '20',
+};
+const NUMBER_WORD_PATTERN = Object.keys(NUMBER_WORDS).sort((left, right) => right.length - left.length).join('|');
+const BUNDLE_TOKEN_NOISE = new Set([
+  ...NOISE_WORDS, 'only', 'max', 'xr', 'oem', 'channel', 'channels', 'complete', 'system', 'kit', 'bundle',
+]);
+const BUNDLE_COMPONENT_NOUN_RE = /\b(?:accessor(?:y|ies)|adapter|bag|batter(?:y|ies)|blade|bowl|cable|case|charger|controller|cord|cover|dock|earbuds?|filter|foot\s*switch|game|headphones?|headset|hose|jar|keyboard|lens(?:es)?|manual|microphones?|mount|mouse|nozzle|pedal|plate|power\s+supply|probe|rack|remote|sensor|speaker|stand|subwoofer|transmitter|tripod)\b/i;
+
+function normalizedNumber(value: string): string {
+  const lower = value.toLowerCase();
+  if (NUMBER_WORDS[lower]) return NUMBER_WORDS[lower];
+  return String(Number(lower.replace(/(?:st|nd|rd|th)$/i, '')));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function normalizedIsbn(value: string): string {
+  const isbn = value.replace(/[^0-9Xx]/g, '').toUpperCase();
+  if (isbn.length === 10) {
+    const total = [...isbn].reduce((sum, character, index) => {
+      const digit = character === 'X' && index === 9 ? 10 : Number(character);
+      return Number.isFinite(digit) ? sum + (digit * (10 - index)) : Number.NaN;
+    }, 0);
+    if (!Number.isFinite(total) || total % 11 !== 0) return '';
+    const body = `978${isbn.slice(0, 9)}`;
+    const checksumTotal = [...body].reduce((sum, character, index) => sum + (Number(character) * (index % 2 ? 3 : 1)), 0);
+    return `${body}${(10 - (checksumTotal % 10)) % 10}`;
+  }
+  if (isbn.length === 13 && /^97[89]/.test(isbn)) {
+    const total = [...isbn].reduce((sum, character, index) => sum + (Number(character) * (index % 2 ? 3 : 1)), 0);
+    return Number.isFinite(total) && total % 10 === 0 ? isbn : '';
+  }
+  return '';
+}
+
+function extractStrictIdentitySignatures(value: string): StrictIdentitySignatures {
+  const source = normalise(value);
+  const modelCodes = rankedInferredModelTokens(tokeniseIdentity(source));
+  const isbnCandidates = [
+    ...[...source.matchAll(/\bisbn(?:-1[03])?\s*[:#]?\s*([0-9Xx][0-9Xx\s-]{8,24})/gi)].map((match) => String(match[1])),
+    ...[...source.matchAll(/\b97[89](?:[\s-]?\d){10}\b/g)].map((match) => String(match[0])),
+    ...[...source.matchAll(/\b\d(?:[\s-]?\d){8}[\s-]?[0-9Xx]\b/g)].map((match) => String(match[0])),
+  ];
+  const isbns = isbnCandidates.map(normalizedIsbn).filter(Boolean);
+  const editions = [
+    ...[...source.matchAll(/\b(\d{1,3})(?:st|nd|rd|th)\s+edition\b/gi)].map((match) => normalizedNumber(String(match[1]))),
+    ...[...source.matchAll(new RegExp(`\\b(${NUMBER_WORD_PATTERN})\\s+edition\\b`, 'gi'))].map((match) => normalizedNumber(String(match[1]))),
+  ];
+  const volumes = [
+    ...[...source.matchAll(/\b(\d{1,3})[\s-]+volumes?\b/gi)].map((match) => normalizedNumber(String(match[1]))),
+    ...[...source.matchAll(/\bvolume\s+(\d{1,3})\b/gi)].map((match) => normalizedNumber(String(match[1]))),
+    ...[...source.matchAll(new RegExp(`\\b(${NUMBER_WORD_PATTERN})[\\s-]+volumes?\\b`, 'gi'))].map((match) => normalizedNumber(String(match[1]))),
+    ...[...source.matchAll(new RegExp(`\\bvolume\\s+(${NUMBER_WORD_PATTERN})\\b`, 'gi'))].map((match) => normalizedNumber(String(match[1]))),
+  ];
+  const grades = [
+    ...[...source.matchAll(/\b(PSA|BGS|SGC|CGC)\s*(\d+(?:\.\d+)?)\b/gi)].map((match) => `${match[1]}:${match[2]}`.toLowerCase()),
+    ...[...source.matchAll(/\b(NGC|PCGS)\s*((?:MS|PF|PR|AU|XF|VF|VG|AG|FR|PO)\s*\d{1,2}(?:\.\d+|\+)?)\b/gi)]
+      .map((match) => `${match[1]}:${String(match[2]).replace(/\s+/g, '')}`.toLowerCase()),
+  ];
+  const catalogNumbers = [
+    ...[...source.matchAll(/(?:#|\b(?:no\.?|number)\s+)\s*([A-Z0-9][A-Z0-9-]{0,9})\b/gi)].map((match) => `catalog:${String(match[1]).toLowerCase()}`),
+    ...[...source.matchAll(/\b(\d{1,4}\/\d{1,4})\b/g)].map((match) => `fraction:${match[1]}`),
+  ];
+  const mintMarks = [...source.matchAll(/\b((?:1[5-9]\d{2}|20\d{2}))[\s-]+([A-Z])\b/gi)]
+    .map((match) => `${match[1]}-${String(match[2]).toLowerCase()}`);
+  const connector = source.match(/\b(?:bundled\s+with|with|includes?|including|plus)\s+(.+)$/i);
+  const bundleComponents = connector
+    ? stripResearchSuffixes(connector[1] || '')
+      .split(/\s*(?:,|;|\b(?:and|plus)\b)\s*/i)
+      .filter((component) => BUNDLE_COMPONENT_NOUN_RE.test(component))
+      .map((component) => compactTokens(component)
+        .map((token) => token.toLowerCase())
+        .filter((token) => token.length > 1 && !BUNDLE_TOKEN_NOISE.has(token) && !isMeasurementLikeModelToken(token)))
+      .filter((component) => component.length > 0)
+    : [];
+  return {
+    modelCodes: uniqueStrings(modelCodes),
+    isbns: uniqueStrings(isbns),
+    editions: uniqueStrings(editions),
+    volumes: uniqueStrings(volumes),
+    grades: uniqueStrings(grades),
+    catalogNumbers: uniqueStrings(catalogNumbers),
+    mintMarks: uniqueStrings(mintMarks),
+    bundleComponents,
+  };
+}
+
+function compareStrictIdentitySignatures(candidateTitle: string, product: ProductIdentity): string[] {
+  const expected = extractStrictIdentitySignatures(product.name);
+  const actual = extractStrictIdentitySignatures(candidateTitle);
+  const reasons: string[] = [];
+  const primaryModel = String(product.model || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const requiredCodes = expected.modelCodes.filter((code) => {
+    const compact = code.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return !primaryModel || primaryModel === compact || !primaryModel.startsWith(compact);
+  });
+  for (const code of requiredCodes) {
+    if (!modelMatches(candidateTitle, code)) reasons.push(`identity-code-missing:${code}`);
+  }
+  const compareExactGroup = (label: string, sourceValues: string[], candidateValues: string[]) => {
+    for (const expectedValue of sourceValues) {
+      if (candidateValues.includes(expectedValue)) continue;
+      reasons.push(`${candidateValues.length ? 'identity-conflict' : 'identity-missing'}:${label}:${expectedValue}`);
+    }
+  };
+  compareExactGroup('isbn', expected.isbns, actual.isbns);
+  compareExactGroup('edition', expected.editions, actual.editions);
+  compareExactGroup('volume', expected.volumes, actual.volumes);
+  compareExactGroup('grade', expected.grades, actual.grades);
+  compareExactGroup('catalog-number', expected.catalogNumbers, actual.catalogNumbers);
+  compareExactGroup('mint-mark', expected.mintMarks, actual.mintMarks);
+
+  const candidateTokens = new Set(compactTokens(candidateTitle).map((token) => token.toLowerCase()));
+  for (const component of expected.bundleComponents) {
+    const hits = component.filter((token) => candidateTokens.has(token)).length;
+    const requiredHits = Math.max(1, Math.ceil(component.length * 0.5));
+    if (hits < requiredHits) reasons.push(`bundle-component-missing:${component.join('-')}`);
+  }
+  return uniqueStrings(reasons);
+}
+
+function stripStructuredBatchPrefix(value: string, statedBrand: string, statedModel: string): string {
+  const match = value.match(/^([A-Za-z]{1,3}\d{1,2})\s+(.+)$/);
+  if (!match) return value;
+  const prefix = compactIdentityText(match[1]!);
+  const model = compactIdentityText(statedModel);
+  if (model && model === prefix) return value;
+  const remainder = match[2]!;
+  const brand = compactIdentityText(statedBrand);
+  const brandAppearsAfterPrefix = Boolean(brand && compactIdentityText(remainder).includes(brand));
+  const structuredModelDisagrees = Boolean(looksLikeModel(statedModel) && model !== prefix);
+  return brandAppearsAfterPrefix || structuredModelDisagrees ? remainder.trim() : value;
 }
 
 export function extractProductIdentity(record: LotAnalysisRecord): ProductIdentity;
@@ -901,35 +1344,55 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   const sourceDescription = record ? (record.description || '') : description;
   const lead = normalise(title).trim();
   const parsed = parseStructuredDescription(sourceDescription);
+  const statedBrand = (fieldValue(parsed.fields, 'brand', 'manufacturer', 'make') ?? '').trim();
+  const statedModel = (fieldValue(parsed.fields, 'model', 'model #', 'model number', 'mpn') ?? '').trim();
   const prose = parsed.freeText.split(/\n\s*\*{2,}/)[0]?.replace(/\n+/g, ' ').trim() ?? '';
-  // The visible lot title identifies the product. Description prose may enrich
-  // structured fields, but must never replace the title with marketing copy.
-  const source = lead || prose;
+  const recovery = descriptionIdentityCandidate(parsed) || prose;
+  const leadStem = lead.replace(/(?:\.{3}|…)\s*$/, '').trim();
+  const recoveryQuery = buildProductResearchQuery(recovery);
+  const leadTokens = buildProductResearchQuery(leadStem).split(/\s+/).filter(Boolean);
+  const recoveryTokens = recoveryQuery.split(/\s+/).filter(Boolean);
+  const leadIsTruncated = /(?:\.{3}|…)\s*$/.test(lead);
+  const recoveryExtendsTruncatedLead = leadIsTruncated
+    && leadTokens.length > 0
+    && leadTokens.every((token, index) => recoveryTokens[index] === token);
+  // A concrete visible title remains authoritative. Placeholder, generic, or
+  // explicitly truncated headings may recover identity from the first safe
+  // product line or structured brand/model fields in the description.
+  const source = (!lead || (isWeakResearchTitle(lead) && !leadIsTruncated) || recoveryExtendsTruncatedLead) && recoveryQuery
+    ? recovery
+    : (lead || recovery);
   const sections = source.split('|').map((part) => part.trim()).filter(Boolean);
   let named = sections.length > 1
-    ? sections.find((part) => !/^lot\s*#?\s*[a-z0-9-]+$/i.test(part) && !/^(?:retail|msrp|est\.?|value)?\s*\$?\s*[\d,]+(?:\.\d+)?\s*$/i.test(part)) ?? sections.at(-1) ?? source
+    ? sections.find((part) => !isWeakResearchTitle(part) && !/^(?:retail|msrp|est\.?|value)?\s*\$?\s*[\d,]+(?:\.\d+)?\s*$/i.test(part)) ?? sections.at(-1) ?? source
     : source;
   named = named
     .replace(/^\s*(?:retail|msrp|est\.?\s*retail(?:\s*price)?|value)\s*[:\-]?\s*\$?\s*[\d,]+(?:\.\d+)?\s*/i, '')
     .replace(/^\s*\$\s*[\d,]+(?:\.\d+)?\s*/, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
-  let name = stripInventoryPrefix(named.replace(/\s*-\s*$/, '').trim());
+  let name = stripResearchPrefixes(stripInventoryPrefix(named.replace(/\s*-\s*$/, '').trim()));
+  name = stripStructuredBatchPrefix(name, statedBrand, statedModel);
   if (name.length < 3) name = lead || normalise(sourceDescription).split('\n')[0]?.trim() || '';
   const rawTokens = tokeniseIdentity(name);
   const tokens = rawTokens.filter((token) => !NOISE_WORDS.has(token.toLowerCase()) && !/^\$?[\d.,]+$/.test(token));
-  const titleBrand = tokens.find((token) => !GENERIC_BRAND_RE.test(token)) || tokens[0] || '';
-  const statedBrand = (fieldValue(parsed.fields, 'brand', 'manufacturer', 'make') ?? '').trim();
+  const compoundBrand = knownLeadingBrand(name);
+  const titleBrand = compoundBrand || tokens.find((token) => !GENERIC_BRAND_RE.test(token)
+    && !/^(?:case|group|lot|pair|set)$/i.test(token)
+    && !/^\d/.test(token)) || tokens[0] || '';
   const statedBrandAppearsInTitle = statedBrand && new RegExp(`\\b${escapeRegExp(statedBrand)}\\b`, 'i').test(name);
-  const brand = statedBrand && (!titleBrand || GENERIC_BRAND_RE.test(titleBrand) || statedBrandAppearsInTitle) ? statedBrand : titleBrand;
-  const statedModel = (fieldValue(parsed.fields, 'model', 'model #', 'model number', 'mpn') ?? '').trim();
+  const measurementLedName = /^\s*\d+(?:\.\d+)?\s*(?:[x×]\s*\d|(?:in(?:ch(?:es)?)?|ft|feet|foot|mm|cm)\b)/i.test(name);
+  const brand = statedBrand && (!titleBrand || titleBrand.length < 2 || GENERIC_BRAND_RE.test(titleBrand) || statedBrandAppearsInTitle || measurementLedName)
+    ? statedBrand
+    : titleBrand;
   const explicitTitleModel = name.match(/\b(?:model|mpn)\s*(?:no\.?|number|#)?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9+.-]{1,23})\b/i)?.[1] || '';
   const hashNumericModel = name.match(/(?:^|[^A-Za-z0-9])#\s*(\d{3,8})\b/i)?.[1] || '';
   const parenthesizedNumber = name.match(/\(\s*(?:model\s*)?#\s*(\d{3,8})\s*\)/i)?.[1] || '';
   const modelAfterProductWord = name.match(/\bmodel\s+[A-Za-z][A-Za-z-]{2,20}\s+(\d{3,8})\b/i)?.[1] || '';
   const familyNumericSuffix = name.match(/\b([A-Za-z][A-Za-z0-9-]{2,15})\s+(\d{1,4})\s+([A-Z]{2,6})\b/) || [];
   const familyNumericModel = familyNumericSuffix[1]
-    && !/^(?:PCS?|PACK|COUNT|CT|GB|TB|MB|KB|IN|INCH|OZ|LB|W|V|LED|LCD|USB|HDMI)$/i.test(familyNumericSuffix[3] || '')
+    && !/^(?:19|20)\d{2}$/.test(familyNumericSuffix[2] || '')
+    && !/^(?:PCS?|PACK|COUNT|CT|GB|TB|MB|KB|IN|INCH|OZ|LB|W|V|LED|LCD|USB|HDMI|ISBN|OEM)$/i.test(familyNumericSuffix[3] || '')
     ? `${familyNumericSuffix[1]}${familyNumericSuffix[2]}${familyNumericSuffix[3]}`
     : '';
   // Numeric manufacturer models such as Pelican 1490 are meaningful identity,
@@ -938,26 +1401,34 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   // ordinary years out of the model path.
   const brandTokenIndex = rawTokens.findIndex((token) => token.toLowerCase() === brand.toLowerCase());
   const numericAfterBrand = brandTokenIndex >= 0 ? rawTokens[brandTokenIndex + 1] || '' : '';
-  const numericBrandModel = /^\d{3,6}$/.test(numericAfterBrand)
+  const numericBrandModel = /^(?:\d{3,12}|\d{2,8}(?:-\d{2,8})+)$/.test(numericAfterBrand)
     && !/^(?:19|20)\d{2}$/.test(numericAfterBrand) ? numericAfterBrand : null;
-  const numericLeadingModel = [...tokens].reverse().find((token) => /^\d{3,8}[A-Z]{2,8}$/.test(token) && !CAPACITY_RE.test(token)) || null;
-  const titleModelBase = tokens.find((token) => MODEL_RE.test(token) && !/^\d+$/.test(token) && !GENERIC_MODEL_RE.test(token))
-    ?? tokens.find((token) => TITLE_MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token))
-    ?? rawTokens.find((token) => PART_NUMBER_RE.test(token))
-    ?? numericLeadingModel
-    ?? numericBrandModel;
+  const inferredModelTokens = rankedInferredModelTokens(rawTokens);
+  const titleModelBase = inferredModelTokens[0] ?? numericBrandModel;
   const titleModelIndex = titleModelBase ? rawTokens.findIndex((token) => token.toLowerCase() === titleModelBase.toLowerCase()) : -1;
   const titleModelSuffix = titleModelIndex >= 0 ? rawTokens[titleModelIndex + 1] || '' : '';
-  const titleModel = titleModelBase && /^[A-Z]{2,4}$/.test(titleModelSuffix)
-    && !/^(?:GPU|CPU|USB|LED|LCD|SSD|HDD|RAM|WIFI|HDMI|OC)$/i.test(titleModelSuffix)
+  const joinSingleLetterSuffix = Boolean(titleModelBase && /^\d{3,6}$/.test(titleModelBase) && /^[A-Z]$/.test(titleModelSuffix));
+  const joinManufacturerSuffix = Boolean(titleModelBase
+    && !titleModelBase.includes('-')
+    && /\d$/.test(titleModelBase)
+    && /^[A-Z]{3,4}$/.test(titleModelSuffix)
+    && !/^(?:CPU|GPU|USB|LED|LCD|SSD|HDD|RAM|WIFI|HDMI|OEM|ISBN|EVIS|PLC|IPC|TPMS|ECU)$/i.test(titleModelSuffix));
+  const titleModel = titleModelBase && (joinSingleLetterSuffix || joinManufacturerSuffix)
     ? `${titleModelBase}${titleModelSuffix}`
     : titleModelBase;
   const explicitModel = [explicitTitleModel, hashNumericModel, parenthesizedNumber, modelAfterProductWord, familyNumericModel].find((value) => looksLikeModel(value)) || null;
   const model = (looksLikeModel(statedModel) && modelMatches(name, statedModel) ? statedModel : null) || explicitModel || titleModel || (looksLikeModel(statedModel) ? statedModel : null);
-  const model2 = tokens.find((token) => token !== model && token.toLowerCase() !== String(model ?? '').toLowerCase() && token.toLowerCase() !== brand.toLowerCase() && TITLE_MODEL_ALT_RE.test(token) && !GENERIC_MODEL_RE.test(token)) ?? null;
+  const model2 = inferredModelTokens.find((token) => token.toLowerCase() !== String(model ?? '').toLowerCase()
+    && !modelMatches(model || '', token)
+    && token.toLowerCase() !== brand.toLowerCase()) ?? null;
   const capacities = [...new Set(tokens.filter((token) => CAPACITY_RE.test(token)))];
-  let query = buildProductResearchQuery(name);
   const discriminators = extractProductDiscriminators(name);
+  const researchName = [
+    brand && !compactIdentityText(name).includes(compactIdentityText(brand)) ? brand : '',
+    name,
+    model && !modelMatches(name, model) ? model : '',
+  ].filter(Boolean).join(' ');
+  let query = buildProductResearchQuery(researchName);
   if (discriminators.gpuModels.includes('nvidia:rtx:4070:ti-super') && !/\brtx\s*4070\s*ti\s+super\b/i.test(query)) {
     query = query.replace(/\brtx\s*4070\s*ti\b/i, (value) => `${value} super`);
   }
@@ -1006,7 +1477,7 @@ export function detectMixedLot(title: string | null | undefined, description = '
   const descriptionText = normalise(description);
   const reasons: string[] = [];
   const checks: Array<[string, RegExp, string]> = [
-    ['title', /\b(?:group|assorted|various|mixed|collection|contents|equipment|rack|cabinet)\b/i, 'group or mixed-lot wording'],
+    ['title', /\b(?:group|assorted|various|mixed|collection|contents)\b/i, 'group or mixed-lot wording'],
     ['title', /\b(?:bundle|lot)\s+of\s+(?:different|assorted|mixed|various)\b/i, 'mixed bundle wording'],
     ['title', /\bwith\s+(?:components?|contents?|assorted\s+items?|mixed\s+items?|equipment)\b/i, 'explicit component or contents wording'],
     ['title', /\b(?:amp|amplifier|receiver)\b\s*,\s*[^,;]{0,60}\b(?:tuner|turntable|cd\s+player|cassette\s+player)\b/i, 'separate audio components'],
@@ -1183,8 +1654,19 @@ function canonicalBrandFamily(value: string | null | undefined): string | null {
 function literalBrandMatches(candidateTitle: string, brand: string): boolean {
   if (!brand) return false;
   const fold = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
-  const phrase = escapeRegExp(fold(brand)).replace(/\s+/g, '\\s+');
+  const brandParts = fold(brand).split(/\s*(?:\+|&|\band\b)\s*/i).filter(Boolean);
+  const phrase = brandParts.length > 1
+    ? brandParts.map(escapeRegExp).join('\\s*(?:\\+|&|and)\\s*')
+    : escapeRegExp(fold(brand)).replace(/\s+/g, '\\s+');
   return new RegExp(`(?:^|[^a-z0-9])${phrase}(?:$|[^a-z0-9])`, 'i').test(fold(candidateTitle));
+}
+
+function productBrandFamily(product: ProductIdentity): string | null {
+  const credible = Boolean(product.brand)
+    && !GENERIC_BRAND_RE.test(product.brand)
+    && !CAPACITY_RE.test(product.brand)
+    && /[a-z]/i.test(product.brand);
+  return credible ? canonicalBrandFamily(product.brand) : canonicalBrandFamily(product.name);
 }
 
 function inferredBrandAliases(brand: string): string[] {
@@ -1200,7 +1682,7 @@ function inferredBrandAliases(brand: string): string[] {
 function brandEvidence(candidateTitle: string, product: ProductIdentity): { matches: boolean; expected: boolean; label: string } {
   const credible = Boolean(product.brand) && !GENERIC_BRAND_RE.test(product.brand) && !CAPACITY_RE.test(product.brand) && /[a-z]/i.test(product.brand);
   if (!credible) return { matches: false, expected: false, label: '' };
-  const expectedFamily = canonicalBrandFamily(`${product.brand} ${product.name}`);
+  const expectedFamily = productBrandFamily(product);
   const candidateFamily = canonicalBrandFamily(candidateTitle);
   if (expectedFamily) return { matches: candidateFamily === expectedFamily, expected: true, label: expectedFamily };
   const aliases = inferredBrandAliases(product.brand);
@@ -1253,37 +1735,67 @@ function primaryKindIndex(title: string, kind: ProductKind | null): number {
 
 function sourceIsAccessoryProduct(product: ProductIdentity): boolean {
   if (/\bstand\s+mixers?\b/i.test(product.name)) return false;
-  const noun = ACCESSORY_NOUN_RE.exec(product.name);
+  const noun = ACCESSORY_NOUN_RE.exec(product.name) ?? /\b(batter(?:y|ies))\b/i.exec(product.name);
   if (!noun) return false;
-  const before = product.name.slice(Math.max(0, noun.index - 24), noun.index);
-  return !/(?:\bwith|\bw\s*\/|\bincludes?|\bincluding|\bplus)\s*$/i.test(before);
+  const afterNoun = product.name.slice(noun.index + noun[0].length);
+  if (/^batter(?:y|ies)$/i.test(noun[0]) && /^\s*[- ]?(?:powered|operated)\b/i.test(afterNoun)) return false;
+  const before = product.name.slice(0, noun.index);
+  const connector = /(?:(?:\bwith|\bincludes?|\bincluding|\bbundled\s+with|\bplus)\b|\bw\s*\/)[^,;]{0,40}$/i;
+  if (connector.test(before)) return false;
+  const kindIndex = primaryKindIndex(product.name, product.kind);
+  if (kindIndex >= 0 && kindIndex < noun.index && connector.test(before.slice(kindIndex))) return false;
+  return true;
 }
 
 export function isAccessoryListing(title: string | null | undefined, product: ProductIdentity): boolean {
   const candidateTitle = String(title ?? '');
+  const documentation = /\b(?:(?:service|repair|owners?|owner'?s|user|instruction|installation|workshop)\s+manual|manual\s+(?:pdf|digital|download|disc|cd)|service\s+(?:literature|documentation)|wiring\s+diagram|schematic)\b/i;
+  if (documentation.test(candidateTitle) && !documentation.test(product.name)) return true;
+  const packagingOnly = /\b(?:(?:empty|original)\s+(?:retail\s+)?box(?:\s+only)?|box\s+only|box\s+(?:and|with)\s+(?:cooler|heatsink|fan|manual|accessories)|(?:retail\s+)?packaging\s+only|(?:empty|original)\s+carton(?:\s+only)?|carton\s+only|(?:cooler|heatsink)\s+only)\b/i;
+  if (packagingOnly.test(candidateTitle) && !packagingOnly.test(product.name)) return true;
   if (product.kind === 'game-console' && detectProductKind(candidateTitle) !== 'game-console') return true;
   if (/\breplacement\s+parts?\s+only\b|\bnot\s+a\s+complete\b/i.test(candidateTitle)) return true;
-  const noun = ACCESSORY_NOUN_RE.exec(candidateTitle);
+  const noun = ACCESSORY_NOUN_RE.exec(candidateTitle) ?? /\b(batter(?:y|ies))\b/i.exec(candidateTitle);
   if (!noun || sourceIsAccessoryProduct(product)) return false;
   const beforeNoun = candidateTitle.slice(Math.max(0, noun.index - 24), noun.index);
-  const strictComponent = /^(?:build\s*plate|magnetic\s*plate|pei\s+(?:sheet|plate)|flexi(?:ble)?\s+steel)/i.test(noun[0]);
-  if (strictComponent && !/(?:\bwith|\bw\s*\/|\bincludes?|\bincluding|\bbundle)\s*$/i.test(beforeNoun)) return true;
+  const candidateKind = detectProductKind(candidateTitle);
+  const kindIndex = primaryKindIndex(candidateTitle, product.kind);
+  const exactModel = Boolean(product.model && modelMatches(candidateTitle, product.model));
+  const marker = /\b(?:for|compatible\s+with|replacement\s+for|designed\s+for|made\s+for|fits)\b/i.exec(candidateTitle);
+  const primaryBundle = candidateKind === product.kind
+    && kindIndex >= 0
+    && kindIndex < noun.index
+    && /\b(?:with|includes?|including|bundle(?:d)?\s+with)\b/i.test(candidateTitle.slice(kindIndex, noun.index));
+  const identityTokens = new Set([
+    product.brand,
+    product.model,
+    product.model2,
+  ].filter(Boolean).map((value) => String(value).toLowerCase().replace(/[^a-z0-9]+/g, '')));
+  const sourceDescriptors = retailIdentityTokens(product).filter((token) => !identityTokens.has(token));
+  const beforeMarkerTokens = new Set(compactTokens(candidateTitle.slice(0, marker?.index ?? 0))
+    .map((token) => token.toLowerCase().replace(/[^a-z0-9]+/g, '')));
+  const platformAccessoryMention = Boolean(marker
+    && marker.index < noun.index
+    && exactModel
+    && sourceDescriptors.filter((token) => beforeMarkerTokens.has(token)).length >= 2);
+  const strictComponent = /^(?:batter(?:y|ies)|build\s*plate|magnetic\s*plate|pei\s+(?:sheet|plate)|flexi(?:ble)?\s+steel|lamps?|bulbs?|footswitch(?:es)?|foot\s+switch(?:es)?|pedals?|cartridges?|probes?|camera\s+heads?)/i.test(noun[0]);
+  if (/\b(?:replacement|spare)\s+batter(?:y|ies)\b/i.test(candidateTitle)) return true;
+  if (strictComponent
+    && !primaryBundle
+    && !platformAccessoryMention
+    && !/(?:\bwith|\bw\s*\/|\bincludes?|\bincluding|\bbundle)\s*$/i.test(beforeNoun)) return true;
   const identity = [product.brand, product.model, product.model2].filter(Boolean).map((value) => escapeRegExp(String(value)).replace(/[-\s]/g, '[-\\s]?')).join('|');
   if (identity) {
     const forProduct = new RegExp(`\\b(?:${FOR_PRODUCT_VERBS})\\s+(?:the\\s+)?[^,;.]{0,40}?(?:${identity})`, 'i');
     if (forProduct.test(candidateTitle)) return true;
   }
   if (ACCESSORY_MARKER_RE.test(candidateTitle)) return true;
-  const marker = /\b(?:for|compatible\s+with|replacement\s+for|designed\s+for|made\s+for|fits)\b/i.exec(candidateTitle);
   const sourceAttributes = product.discriminators || extractProductDiscriminators(product.name);
   const candidateAttributes = extractProductDiscriminators(candidateTitle);
   const familyEvidence = sourceAttributes.platformVariants.some((value) => candidateAttributes.platformVariants.includes(value))
     || sourceAttributes.seriesSignatures.some((value) => candidateAttributes.seriesSignatures.includes(value));
   if (marker && marker.index > noun.index && (familyEvidence || brandEvidence(candidateTitle, product).matches || Boolean(product.model && modelMatches(candidateTitle, product.model)))) return true;
 
-  const candidateKind = detectProductKind(candidateTitle);
-  const kindIndex = primaryKindIndex(candidateTitle, product.kind);
-  const exactModel = Boolean(product.model && modelMatches(candidateTitle, product.model));
   if (candidateKind === product.kind && kindIndex >= 0 && kindIndex < noun.index && (exactModel || /\b(?:with|includes?|bundle)\b/i.test(candidateTitle.slice(kindIndex, noun.index)))) return false;
   if (exactModel && !marker) return false;
   const bare = candidateTitle.replace(TITLE_PREFIX_RE, '').trim();
@@ -1318,9 +1830,10 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
   const discriminators = matchesProductDiscriminators(candidateTitle, product);
   if (discriminators.conflicts.length) rejectionReasons.push(...discriminators.conflicts.map((value) => `attribute-conflict:${value}`));
   rejectionReasons.push(...criticalMissingDiscriminators(discriminators.missing).map((value) => `attribute-missing:${value}`));
+  rejectionReasons.push(...compareStrictIdentitySignatures(candidateTitle, product));
   const brand = brandEvidence(candidateTitle, product);
   const candidateKind = detectProductKind(candidateTitle);
-  const sourceFamily = canonicalBrandFamily(`${product.brand} ${product.name}`);
+  const sourceFamily = productBrandFamily(product);
   const candidateFamily = canonicalBrandFamily(candidateTitle);
   if (sourceFamily && candidateFamily !== sourceFamily) rejectionReasons.push(`brand-mismatch:${sourceFamily}`);
   if (!sourceFamily && brand.expected && !brand.matches) {
@@ -1360,18 +1873,22 @@ export function evaluateRetailCandidate(title: string | null | undefined, produc
   return { accepted: score > 0, score, rejectionReasons: [], matchedEvidence };
 }
 
+export function canAmazonDetailEnrichmentResolve(rejectionReasons: string[]): boolean {
+  return rejectionReasons.length > 0
+    && rejectionReasons.every((reason) => /^(?:attribute-(?:missing|conflict):|identity-code-missing:|identity-missing:|bundle-component-missing:|model-mismatch:|weak-title-overlap:)/.test(reason));
+}
+
 export function evaluateAmazonCandidateEvidence(candidate: AmazonCandidate, product: ProductIdentity): RetailCandidateEvaluation {
   const titleEvaluation = evaluateRetailCandidate(candidate.title, product);
   if (titleEvaluation.accepted || !candidate.matchText || candidate.matchText === candidate.title) return titleEvaluation;
-  const hardReasons = titleEvaluation.rejectionReasons.filter((reason) => /^(?:insufficient-source-identity|accessory-or-component|attribute-conflict|attribute-missing|kind-mismatch|model-mismatch|brand-mismatch)/.test(reason));
+  const hardReasons = titleEvaluation.rejectionReasons.filter((reason) => /^(?:insufficient-source-identity|accessory-or-component|attribute-conflict|attribute-missing|identity-code-missing|identity-conflict|identity-missing|bundle-component-missing|kind-mismatch|model-mismatch|brand-mismatch)/.test(reason));
   const visibleFirstToken = candidate.title.replace(TITLE_PREFIX_RE, '').trim().match(/[A-Za-z0-9][A-Za-z0-9.&'+-]*/)?.[0] || '';
   const missingVisibleBrandOnly = hardReasons.length > 0
     && hardReasons.every((reason) => reason.startsWith('brand-mismatch:'))
     && GENERIC_BRAND_RE.test(visibleFirstToken)
     && Boolean(product.brand && literalBrandMatches(candidate.matchText, product.brand));
   const detailCanResolve = Boolean(candidate.detailEnriched)
-    && hardReasons.length > 0
-    && hardReasons.every((reason) => /^(?:attribute-(?:missing|conflict):|model-mismatch:|weak-title-overlap:)/.test(reason));
+    && canAmazonDetailEnrichmentResolve(hardReasons);
   if (hardReasons.length && !missingVisibleBrandOnly && !detailCanResolve) return titleEvaluation;
   return evaluateRetailCandidate(candidate.matchText, product);
 }
@@ -1388,7 +1905,7 @@ export function scoreRetailCandidate(title: string | null | undefined, product: 
   // prevent a different model, capacity, platform, or product kind from being
   // promoted merely because it shares broad search words.
   const guarded = evaluateRetailCandidate(candidateTitle, product);
-  if (guarded.rejectionReasons.some((reason) => /^(?:insufficient-source-identity|accessory-or-component|attribute-conflict|attribute-missing|kind-mismatch|model-mismatch|brand-mismatch)/.test(reason))) return 0;
+  if (guarded.rejectionReasons.some((reason) => /^(?:insufficient-source-identity|accessory-or-component|attribute-conflict|attribute-missing|identity-code-missing|identity-conflict|identity-missing|bundle-component-missing|kind-mismatch|model-mismatch|brand-mismatch)/.test(reason))) return 0;
   let score = 0;
   if (product.model) {
     if (!modelMatches(candidateTitle, product.model)) return 0;
@@ -1539,7 +2056,9 @@ export const calculateAllInCost = calculateUsAllIn;
 export const buildAccountVerdict = computeAccountVerdict;
 
 export function buildRetailLinks(query: string | null | undefined): RetailLinks {
-  const encoded = encodeURIComponent(String(query ?? '').trim());
+  const cleaned = String(query ?? '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return { amazon: '', ebay: '', amazonUrl: '', ebayUrl: '' };
+  const encoded = encodeURIComponent(cleaned);
   const amazon = `https://www.amazon.com/s?k=${encoded}`;
   const ebay = `https://www.ebay.com/sch/i.html?_nkw=${encoded}&LH_Sold=1&LH_Complete=1`;
   return {

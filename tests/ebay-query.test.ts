@@ -51,6 +51,38 @@ test('eBay query removes auction noise without dropping identifying edge cases',
     buildEbaySoldQuery('Lot 12: Sony STR-DH790 7.2-Channel Dolby Atmos AV Receiver'),
     'sony str-dh790 7.2-channel dolby atmos av receiver'
   );
+  assert.equal(
+    buildProductResearchQuery('Lot 811 | Circon ACMI ALU-1B Light Source'),
+    'circon acmi alu-1b light source'
+  );
+  assert.equal(
+    buildProductResearchQuery('Lot Sony PlayStation 5 Console'),
+    'sony playstation 5 console'
+  );
+  assert.equal(
+    buildEbaySoldQuery('Lot Craftsman Drill Press'),
+    'craftsman drill press'
+  );
+  assert.equal(buildProductResearchQuery('Lot (4/Case) Regal Ground Sage 2.75 lb.'), '4/case regal ground sage 2.75 lb');
+  assert.equal(buildProductResearchQuery('Lot 3 Pack Pampers Swaddlers'), '3 pack pampers swaddlers');
+  assert.equal(buildProductResearchQuery('Lot SKU: A17 | Regal Ground Cloves - 4.25 lb.'), 'regal ground cloves 4.25 lb');
+  assert.equal(buildProductResearchQuery('Lot Kari-Out Company Panko Bread Crumbs - 20 lb.'), 'kari-out company panko bread crumbs 20 lb');
+  assert.equal(buildProductResearchQuery('Lot 1927 Mercedes Mug Ship Grand Turk Salem 1786'), '1927 mercedes mug ship grand turk salem 1786');
+  assert.equal(buildProductResearchQuery('Lot 32in Mini Pink Prelit Christmas Tree'), '32in mini pink prelit christmas tree');
+});
+
+test('warehouse shelf prefixes do not become product models', () => {
+  const cases = [
+    ['Vv2 6pack composition book', '6pack composition book'],
+    ['Gg3 $86 VEVOR 10" Shutter Exhaust Fan', 'vevor 10 shutter exhaust fan'],
+    ['Oo4 Pumpkin decoration 1pcs', 'pumpkin decoration 1pcs'],
+  ] as const;
+  for (const [title, expected] of cases) {
+    assert.equal(buildProductResearchQuery(title), expected);
+    assert.equal(buildEbaySoldQuery(title), expected);
+  }
+  assert.equal(buildProductResearchQuery('BMW X3 Cargo Liner'), 'bmw x3 cargo liner');
+  assert.equal(buildProductResearchQuery('Soundcore T30 Wireless Earbuds'), 'soundcore t30 wireless earbuds');
 });
 
 test('repeated HiBid title identities collapse before Amazon or eBay search', () => {
@@ -63,12 +95,28 @@ test('repeated HiBid title identities collapse before Amazon or eBay search', ()
       'Smith+Nephew Dyonics Intelijet Suction Supply Unit Smith+Nephew Dyonics Intelijet Suction Supply Unit',
       'smith+nephew dyonics intelijet suction supply unit',
     ],
+    [
+      '“Vv3 $56 Skechers Vigor 3.0 Men\'s Athletic Shoes Vv3 $56 Skechers Vigor 3.0 Men\'s Athletic Shoes - No Reserve - Pickup Only”',
+      'skechers vigor 3.0 mens athletic shoes',
+    ],
   ];
   for (const [title, expected] of cases) {
     assert.equal(buildProductResearchQuery(title), expected);
     assert.equal(buildEbaySoldQuery(title), expected);
   }
   assert.equal(buildProductResearchQuery('New York New York Movie Poster'), 'new york new york movie poster');
+});
+
+test('repeated HiBid boundary fragments collapse without deleting meaningful middle identity', () => {
+  const cases = [
+    ['1 oz SILVER BAR 999 Fine Silver-Random Mints 1 oz', '1 oz silver bar 999 fine silver-random mints'],
+    ['1 Pound Bag of Unsearched WORLD Coins 1 Pound Bag', '1 pound bag of unsearched world coins'],
+    ['10 Carats + of Diamonds Rough Stones 10 Carats + o', '10 carats of diamonds rough stones'],
+  ] as const;
+  for (const [title, expected] of cases) {
+    assert.equal(buildProductResearchQuery(title), expected);
+    assert.equal(buildEbaySoldQuery(title), expected);
+  }
 });
 
 test('partial HiBid headings and detached plural suffixes cannot corrupt resale searches', () => {
@@ -83,6 +131,9 @@ test('partial HiBid headings and detached plural suffixes cannot corrupt resale 
   }
   assert.equal(buildProductResearchQuery('Lot s'), '');
   assert.equal(buildEbaySoldQuery('Lot s'), '');
+  assert.equal(buildProductResearchQuery('Samsung Galaxy S 24 Ultra Smartphone'), 'samsung galaxy s 24 ultra smartphone');
+  assert.equal(buildProductResearchQuery('Audi S 5 Grille Assembly'), 'audi s 5 grille assembly');
+  assert.equal(buildProductResearchQuery('BB30 Bottom Bracket Bearing Kit'), 'bb30 bottom bracket bearing kit');
 });
 
 test('eBay query uses a word-boundary character cap instead of dropping trailing identity tokens', () => {
@@ -100,7 +151,7 @@ test('legacy calculator bundle receives the maintained eBay query builder', asyn
   const patched = patchLegacyEbayQueryModule(source);
   assert.match(patched, /function w\(title\)/);
   assert.doesNotMatch(patched, /slice\(0,6\)/);
-  assert.match(patched, /query\.length > 120/);
+  assert.match(patched, /const capTokens/);
 });
 
 test('legacy calculator build patch removes shipping UI and ignores persisted shipping costs', async () => {

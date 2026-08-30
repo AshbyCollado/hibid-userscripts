@@ -4,7 +4,9 @@ import { selectAmazonCandidateTitle, type AmazonCandidate } from './us-deal-inte
 type Node = DefaultTreeAdapterTypes.Node;
 type Element = DefaultTreeAdapterTypes.Element;
 
-const USED_RE = /\b(open\s*box|openbox|refurbished|refurb|renewed|pre[\s-]?owned|used|for\s+parts)\b/i;
+const EXPLICIT_USED_RE = /\b(open\s*box|openbox|refurbished|refurb|renewed|pre[\s-]?owned|for\s+parts(?:\s+only)?|parts\s+only|not\s+working|broken|salvage)\b/i;
+const USED_BADGE_RE = /^(?:save\s+with\s+)?(?:used(?:\s*[-\u2013:]\s*(?:like\s+new|very\s+good|good|acceptable))?|used\s+for\s+parts|for\s+parts|open\s*box|openbox|refurbished|refurb|renewed|pre[\s-]?owned)$/i;
+const INSTALLMENT_RE = /(?:\/\s*(?:mo(?:nth)?|month)|\bper\s+month\b|\bmonthly\b|\binstallments?\b|\bpayments?\s+of\b)/i;
 
 function isElement(node: Node): node is Element {
   return 'tagName' in node;
@@ -24,6 +26,10 @@ function textContent(node: Node): string {
   return node.childNodes.map(textContent).join('');
 }
 
+function normalizedText(node: Node): string {
+  return textContent(node).replace(/\s+/g, ' ').trim();
+}
+
 function descendants(root: Element, rootAsin: string): Element[] {
   const found: Element[] = [];
   const visit = (node: Node): void => {
@@ -40,11 +46,130 @@ function descendants(root: Element, rootAsin: string): Element[] {
   return found;
 }
 
-function firstNumber(value: string): number | null {
-  const match = value.replace(/,/g, '').match(/\d+(?:\.\d+)?/);
+function currencyPrice(value: string): number | null {
+  const match = value.match(/(?:US\s*)?\$\s*([\d,]+(?:\.\d{1,2})?)/i);
   if (!match) return null;
-  const parsed = Number(match[0]);
-  return Number.isFinite(parsed) ? parsed : null;
+  const parsed = Number(match[1]?.replace(/,/g, ''));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function containsNode(root: Node, target: Node): boolean {
+  if (root === target) return true;
+  return 'childNodes' in root && root.childNodes.some((child) => containsNode(child, target));
+}
+
+function containsPriceNode(root: Node, asin: string): boolean {
+  if (isElement(root) && hasClass(root, 'a-price')) return true;
+  if (!('childNodes' in root)) return false;
+  return root.childNodes.some((child) => {
+    if (isElement(child)) {
+      const nestedAsin = attribute(child, 'data-asin').toUpperCase();
+      if (nestedAsin && nestedAsin !== asin) return false;
+    }
+    return containsPriceNode(child, asin);
+  });
+}
+
+function adjacentPriceText(parent: Element, node: Element, asin: string): { before: string; after: string } {
+  const branchIndex = parent.childNodes.findIndex((child) => containsNode(child, node));
+  if (branchIndex < 0) return { before: '', after: '' };
+  const before: string[] = [];
+  for (let index = branchIndex - 1; index >= 0; index -= 1) {
+    const sibling = parent.childNodes[index]!;
+    if (containsPriceNode(sibling, asin)) break;
+    before.unshift(textContent(sibling));
+  }
+  const after: string[] = [];
+  for (let index = branchIndex + 1; index < parent.childNodes.length; index += 1) {
+    const sibling = parent.childNodes[index]!;
+    if (containsPriceNode(sibling, asin)) break;
+    after.push(textContent(sibling));
+  }
+  return {
+    before: before.join(' ').replace(/\s+/g, ' ').trim(),
+    after: after.join(' ').replace(/\s+/g, ' ').trim(),
+  };
+}
+
+function isInstallmentPrice(node: Element, asin: string): boolean {
+  if (INSTALLMENT_RE.test(normalizedText(node))) return true;
+  let parent: Node | null = node.parentNode;
+  while (parent && isElement(parent)) {
+    const parentAsin = attribute(parent, 'data-asin').toUpperCase();
+    const siblingPrices = [parent, ...descendants(parent, asin)].filter((item) => hasClass(item, 'a-price'));
+    const adjacent = adjacentPriceText(parent, node, asin);
+    if (INSTALLMENT_RE.test(adjacent.after)
+      || /\b(?:payments?|installments?)\s+(?:of\s*)?$/i.test(adjacent.before)) return true;
+    if (siblingPrices.length <= 1 && INSTALLMENT_RE.test(normalizedText(parent))) return true;
+    if (/^[A-Z0-9]{10}$/.test(parentAsin)) return false;
+    parent = parent.parentNode;
+  }
+  return false;
+}
+
+function priceFromContainer(node: Element, asin: string): number | null {
+  const contents = descendants(node, asin);
+  for (const offscreen of contents.filter((item) => hasClass(item, 'a-offscreen'))) {
+    const price = currencyPrice(normalizedText(offscreen));
+    if (price != null) return price;
+  }
+  const labelledPrice = currencyPrice(attribute(node, 'aria-label'));
+  if (labelledPrice != null) return labelledPrice;
+
+  const whole = contents.find((item) => hasClass(item, 'a-price-whole'));
+  const fraction = contents.find((item) => hasClass(item, 'a-price-fraction'));
+  const wholeText = whole ? textContent(whole).replace(/[^\d]/g, '') : '';
+  if (wholeText) {
+    const parsed = Number(`${wholeText}.${fraction ? textContent(fraction).replace(/[^\d]/g, '') || '00' : '00'}`);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return currencyPrice(normalizedText(node));
+}
+
+function parseCardPrice(elements: Element[], asin: string): number | null {
+  const containers = elements.filter((item) => hasClass(item, 'a-price') && !hasClass(item, 'a-text-price'));
+  for (const container of containers) {
+    if (isInstallmentPrice(container, asin)) continue;
+    const price = priceFromContainer(container, asin);
+    if (price != null) return price;
+  }
+  return null;
+}
+
+function isConditionBadge(node: Element): boolean {
+  const scope = [
+    attribute(node, 'class'),
+    attribute(node, 'id'),
+    attribute(node, 'data-cy'),
+    attribute(node, 'data-component-type'),
+  ].join(' ');
+  return /(?:^|[-_\s])(?:badge|condition)(?:$|[-_\s])/i.test(scope);
+}
+
+function hasUsedCondition(titleEvidence: string[], elements: Element[]): boolean {
+  if (titleEvidence.some((value) => EXPLICIT_USED_RE.test(value))) return true;
+  return elements.some((item) => isConditionBadge(item) && USED_BADGE_RE.test(normalizedText(item)));
+}
+
+function isSponsoredMarker(node: Element): boolean {
+  const componentType = attribute(node, 'data-component-type');
+  const className = attribute(node, 'class');
+  if (/^sp-sponsored-result$/i.test(componentType) || /(?:^|\s)AdHolder(?:\s|$)/i.test(className)) return true;
+  const markerScope = [className, attribute(node, 'id'), attribute(node, 'data-cy')].join(' ');
+  return /sponsored/i.test(markerScope) && /^(?:Sponsored|Sponsored Ad)$/i.test(normalizedText(node));
+}
+
+function hasValidPrice(candidate: AmazonCandidate): boolean {
+  return candidate.price != null && Number.isFinite(candidate.price) && candidate.price > 0;
+}
+
+function preferCandidate(candidate: AmazonCandidate, previous: AmazonCandidate): boolean {
+  const candidateTraits = [!candidate.sponsored, !candidate.used, hasValidPrice(candidate)];
+  const previousTraits = [!previous.sponsored, !previous.used, hasValidPrice(previous)];
+  for (let index = 0; index < candidateTraits.length; index += 1) {
+    if (candidateTraits[index] !== previousTraits[index]) return Boolean(candidateTraits[index]);
+  }
+  return hasValidPrice(candidate) && hasValidPrice(previous) && candidate.price! < previous.price!;
 }
 
 function productSlug(urlValue: string, asin: string): string {
@@ -74,30 +199,21 @@ function parseResult(node: Element, asin: string): AmazonCandidate | null {
     || textContent(node).replace(/\s+/g, ' ').trim();
   if (!title) return null;
 
-  const offscreen = own.find((item) => hasClass(item, 'a-offscreen'));
-  let price = offscreen ? firstNumber(textContent(offscreen)) : null;
-  if (price == null) {
-    const whole = own.find((item) => hasClass(item, 'a-price-whole'));
-    const fraction = own.find((item) => hasClass(item, 'a-price-fraction'));
-    const wholeText = whole ? textContent(whole).replace(/[^\d]/g, '') : '';
-    if (wholeText) price = Number(`${wholeText}.${fraction ? textContent(fraction).replace(/[^\d]/g, '') || '00' : '00'}`);
-  }
+  const price = parseCardPrice(own, asin);
 
   const link = own.find((item) => item.tagName === 'a' && new RegExp(`/(?:dp|gp/product)/${asin}(?:[/?#]|$)`, 'i').test(attribute(item, 'href')));
   const slug = link ? productSlug(attribute(link, 'href'), asin) : '';
   const matchText = [...new Set([title, ...titleEvidence, slug]
     .map((value) => value.replace(/^Sponsored\s*Ad\s*[\u2013-]\s*/i, '').replace(/\s+/g, ' ').trim())
     .filter(Boolean))].join(' ');
-  const sponsored = /\bAdHolder\b/.test(attribute(node, 'class'))
-    || own.some((item) => attribute(item, 'data-component-type') === 'sp-sponsored-result')
-    || own.some((item) => /^(?:Sponsored|Sponsored Ad)$/i.test(textContent(item).trim()) && /sponsored/i.test(attribute(item, 'class')));
+  const sponsored = [node, ...own].some(isSponsoredMarker);
 
   return {
     asin,
     title: title.replace(/^Sponsored\s*Ad\s*[\u2013-]\s*/i, '').trim(),
     matchText,
     price,
-    used: USED_RE.test(matchText),
+    used: hasUsedCondition(titleEvidence, own),
     sponsored,
     url: `https://www.amazon.com/dp/${asin}`,
   };
@@ -107,14 +223,18 @@ function parseResult(node: Element, asin: string): AmazonCandidate | null {
 export function parseAmazonDocumentCandidates(html: string | null | undefined): AmazonCandidate[] {
   const document = parse(String(html || ''));
   const roots: Element[] = [];
-  const visit = (node: Node): void => {
+  const visit = (node: Node, ancestorAsins: string[] = []): void => {
     if (!('childNodes' in node)) return;
     for (const child of node.childNodes) {
+      let childAncestorAsins = ancestorAsins;
       if (isElement(child)) {
         const asin = attribute(child, 'data-asin').toUpperCase();
-        if (/^[A-Z0-9]{10}$/.test(asin)) roots.push(child);
+        if (/^[A-Z0-9]{10}$/.test(asin)) {
+          if (!ancestorAsins.includes(asin)) roots.push(child);
+          childAncestorAsins = [...ancestorAsins, asin];
+        }
       }
-      visit(child);
+      visit(child, childAncestorAsins);
     }
   };
   visit(document);
@@ -125,8 +245,7 @@ export function parseAmazonDocumentCandidates(html: string | null | undefined): 
     const candidate = parseResult(root, asin);
     if (!candidate) continue;
     const previous = byAsin.get(asin);
-    if (!previous || (previous.sponsored && !candidate.sponsored)
-      || (previous.sponsored === candidate.sponsored && (candidate.price ?? Infinity) < (previous.price ?? Infinity))) {
+    if (!previous || preferCandidate(candidate, previous)) {
       byAsin.set(asin, candidate);
     }
   }
@@ -162,7 +281,7 @@ export function enrichAmazonCandidateFromDetail(candidate: AmazonCandidate, html
     ...candidate,
     title,
     matchText: `${title} ${evidence}`.replace(/\s+/g, ' ').trim().slice(0, 4_000),
-    used: candidate.used || USED_RE.test(`${title} ${evidence}`),
+    used: candidate.used || EXPLICIT_USED_RE.test(`${title} ${evidence}`),
     detailEnriched: true,
   };
 }

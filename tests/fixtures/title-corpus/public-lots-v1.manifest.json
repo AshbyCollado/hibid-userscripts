@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": "public-lots-v1",
+  "format": "jsonl+gzip",
+  "source": "artifacts/title-corpus/hibid-public-raw.jsonl",
+  "output": "tests/fixtures/title-corpus/public-lots-v1.jsonl.gz",
+  "hashAlgorithm": "sha256",
+  "sourceHash": "b5902a70e26f93d1f5593f0d673a906a36be8b9cf9a10e3cc207a8fb26b512eb",
+  "contentHash": "5f528a48be292f66aca96cad19da7296821fbe0dc639ff6f99af7f624488fdd7",
+  "contentBytes": 844399,
+  "artifactHash": "d3e73ebf2970428d48ead7395c75a243d81a9587deabbcb7a064f13fff335f33",
+  "artifactBytes": 102861,
+  "selectionSeed": "hibid-public-lots-v1-2026-08",
+  "selectionAlgorithm": "sha256-v1",
+  "sanitizerVersion": "public-lot-text-v1",
+  "limits": {
+    "titleChars": 300,
+    "descriptionChars": 500,
+    "categoryChars": 200
+  },
+  "counts": {
+    "sourceRecords": 3717,
+    "eligibleRecords": 3554,
+    "rejectedRecords": 163,
+    "duplicateRecords": 0,
+    "distinctEligibleRecords": 3554,
+    "requestedRecords": 3000,
+    "selectedRecords": 3000,
+    "descriptionsIncluded": 2412,
+    "categoriesIncluded": 0
+  }
+}

@@ -670,3 +670,79 @@ ignored by Git.
   samples, and 30 raw screenshots are recorded in
   `docs/flippah-v0.5.16-auctionninja-proof.md` and the ignored local
   `artifacts/auctionninja-proof-v0.5.16/` directory.
+
+## v0.5.17 corpus-driven title reliability
+
+- Query changes require a real-corpus replay, exact adversarial oracles, and
+  identity-preservation tests. A handful of hand-picked titles is not an
+  adequate release gate.
+- The tracked public corpus is `tests/fixtures/title-corpus/public-lots-v1.jsonl.gz`.
+  Its manifest records sanitizer limits, deterministic selection, source and
+  content hashes, and record counts. Raw captures and generated reports stay in
+  ignored `artifacts/title-corpus/` paths.
+- Normalize HTML entities, Unicode compatibility forms, smart punctuation,
+  zero-width characters, inventory wrappers, condition wrappers, retail-value
+  claims, repeated phrases, and detached plural suffixes before URL creation.
+  Keep legitimate repetition such as `New York New York` and real variants
+  such as `Xbox Series S`.
+- Hard identity is conservative and cross-family: model/part codes, ISBN,
+  edition, volume, grading certificate, collectible number, mint mark,
+  capacity, dimension, CPU/GPU suffix, and explicit bundle composition survive
+  normalization and remain candidate rejection gates.
+- Generated eBay searches are discovery URLs only. Sold proof still requires a
+  canonical item URL plus independent sold provenance; active listings and
+  manual resale estimates cannot satisfy the evidence gate.
+- Installed-browser acceptance must inspect the actual content-script version,
+  assert every eBay URL carries `LH_Sold=1` and `LH_Complete=1`, replay known
+  failures on their lot pages, and cross pagination boundaries to expose stale
+  Angular tile identity.
+- The release record and corpus hashes live in
+  `docs/flippah-v0.5.17-title-reliability-proof.md`. The mandated soak report is
+  generated at `artifacts/title-corpus/soak-8h-v0.5.17.json`. The owner stopped
+  it at 7.619 measured hours to begin sold-comp verification; retain the result
+  as strong evidence but never describe it as an eight-hour pass.
+
+## v0.5.18 eBay sold-comp truth
+
+- A correctly generated Sold+Completed URL is only a research seed. It is not
+  a sold comp and cannot support a resale value by itself.
+- Prefer signed-in Seller Hub Product Research because it exposes actual sold
+  records, longer history, and accepted Best Offer prices. Public Sold search
+  is a fallback and must carry both `LH_Sold=1` and `LH_Complete=1`.
+- Parse only an explicit Sold context. Preserve canonical item ID, item URL,
+  query, source URL, timestamp, currency, sold price, shipping, condition, and
+  source provenance. Never convert an Active row or manual estimate into sold
+  evidence.
+- Hidden public Best Offer amounts are price-unknown. Keep the sale event for
+  audit but exclude it from median, range, and sample-size calculations.
+- Deduplicate by canonical eBay item ID. Exhaust every planned query and page
+  before returning terminal `insufficient`; a challenge is `blocked`, not
+  `insufficient`.
+- Comparable means same primary product, model/family, material variant,
+  capacity/edition/region when relevant, quantity, and compatible condition.
+  Reject accessories, replacement parts, manuals, packaging-only listings,
+  parts-only/locked/untested conflicts, wrong models, and candidate-only
+  bundles.
+- Three actual-price comparable sales are the default minimum. Mixed variants
+  may be shown as evidence but must remain terminal `insufficient` with
+  `variant-ambiguous` detail until the source variant is known; do not label
+  that state `verified`.
+- This repository's parser/verifier is a development acceptance harness. Keep
+  the generated HiBid/AuctionNinja extension free of eBay host permissions and
+  signed-in account automation unless that product boundary is explicitly
+  changed.
+- The hostile review suite must continue rejecting untrusted Seller Hub URLs,
+  contradictory Active tabs, challenge/partial-page threshold overrides,
+  cards without explicit Sold evidence, unknown accepted Best Offer amounts,
+  model-generation drift, inferred models for generic sources, non-contiguous
+  pagination, word-quantity mismatches, locked devices, candidate-only bundles,
+  conflicting duplicate records, foreign currencies, and zero-dollar rows.
+- Keep book intake in the toolbar popup's `Scraper` tab. Do not remount the
+  page-level `Analyze books in Flippah` card in the content script.
+
+## v0.5.19 installed-runtime refresh
+
+- Patch-bump after the final sold-evidence hardening so the unpacked Chrome
+  install self-reloads. Reinstalling changed files under an unchanged semantic
+  version is not browser acceptance: an already-running content script may
+  still be the older build.

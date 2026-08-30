@@ -80,7 +80,7 @@ test('generated HiBid runtimes exclude the dedicated Product Research parser', a
   }
 });
 
-test('generated packages load one modern runtime containing the visible lot-page action', async () => {
+test('generated packages keep book handoff in the popup instead of a lot-page card', async () => {
   for (const target of ['chrome', 'waterfox']) {
     const manifest = JSON.parse(
       await readFile(`dist/${target}/manifest.json`, 'utf8'),
@@ -97,8 +97,8 @@ test('generated packages load one modern runtime containing the visible lot-page
       1,
       `${target} must load the modern content runtime exactly once`,
     );
-    assert.match(modernRuntime, /Analyze books in Flippah/);
-    assert.match(modernRuntime, /flippah-auction-handoff/);
+    assert.doesNotMatch(modernRuntime, /Analyze books in Flippah/);
+    assert.doesNotMatch(modernRuntime, /flippah-auction-handoff/);
     assert.doesNotMatch(legacyRuntime, /Analyze books in Flippah/);
     assert.doesNotMatch(legacyRuntime, /flippah-auction-handoff/);
     assert.equal(

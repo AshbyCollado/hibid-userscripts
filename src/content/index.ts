@@ -9,7 +9,6 @@ import { extractAccountLots, extractHiBidPageState, extractHiBidPortalSearchCont
 import { scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js';
 import { DealIntelligenceController } from './deal-intelligence.js';
 import { installHibidImagePreview } from './image-preview.js';
-import { installHibidAuctionHandoffAction } from './auction-handoff-action.js';
 import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
 import { isAnalysisActivityPhase, isScrapeActivityPhase, type ToolbarActivityUpdate } from '../core/activity.js';
 import { runHibidAuctionHandoff } from './auction-handoff-flow.js';
@@ -60,20 +59,6 @@ function startAuctionHandoff(onSending: (pictureCount: number) => void = () => u
     () => { if (auctionHandoffInFlight === operation) auctionHandoffInFlight = null; },
   );
   return operation;
-}
-
-let auctionHandoff: ReturnType<typeof installHibidAuctionHandoffAction>;
-try {
-  auctionHandoff = installHibidAuctionHandoffAction(
-    document,
-    window,
-    (onSending) => startAuctionHandoff(onSending),
-  );
-} catch (error) {
-  document.documentElement.dataset.flippahAuctionHandoffError = error instanceof Error
-    ? error.message.slice(0, 160)
-    : 'unknown initialization failure';
-  throw error;
 }
 
 void getSyncStorage()
@@ -388,7 +373,6 @@ let lastHref = location.href;
 function handleLocationChange(): void {
   if (location.href === lastHref) return;
   lastHref = location.href;
-  auctionHandoff.update();
   if (activeJob && !['completed', 'failed', 'stopped', 'stale'].includes(activeJob.phase)) {
     controller?.abort();
     void saveJob({ phase: 'stale', message: 'Page changed during scrape', errorCode: 'route-fingerprint-changed', completedAt: Date.now() })
@@ -405,7 +389,6 @@ function handleLocationChange(): void {
 
 new MutationObserver((mutations) => {
   handleLocationChange();
-  auctionHandoff.update();
   dealIntelligence.handleMutations(mutations);
 }).observe(document.documentElement, { childList: true, subtree: true });
 window.addEventListener('popstate', handleLocationChange);

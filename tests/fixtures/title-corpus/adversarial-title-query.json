@@ -1,0 +1,521 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "model-x-tesla",
+      "tags": ["model-x-tokens", "automotive"],
+      "title": "Tesla Model X OEM Gen 3 Wall Connector",
+      "expectedQuery": "tesla model x oem gen 3 wall connector"
+    },
+    {
+      "id": "model-x-xbox",
+      "tags": ["model-x-tokens", "consoles"],
+      "title": "Microsoft Xbox Series X 1TB Console",
+      "expectedQuery": "microsoft xbox series x 1tb console"
+    },
+    {
+      "id": "model-x-iphone",
+      "tags": ["model-x-tokens"],
+      "title": "Apple iPhone X 256GB A1865 Unlocked",
+      "expectedQuery": "apple iphone x 256gb a1865 unlocked"
+    },
+    {
+      "id": "model-x-thinkpad",
+      "tags": ["model-x-tokens"],
+      "title": "Lenovo ThinkPad X1 Carbon Gen 11 Laptop",
+      "expectedQuery": "lenovo thinkpad x1 carbon gen 11 laptop"
+    },
+    {
+      "id": "unicode-named-entity",
+      "tags": ["unicode-entities", "medical"],
+      "title": "Smith &amp; Nephew Dyonics 7205357 Shaver Handpiece",
+      "expectedQuery": "smith nephew dyonics 7205357 shaver handpiece"
+    },
+    {
+      "id": "unicode-numeric-entity",
+      "tags": ["unicode-entities"],
+      "title": "Sony&nbsp;WH&#x2D;1000XM5 Wireless Headphones",
+      "expectedQuery": "sony wh-1000xm5 wireless headphones"
+    },
+    {
+      "id": "unicode-smart-punctuation",
+      "tags": ["unicode-entities"],
+      "title": "Caf\u00e9 Cr\u00e8me \u201cBarista\u201d Espresso Machine \u2014 EC-933",
+      "expectedQuery": "cafe creme barista espresso machine ec-933"
+    },
+    {
+      "id": "unicode-times-and-inches",
+      "tags": ["unicode-entities", "dimensions-resolutions"],
+      "title": "Miele 30\u2033 &times; 20\u2033 Stainless Steel Shelf",
+      "expectedQuery": "miele 30 x 20 stainless steel shelf"
+    },
+    {
+      "id": "unicode-transliteration",
+      "tags": ["unicode-entities", "dimensions-resolutions"],
+      "title": "H\u00d8VE \u0141\u00f3d\u017a 10\u00d742 Binoculars",
+      "expectedQuery": "hove lodz 10x42 binoculars"
+    },
+    {
+      "id": "unicode-zero-width",
+      "tags": ["unicode-entities"],
+      "title": "Apple\u200b MacBook Pro A2338",
+      "expectedQuery": "apple macbook pro a2338"
+    },
+    {
+      "id": "unicode-registered-entity",
+      "tags": ["unicode-entities", "consoles"],
+      "title": "Sony&reg; PlayStation 5 Disc Console",
+      "expectedQuery": "sony playstation 5 disc console"
+    },
+    {
+      "id": "duplicate-circon",
+      "tags": ["duplicate-blocks", "medical"],
+      "title": "Circon ACMI ALU-1B Light Source Circon ACMI ALU-1B Light Source",
+      "expectedQuery": "circon acmi alu-1b light source"
+    },
+    {
+      "id": "duplicate-makita-middle",
+      "tags": ["duplicate-blocks"],
+      "title": "Makita XGT 40V Max Impact Driver Makita XGT 40V Max Impact Driver Kit With Battery",
+      "expectedQuery": "makita xgt 40v max impact driver kit with battery"
+    },
+    {
+      "id": "duplicate-triple-fluke",
+      "tags": ["duplicate-blocks", "industrial"],
+      "title": "Fluke 87V Multimeter Fluke 87V Multimeter Fluke 87V Multimeter",
+      "expectedQuery": "fluke 87v multimeter"
+    },
+    {
+      "id": "duplicate-legitimate-new-york",
+      "tags": ["duplicate-blocks", "collectibles"],
+      "title": "New York New York Movie Poster",
+      "expectedQuery": "new york new york movie poster"
+    },
+    {
+      "id": "duplicate-smith-nephew",
+      "tags": ["duplicate-blocks", "medical"],
+      "title": "Smith+Nephew Dyonics Intelijet Suction Supply Unit Smith+Nephew Dyonics Intelijet Suction Supply Unit",
+      "expectedQuery": "smith+nephew dyonics intelijet suction supply unit"
+    },
+    {
+      "id": "inventory-lot-delimited",
+      "tags": ["inventory-wrappers"],
+      "title": "Lot #42 | DeWalt DCD996 20V MAX XR Hammer Drill",
+      "expectedQuery": "dewalt dcd996 20v max xr hammer drill"
+    },
+    {
+      "id": "inventory-lot-without-delimiter",
+      "tags": ["inventory-wrappers"],
+      "title": "Lot 42 DeWalt DCD996 20V MAX XR Hammer Drill",
+      "expectedQuery": "dewalt dcd996 20v max xr hammer drill"
+    },
+    {
+      "id": "inventory-inventory-number",
+      "tags": ["inventory-wrappers", "industrial"],
+      "title": "Inventory INV-778: Fluke 87V Industrial Multimeter",
+      "expectedQuery": "fluke 87v industrial multimeter"
+    },
+    {
+      "id": "inventory-sku",
+      "tags": ["inventory-wrappers"],
+      "title": "SKU: A-991 | Bosch GLM 50 C Laser Measure",
+      "expectedQuery": "bosch glm 50 c laser measure"
+    },
+    {
+      "id": "inventory-online-auction-item",
+      "tags": ["inventory-wrappers", "industrial"],
+      "title": "Online Auction Item No. 118 - Milwaukee 2767-20 M18 FUEL Impact Wrench",
+      "expectedQuery": "milwaukee 2767-20 m18 fuel impact wrench"
+    },
+    {
+      "id": "inventory-leading-hash",
+      "tags": ["inventory-wrappers"],
+      "title": "#A-77: Canon EOS R6 Mark II Mirrorless Camera",
+      "expectedQuery": "canon eos r6 mark ii mirrorless camera"
+    },
+    {
+      "id": "inventory-each",
+      "tags": ["inventory-wrappers", "industrial"],
+      "title": "{Each} Klein Tools ET450 Advanced Circuit Tracer Kit",
+      "expectedQuery": "klein tools et450 advanced circuit tracer kit"
+    },
+    {
+      "id": "inventory-retail-value",
+      "tags": ["inventory-wrappers"],
+      "title": "Retail: $1,299 - Sony A7 IV ILCE-7M4 Camera Body",
+      "expectedQuery": "sony a7 iv ilce-7m4 camera body"
+    },
+    {
+      "id": "dimensions-television",
+      "tags": ["dimensions-resolutions"],
+      "title": "Samsung 55 inch 4K UHD Smart TV 3840 x 2160",
+      "expectedQuery": "samsung 55 inch 4k uhd smart tv 3840 x 2160"
+    },
+    {
+      "id": "dimensions-monitor",
+      "tags": ["dimensions-resolutions"],
+      "title": "Dell UltraSharp U2723QE 27-inch 3840\u00d72160 4K Monitor",
+      "expectedQuery": "dell ultrasharp u2723qe 27-inch 3840x2160 4k monitor"
+    },
+    {
+      "id": "dimensions-projector",
+      "tags": ["dimensions-resolutions"],
+      "title": "Epson Home Cinema 5050UB 4K PRO-UHD 4096 x 2160 Projector",
+      "expectedQuery": "epson home cinema 5050ub 4k pro-uhd 4096 x 2160 projector"
+    },
+    {
+      "id": "dimensions-wire-shelf",
+      "tags": ["dimensions-resolutions", "industrial"],
+      "title": "Metro Wire Shelf 48 in. x 24 in. x 72 in.",
+      "expectedQuery": "metro wire shelf 48 in x 24 in x 72 in"
+    },
+    {
+      "id": "dimensions-tire",
+      "tags": ["dimensions-resolutions", "automotive"],
+      "title": "Michelin Defender LTX M/S P245/70R17 110T Tire",
+      "expectedQuery": "michelin defender ltx m/s p245/70r17 110t tire"
+    },
+    {
+      "id": "dimensions-sheet-pan",
+      "tags": ["dimensions-resolutions"],
+      "title": "Vollrath Stainless Steel Pan 12\u2033 x 18\u2033 x 2.5\u2033",
+      "expectedQuery": "vollrath stainless steel pan 12 x 18 x 2.5"
+    },
+    {
+      "id": "quantity-lot-vs-pack",
+      "tags": ["package-vs-auction-quantity"],
+      "title": "Lot of 3 - Apple AirTag 4 Pack",
+      "expectedQuery": "apple airtag 4 pack"
+    },
+    {
+      "id": "quantity-qty-vs-pack",
+      "tags": ["package-vs-auction-quantity"],
+      "title": "Qty: 12 | Philips Hue A19 4-Pack Smart Bulbs",
+      "expectedQuery": "philips hue a19 4-pack smart bulbs"
+    },
+    {
+      "id": "quantity-group-vs-pack",
+      "tags": ["package-vs-auction-quantity"],
+      "title": "Group of (6) - Philips Hue A19 2-Pack Smart LED Bulbs",
+      "expectedQuery": "philips hue a19 2-pack smart led bulbs"
+    },
+    {
+      "id": "quantity-x-vs-count",
+      "tags": ["package-vs-auction-quantity"],
+      "title": "(8) x - Oral-B CrossAction 3 Count Replacement Brush Heads",
+      "expectedQuery": "oral-b crossaction 3 count replacement brush heads"
+    },
+    {
+      "id": "quantity-lot-vs-rolls",
+      "tags": ["package-vs-auction-quantity"],
+      "title": "Lot of 2 Bounty Select-A-Size Paper Towels 8 Double Rolls",
+      "expectedQuery": "bounty select-a-size paper towels 8 double rolls"
+    },
+    {
+      "id": "quantity-item-vs-pods-count",
+      "tags": ["package-vs-auction-quantity", "inventory-wrappers"],
+      "title": "Item 991: Tide PODS Laundry Detergent 42 Count",
+      "expectedQuery": "tide pods laundry detergent 42 count"
+    },
+    {
+      "id": "condition-open-box-prefix",
+      "tags": ["condition-wrappers"],
+      "title": "Open Box - Apple MacBook Pro 14-inch M3 Pro",
+      "expectedQuery": "apple macbook pro 14-inch m3 pro"
+    },
+    {
+      "id": "condition-parenthesized-open-box",
+      "tags": ["condition-wrappers"],
+      "title": "(Open Box) Apple Magic Keyboard A2450",
+      "expectedQuery": "apple magic keyboard a2450"
+    },
+    {
+      "id": "condition-refurbished-prefix",
+      "tags": ["condition-wrappers"],
+      "title": "Refurbished: Dyson V15 Detect Cordless Vacuum",
+      "expectedQuery": "dyson v15 detect cordless vacuum"
+    },
+    {
+      "id": "condition-used-prefix",
+      "tags": ["condition-wrappers"],
+      "title": "Used Sony WH-1000XM5 Wireless Headphones",
+      "expectedQuery": "sony wh-1000xm5 wireless headphones"
+    },
+    {
+      "id": "condition-stacked-suffixes",
+      "tags": ["condition-wrappers"],
+      "title": "Sony STR-DH790 7.2-Channel AV Receiver - Tested Working - Local Pickup Only",
+      "expectedQuery": "sony str-dh790 7.2-channel av receiver"
+    },
+    {
+      "id": "condition-nib-suffix",
+      "tags": ["condition-wrappers", "consoles"],
+      "title": "Nintendo Switch OLED HEG-001 - NIB",
+      "expectedQuery": "nintendo switch oled heg-001"
+    },
+    {
+      "id": "condition-parts-suffix",
+      "tags": ["condition-wrappers", "appliance-parts"],
+      "title": "Whirlpool W10810403 Washer Lid Lock Assembly - For Parts Only",
+      "expectedQuery": "whirlpool w10810403 washer lid lock assembly"
+    },
+    {
+      "id": "condition-as-is-suffix",
+      "tags": ["condition-wrappers"],
+      "title": "Makita XPH14 18V Hammer Drill, AS-IS",
+      "expectedQuery": "makita xph14 18v hammer drill"
+    },
+    {
+      "id": "condition-parenthesized-untested",
+      "tags": ["condition-wrappers"],
+      "title": "Canon PowerShot G7 X Mark III (Untested)",
+      "expectedQuery": "canon powershot g7 x mark iii"
+    },
+    {
+      "id": "industrial-allen-bradley",
+      "tags": ["industrial"],
+      "title": "Allen-Bradley 1756-L83E ControlLogix 5580 Controller",
+      "expectedQuery": "allen-bradley 1756-l83e controllogix 5580 controller"
+    },
+    {
+      "id": "industrial-square-d",
+      "tags": ["industrial"],
+      "title": "Square D QO320 3-Pole 20A Circuit Breaker",
+      "expectedQuery": "square d qo320 3-pole 20a circuit breaker"
+    },
+    {
+      "id": "industrial-siemens",
+      "tags": ["industrial"],
+      "title": "Siemens 6ES7 315-2EH14-0AB0 SIMATIC S7-300 CPU Module",
+      "expectedQuery": "siemens 6es7 315-2eh14-0ab0 simatic s7-300 cpu module"
+    },
+    {
+      "id": "industrial-fluke-calibrator",
+      "tags": ["industrial"],
+      "title": "Fluke 754 Documenting Process Calibrator",
+      "expectedQuery": "fluke 754 documenting process calibrator"
+    },
+    {
+      "id": "medical-dinamap-plural-repair",
+      "tags": ["medical", "package-vs-auction-quantity"],
+      "title": "Lot of 3 GE Dinamap ProCare 400 Vital Signs Monitor s",
+      "expectedQuery": "ge dinamap procare 400 vital signs monitors"
+    },
+    {
+      "id": "medical-smith-nephew",
+      "tags": ["medical"],
+      "title": "Smith+Nephew Dyonics Intelijet Suction Supply Unit",
+      "expectedQuery": "smith+nephew dyonics intelijet suction supply unit"
+    },
+    {
+      "id": "medical-covidien-partial-heading",
+      "tags": ["medical", "inventory-wrappers"],
+      "title": "Lot # : S - Covidien Endo Clip III Auto Suture",
+      "expectedQuery": "covidien endo clip iii auto suture"
+    },
+    {
+      "id": "medical-philips-aed",
+      "tags": ["medical"],
+      "title": "Philips HeartStart FRx AED 861304",
+      "expectedQuery": "philips heartstart frx aed 861304"
+    },
+    {
+      "id": "automotive-ford-tail-light",
+      "tags": ["automotive"],
+      "title": "Ford F-150 OEM Tail Light JL3Z-13404-C",
+      "expectedQuery": "ford f-150 oem tail light jl3z-13404-c"
+    },
+    {
+      "id": "automotive-acdelco-spark-plugs",
+      "tags": ["automotive", "package-vs-auction-quantity"],
+      "title": "ACDelco 41-110 Iridium Spark Plugs 8-Pack",
+      "expectedQuery": "acdelco 41-110 iridium spark plugs 8-pack"
+    },
+    {
+      "id": "automotive-bosch-maf",
+      "tags": ["automotive"],
+      "title": "Bosch 0 280 218 108 Mass Air Flow Sensor",
+      "expectedQuery": "bosch 0 280 218 108 mass air flow sensor"
+    },
+    {
+      "id": "automotive-snap-on-scanner",
+      "tags": ["automotive"],
+      "title": "Snap-on MODIS Edge EEMS341 Automotive Diagnostic Scanner",
+      "expectedQuery": "snap-on modis edge eems341 automotive diagnostic scanner"
+    },
+    {
+      "id": "books-hobbit-isbn",
+      "tags": ["books"],
+      "title": "The Hobbit J.R.R. Tolkien ISBN 978-0-261-10221-7 Hardcover",
+      "expectedQuery": "the hobbit j.r.r tolkien isbn 978-0-261-10221-7 hardcover"
+    },
+    {
+      "id": "books-harry-potter-set",
+      "tags": ["books", "package-vs-auction-quantity"],
+      "title": "Harry Potter Complete 7-Book Boxed Set ISBN 978-0545044257",
+      "expectedQuery": "harry potter complete 7-book boxed set isbn 978-0545044257"
+    },
+    {
+      "id": "books-collectors-apostrophe",
+      "tags": ["books", "unicode-entities"],
+      "title": "Collector\u2019s Library: Pride &amp; Prejudice by Jane Austen Hardcover",
+      "expectedQuery": "collectors library pride prejudice by jane austen hardcover"
+    },
+    {
+      "id": "books-chilton-wrapper",
+      "tags": ["books", "inventory-wrappers", "condition-wrappers", "automotive"],
+      "title": "Item 14: Chilton Ford F-150 Repair Manual 26664 - Used",
+      "expectedQuery": "chilton ford f-150 repair manual 26664"
+    },
+    {
+      "id": "collectibles-topps-rookie",
+      "tags": ["collectibles"],
+      "title": "1986 Topps #161 Jerry Rice Rookie Card PSA 9",
+      "expectedQuery": "1986 topps 161 jerry rice rookie card psa 9"
+    },
+    {
+      "id": "collectibles-pokemon-card",
+      "tags": ["collectibles", "unicode-entities"],
+      "title": "Pok\u00e9mon Charizard 4/102 Base Set Holo Trading Card",
+      "expectedQuery": "pokemon charizard 4/102 base set holo trading card"
+    },
+    {
+      "id": "collectibles-funko-pop",
+      "tags": ["collectibles"],
+      "title": "Funko Pop! Star Wars #01 Darth Vader Vinyl Figure",
+      "expectedQuery": "funko pop star wars 01 darth vader vinyl figure"
+    },
+    {
+      "id": "collectibles-morgan-dollar",
+      "tags": ["collectibles"],
+      "title": "1881-S Morgan Silver Dollar NGC MS64",
+      "expectedQuery": "1881-s morgan silver dollar ngc ms64"
+    },
+    {
+      "id": "appliance-whirlpool-lid-lock",
+      "tags": ["appliance-parts"],
+      "title": "Whirlpool W10810403 Washer Lid Lock Assembly",
+      "expectedQuery": "whirlpool w10810403 washer lid lock assembly"
+    },
+    {
+      "id": "appliance-ge-control-board",
+      "tags": ["appliance-parts"],
+      "title": "GE WR55X10942 Refrigerator Main Control Board",
+      "expectedQuery": "ge wr55x10942 refrigerator main control board"
+    },
+    {
+      "id": "appliance-samsung-idler",
+      "tags": ["appliance-parts"],
+      "title": "Samsung DC97-18094B Dryer Idler Pulley Assembly",
+      "expectedQuery": "samsung dc97-18094b dryer idler pulley assembly"
+    },
+    {
+      "id": "appliance-bosch-drain-pump",
+      "tags": ["appliance-parts"],
+      "title": "Bosch 00611332 Dishwasher Drain Pump",
+      "expectedQuery": "bosch 00611332 dishwasher drain pump"
+    },
+    {
+      "id": "gpu-asus-rtx4060",
+      "tags": ["gpus", "inventory-wrappers"],
+      "title": "AV - ASUS GEFORCE RTX4060 8GB VIDEO CARD",
+      "expectedQuery": "asus geforce rtx4060 8gb video card"
+    },
+    {
+      "id": "gpu-nvidia-rtx4090",
+      "tags": ["gpus"],
+      "title": "NVIDIA GeForce RTX 4090 Founders Edition 24GB GDDR6X",
+      "expectedQuery": "nvidia geforce rtx 4090 founders edition 24gb gddr6x"
+    },
+    {
+      "id": "gpu-sapphire-rx7900xtx",
+      "tags": ["gpus"],
+      "title": "Sapphire Pulse Radeon RX 7900 XTX 24GB",
+      "expectedQuery": "sapphire pulse radeon rx 7900 xtx 24gb"
+    },
+    {
+      "id": "gpu-evga-rtx3080",
+      "tags": ["gpus"],
+      "title": "EVGA GeForce RTX 3080 FTW3 Ultra Gaming 10GB",
+      "expectedQuery": "evga geforce rtx 3080 ftw3 ultra gaming 10gb"
+    },
+    {
+      "id": "console-playstation-5",
+      "tags": ["consoles", "inventory-wrappers"],
+      "title": "AV - PLAYSTATION 5 CONSOLE",
+      "expectedQuery": "playstation 5 console"
+    },
+    {
+      "id": "console-xbox-series-s",
+      "tags": ["consoles", "model-x-tokens"],
+      "title": "Xbox Series S Console",
+      "expectedQuery": "xbox series s console"
+    },
+    {
+      "id": "console-switch-oled",
+      "tags": ["consoles"],
+      "title": "Nintendo Switch OLED Model HEG-001",
+      "expectedQuery": "nintendo switch oled model heg-001"
+    },
+    {
+      "id": "console-steam-deck",
+      "tags": ["consoles"],
+      "title": "Valve Steam Deck OLED 1TB Handheld Console",
+      "expectedQuery": "valve steam deck oled 1tb handheld console"
+    },
+    {
+      "id": "empty-blank",
+      "tags": ["empty-identity"],
+      "title": "",
+      "expectedQuery": ""
+    },
+    {
+      "id": "empty-whitespace",
+      "tags": ["empty-identity"],
+      "title": " \t \n ",
+      "expectedQuery": ""
+    },
+    {
+      "id": "empty-nbsp-entity",
+      "tags": ["empty-identity", "unicode-entities"],
+      "title": "&nbsp;",
+      "expectedQuery": ""
+    },
+    {
+      "id": "empty-detached-lot-suffix",
+      "tags": ["empty-identity", "inventory-wrappers"],
+      "title": "Lot s",
+      "expectedQuery": ""
+    },
+    {
+      "id": "empty-auction-lot",
+      "tags": ["empty-identity", "inventory-wrappers"],
+      "title": "Auction Lot",
+      "expectedQuery": ""
+    },
+    {
+      "id": "empty-miscellaneous-various",
+      "tags": ["empty-identity"],
+      "title": "Miscellaneous Various",
+      "expectedQuery": ""
+    },
+    {
+      "id": "empty-unknown",
+      "tags": ["empty-identity"],
+      "title": "Unknown",
+      "expectedQuery": ""
+    },
+    {
+      "id": "long-pioneer-receiver",
+      "tags": ["model-x-tokens", "dimensions-resolutions"],
+      "title": "Pioneer Elite VSX-LX305 9.2 Channel Network AV Receiver Dolby Atmos DTS:X IMAX Enhanced Bluetooth WiFi AirPlay 2 Chromecast Black With Remote Tested Working",
+      "expectedQuery": "pioneer elite vsx-lx305 9.2 channel network av receiver dolby atmos dts x imax enhanced bluetooth wifi 2 with remote"
+    },
+    {
+      "id": "long-hp-workstation-gpu",
+      "tags": ["gpus", "model-x-tokens"],
+      "title": "Hewlett-Packard Z8 G4 Workstation Intel Xeon Gold 6248R 24-Core 3.0GHz 192GB DDR4 ECC 4TB NVMe NVIDIA RTX A6000 48GB Graphics Windows 11 Pro",
+      "expectedQuery": "hewlett-packard z8 g4 workstation intel xeon gold 6248r 24-core 3.0ghz 192gb ddr4 ecc 4tb nvme nvidia a6000 48gb 11 pro"
+    }
+  ]
+}
