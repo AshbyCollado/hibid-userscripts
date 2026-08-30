@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-18T00:00:00-04:00",
+  "captureAuthority": "Chrome DevTools Protocol Network and Runtime inspection",
+  "containsCredentials": false,
+  "containsAccountData": false,
+  "rawCaptureCommitted": false,
+  "calendar": {
+    "route": "https://aarauctions.com/auctions/",
+    "transport": "server-rendered text/html",
+    "expectedTotal": null,
+    "collected": 56,
+    "uniqueAuctionIds": 56,
+    "settledBottom": true,
+    "stableCycles": 2,
+    "firstAuctionId": "8658",
+    "middleAuctionId": "8698",
+    "lastAuctionId": "8673",
+    "paginationLinks": 0
+  },
+  "catalogs": [
+    {
+      "auctionId": "8649",
+      "request": "/servlet/Search.do?auctionId=8649&page=1&perPage=100&orderBy=",
+      "advertisedTotal": 80,
+      "collected": 80,
+      "uniqueItemIds": 80,
+      "first": { "lot": "1", "itemId": "223844" },
+      "middle": { "lot": "41", "itemId": "223884" },
+      "last": { "lot": "80", "itemId": "223923" }
+    },
+    {
+      "auctionId": "8573",
+      "request": "/servlet/Search.do?auctionId=8573&page=1&perPage=100&orderBy=",
+      "advertisedTotal": 41,
+      "collected": 41,
+      "uniqueItemIds": 41,
+      "first": { "lot": "1", "itemId": "221732" },
+      "middle": { "lot": "21", "itemId": "221752" },
+      "last": { "lot": "41", "itemId": "221772" },
+      "containsHistoricalSampleItem221770": true
+    }
+  ],
+  "filteredCatalog": {
+    "auctionId": "8649",
+    "filters": { "keyword": "PowerBlock", "categoryName": "", "lotId": "" },
+    "advertisedAuctionTotal": 80,
+    "filteredCollected": 1,
+    "uniqueItemIds": 1,
+    "proof": "the filtered page has no higher pagination link and returns a short page"
+  },
+  "detailEvidence": [
+    {
+      "lot": "1",
+      "itemId": "223844",
+      "descriptionPresent": true,
+      "largeImageCount": 9,
+      "responseIdentityMatches": true
+    },
+    {
+      "lot": "41",
+      "itemId": "223884",
+      "descriptionPresent": true,
+      "largeImageCount": 5,
+      "responseIdentityMatches": true
+    },
+    {
+      "lot": "80",
+      "itemId": "223923",
+      "descriptionPresent": true,
+      "largeImageCount": 15,
+      "responseIdentityMatches": true
+    }
+  ],
+  "releaseValidation": {
+    "candidateVersion": "0.8.24",
+    "unfilteredCatalog": {
+      "auctionId": "8649",
+      "expected": 80,
+      "copied": 80,
+      "uniqueItemIds": 80,
+      "detailsRequested": 80,
+      "detailsSucceeded": 80,
+      "complete": true
+    },
+    "filteredCatalog": {
+      "auctionId": "8649",
+      "keyword": "PowerBlock",
+      "broadAuctionTotalIgnored": 80,
+      "expected": 1,
+      "copied": 1,
+      "uniqueItemIds": 1,
+      "complete": true
+    },
+    "calendar": {
+      "copied": 56,
+      "uniqueAuctionIds": 56,
+      "settledBottom": true,
+      "complete": true
+    },
+    "historicalItem": {
+      "auctionId": "8573",
+      "itemId": "221770",
+      "descriptionPresent": true,
+      "largeImageCount": 5,
+      "identityMatches": true
+    },
+    "bidderAliasLeakCount": 0
+  },
+  "privacy": {
+    "bidderAliasesCommitted": false,
+    "cookiesCommitted": false,
+    "authorizationCommitted": false,
+    "tokensCommitted": false
+  }
+}

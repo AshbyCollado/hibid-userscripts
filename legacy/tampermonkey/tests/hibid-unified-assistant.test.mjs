@@ -1,0 +1,7532 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import test from 'node:test';
+import vm from 'node:vm';
+
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+test('userscript metadata version matches the runtime version', () => {
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  const metadataVersion = source.match(/^\/\/\s*@version\s+([^\s]+)$/m)?.[1];
+  const runtimeVersion = source.match(/const SCRIPT_VERSION = '([^']+)'/)?.[1];
+  assert.ok(metadataVersion, 'missing userscript metadata version');
+  assert.ok(runtimeVersion, 'missing runtime version');
+  assert.equal(runtimeVersion, metadataVersion);
+});
+
+test('catalog copy resume helper shares init scope and is declared before init can call it', () => {
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  const helperIndex = source.indexOf('function scheduleCatalogCopyResume()');
+  const initIndex = source.indexOf('function init()');
+  assert.ok(helperIndex >= 0, 'missing catalog copy resume helper');
+  assert.ok(initIndex >= 0, 'missing panel init function');
+  assert.ok(helperIndex < initIndex, 'catalog resume helper must be visible in init lexical scope');
+  assert.doesNotMatch(source, /const scheduleCatalogCopyResume\s*=\s*\(/);
+});
+
+function loadCore(options = {}) {
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  const sandbox = {
+    console,
+    URL,
+    URLSearchParams,
+    AbortController,
+    clearTimeout,
+    setTimeout,
+    globalThis: {},
+  };
+  if (options.storage) {
+    sandbox.GM_getValue = (key, fallback) => options.storage.has(key) ? options.storage.get(key) : fallback;
+    sandbox.GM_setValue = (key, value) => {
+      options.storage.set(key, value);
+      return value;
+    };
+  }
+  if (options.unsafeWindow) {
+    sandbox.unsafeWindow = options.unsafeWindow;
+  }
+  if (options.fetch) {
+    sandbox.fetch = options.fetch;
+  }
+  if (options.DOMParser) {
+    sandbox.DOMParser = options.DOMParser;
+  }
+  if (options.location) {
+    sandbox.location = options.location;
+  }
+  if (options.GM) {
+    sandbox.GM = options.GM;
+  }
+  if (options.GM_setClipboard) {
+    sandbox.GM_setClipboard = options.GM_setClipboard;
+  }
+  if (options.GM_xmlhttpRequest) {
+    sandbox.GM_xmlhttpRequest = options.GM_xmlhttpRequest;
+  }
+  if (options.navigator) {
+    sandbox.navigator = options.navigator;
+  }
+  if (options.document) {
+    sandbox.document = options.document;
+  }
+  if (options.window) {
+    sandbox.window = options.window;
+  }
+  if (options.setTimeout) {
+    sandbox.setTimeout = options.setTimeout;
+  }
+  sandbox.globalThis = sandbox;
+  sandbox.__HIBID_BID_ASSISTANT_TEST__ = true;
+  vm.runInNewContext(source, sandbox, { filename: 'hibid-bid-assistant.user.js' });
+  return sandbox.HiBidBidAssistantCore;
+}
+
+function makeElement({ text = '', attrs = {}, disabled = false } = {}) {
+  return {
+    disabled,
+    offsetParent: {},
+    textContent: text,
+    getClientRects: () => [{ width: 1, height: 1 }],
+    getAttribute(name) {
+      return attrs[name] || '';
+    },
+    closest() {
+      return null;
+    },
+  };
+}
+
+function makeFakeNode({ text = '', attrs = {}, selectors = {} } = {}) {
+  const bySelector = new Map(Object.entries(selectors));
+  const findMatch = (selector) => {
+    for (const [pattern, value] of bySelector.entries()) {
+      if (selector.includes(pattern)) return value;
+    }
+    return null;
+  };
+
+  return {
+    textContent: text,
+    href: attrs.href || '',
+    src: attrs.src || '',
+    alt: attrs.alt || '',
+    getAttribute(name) {
+      return attrs[name] || '';
+    },
+    querySelector(selector) {
+      const match = findMatch(selector);
+      return Array.isArray(match) ? (match[0] || null) : match;
+    },
+    querySelectorAll(selector) {
+      const match = findMatch(selector);
+      if (!match) return [];
+      return Array.isArray(match) ? match : [match];
+    },
+  };
+}
+
+function makeTreeNode({ tag = 'div', text = '', attrs = {}, className = '', children = [] } = {}) {
+  const node = {
+    tagName: tag.toUpperCase(),
+    id: attrs.id || '',
+    className,
+    href: attrs.href || '',
+    src: attrs.src || '',
+    disabled: false,
+    parentElement: null,
+    nextElementSibling: null,
+    children: [],
+    getAttribute(name) {
+      if (name === 'class') return className;
+      if (name === 'href') return attrs.href || '';
+      if (name === 'src') return attrs.src || '';
+      if (name === 'srcset') return attrs.srcset || '';
+      if (name === 'data-label') return attrs['data-label'] || '';
+      return attrs[name] || '';
+    },
+    matches(selector) {
+      return selector.split(',').some(part => matchesTreeSelector(node, part.trim()));
+    },
+    querySelector(selector) {
+      return node.querySelectorAll(selector)[0] || null;
+    },
+    querySelectorAll(selector) {
+      const found = [];
+      const visit = child => {
+        if (child.matches?.(selector)) found.push(child);
+        child.children?.forEach(visit);
+      };
+      node.children.forEach(visit);
+      return found;
+    },
+    appendChild(child) {
+      child.parentElement = node;
+      const previous = node.children[node.children.length - 1];
+      if (previous) previous.nextElementSibling = child;
+      node.children.push(child);
+      return child;
+    },
+    contains(candidate) {
+      if (candidate === node) return true;
+      return node.children.some(child => child === candidate || child.contains?.(candidate));
+    },
+  };
+  Object.defineProperty(node, 'textContent', {
+    get() { return text || node.children.map(child => child.textContent || '').join(' '); },
+    set() {},
+  });
+  Object.defineProperty(node, 'innerText', {
+    get() { return text || node.children.map(child => child.innerText || '').join('\n'); },
+    set() {},
+  });
+  children.forEach(child => node.appendChild(child));
+  return node;
+}
+
+function matchesTreeSelector(node, selector) {
+  const normalized = selector.replace(/\s+/g, ' ').trim();
+  const finalPart = normalized.split(' ').pop() || normalized;
+  const tag = node.tagName.toLowerCase();
+  if (finalPart.startsWith('#')) return node.id === finalPart.slice(1);
+  const tagMatch = finalPart.match(/^([a-z][\w-]*)/i);
+  if (tagMatch && tag !== tagMatch[1].toLowerCase()) return false;
+  const classMatches = Array.from(finalPart.matchAll(/\.([\w-]+)/g)).map(match => match[1]);
+  if (classMatches.some(name => !String(node.className || '').split(/\s+/).includes(name))) return false;
+  const classContains = finalPart.match(/\[class\*=["']([^"']+)["']\]/i);
+  if (classContains && !String(node.className || '').includes(classContains[1])) return false;
+  const hrefContains = finalPart.match(/\[href\*=["']([^"']+)["']\]/i);
+  if (hrefContains && !String(node.href || '').includes(hrefContains[1])) return false;
+  if (/\[href\]/i.test(finalPart) && !node.href) return false;
+  if (/\[src\]/i.test(finalPart) && !node.src) return false;
+  const dataLabel = finalPart.match(/\[data-label\]/i);
+  if (dataLabel && !node.getAttribute('data-label')) return false;
+  const dataLead = finalPart.match(/\[data-lead\]/i);
+  if (dataLead && !node.getAttribute('data-lead')) return false;
+  const dataTestIdContains = finalPart.match(/\[data-testid\*=["']([^"']+)["']\]/i);
+  if (dataTestIdContains && !String(node.getAttribute('data-testid') || '').includes(dataTestIdContains[1])) return false;
+  return true;
+}
+
+function makeGovDealsAssetDomFixture({
+  title,
+  assetId,
+  accountId,
+  currentBid,
+  bidCount,
+  closeTime,
+  seller,
+  sellerUrl,
+  location,
+  image,
+  specs,
+  description,
+}) {
+  const valueNode = (value) => makeFakeNode({ text: value });
+  const specRows = Object.entries(specs).map(([label, value]) => makeFakeNode({
+    selectors: {
+      '.td-att-label': valueNode(label),
+      '.td-att-value': valueNode(value),
+    },
+  }));
+  const sellerRow = makeFakeNode({
+    selectors: {
+      h5: valueNode('Seller:'),
+      p: valueNode(seller),
+    },
+  });
+  const locationRow = makeFakeNode({
+    selectors: {
+      h5: valueNode('Item Location:'),
+      p: valueNode(location),
+    },
+  });
+  const sellerLink = makeFakeNode({ text: seller, attrs: { href: sellerUrl } });
+  const longDescription = makeFakeNode({ text: description });
+  const content = makeFakeNode({
+    text: `Description ${Object.entries(specs).map(([label, value]) => `${label} ${value}`).join(' ')} Lot Number ${accountId}-${assetId} ${description}`,
+  });
+  const main = makeFakeNode({
+    selectors: {
+      '.col-md-10.mx-auto': content,
+    },
+  });
+  const root = makeFakeNode({
+    selectors: {
+      '#main-content': main,
+      'h1.product-title': makeFakeNode({ text: title }),
+      '#currentBid': makeFakeNode({ text: `${currentBid} USD` }),
+      '.numberofbids': makeFakeNode({ text: `${bidCount} Bids Closes: ${closeTime}` }),
+      '.sales-type': makeFakeNode({ text: 'Sales/Lot Type: Online Auction' }),
+      '.product-location': makeFakeNode({ text: `Location: ${location}` }),
+      '#seller_information a[href]': sellerLink,
+      '#seller_information .row': [sellerRow, locationRow],
+      '#table-id-0 tr, .description-table table tr': specRows,
+      '.long-description': longDescription,
+      '#lnkAssetDetailLocation': makeFakeNode({ text: location }),
+      'img.lg-object.lg-image': makeFakeNode({
+        attrs: { src: image, alt: title, class: 'lg-object lg-image' },
+      }),
+    },
+  });
+  root.title = `${title} | GovDeals`;
+  return root;
+}
+
+test('assistant initializes on state-prefixed HiBid lots pages', () => {
+  const core = loadCore();
+  const stateLots = new URL('https://hibid.com/newjersey/lots/40196/computers-and-electronics');
+
+  assert.equal(core.shouldInitOnLocation(stateLots), true);
+  assert.deepEqual(plain(core.resolveHiBidPage(stateLots)), {
+    supported: true,
+    kind: 'catalog',
+    host: 'hibid.com',
+    statePrefix: 'newjersey',
+    auctionId: '40196',
+    reason: 'state-prefixed lots route',
+  });
+});
+
+test('assistant shared route resolver covers HiBid route families', () => {
+  const core = loadCore();
+  const cases = [
+    ['https://hibid.com/lots', 'catalog'],
+    ['https://www.hibid.com/lots', 'catalog'],
+    ['https://hibid.com/catalog/752334/the-luxe-edit', 'catalog'],
+    ['https://www.hibid.com/catalog/752334/the-luxe-edit', 'catalog'],
+    ['https://hibid.com/livecatalog/752334/the-luxe-edit', 'live'],
+    ['https://www.hibid.com/livecatalog/752334/the-luxe-edit', 'live'],
+    ['https://hibid.com/lot/123/example-lot', 'lot'],
+    ['https://hibid.com/newjersey/lot/123/example-lot', 'lot'],
+    ['https://hibid.com/newjersey/lots/40196/computers-and-electronics', 'catalog'],
+    ['https://hibid.com/NEWJERSEY/LOTS/40196/computers-and-electronics', 'catalog'],
+    ['https://seuyco.hibid.com/catalog/752334/the-luxe-edit', 'catalog'],
+    ['https://hibid.com/account/watchlist?status=OUTBID', 'watchlist-outbid'],
+    ['https://www.hibid.com/account/watchlist?status=OUTBID', 'watchlist-outbid'],
+    ['https://hibid.com/newjersey/account/watchlist', 'watchlist'],
+    ['https://hibid.com/NEWJERSEY/ACCOUNT/WATCHLIST', 'watchlist'],
+    ['https://hibid.com/account/currentbids?status=WINNING', 'currentbids-winning'],
+    ['https://hibid.com/newjersey/account/currentbids?status=WINNING', 'currentbids-winning'],
+    ['https://hibid.com/account/currentbids?status=OUTBID', 'currentbids-outbid'],
+    ['https://www.hibid.com/account/currentbids?status=OUTBID', 'currentbids-outbid'],
+  ];
+
+  cases.forEach(([href, kind]) => {
+    const resolved = core.resolveHiBidPage(new URL(href));
+    assert.equal(resolved.supported, true, href);
+    assert.equal(resolved.kind, kind, href);
+    assert.equal(core.shouldInitOnLocation(new URL(href)), true, href);
+  });
+
+  assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/watchlist')), true);
+  assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/currentbids')), false);
+  assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/currentbids?status=CLOSED')), false);
+  assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/help')), false);
+});
+
+test('assistant resolves past HiBid auction account routes and renders scoped copy UI', () => {
+  const core = loadCore();
+  const pastBids = new URL('https://hibid.com/account/pastbidsm');
+  const pastWatchlist = new URL('https://hibid.com/account/pastwatchlist');
+  const stateWatchlist = new URL('https://hibid.com/newjersey/account/pastwatchlist');
+
+  assert.equal(core.resolveHiBidPage(pastBids).kind, 'pastbids');
+  assert.equal(core.resolveHiBidPage(pastWatchlist).kind, 'pastwatchlist');
+  assert.equal(core.resolveHiBidPage(stateWatchlist).kind, 'pastwatchlist');
+  assert.equal(core.shouldInitOnLocation(pastBids), true);
+  assert.equal(core.shouldInitOnLocation(pastWatchlist), true);
+  assert.equal(core.shouldInitOnLocation(new URL('https://hibid.com/account/settings')), false);
+
+  const panel = core.buildPanelHtml({ mode: 'catalog', route: core.resolveHiBidPage(pastWatchlist), debugEnabled: false });
+  assert.match(panel, /Past Watchlist Auction Export/);
+  assert.match(panel, /Copy Auction/);
+  assert.doesNotMatch(panel, /Prepare Bid|Snipe Now|Auto-confirm|Max plan/i);
+
+  const dialog = core.buildHibidPastAuctionDialogHtml();
+  ['flipperaddon-hibid-auction-copy-status', 'flipperaddon-hibid-auction-copy-json', 'flipperaddon-hibid-auction-copy-llm', 'flipperaddon-hibid-auction-copy-stop', 'flipperaddon-hibid-auction-copy-close']
+    .forEach(id => assert.match(dialog, new RegExp(`id="${id}"`)));
+});
+
+test('assistant isolates selected past-auction rows and preserves lot lead/description evidence', () => {
+  const core = loadCore();
+  const makeLot = ({ lot, title, lead, category, image, status = 'Won' }) => makeTreeNode({
+    className: 'bid-status-border',
+    text: `Lot # ${lot}\n${lead}\nGroup - Category\n${category}\nDescription\nShelf Location: Z1\nCondition: New - Factory Sealed\nIn Packaging?: Yes\nAssembly Required?: No\nDamaged?: No\nFunctional?: Yes\nMissing Parts?: No\nCurrent Bid: 18.00 USD\n2 Bids\n${status}`,
+    children: [
+      makeTreeNode({ className: 'lot-number-lead', text: `Lot ${lot}` }),
+      makeTreeNode({ className: 'lot-title', text: title }),
+      makeTreeNode({ tag: 'a', attrs: { href: `/lot/765226${lot}/${title.toLowerCase().replace(/\s+/g, '-')}` }, text: title }),
+      makeTreeNode({ tag: 'img', attrs: { src: image } }),
+    ],
+  });
+  const makeAuction = ({ id, title, location, lot }) => {
+    const heading = makeTreeNode({
+      className: 'listing-box-title',
+      children: [
+        makeTreeNode({ tag: 'strong', text: title }),
+        makeTreeNode({ tag: 'a', attrs: { href: `/catalog/${id}/${title.toLowerCase().replace(/\s+/g, '-')}` }, text: title }),
+        makeTreeNode({ tag: 'a', className: 'alert-link', attrs: { href: `https://maps.google.com/maps?q=${location}` }, text: location }),
+        makeTreeNode({ className: 'printer-d-none', children: [makeTreeNode({ tag: 'a', attrs: { href: `/catalog/${id}/${title.toLowerCase().replace(/\s+/g, '-')}` }, text: 'View Catalog' })] }),
+      ],
+    });
+    return makeTreeNode({ className: 'listing-box', children: [heading, lot] });
+  };
+  const firstAuction = makeAuction({
+    id: '765226',
+    title: 'Mid Summer Deals Overstock / Liquidation / Returns W31',
+    location: 'Paterson, NJ',
+    lot: makeLot({
+      lot: '6',
+      title: 'SteelSeries Arctis Nova 7 Wireless Xbox',
+      lead: 'SteelSeries Arctis Nova 7 Wireless Xbox',
+      category: 'Computers & Electronics - Consumer Electronics - Video Games - Accessories',
+      image: '/images/steelseries.jpg',
+    }),
+  });
+  const secondAuction = makeAuction({
+    id: '765227',
+    title: 'Unrelated Auction',
+    location: 'Edison, NJ',
+    lot: makeLot({
+      lot: '99',
+      title: 'Unrelated Item',
+      lead: 'Unrelated Item',
+      category: 'Other',
+      image: '/images/other.jpg',
+    }),
+  });
+  const root = makeTreeNode({ children: [firstAuction, secondAuction] });
+  const loc = new URL('https://hibid.com/account/pastwatchlist');
+  const rows = core.extractHibidPastAuctionRows(root, loc, 'pastwatchlist');
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].auctionTitle, 'Mid Summer Deals Overstock / Liquidation / Returns W31');
+  assert.equal(rows[0].location, 'Paterson, NJ');
+  assert.match(rows[0].locationUrl, /maps\.google\.com/);
+  assert.equal(rows[0].auctionId, '765226');
+
+  const selected = core.extractHibidAccountAuctionLots(root, rows[0], loc, 'pastwatchlist');
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].lot, '6');
+  assert.equal(selected[0].lead, 'SteelSeries Arctis Nova 7 Wireless Xbox');
+  assert.match(selected[0].groupCategory, /Computers & Electronics/);
+  assert.match(selected[0].description, /Condition: New - Factory Sealed/);
+  assert.equal(selected[0].descriptionFields.condition, 'New - Factory Sealed');
+  assert.equal(selected[0].descriptionFields.functional, 'Yes');
+  assert.match(selected[0].image, /steelseries\.jpg/);
+  assert.doesNotMatch(selected.map(item => item.title).join(' '), /Unrelated Item/);
+
+  const payload = JSON.parse(core.buildHibidAccountAuctionJsonPayload({
+    context: rows[0],
+    items: selected,
+    audit: { selectedGroupFound: true, lotsCollected: 1, detailsRequested: 1, detailsSucceeded: 1, detailsFailed: 0, stopReason: 'complete' },
+  }));
+  assert.equal(payload.context.scope, 'selected-account-auction-group');
+  assert.equal(payload.items[0].lead, 'SteelSeries Arctis Nova 7 Wireless Xbox');
+  assert.equal(payload.items[0].descriptionFields.condition, 'New - Factory Sealed');
+  const brief = core.buildHibidAccountAuctionLlmBrief(payload);
+  assert.match(brief, /Mixed \/ Group Lot Rule/);
+  assert.match(brief, /SteelSeries Arctis Nova 7 Wireless Xbox/);
+  assert.match(brief, /Do not bid, watch, unwatch/);
+});
+
+test('assistant isolates a selected HiBid group inside the shared account lot grid', () => {
+  const core = loadCore();
+  const makeHeader = ({ id, title }) => makeTreeNode({
+    tag: 'app-watched-auction-header',
+    children: [makeTreeNode({
+      className: 'ng-star-inserted',
+      children: [makeTreeNode({
+        className: 'listing-box-title',
+        children: [
+          makeTreeNode({ tag: 'strong', text: title }),
+          makeTreeNode({ tag: 'a', attrs: { href: `/catalog/${id}/${title.toLowerCase().replace(/\s+/g, '-')}` }, text: title }),
+          makeTreeNode({ className: 'printer-d-none' }),
+        ],
+      })],
+    })],
+  });
+  const firstHeader = makeHeader({ id: '765226', title: 'Selected Auction' });
+  const secondHeader = makeHeader({ id: '765227', title: 'Unrelated Auction' });
+  const firstLot = makeTreeNode({
+    tag: 'app-lot-tile',
+    className: 'lot-tile',
+    text: 'Lot # 6\nSteelSeries Arctis Nova 7 Wireless Xbox',
+    children: [makeTreeNode({ tag: 'a', attrs: { href: '/lot/7652266/steelseries' }, text: 'SteelSeries Arctis Nova 7 Wireless Xbox' })],
+  });
+  const secondLot = makeTreeNode({
+    tag: 'app-lot-tile',
+    className: 'lot-tile',
+    text: 'Lot # 99\nUnrelated Item',
+    children: [makeTreeNode({ tag: 'a', attrs: { href: '/lot/76522799/unrelated' }, text: 'Unrelated Item' })],
+  });
+  const grid = makeTreeNode({ className: 'lot-tiles md-tiles', children: [firstHeader, firstLot, secondHeader, secondLot] });
+  const root = makeTreeNode({ children: [grid] });
+  const loc = new URL('https://hibid.com/account/pastwatchlist');
+  const rows = core.extractHibidPastAuctionRows(root, loc, 'pastwatchlist');
+
+  assert.equal(rows.length, 2);
+  const selected = core.extractHibidAccountAuctionLots(root, rows[0], loc, 'pastwatchlist');
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].lot, '6');
+  assert.match(selected[0].title, /SteelSeries/);
+  assert.doesNotMatch(selected.map(item => item.title).join(' '), /Unrelated Item/);
+
+  const unrelated = core.extractHibidAccountAuctionLots(root, rows[1], loc, 'pastwatchlist');
+  assert.equal(unrelated.length, 1);
+  assert.equal(unrelated[0].lot, '99');
+});
+
+test('assistant extracts HiBid lot detail labels, descriptions, and all images', () => {
+  const core = loadCore();
+  const body = makeTreeNode({ children: [
+    makeTreeNode({ tag: 'h1', text: 'SteelSeries Arctis Nova 7 Wireless Xbox' }),
+    makeTreeNode({ tag: 'tr', children: [makeTreeNode({ tag: 'th', text: 'Lead' }), makeTreeNode({ tag: 'td', text: 'SteelSeries Arctis Nova 7 Wireless Xbox' })] }),
+    makeTreeNode({ tag: 'tr', children: [makeTreeNode({ tag: 'th', text: 'Group - Category' }), makeTreeNode({ tag: 'td', text: 'Computers & Electronics - Consumer Electronics' })] }),
+    makeTreeNode({ tag: 'tr', children: [makeTreeNode({ tag: 'th', text: 'Condition' }), makeTreeNode({ tag: 'td', text: 'New - Factory Sealed' })] }),
+    makeTreeNode({ className: 'description', text: 'Shelf Location: Z1\nCondition: New - Factory Sealed\nFunctional?: Yes' }),
+    makeTreeNode({ tag: 'img', attrs: { src: '/images/one.jpg' } }),
+    makeTreeNode({ tag: 'img', attrs: { src: '/images/two.jpg' } }),
+  ] });
+  const root = makeTreeNode({ children: [body] });
+  root.body = body;
+  const detail = core.extractHibidLotDetail(root, new URL('https://hibid.com/lot/7652266/steelseries'));
+  assert.equal(detail.lead, 'SteelSeries Arctis Nova 7 Wireless Xbox');
+  assert.match(detail.groupCategory, /Computers & Electronics/);
+  assert.equal(detail.descriptionFields.condition, 'New - Factory Sealed');
+  assert.equal(detail.images.length, 2);
+  assert.match(detail.description, /Shelf Location: Z1/);
+});
+
+test('assistant keeps selected HiBid account lots when detail enrichment is unavailable', async () => {
+  const core = loadCore();
+  const lot = makeTreeNode({
+    className: 'bid-status-border',
+    text: 'Lot # 6\nSteelSeries Arctis Nova 7 Wireless Xbox\nCurrent Bid: 18.00 USD',
+    children: [
+      makeTreeNode({ className: 'lot-title', text: 'SteelSeries Arctis Nova 7 Wireless Xbox' }),
+      makeTreeNode({ tag: 'a', attrs: { href: '/lot/7652266/steelseries' }, text: 'SteelSeries Arctis Nova 7 Wireless Xbox' }),
+    ],
+  });
+  const heading = makeTreeNode({
+    className: 'listing-box-title',
+    children: [
+      makeTreeNode({ tag: 'strong', text: 'Selected Auction' }),
+      makeTreeNode({ tag: 'a', attrs: { href: '/catalog/765226/selected-auction' }, text: 'Selected Auction' }),
+    ],
+  });
+  const root = makeTreeNode({ children: [makeTreeNode({ className: 'listing-box', children: [heading, lot] })] });
+  const rows = core.extractHibidPastAuctionRows(root, new URL('https://hibid.com/account/pastbidsm'), 'pastbids');
+  const result = await core.scrapeHibidAccountAuction(rows[0], () => {}, () => false, root);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.audit.selectedGroupFound, true);
+  assert.equal(result.audit.detailsFailed, 1);
+  assert.equal(result.audit.stopReason, 'partial-detail-failures');
+  assert.match(result.items[0].detailError, /browser-fetch-unavailable/);
+});
+
+test('assistant enriches selected HiBid account lots from same-origin detail pages', async () => {
+  const detailRoot = makeTreeNode({
+    text: 'Lot # 6\nLead\nSteelSeries Arctis Nova 7 Wireless Xbox\nDescription\nCondition: New - Factory Sealed',
+    children: [
+      makeTreeNode({ tag: 'img', attrs: { src: '/images/detail-one.jpg' } }),
+      makeTreeNode({ tag: 'img', attrs: { src: '/images/detail-two.jpg' } }),
+    ],
+  });
+  const fetchedUrls = [];
+  const core = loadCore({
+    fetch: async url => {
+      fetchedUrls.push(String(url));
+      return { ok: true, text: async () => '<html>detail</html>' };
+    },
+    DOMParser: class {
+      parseFromString() {
+        return detailRoot;
+      }
+    },
+  });
+  const lot = makeTreeNode({
+    className: 'bid-status-border',
+    text: 'Lot # 6\nSteelSeries Arctis Nova 7 Wireless Xbox\nCurrent Bid: 18.00 USD',
+    children: [
+      makeTreeNode({ tag: 'a', attrs: { href: '/lot/7652266/steelseries' }, text: 'SteelSeries Arctis Nova 7 Wireless Xbox' }),
+    ],
+  });
+  const heading = makeTreeNode({
+    className: 'listing-box-title',
+    children: [
+      makeTreeNode({ tag: 'strong', text: 'Selected Auction' }),
+      makeTreeNode({ tag: 'a', attrs: { href: '/catalog/765226/selected-auction' }, text: 'Selected Auction' }),
+    ],
+  });
+  const root = makeTreeNode({ children: [makeTreeNode({ className: 'listing-box', children: [heading, lot] })] });
+  const rows = core.extractHibidPastAuctionRows(root, new URL('https://hibid.com/account/pastwatchlist'), 'pastwatchlist');
+  const result = await core.scrapeHibidAccountAuction(rows[0], () => {}, () => false, root);
+  assert.deepEqual(fetchedUrls, ['https://hibid.com/lot/7652266/steelseries']);
+  assert.equal(result.audit.detailsRequested, 1);
+  assert.equal(result.audit.detailsSucceeded, 1);
+  assert.equal(result.audit.detailsFailed, 0);
+  assert.equal(result.audit.stopReason, 'complete');
+  assert.equal(result.items[0].detailFetched, true);
+  assert.equal(result.items[0].description, 'Condition: New - Factory Sealed');
+  assert.deepEqual(Array.from(result.items[0].images), [
+    'https://hibid.com/images/detail-one.jpg',
+    'https://hibid.com/images/detail-two.jpg',
+  ]);
+});
+
+test('assistant metadata-covered host variants resolve to their site modules', () => {
+  const core = loadCore();
+  const auctionNinjaSeller = new URL('https://seller.auctionninja.com/clearinghouseestatesales/sales/details/example--17395.html');
+  const aarWww = new URL('https://www.aarauctions.com/auctions/');
+  const govDealsSeller = new URL('https://rutgers.govdeals.com/en/rutgers');
+  const facebookBare = new URL('https://facebook.com/marketplace/you/selling');
+
+  assert.equal(core.shouldInitOnLocation(auctionNinjaSeller), true);
+  assert.equal(core.resolveAuctionNinjaPage(auctionNinjaSeller).kind, 'sale-catalog');
+  assert.equal(core.shouldInitOnLocation(aarWww), true);
+  assert.equal(core.resolveAarAuctionsPage(aarWww).kind, 'aar-auction-list');
+  assert.equal(core.shouldInitOnLocation(govDealsSeller), true);
+  assert.equal(core.resolveGovDealsPage(govDealsSeller).kind, 'govdeals-seller');
+  assert.equal(core.shouldInitOnLocation(facebookBare), true);
+  assert.equal(core.resolveFlipTrackerPage(facebookBare).kind, 'fliptracker-facebook');
+});
+
+test('assistant resolves AJ Willner auction pages as source-aware catalog exports', () => {
+  const core = loadCore();
+  const loc = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');
+  const mode = core.resolveAssistantMode(loc);
+
+  assert.equal(core.shouldInitOnLocation(loc), true);
+  assert.equal(mode.mode, 'catalog');
+  assert.equal(mode.source, 'ajwillner');
+  assert.equal(mode.route.auctionId, '164037');
+
+  const html = core.buildPanelHtml({ mode: 'catalog', route: mode.route, debugEnabled: false });
+  assert.match(html, /AJ Willner/);
+  assert.match(html, /AJ Willner Catalog Export/);
+  assert.match(html, /id="flipperaddon-partial-export"/);
+  assert.match(html, /id="flipperaddon-copy-verified-partial"/);
+  assert.doesNotMatch(html, /id="hibid-catalog-copy-partial"/);
+  assert.doesNotMatch(html, />HiBid catalog</);
+});
+
+test('assistant route and network manifests cover all seven supported sites', () => {
+  const core = loadCore();
+  const expectedSites = ['hibid', 'ajwillner', 'auctionninja', 'aar', 'govdeals', 'ebay', 'facebook'];
+  const routes = plain(core.getRouteManifest());
+  const endpoints = plain(core.getNetworkEndpointManifest());
+
+  assert.deepEqual(routes.map(entry => entry.site), expectedSites);
+  assert.equal(new Set(routes.map(entry => entry.site)).size, expectedSites.length);
+  assert.deepEqual(Object.keys(endpoints), expectedSites);
+
+  const routeCases = [
+    ['hibid', 'https://hibid.com/catalog/765226/mid-summer-deals', 'catalog'],
+    ['ajwillner', 'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active', 'catalog'],
+    ['auctionninja', 'https://www.auctionninja.com/category/electronics?miles=30&zip=07008', 'category-search'],
+    ['aar', 'https://aarauctions.com/servlet/Search.do?auctionId=8573', 'aar-auction-catalog'],
+    ['govdeals', 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50', 'govdeals-new-listings'],
+    ['ebay', 'https://www.ebay.com/sh/lst/active', 'fliptracker-ebay-active'],
+    ['facebook', 'https://www.facebook.com/marketplace/you/selling', 'fliptracker-facebook'],
+  ];
+
+  routeCases.forEach(([site, href, kind]) => {
+    const manifestEntry = routes.find(entry => entry.site === site);
+    const resolved = core.resolveSiteRoute(new URL(href));
+    assert.ok(manifestEntry, `missing ${site} route manifest`);
+    assert.equal(resolved.supported, true, href);
+    assert.equal(resolved.source, site, href);
+    assert.equal(resolved.kind, kind, href);
+    assert.equal(manifestEntry.routeKinds.includes(kind), true, `${site} manifest omits ${kind}`);
+    assert.equal(typeof manifestEntry.proofPolicy, 'string', `${site} proof policy missing`);
+    assert.ok(manifestEntry.proofPolicy.length > 0, `${site} proof policy empty`);
+  });
+
+  const expectedEnumerators = {
+    hibid: ['POST', 'https://hibid-api.io/sr/main/v1/search/lot'],
+    ajwillner: ['GET', 'https://bid.ajwillnerauctions.com/api/items/search'],
+    auctionninja: ['GET', 'document pagination'],
+    aar: ['GET', 'https://aarauctions.com/servlet/Search.do'],
+    govdeals: ['POST', 'https://maestro.lqdt1.com/search/list'],
+    ebay: ['GET', 'Seller Hub document pagination'],
+    facebook: ['DOM', 'Marketplace selling virtual list'],
+  };
+  Object.entries(expectedEnumerators).forEach(([site, [method, url]]) => {
+    assert.equal(endpoints[site].discovery, 'chrome-cdp', `${site} discovery authority`);
+    assert.equal(endpoints[site].enumerate.method, method, `${site} enumeration method`);
+    assert.equal(endpoints[site].enumerate.url, url, `${site} enumeration endpoint`);
+    assert.ok(Array.isArray(endpoints[site].enumerate.variables), `${site} variables must be sanitized metadata`);
+  });
+
+  const serialized = JSON.stringify(endpoints);
+  assert.doesNotMatch(serialized, /workspaceId|sessionId\"\s*:|authorization|cookie|bearer|164037|07008/i);
+});
+
+test('sanitized network evidence is committed without credentials or account data', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../network-endpoints.sanitized.json', import.meta.url), 'utf8'));
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  const runtimeVersion = source.match(/const SCRIPT_VERSION = '([^']+)'/)?.[1];
+  assert.equal(manifest.release, runtimeVersion);
+  assert.deepEqual(Object.keys(manifest.sites).sort(), ['aar', 'ajwillner', 'auctionninja', 'ebay', 'facebook', 'govdeals', 'hibid']);
+  assert.equal(manifest.policy.rawCapturesCommitted, false);
+  const serialized = JSON.stringify(manifest);
+  assert.doesNotMatch(serialized, /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token)/i);
+  assert.equal(manifest.sites.hibid.sanitizedObservations.every(row => row.expected === row.collected && row.collected === row.unique), true);
+});
+
+test('AJ Willner sanitized Chrome fixture proves exact coverage and rich records', () => {
+  const fixture = JSON.parse(fs.readFileSync(new URL('../fixtures/ajwillner-network.sanitized.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.discovery, 'Chrome DevTools Protocol Network');
+  assert.equal(fixture.rawCaptureCommitted, false);
+  assert.deepEqual(fixture.unfilteredCoverage.pageCounts, [200, 200, 200, 200, 68]);
+  assert.equal(fixture.unfilteredCoverage.expected, 868);
+  assert.equal(fixture.unfilteredCoverage.collected, 868);
+  assert.equal(fixture.unfilteredCoverage.uniqueStableIds, 868);
+  assert.equal(fixture.unfilteredCoverage.duplicateStableIds, 0);
+  assert.equal(fixture.unfilteredCoverage.recordsWithDescriptions, 868);
+  assert.equal(fixture.unfilteredCoverage.recordsWithImages, 868);
+  assert.equal(fixture.filteredCoverage.expected, fixture.filteredCoverage.collected);
+  assert.equal(fixture.filteredCoverage.collected, fixture.filteredCoverage.uniqueStableIds);
+  assert.doesNotMatch(JSON.stringify(fixture), /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token|contact_email|contact_phone)/i);
+});
+
+test('AuctionNinja sanitized Chrome fixture proves public contracts and labels account probes honestly', () => {
+  const fixture = JSON.parse(fs.readFileSync(new URL('../fixtures/auctionninja-network.sanitized.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.capture.authority, 'Chrome DevTools Protocol Network and Runtime');
+  assert.equal(fixture.capture.rawCaptureCommitted, false);
+  assert.deepEqual(fixture.saleCatalog.pages.map(page => page.count), [20, 20, 20, 20, 20, 6]);
+  assert.equal(fixture.saleCatalog.expectedTotal, 106);
+  assert.equal(fixture.saleCatalog.coverage.collected, fixture.saleCatalog.coverage.unique);
+  assert.deepEqual(fixture.category.pageCounts, [20, 20, 20, 20, 14]);
+  assert.equal(fixture.category.expectedTotal, 94);
+  assert.deepEqual(fixture.auctionSearch.pageCounts, [12, 12, 12, 12, 12, 12, 12, 12, 12, 10]);
+  assert.equal(fixture.auctionSearch.expectedTotal, 118);
+  assert.equal(fixture.auctionSearch.coverage.collected, fixture.auctionSearch.coverage.unique);
+  assert.equal(fixture.auctionSearch.scopeRejection.promotionalShippingCardsOutsideResultContainer, 12);
+  assert.equal(fixture.accountRoutes.coverageStatus, 'no-authenticated-account-coverage-committed');
+  assert.equal(fixture.accountRoutes.nonEmptyCoverageCommitted, false);
+  assert.deepEqual(fixture.accountRoutes.explicitZeroObserved, []);
+  assert.deepEqual(fixture.accountRoutes.historicalUiZeroLabelsNotAcceptedAsFixtureProof, ['items-won', 'bid-history']);
+  assert.deepEqual(fixture.accountRoutes.unprovenEmptyRejected, ['followed-items']);
+  assert.doesNotMatch(JSON.stringify(fixture), /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token|@gmail|\b\d{3}[-.) ]\d{3}[-. ]\d{4}\b)/i);
+});
+
+test('AAR sanitized Chrome fixture proves exact servlet and settled-calendar coverage', () => {
+  const fixture = JSON.parse(fs.readFileSync(new URL('../fixtures/aar-network.sanitized.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.captureAuthority, 'Chrome DevTools Protocol Network and Runtime inspection');
+  assert.equal(fixture.rawCaptureCommitted, false);
+  assert.equal(fixture.calendar.collected, fixture.calendar.uniqueAuctionIds);
+  assert.equal(fixture.calendar.settledBottom, true);
+  assert.equal(fixture.calendar.stableCycles >= 2, true);
+  fixture.catalogs.forEach(catalog => {
+    assert.equal(catalog.advertisedTotal, catalog.collected);
+    assert.equal(catalog.collected, catalog.uniqueItemIds);
+  });
+  assert.equal(fixture.filteredCatalog.filteredCollected, fixture.filteredCatalog.uniqueItemIds);
+  assert.equal(fixture.detailEvidence.every(row => row.descriptionPresent && row.largeImageCount > 0 && row.responseIdentityMatches), true);
+  assert.equal(fixture.releaseValidation.unfilteredCatalog.expected, fixture.releaseValidation.unfilteredCatalog.copied);
+  assert.equal(fixture.releaseValidation.unfilteredCatalog.copied, fixture.releaseValidation.unfilteredCatalog.uniqueItemIds);
+  assert.equal(fixture.releaseValidation.unfilteredCatalog.detailsRequested, fixture.releaseValidation.unfilteredCatalog.detailsSucceeded);
+  assert.equal(fixture.releaseValidation.filteredCatalog.expected, fixture.releaseValidation.filteredCatalog.copied);
+  assert.equal(fixture.releaseValidation.filteredCatalog.copied, fixture.releaseValidation.filteredCatalog.uniqueItemIds);
+  assert.equal(fixture.releaseValidation.filteredCatalog.broadAuctionTotalIgnored, 80);
+  assert.equal(fixture.releaseValidation.calendar.copied, fixture.releaseValidation.calendar.uniqueAuctionIds);
+  assert.equal(fixture.releaseValidation.historicalItem.identityMatches, true);
+  assert.equal(fixture.releaseValidation.bidderAliasLeakCount, 0);
+  assert.equal(fixture.privacy.bidderAliasesCommitted, false);
+  assert.doesNotMatch(JSON.stringify(fixture), /(?:bearer\s+|set-cookie|password|access[_-]?token|refresh[_-]?token|private-bidder-alias)/i);
+});
+
+test('assistant parses HiBid showing totals and safe next-page controls', () => {
+  const core = loadCore();
+  const next = makeElement({ text: 'Next >', attrs: { href: '?apage=2' } });
+  const bid = makeElement({ text: 'Bid 170.00 USD' });
+  const root = {
+    body: { textContent: 'Showing 1 to 100 of 222 lots' },
+    documentElement: { textContent: 'Showing 1 to 100 of 222 lots' },
+    createTreeWalker: () => null,
+    querySelectorAll(selector) {
+      if (selector.includes('button') || selector.includes('a[href]')) return [bid, next];
+      return [];
+    },
+  };
+
+  assert.equal(core.getExpectedLotTotal(root), 222);
+  assert.equal(core.findCatalogNextPageButton(root), next);
+});
+
+test('assistant extracts enriched lots from embedded HiBid Apollo state', () => {
+  const core = loadCore();
+  const state = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 222,
+          filteredCount: 222,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:4432i' }],
+        },
+      },
+    },
+    'Lot:4432i': {
+      id: '307763539',
+      lotNumber: '4432i',
+      lead: '$499 NEW! MONSTER GI30 PRO HIGH POWER 2000W BLUETOOTH',
+      description: '<p>Factory sealed speaker</p>',
+      featuredPicture: { thumbnailLocation: 'https://cdn.example.test/4432i.jpg' },
+      pictureCount: 3,
+      auction: { __ref: 'Auction:123' },
+      lotState: {
+        highBid: 165,
+        minBid: 170,
+        bidCount: 28,
+        status: 'OPEN',
+        timeLeft: '9h 39m',
+        isWatching: true,
+      },
+    },
+    'Auction:123': {
+      id: '123',
+      title: 'Overstock Product Liquidation NJ W27',
+      buyerPremium: '15%',
+    },
+  };
+
+  const result = core.extractHibidApolloLots(state, {
+    url: 'https://hibid.com/newjersey/lots/40196/computers-and-electronics',
+  });
+
+  assert.equal(result.expectedTotal, 222);
+  assert.equal(result.source, 'hibid-state');
+  assert.deepEqual(plain(result.items), [
+    {
+      id: '307763539',
+      lot: '4432i',
+      title: '$499 NEW! MONSTER GI30 PRO HIGH POWER 2000W BLUETOOTH',
+      url: 'https://hibid.com/lot/307763539/4432i',
+      image: 'https://cdn.example.test/4432i.jpg',
+      highBid: 'High Bid: 165.00 USD',
+      highBidAmount: 165,
+      currentPrice: 165,
+      currentBid: 165,
+      nextBid: 'Bid 170.00 USD',
+      nextBidAmount: 170,
+      bidCount: '28 Bids',
+      bidCountNumber: 28,
+      timeLeft: '9h 39m',
+      status: 'OPEN',
+      userBidStatus: '',
+      isWinning: false,
+      isOutbid: false,
+      watched: true,
+      pictureCount: 3,
+      description: 'Factory sealed speaker',
+      auctionTitle: 'Overstock Product Liquidation NJ W27',
+      buyerPremium: '15%',
+    },
+  ]);
+});
+
+test('assistant extracts AJ Willner virtual-list cards as catalog lots', () => {
+  const core = loadCore();
+  const link = makeFakeNode({
+    text: '#32 \u2022 Rowe "Moore" Upholstered Sofa',
+    attrs: { href: '/ui/auctions/164037/24887841' },
+  });
+  const title = makeFakeNode({ text: '#32 \u2022 Rowe "Moore" Upholstered Sofa' });
+  const description = makeFakeNode({
+    text: 'Quantity: 1\nDimensions: 93W x 40D x 33H\nMSRP: $4,639',
+  });
+  const bid = makeFakeNode({ text: 'High bid $100' });
+  const status = makeFakeNode({ text: 'ENDS 4d 10h 18min' });
+  const image = makeFakeNode({ attrs: { src: 'https://images.example.test/sofa.jpg' } });
+  const card = makeFakeNode({
+    text: 'ENDS 4d 10h 18min #32 \u2022 Rowe "Moore" Upholstered Sofa Quantity: 1 Dimensions: 93W x 40D x 33H MSRP: $4,639 High bid $100',
+    attrs: { 'data-testid': 'list-item-24887841' },
+    selectors: {
+      '.titleLink[href]': link,
+      '.titleLink h1': title,
+      '.description': description,
+      '.bidsLine': bid,
+      '[data-testid="list-item-24887841-status-stripe"]': status,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: '866 items found in Active',
+    selectors: {
+      '[data-testid^="list-item-"]': [card],
+    },
+  });
+
+  const lots = core.extractAjWillnerVisibleListings(root, new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active'));
+
+  assert.deepEqual(plain(lots), [
+    {
+      source: 'ajwillner',
+      id: '24887841',
+      lot: '32',
+      title: 'Rowe "Moore" Upholstered Sofa',
+      url: 'https://bid.ajwillnerauctions.com/ui/auctions/164037/24887841',
+      image: 'https://images.example.test/sofa.jpg',
+      description: 'Quantity: 1 Dimensions: 93W x 40D x 33H MSRP: $4,639',
+      highBid: 'High bid $100',
+      highBidAmount: 100,
+      currentPrice: 100,
+      currentBid: 100,
+      nextBid: '',
+      nextBidAmount: null,
+      bidCount: '',
+      bidCountNumber: null,
+      timeLeft: '4d 10h 18min',
+      status: 'ENDS 4d 10h 18min',
+      userBidStatus: '',
+      isWinning: false,
+      isOutbid: false,
+      watched: false,
+      rawText: 'ENDS 4d 10h 18min #32 \u2022 Rowe "Moore" Upholstered Sofa Quantity: 1 Dimensions: 93W x 40D x 33H MSRP: $4,639 High bid $100',
+    },
+  ]);
+});
+
+test('assistant builds AJ Willner API search URLs from the active page filters', () => {
+  const core = loadCore();
+  const activeUrl = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');
+  const activeApi = new URL(core.ajWillnerSearchApiUrl(activeUrl, 2, 200));
+
+  assert.equal(activeApi.origin, 'https://bid.ajwillnerauctions.com');
+  assert.equal(activeApi.pathname, '/api/items/search');
+  assert.equal(activeApi.searchParams.get('auction_id'), '164037');
+  assert.equal(activeApi.searchParams.get('category'), 'All');
+  assert.equal(activeApi.searchParams.get('page'), '2');
+  assert.equal(activeApi.searchParams.get('per_page'), '200');
+  assert.equal(activeApi.searchParams.get('exact_category_match'), 'true');
+  assert.equal(activeApi.searchParams.has('sub_category'), false);
+
+  const filteredUrl = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=Sofas&subCategory=Closed&q=chair');
+  const filteredApi = new URL(core.ajWillnerSearchApiUrl(filteredUrl, 3, 50));
+  assert.equal(filteredApi.searchParams.get('category'), 'Sofas');
+  assert.equal(filteredApi.searchParams.get('sub_category'), 'Closed');
+  assert.equal(filteredApi.searchParams.get('query'), 'chair');
+  assert.equal(filteredApi.searchParams.get('page'), '3');
+  assert.equal(filteredApi.searchParams.get('per_page'), '50');
+});
+
+test('assistant normalizes only public AJ Willner auction context fields', () => {
+  const core = loadCore();
+  const loc = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');
+  const context = core.normalizeAjWillnerAuctionContext({
+    id: 164037,
+    name: 'Willow Furniture & Design',
+    simple_description: '<p>Showroom inventory. Buyer\'s premium is 15%.</p>',
+    terms: '<p>All items sold as-is.</p>',
+    location: { street: '230 Route 117 Bypass', city: 'Bedford Hills', state: 'NY', zip: '10507', country: 'US' },
+    published_items_count: 868,
+    items_count: 868,
+    scheduled_end_time: '2026-07-14T15:00:00Z',
+    status: 'complete',
+    contact_email: 'must-not-export@example.test',
+    contact_phone: '555-0100',
+  }, loc);
+
+  assert.deepEqual(plain(context), {
+    source: 'ajwillner',
+    pageKind: 'catalog',
+    auctionId: '164037',
+    auctionTitle: 'Willow Furniture & Design',
+    catalogUrl: loc.href,
+    location: '230 Route 117 Bypass, Bedford Hills, NY, 10507, US',
+    description: "Showroom inventory. Buyer's premium is 15%.",
+    terms: 'All items sold as-is.',
+    buyerPremium: '15%',
+    startsAt: '',
+    scheduledEndTime: '2026-07-14T15:00:00Z',
+    status: 'complete',
+    publishedItemsCount: 868,
+    itemsCount: 868,
+    categoryCounts: [],
+  });
+  assert.doesNotMatch(JSON.stringify(context), /must-not-export|555-0100/);
+});
+
+test('assistant normalizes AJ Willner API lots with compact descriptions', () => {
+  const core = loadCore();
+  const item = {
+    id: 24887841,
+    auction_id: 164037,
+    auction_name: 'Overstock Product Liquidation NJ W27',
+    lot_identifier: '32',
+    name: 'Rowe "Moore" Upholstered Sofa',
+    name_with_prefix: '#32 Rowe "Moore" Upholstered Sofa',
+    description: '<p>Quantity: 1</p><p>Dimensions: 93W x 40D x 33H</p><strong>Terms of Sale</strong><p>Everything repeats forever.</p>',
+    description_without_html: 'Quantity: 1 Dimensions: 93W x 40D x 33H Terms of Sale Everything repeats forever.',
+    images: [
+      { lg: 'https://images.example.test/sofa-large.jpg', sm: 'https://images.example.test/sofa-small.jpg' },
+      { xl: 'https://images.example.test/sofa-detail.jpg' },
+    ],
+    api_bidding_state: {
+      high: { amount: 650 },
+      ask_amount: 700,
+      accepted_bid_count: 7,
+    },
+    status: 'accepting_bids',
+    main_category: 'Sofas',
+    sub_categories: [{ name: 'Upholstered' }],
+    location: { city: 'Bedford Hills', state: 'NY', zip: '10507' },
+    quantity: 1,
+    start_amount: 500,
+    bidding_configuration: { start_amount: 500, low_estimate: 1200, high_estimate: 1800 },
+    custom_buyers_premium_amount: 15,
+    scheduled_end_time: '2026-07-17T23:00:00Z',
+    currency_symbol: '$',
+  };
+
+  const lot = core.normalizeAjWillnerApiItem(item, new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active'));
+
+  assert.deepEqual(plain(lot), {
+    source: 'ajwillner',
+    id: '24887841',
+    auctionId: '164037',
+    lot: '32',
+    title: 'Rowe "Moore" Upholstered Sofa',
+    url: 'https://bid.ajwillnerauctions.com/ui/auctions/164037/24887841',
+    image: 'https://images.example.test/sofa-large.jpg',
+    images: ['https://images.example.test/sofa-large.jpg', 'https://images.example.test/sofa-detail.jpg'],
+    imageCount: 2,
+    description: 'Quantity: 1 Dimensions: 93W x 40D x 33H',
+    descriptionHtml: '<p>Quantity: 1</p><p>Dimensions: 93W x 40D x 33H</p><strong>Terms of Sale</strong><p>Everything repeats forever.</p>',
+    highBid: 'High bid $650',
+    highBidAmount: 650,
+    currentPrice: 650,
+    currentBid: 650,
+    nextBid: 'Bid $700',
+    nextBidAmount: 700,
+    bidCount: '7 Bids',
+    bidCountNumber: 7,
+    timeLeft: '',
+    status: 'accepting bids',
+    userBidStatus: '',
+    isWinning: false,
+    isOutbid: false,
+    watched: false,
+    quantity: 1,
+    category: 'Sofas',
+    categoryPath: ['Sofas', 'Upholstered'],
+    location: 'Bedford Hills, NY, 10507',
+    startAmount: 500,
+    estimateLow: 1200,
+    estimateHigh: 1800,
+    buyerPremiumAmount: 15,
+    auctionTitle: 'Overstock Product Liquidation NJ W27',
+    scheduledEndTime: '2026-07-17T23:00:00Z',
+    rawText: '#32 Rowe "Moore" Upholstered Sofa Quantity: 1 Dimensions: 93W x 40D x 33H High bid $650 7 Bids accepting bids',
+  });
+});
+
+test('assistant scrapes AJ Willner through paged API before virtual scrolling', async () => {
+  const requests = [];
+  const core = loadCore({
+    fetch: async (href) => {
+      const url = new URL(href);
+      requests.push(url);
+      if (url.pathname === '/api/auctions/164037') {
+        assert.equal(url.searchParams.get('include_items_data'), 'false');
+        return {
+          ok: true,
+          json: async () => ({
+            id: 164037,
+            name: 'Willow Furniture & Design',
+            published_items_count: 2,
+            items_count: 2,
+            location: { city: 'Bedford Hills', state: 'NY', zip: '10507' },
+            simple_description: 'Showroom inventory',
+          }),
+        };
+      }
+      const page = Number(url.searchParams.get('page'));
+      assert.equal(url.pathname, '/api/items/search');
+      assert.equal(url.searchParams.get('auction_id'), '164037');
+      assert.equal(url.searchParams.get('category'), 'All');
+      assert.equal(url.searchParams.get('per_page'), page === 1 ? '200' : '1');
+      const base = {
+        total: 2,
+        per_page: 1,
+        page,
+      };
+      return {
+        ok: true,
+        json: async () => ({
+          ...base,
+          items: page === 1
+            ? [{
+                id: '1',
+                auction_id: '164037',
+                lot_identifier: '2',
+                name: 'Second lot',
+                description_without_html: 'Second description Terms of Sale Extra.',
+                api_bidding_state: { high: { amount: 20 }, ask_amount: 25, accepted_bid_count: 2 },
+              }]
+            : [{
+                id: '2',
+                auction_id: '164037',
+                lot_identifier: '1',
+                name: 'First lot',
+                description_without_html: 'First description',
+                api_bidding_state: { high: { amount: 10 }, ask_amount: 15, accepted_bid_count: 1 },
+              }],
+        }),
+      };
+    },
+  });
+  const statuses = [];
+  const result = await core.scrapeAjWillnerApiListings(
+    (message) => statuses.push(message),
+    () => false,
+    makeFakeNode({ text: '2 items found in Active' }),
+    new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+  );
+
+  assert.equal(result.source, 'ajwillner-api');
+  assert.equal(result.expectedTotal, 2);
+  assert.equal(result.items.length, 2);
+  assert.equal(result.incomplete, false);
+  assert.equal(result.stopReason, 'api-complete');
+  assert.equal(result.coverage.proofTier, 'api-exact');
+  assert.equal(result.coverage.bootstrapExpectedTotal, 2);
+  assert.equal(result.context.auctionTitle, 'Willow Furniture & Design');
+  assert.equal(result.context.location, 'Bedford Hills, NY, 10507');
+  assert.equal(result.pageSteps, 2);
+  assert.deepEqual(plain(result.items.map(item => item.lot)), ['1', '2']);
+  assert.deepEqual(plain(result.items.map(item => item.title)), ['First lot', 'Second lot']);
+  assert.equal(result.items[1].description, 'Second description');
+  assert.deepEqual(plain(requests.filter(url => url.pathname === '/api/items/search').map(url => url.searchParams.get('page'))), ['1', '2']);
+  assert.ok(statuses.some(message => /AJ Willner API page 1/i.test(message)));
+  assert.ok(statuses.some(message => /AJ Willner API page 2\/2/i.test(message)));
+});
+
+test('assistant rejects AJ Willner unfiltered API totals that disagree with auction bootstrap', async () => {
+  const core = loadCore({
+    fetch: async (href) => {
+      const url = new URL(href);
+      if (url.pathname.startsWith('/api/auctions/')) {
+        return { ok: true, json: async () => ({ id: 164037, name: 'Mismatch Auction', published_items_count: 2, items_count: 2 }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          total: 1,
+          per_page: 200,
+          page: 1,
+          items: [{ id: '1', auction_id: '164037', lot_identifier: '1', name: 'Only API lot', description_without_html: 'Complete description' }],
+        }),
+      };
+    },
+  });
+  const result = await core.scrapeAjWillnerApiListings(
+    () => {},
+    () => false,
+    makeFakeNode({ text: '2 items found in Active' }),
+    new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+  );
+
+  assert.equal(result.incomplete, true);
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.stopReason, 'bootstrap-total-mismatch');
+  assert.equal(result.coverage.expectedTotal, 1);
+  assert.equal(result.coverage.bootstrapExpectedTotal, 2);
+});
+
+test('assistant never certifies AJ Willner API data without an authoritative search total', async () => {
+  const core = loadCore({
+    fetch: async (href) => {
+      const url = new URL(href);
+      if (url.pathname.startsWith('/api/auctions/')) {
+        return { ok: true, json: async () => ({ id: 164037, name: 'No-total Auction', published_items_count: 1 }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          page: 1,
+          per_page: 200,
+          items: [{ id: '1', auction_id: '164037', lot_identifier: '1', name: 'Unproven lot', description_without_html: 'Description' }],
+        }),
+      };
+    },
+  });
+  const route = { kind: 'catalog', source: 'ajwillner', auctionId: '164037' };
+  const result = await core.scrapeAjWillnerApiListings(
+    () => {},
+    () => false,
+    makeFakeNode({ text: '1 item found in Active' }),
+    new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+  );
+
+  assert.equal(result.incomplete, true);
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.stopReason, 'authoritative-total-unavailable');
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', route)), {
+    ok: false,
+    reason: 'catalog-incomplete',
+  });
+});
+
+test('assistant aborts an in-flight AJ Willner request when Stop is pressed', async () => {
+  let stopped = false;
+  let aborted = 0;
+  const core = loadCore({
+    fetch: async (_href, options = {}) => new Promise((resolve, reject) => {
+      options.signal?.addEventListener('abort', () => {
+        aborted += 1;
+        reject(new Error('aborted'));
+      }, { once: true });
+    }),
+  });
+  setTimeout(() => { stopped = true; }, 20);
+
+  await assert.rejects(
+    core.scrapeAjWillnerApiListings(
+      () => {},
+      () => stopped,
+      makeFakeNode({ text: '868 items found in Active' }),
+      new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+    ),
+    /stopped|aborted/i
+  );
+  assert.ok(aborted >= 1);
+});
+
+test('assistant retries an HTTP-200 short AJ Willner page before certifying coverage', async () => {
+  let searchCalls = 0;
+  const core = loadCore({
+    fetch: async (href) => {
+      const url = new URL(href);
+      if (url.pathname.startsWith('/api/auctions/')) {
+        return { ok: true, json: async () => ({ id: 164037, published_items_count: 2, items_count: 2 }) };
+      }
+      searchCalls += 1;
+      const complete = searchCalls > 1;
+      return {
+        ok: true,
+        json: async () => ({
+          total: 2,
+          page: 1,
+          per_page: 200,
+          items: [
+            { id: '1', auction_id: '164037', lot_identifier: '1', name: 'First', description_without_html: 'First description' },
+            ...(complete ? [{ id: '2', auction_id: '164037', lot_identifier: '2', name: 'Second', description_without_html: 'Second description' }] : []),
+          ],
+        }),
+      };
+    },
+  });
+  const result = await core.scrapeAjWillnerApiListings(
+    () => {},
+    () => false,
+    makeFakeNode({ text: '2 items found in Active' }),
+    new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+  );
+
+  assert.equal(searchCalls, 2);
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.items.length, 2);
+});
+
+test('assistant rejects duplicate AJ Willner IDs and route drift', async () => {
+  const activeLocation = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');
+  let searchReturned = false;
+  const core = loadCore({
+    location: activeLocation,
+    fetch: async (href) => {
+      const url = new URL(href);
+      if (url.pathname.startsWith('/api/auctions/')) {
+        return { ok: true, json: async () => ({ id: 164037, published_items_count: 2, items_count: 2 }) };
+      }
+      const payload = {
+        total: 2,
+        page: 1,
+        per_page: 200,
+        items: [
+          { id: 'same', auction_id: '164037', lot_identifier: '1', name: 'First duplicate', description_without_html: 'First description' },
+          { id: 'same', auction_id: '164037', lot_identifier: '2', name: 'Second duplicate', description_without_html: 'Second description' },
+        ],
+      };
+      if (!searchReturned) {
+        searchReturned = true;
+        activeLocation.searchParams.set('q', 'changed-during-scrape');
+      }
+      return { ok: true, json: async () => payload };
+    },
+  });
+  const result = await core.scrapeAjWillnerApiListings(
+    () => {},
+    () => false,
+    makeFakeNode({ text: '2 items found in Active' }),
+    activeLocation
+  );
+
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.coverage.routeMatches, false);
+  assert.deepEqual(plain(result.coverage.duplicateIds), ['same']);
+  assert.equal(result.stopReason, 'route-fingerprint-changed');
+});
+
+test('assistant rejects an unproven AJ Willner DOM card after API failure', async () => {
+  const link = makeFakeNode({ text: '#1 \u2022 Unproven chair', attrs: { href: '/ui/auctions/164037/1001' } });
+  const title = makeFakeNode({ text: '#1 \u2022 Unproven chair' });
+  const card = makeFakeNode({
+    text: '#1 \u2022 Unproven chair High bid $10',
+    attrs: { 'data-testid': 'list-item-1001' },
+    selectors: {
+      '.titleLink[href]': link,
+      '.titleLink h1': title,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Auction listings',
+    selectors: { '[data-testid^="list-item-"]': [card] },
+  });
+  const core = loadCore({
+    fetch: async () => ({ ok: false, status: 400, json: async () => ({}) }),
+  });
+  const route = { kind: 'catalog', source: 'ajwillner', auctionId: '164037' };
+  const result = await core.scrapeAjWillnerListings(
+    () => {},
+    () => false,
+    root,
+    new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active')
+  );
+
+  assert.equal(result.source, 'ajwillner-visible-dom');
+  assert.equal(result.items.length, 1);
+  assert.equal(result.incomplete, true);
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.stopReason, 'unproven-visible-dom');
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', route)), {
+    ok: false,
+    reason: 'catalog-incomplete',
+  });
+});
+
+test('assistant uses an overlapping AJ Willner virtual-scroll stride', () => {
+  const core = loadCore();
+  assert.equal(core.getAjWillnerScrollStepSize({ clientHeight: 857 }), 360);
+  assert.equal(core.getAjWillnerScrollStepSize({ clientHeight: 300 }), 180);
+});
+
+test('assistant ignores stray Apollo lot connections when visible total identifies the main list', () => {
+  const core = loadCore();
+  const state = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 222,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:main' }],
+        },
+      },
+      'featuredLotSearch({"limit":100})': {
+        pagedResults: {
+          totalCount: 999,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:stray' }],
+        },
+      },
+    },
+    'Lot:main': {
+      id: 'main',
+      lotNumber: '4432i',
+      lead: 'Real visible category lot',
+      lotState: { highBid: 10, minBid: 12.5, bidCount: 2, status: 'OPEN' },
+    },
+    'Lot:stray': {
+      id: 'stray',
+      lotNumber: '999',
+      lead: 'Featured stray lot',
+      lotState: { highBid: 99, minBid: 100, bidCount: 9, status: 'OPEN' },
+    },
+  };
+
+  const result = core.extractHibidApolloLots(state, {
+    url: 'https://hibid.com/newjersey/lots/40196/computers-and-electronics',
+    expectedTotal: 222,
+  });
+
+  assert.equal(result.expectedTotal, 222);
+  assert.deepEqual(plain(result.items.map(lot => lot.id)), ['main']);
+});
+
+test('assistant prefers page-bound Apollo connections on unfiltered catalogs', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/761410/great-deals-overstock---liquidation---returns-w29');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 to 100 of 483 lots' },
+    documentElement: { textContent: 'Showing 1 to 100 of 483 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  }, loc);
+  const state = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 455,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:stale' }],
+        },
+      },
+      'lotSearch({"input":{"eventItemIds":[1,2],"sortOrder":"LOT_NUMBER"},"pageLength":2,"pageNumber":1})': {
+        pagedResults: {
+          totalCount: 2,
+          pageLength: 2,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:page-bound' }],
+        },
+      },
+    },
+    'Lot:stale': {
+      id: 'stale',
+      lotNumber: '900',
+      lead: 'Unrelated stale lot',
+      lotState: { highBid: 99, minBid: 100, bidCount: 1, status: 'OPEN' },
+    },
+    'Lot:page-bound': {
+      id: 'page-bound',
+      lotNumber: '1',
+      lead: 'Visible page-bound lot',
+      lotState: { highBid: 10, minBid: 12, bidCount: 1, status: 'OPEN' },
+    },
+  };
+
+  const result = core.extractHibidApolloLots(state, {
+    url: loc.href,
+    expectedTotal: visibleState.expectedTotal,
+    visibleState,
+  });
+
+  assert.deepEqual(plain(result.items.map(lot => lot.id)), ['page-bound']);
+  assert.equal(result.expectedTotal, 483);
+});
+
+test('assistant rejects an Apollo connection that exceeds the visible unfiltered page total', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/765261/collectibles--music--toys-and-vintage-finds-auction');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 - 100 of 618 lots' },
+    documentElement: { textContent: 'Showing 1 - 100 of 618 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  }, loc);
+  const state = {
+    ROOT_QUERY: {
+      'lotSearch({"input":{"eventItemIds":[1,2,3],"sortOrder":"LOT_NUMBER"},"pageLength":3,"pageNumber":1})': {
+        pagedResults: {
+          totalCount: 1236,
+          pageLength: 3,
+          pageNumber: 1,
+          results: [
+            { __ref: 'Lot:one' },
+            { __ref: 'Lot:two' },
+            { __ref: 'Lot:three' },
+          ],
+        },
+      },
+    },
+    'Lot:one': { id: 'one', lotNumber: '1', lead: 'First lot' },
+    'Lot:two': { id: 'two', lotNumber: '2', lead: 'Second lot' },
+    'Lot:three': { id: 'three', lotNumber: '3', lead: 'Third lot' },
+  };
+
+  const result = core.extractHibidApolloLots(state, {
+    url: loc.href,
+    expectedTotal: visibleState.expectedTotal,
+    visibleState,
+  });
+
+  assert.equal(visibleState.expectedTotal, 618);
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(result.rejectedSource, 'visible-total-mismatch');
+  assert.equal(result.stopReason, 'visible-total-mismatch');
+});
+
+test('assistant derives HiBid paginated DOM page size from the visible range', () => {
+  const core = loadCore();
+  const root = {
+    body: { textContent: 'Showing 1 - 100 of 618 lots' },
+    documentElement: { textContent: 'Showing 1 - 100 of 618 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  assert.equal(core.hibidCatalogPageSize(root), 100);
+});
+
+test('assistant rejects ambiguous unfiltered Apollo state instead of exporting a broad connection', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/761410/great-deals-overstock---liquidation---returns-w29');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 to 100 of 483 lots' },
+    documentElement: { textContent: 'Showing 1 to 100 of 483 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  }, loc);
+  const result = core.extractHibidApolloLots({
+    ROOT_QUERY: {
+      'featuredLotSearch({"limit":100})': {
+        pagedResults: {
+          totalCount: 455,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:stale' }],
+        },
+      },
+    },
+    'Lot:stale': {
+      id: 'stale',
+      lotNumber: '900',
+      lead: 'Unrelated stale lot',
+      lotState: { highBid: 99, minBid: 100, bidCount: 1, status: 'OPEN' },
+    },
+  }, {
+    url: loc.href,
+    expectedTotal: visibleState.expectedTotal,
+    visibleState,
+  });
+
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(result.rejectedSource, 'ambiguous-unfiltered-state');
+});
+
+test('assistant fails closed when filtered HiBid page has no matches but Apollo has broad catalog data', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');
+  const root = {
+    body: { textContent: 'Quick Search No matches found. Try adjusting your filters or Browse All Lots' },
+    documentElement: { textContent: 'Quick Search No matches found. Try adjusting your filters or Browse All Lots' },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const visibleState = core.extractHibidVisiblePageState(root, loc);
+  const apolloState = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 455,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:card' }, { __ref: 'Lot:jewelry' }],
+        },
+      },
+    },
+    'Lot:card': {
+      id: 'card',
+      lotNumber: '236',
+      lead: '2004 Topps Chrome #55 Rose/Lebron /500 PSA 8!',
+      lotState: { highBid: 175, minBid: 180, bidCount: 12, status: 'OPEN' },
+    },
+    'Lot:jewelry': {
+      id: 'jewelry',
+      lotNumber: '27003',
+      lead: 'Curb Link Bracelet in 14k Yellow Gold',
+      lotState: { highBid: 1975, minBid: 2000, bidCount: 33, status: 'OPEN' },
+    },
+  };
+
+  assert.equal(visibleState.noMatches, true);
+  assert.equal(visibleState.hasActiveFilters, true);
+  assert.deepEqual(plain(visibleState.filters), { g: '-1', q: 'lebron' });
+
+  const result = core.extractHibidApolloLots(apolloState, {
+    url: loc.href,
+    visibleState,
+  });
+
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(result.expectedTotal, 0);
+  assert.equal(result.rejectedSource, 'filter-mismatch');
+});
+
+test('assistant uses filtered HiBid Apollo connection when it matches active search text', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');
+  const root = {
+    body: { textContent: 'Quick Search lebron' },
+    documentElement: { textContent: 'Quick Search lebron' },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const visibleState = core.extractHibidVisiblePageState(root, loc);
+  const apolloState = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 455,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:jewelry' }],
+        },
+      },
+      'lotSearch({"q":"lebron","g":"-1","apage":1})': {
+        pagedResults: {
+          totalCount: 1,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:lebron' }],
+        },
+      },
+    },
+    'Lot:jewelry': {
+      id: 'jewelry',
+      lotNumber: '27003',
+      lead: 'Curb Link Bracelet in 14k Yellow Gold',
+      lotState: { highBid: 1975, minBid: 2000, bidCount: 33, status: 'OPEN' },
+    },
+    'Lot:lebron': {
+      id: 'lebron',
+      lotNumber: '236',
+      lead: '2004 Topps Chrome #55 Rose/Lebron /500 PSA 8!',
+      lotState: { highBid: 175, minBid: 180, bidCount: 12, status: 'OPEN' },
+    },
+  };
+
+  const result = core.extractHibidApolloLots(apolloState, {
+    url: loc.href,
+    visibleState,
+  });
+
+  assert.equal(result.expectedTotal, 1);
+  assert.deepEqual(plain(result.items.map(lot => lot.id)), ['lebron']);
+});
+
+test('assistant accepts HiBid lots pages whose filtered Apollo key is eventItemIds-based', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&zip=Carteret,%20NJ%2007008,%20USA&miles=-1&countryname=United%20States&shippingoffered=true&status=OPEN&status=UPCOMING&status=CLOSING_TODAY&s=TIME_LEFT');
+  const root = {
+    body: { textContent: 'Results for gaming pc Showing 1 - 15 of 15 lots' },
+    documentElement: { textContent: 'Results for gaming pc Showing 1 - 15 of 15 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const visibleState = core.extractHibidVisiblePageState(root, loc);
+  assert.equal(core.getExpectedLotTotal(root), 15);
+  assert.equal(visibleState.expectedTotal, 15);
+  assert.deepEqual(plain(visibleState.filters), {
+    q: 'gaming pc',
+    zip: 'Carteret, NJ 07008, USA',
+    miles: '-1',
+    countryname: 'United States',
+    shippingoffered: 'true',
+    status: ['OPEN', 'UPCOMING', 'CLOSING_TODAY'],
+    s: 'TIME_LEFT',
+  });
+  const refs = Array.from({ length: 15 }, (_, index) => ({ __ref: `Lot:gaming-${index}` }));
+  const apolloState = {
+    ROOT_QUERY: {
+      'lotSearch({"input":{"auctionId":null,"eventItemIds":[...],"sortOrder":"TIME_LEFT","status":"ALL"},"pageLength":15,"pageNumber":1,"sortDirection":"DESC"})': {
+        results: refs,
+        pageLength: 15,
+        pageNumber: 1,
+      },
+    },
+  };
+  refs.forEach((ref, index) => {
+    apolloState[ref.__ref] = {
+      id: `gaming-${index}`,
+      lotNumber: String(index + 1),
+      lead: index === 0 ? 'Gaming PC Desktop Computer' : `Gaming PC Component ${index}`,
+      lotState: { highBid: index, minBid: index + 1, bidCount: index, status: 'OPEN' },
+    };
+  });
+
+  const result = core.extractHibidApolloLots(apolloState, {
+    url: loc.href,
+    expectedTotal: visibleState.expectedTotal,
+    visibleState,
+  });
+
+  assert.equal(result.rejectedSource, '');
+  assert.equal(result.expectedTotal, 15);
+  assert.equal(result.items.length, 15);
+});
+
+test('assistant counts filtered HiBid cards by canonical event-item ID instead of nested card descendants', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc');
+  const ownerDocument = { defaultView: null };
+  const canonicalTiles = Array.from({ length: 6 }, (_value, index) => ({
+    id: `lot-${500 + index}`,
+    ownerDocument,
+    textContent: `Lot ${index + 1} | Gaming PC ${index + 1}`,
+    querySelector(selector) {
+      if (String(selector).includes('a[href*="/lot/"]')) {
+        return { getAttribute: () => `/lot/${500 + index}/gaming-pc-${index + 1}` };
+      }
+      return null;
+    },
+  }));
+  const nestedCards = Array.from({ length: 6 }, (_value, index) => ({
+    id: '',
+    ownerDocument,
+    textContent: `Lot ${index + 1}`,
+    querySelector(selector) {
+      if (String(selector).includes('lot-number')) return { textContent: `Lot ${index + 1}` };
+      return null;
+    },
+  }));
+  const root = {
+    body: { textContent: 'Results for gaming pc Showing 1 to 6 of 6 lots' },
+    documentElement: { textContent: 'Results for gaming pc Showing 1 to 6 of 6 lots' },
+    querySelectorAll(selector) {
+      if (selector === 'app-lot-tile[id^="lot-"]') return canonicalTiles;
+      return [...canonicalTiles, ...nestedCards];
+    },
+  };
+
+  const visibleState = core.extractHibidVisiblePageState(root, loc);
+
+  assert.equal(visibleState.visibleLotCount, 6);
+  assert.equal(visibleState.expectedTotal, 6);
+});
+
+test('assistant preserves nested Apollo text fields instead of dropping real HiBid lots', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/lots/40198?q=nested');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Results for nested Showing 1 to 2 of 2 lots' },
+    documentElement: { textContent: 'Results for nested Showing 1 to 2 of 2 lots' },
+    querySelectorAll() { return []; },
+  }, loc);
+  const result = core.extractHibidApolloLots({
+    ROOT_QUERY: {
+      'lotSearch({"q":"nested","apage":1})': {
+        pagedResults: {
+          totalCount: 2,
+          pageLength: 2,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:nested-1' }, { __ref: 'Lot:nested-2' }],
+        },
+      },
+    },
+    'Lot:nested-1': {
+      id: 'nested-1',
+      lotNumber: '1',
+      lead: { text: 'Nested Gaming Desktop' },
+      description: { value: 'Description survives normalization.' },
+      lotState: { highBid: 10, minBid: 12, bidCount: 1, status: { label: 'OPEN' } },
+    },
+    'Lot:nested-2': {
+      id: 'nested-2',
+      lotNumber: '2',
+      title: { name: 'Nested Monitor' },
+      lotState: { highBid: 5, minBid: 7, bidCount: 2, status: { displayValue: 'OPEN' } },
+    },
+  }, { url: loc.href, visibleState });
+
+  assert.equal(result.items.length, 2);
+  assert.deepEqual(plain(result.items.map(item => ({ lot: item.lot, title: item.title }))), [
+    { lot: '1', title: 'Nested Gaming Desktop' },
+    { lot: '2', title: 'Nested Monitor' },
+  ]);
+  assert.equal(result.items[0].description, 'Description survives normalization.');
+});
+
+test('assistant bounds filtered HiBid fallback work and preserves the visible target', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.getHibidScrapeLimits(14)), {
+    expectedTotal: 14,
+    maxDurationMs: 25000,
+    maxSteps: 500,
+  });
+  assert.deepEqual(plain(core.getHibidScrapeLimits(null, { maxDurationMs: 3200, maxSteps: 12 })), {
+    expectedTotal: null,
+    maxDurationMs: 3200,
+    maxSteps: 12,
+  });
+});
+
+test('assistant permits bounded state pagination for large HiBid catalogs', () => {
+  const core = loadCore();
+
+  assert.equal(core.getHibidStateScrapeMaxMs(), 180000);
+});
+
+test('assistant ignores hidden HiBid empty-state templates when visible filtered lots exist', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&miles=50');
+  const root = {
+    body: {
+      innerText: 'Results for gaming pc Showing 1 - 14 of 14 lots Lot 424 Gaming PC Desktop Computer',
+      textContent: 'Results for gaming pc Showing 1 - 14 of 14 lots No matches found. Try adjusting your filters.'
+    },
+    documentElement: {
+      innerText: 'Results for gaming pc Showing 1 - 14 of 14 lots Lot 424 Gaming PC Desktop Computer',
+      textContent: 'Results for gaming pc Showing 1 - 14 of 14 lots No matches found. Try adjusting your filters.'
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+
+  const state = core.extractHibidVisiblePageState(root, loc);
+  assert.equal(state.noMatches, false);
+  assert.equal(state.expectedTotal, 14);
+});
+
+test('assistant ignores a transient HiBid no-match phrase when lot tiles are already hydrating', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/lots/40198/computers-and-electronics?q=gaming%20pc');
+  const tile = {
+    id: 'lot-123',
+    offsetParent: {},
+    textContent: 'Lot 123 | Hydrating gaming item',
+    getClientRects: () => [{ width: 1, height: 1 }],
+    querySelector(selector) {
+      if (selector.includes('/lot/')) return { getAttribute: () => '/lot/123', textContent: '' };
+      return { id: 'lot-link', textContent: '' };
+    },
+    getAttribute() { return ''; }
+  };
+  const root = {
+    body: {
+      innerText: 'No matches found. Try adjusting your filters. Showing 1 - 8 of 8 lots',
+      textContent: 'No matches found. Try adjusting your filters. Showing 1 - 8 of 8 lots'
+    },
+    documentElement: { textContent: 'No matches found. Try adjusting your filters. Showing 1 - 8 of 8 lots' },
+    querySelectorAll() { return [tile]; }
+  };
+
+  const state = core.extractHibidVisiblePageState(root, loc);
+  assert.equal(state.noMatches, false);
+  assert.equal(state.expectedTotal, 8);
+  assert.equal(state.visibleLotCount, 1);
+});
+
+test('assistant rejects ambiguous HiBid Apollo data on active filtered pages', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Quick Search lebron' },
+    documentElement: { textContent: 'Quick Search lebron' },
+    querySelectorAll() {
+      return [];
+    },
+  }, loc);
+  const apolloState = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 455,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:jewelry' }],
+        },
+      },
+    },
+    'Lot:jewelry': {
+      id: 'jewelry',
+      lotNumber: '27003',
+      lead: 'Curb Link Bracelet in 14k Yellow Gold',
+      lotState: { highBid: 1975, minBid: 2000, bidCount: 33, status: 'OPEN' },
+    },
+  };
+
+  const result = core.extractHibidApolloLots(apolloState, {
+    url: loc.href,
+    visibleState,
+  });
+
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(result.rejectedSource, 'filter-mismatch');
+});
+
+test('assistant does not accept broad Apollo totals as proof of search-filter matches', () => {
+  const core = loadCore();
+  const loc = new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron');
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 to 100 of 138 lots Lot 1 Kids Toy Lot 2 Generic Watch' },
+    documentElement: { textContent: 'Showing 1 to 100 of 138 lots Lot 1 Kids Toy Lot 2 Generic Watch' },
+    querySelectorAll() {
+      return [];
+    },
+  }, loc);
+  const apolloState = {
+    ROOT_QUERY: {
+      'lotSearch({"apage":1})': {
+        pagedResults: {
+          totalCount: 138,
+          pageLength: 100,
+          pageNumber: 1,
+          results: [{ __ref: 'Lot:toy' }],
+        },
+      },
+    },
+    'Lot:toy': {
+      id: 'toy',
+      lotNumber: '1',
+      lead: 'Kids Toy',
+      lotState: { highBid: 6, minBid: 8, bidCount: 1, status: 'OPEN' },
+    },
+  };
+
+  const result = core.extractHibidApolloLots(apolloState, {
+    url: loc.href,
+    expectedTotal: 138,
+    visibleState,
+  });
+
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(result.rejectedSource, 'filter-mismatch');
+});
+
+test('assistant rejects contradictory HiBid exports against visible no-match state', () => {
+  const core = loadCore();
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'No matches found. Try adjusting your filters.' },
+    documentElement: { textContent: 'No matches found. Try adjusting your filters.' },
+    querySelectorAll() {
+      return [];
+    },
+  }, new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron'));
+
+  assert.equal(visibleState.noMatches, true);
+  assert.equal(visibleState.expectedTotal, 0);
+  assert.deepEqual(plain(core.validateCatalogExportAgainstVisibleState({
+    source: 'hibid-state',
+    items: [{ id: 'broad', title: 'Broad stale lot' }],
+    expectedTotal: 455,
+  }, visibleState)), {
+    ok: false,
+    reason: 'visible-no-matches-with-exported-lots',
+  });
+});
+
+test('assistant blocks DOM fallback exports when search-filtered lots do not match the query', () => {
+  const core = loadCore();
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 to 100 of 138 lots Lot 1 Kids Toy Lot 2 Generic Watch' },
+    documentElement: { textContent: 'Showing 1 to 100 of 138 lots Lot 1 Kids Toy Lot 2 Generic Watch' },
+    querySelectorAll() {
+      return [];
+    },
+  }, new URL('https://hibid.com/catalog/757032/overstock-product-liquidation-nj-w27---great-deals?g=-1&q=lebron'));
+
+  assert.deepEqual(plain(core.validateCatalogExportAgainstVisibleState({
+    source: 'dom-fallback',
+    items: [{ id: 'toy', title: 'Kids Toy' }],
+    expectedTotal: 138,
+  }, visibleState)), {
+    ok: false,
+    reason: 'filtered-search-results-do-not-match-query',
+  });
+});
+
+test('assistant prefers the deduped visible filtered grid when the catalog header is stale', () => {
+  const core = loadCore();
+  const tiles = Array.from({ length: 8 }, (_, index) => ({
+    id: `lot-${index + 1}`,
+    offsetParent: {},
+    textContent: `Lot ${index + 1} Gaming PC`,
+    getClientRects: () => [{ width: 1, height: 1 }],
+    getAttribute() {
+      return '';
+    },
+    querySelector(selector) {
+      if (selector.includes('/lot/')) {
+        return { getAttribute: () => `/lot/${index + 1}`, textContent: '' };
+      }
+      if (selector.includes('lot-number')) {
+        return { textContent: `Lot ${index + 1}` };
+      }
+      return null;
+    },
+  }));
+  const root = {
+    body: { textContent: 'Total Lots: 6' },
+    documentElement: { textContent: 'Total Lots: 6' },
+    querySelectorAll(selector) {
+      return /lot-card|lotTile|lot-tile/.test(selector) ? tiles : [];
+    },
+  };
+  const visibleState = core.extractHibidVisiblePageState(
+    root,
+    new URL('https://hibid.com/lots/40198/computers/desktop---all-in-ones?q=gaming%20pc')
+  );
+
+  assert.equal(visibleState.noMatches, false);
+  assert.equal(visibleState.visibleLotCount, 8);
+  assert.equal(visibleState.expectedTotal, 8);
+});
+
+test('assistant uses canonical HiBid lot cards instead of stray broad lot-number seeds', () => {
+  const core = loadCore();
+  const makeTile = (lot, title = `Gaming PC ${lot}`) => ({
+    id: `lot-${lot}`,
+    offsetParent: {},
+    textContent: `Lot ${lot} | ${title}`,
+    getClientRects: () => [{ width: 1, height: 1 }],
+    getAttribute() {
+      return '';
+    },
+    querySelector(selector) {
+      if (selector.includes('/lot/')) {
+        return { getAttribute: () => `/lot/${lot}`, textContent: '' };
+      }
+      if (selector.includes('lot-number')) {
+        return { textContent: `Lot ${lot}` };
+      }
+      if (selector.includes('img') || selector.includes('lot-title') || selector.includes('h2')) {
+        return { textContent: title };
+      }
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  });
+  const canonical = Array.from({ length: 16 }, (_, index) => makeTile(index + 1));
+  const stray = makeTile('stale', 'Unrelated stale template');
+  const root = {
+    querySelectorAll(selector) {
+      if (selector === '*') return [];
+      if (/app-lot-tile|app-lot-card|lot-card|lotTile|lot-tile/.test(selector)) return canonical;
+      if (/lot-number|\/lot\//.test(selector)) return canonical.concat(stray);
+      return [];
+    },
+  };
+
+  assert.equal(core.getCanonicalHibidLotTiles(root).length, 16);
+  assert.equal(core.getLotTiles(root).length, 16);
+});
+
+test('assistant rejects filtered exports that exceed the visible result total', () => {
+  const core = loadCore();
+  const visibleState = core.extractHibidVisiblePageState({
+    body: { textContent: 'Showing 1 to 6 of 6 lots' },
+    documentElement: { textContent: 'Showing 1 to 6 of 6 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  }, new URL('https://hibid.com/lots/40198/computers/desktop---all-in-ones?q=gaming%20pc'));
+
+  assert.deepEqual(plain(core.validateCatalogExportAgainstVisibleState({
+    source: 'hibid-state',
+    items: Array.from({ length: 12 }, (_, index) => ({ id: String(index), title: `Gaming PC ${index}` })),
+    expectedTotal: 6,
+  }, visibleState)), {
+    ok: false,
+    reason: 'filtered-result-exceeds-visible-total',
+  });
+});
+
+test('assistant blocks AuctionNinja exports from the wrong active page kind', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-auction-search-dom',
+    context: { source: 'AuctionNinja', pageKind: 'auction-search' },
+    items: [{ source: 'AuctionNinja', pageKind: 'auction-search', title: 'Estate Sale' }],
+  }, 'auctionninja', { kind: 'followed-items' })), {
+    ok: false,
+    reason: 'auctionninja-page-kind-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-account-dom',
+    context: { source: 'AuctionNinja', pageKind: 'bid-history' },
+    items: [{ source: 'AuctionNinja', pageKind: 'bid-history', title: 'Brass Floor Lamp' }],
+  }, 'auctionninja', { kind: 'bid-history' })), {
+    ok: true,
+  });
+
+  const sharedSales = [{ source: 'AuctionNinja', pageKind: 'auction-search', title: 'Single Search Result' }];
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-auction-search-dom',
+    context: { source: 'AuctionNinja', pageKind: 'auction-search', totalSales: 1 },
+    items: sharedSales,
+    sales: sharedSales,
+    expectedTotal: 1,
+  }, 'auctionninja', { kind: 'auction-search' })), {
+    ok: true,
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-auction-search-dom',
+    context: { source: 'AuctionNinja', pageKind: 'auction-search', totalSales: 2 },
+    items: [
+      { source: 'AuctionNinja', pageKind: 'auction-search', title: 'Sale 1' },
+      { source: 'AuctionNinja', pageKind: 'auction-search', title: 'Sale 2' },
+      { source: 'AuctionNinja', pageKind: 'auction-search', title: 'Stale Extra Sale' },
+    ],
+    expectedTotal: 2,
+  }, 'auctionninja', { kind: 'auction-search' })), {
+    ok: false,
+    reason: 'auctionninja-count-exceeds-expected',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-auction-search-dom',
+    context: { source: 'AuctionNinja', pageKind: 'auction-search', totalSales: 3 },
+    items: [{ source: 'AuctionNinja', pageKind: 'auction-search', title: 'Partial Sale' }],
+    expectedTotal: 3,
+    incomplete: true,
+  }, 'auctionninja', { kind: 'auction-search' })), {
+    ok: false,
+    reason: 'auctionninja-incomplete',
+  });
+});
+
+test('assistant proof-tier coverage rejects every non-exact collection shape', () => {
+  const core = loadCore();
+  const route = {
+    supported: true,
+    kind: 'catalog',
+    source: 'ajwillner',
+    host: 'bid.ajwillnerauctions.com',
+    auctionId: '164037',
+  };
+  const loc = new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active');
+  const fingerprint = core.genericRouteFingerprint(route, loc);
+  const result = (items, expectedTotal, extra = {}) => ({
+    source: 'ajwillner-api',
+    items,
+    expectedTotal,
+    routeFingerprint: fingerprint,
+    coverage: {
+      proofTier: 'api-exact',
+      routeFingerprint: fingerprint,
+      enumeratedIds: extra.enumeratedIds || items.map(item => item.id),
+      ...extra.coverage,
+    },
+    ...extra.result,
+  });
+  const coverage = value => plain(core.buildProofTierCoverage(value, 'catalog', route, {
+    currentFingerprint: fingerprint,
+  }));
+
+  const exact = coverage(result([{ id: 'a' }, { id: 'b' }], 2));
+  assert.equal(exact.proofTier, 'api-exact');
+  assert.equal(exact.complete, true);
+  assert.equal(exact.reason, 'complete');
+  assert.equal(exact.expectedTotal, 2);
+  assert.equal(exact.collectedCount, 2);
+  assert.equal(exact.uniqueIdentityCount, 2);
+
+  const undercount = coverage(result([{ id: 'a' }], 2, { enumeratedIds: ['a', 'b'] }));
+  assert.equal(undercount.complete, false);
+  assert.equal(undercount.reason, 'count-mismatch');
+  assert.deepEqual(undercount.missingIds, ['b']);
+
+  const overcount = coverage(result([{ id: 'a' }, { id: 'b' }, { id: 'c' }], 2, { enumeratedIds: ['a', 'b'] }));
+  assert.equal(overcount.complete, false);
+  assert.equal(overcount.reason, 'count-mismatch');
+  assert.deepEqual(overcount.unexpectedIds, ['c']);
+
+  const duplicates = coverage(result([{ id: 'a' }, { id: 'a' }], 2, { enumeratedIds: ['a'] }));
+  assert.equal(duplicates.complete, false);
+  assert.equal(duplicates.reason, 'duplicate-identities');
+  assert.deepEqual(duplicates.duplicateIds, ['a']);
+
+  const zero = coverage(result([], 0, { enumeratedIds: [] }));
+  assert.equal(zero.complete, true);
+  assert.equal(zero.expectedTotal, 0);
+  assert.equal(zero.collectedCount, 0);
+  assert.equal(zero.uniqueIdentityCount, 0);
+
+  const drifted = plain(core.buildProofTierCoverage(result([{ id: 'a' }], 1), 'catalog', route, {
+    currentFingerprint: `${fingerprint}|changed-filter`,
+  }));
+  assert.equal(drifted.complete, false);
+  assert.equal(drifted.reason, 'route-fingerprint-changed');
+  assert.equal(drifted.routeMatches, false);
+
+  const unproven = plain(core.buildProofTierCoverage({
+    source: 'facebook-dom',
+    items: [{ listingId: '1234567890' }],
+  }, 'fliptracker', {
+    supported: true,
+    kind: 'fliptracker-facebook',
+    source: 'facebook',
+  }));
+  assert.equal(unproven.proofTier, 'unproven');
+  assert.equal(unproven.complete, false);
+  assert.match(unproven.reason, /expected-total-unknown|proof-unavailable/);
+
+  const settledDom = plain(core.buildProofTierCoverage({
+    source: 'facebook-dom',
+    items: [{ listingId: '1234567890' }],
+    coverage: { proofTier: 'dom-bottom-settled', settledBottom: true },
+  }, 'fliptracker', {
+    supported: true,
+    kind: 'fliptracker-facebook',
+    source: 'facebook',
+  }));
+  assert.equal(settledDom.proofTier, 'dom-bottom-settled');
+  assert.equal(settledDom.complete, true);
+});
+
+test('assistant supports HiBid winning and outbid current-bids exports only', () => {
+  const core = loadCore();
+  const bareWatchlist = core.resolveAssistantMode(new URL('https://hibid.com/account/watchlist'));
+  const winning = core.resolveAssistantMode(new URL('https://hibid.com/account/currentbids?status=WINNING'));
+  const outbid = core.resolveAssistantMode(new URL('https://hibid.com/account/currentbids?status=OUTBID'));
+  const stateWatchlist = core.resolveAssistantMode(new URL('https://hibid.com/newjersey/account/watchlist'));
+
+  assert.equal(winning.mode, 'catalog');
+  assert.equal(winning.source, 'hibid');
+  assert.equal(winning.route.kind, 'currentbids-winning');
+  assert.equal(outbid.mode, 'catalog');
+  assert.equal(outbid.source, 'hibid');
+  assert.equal(outbid.route.kind, 'currentbids-outbid');
+  assert.equal(bareWatchlist.mode, 'catalog');
+  assert.equal(bareWatchlist.source, 'hibid');
+  assert.equal(bareWatchlist.route.kind, 'watchlist');
+  assert.equal(stateWatchlist.mode, 'catalog');
+  assert.equal(stateWatchlist.source, 'hibid');
+  assert.equal(stateWatchlist.route.kind, 'watchlist');
+  assert.equal(core.isHibidAccountExportRoute(stateWatchlist.route), true);
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'dom-fallback',
+    items: [{ lot: '26', title: 'Air Purifier', userBidStatus: 'Winning' }],
+  }, 'catalog', winning.route)), {
+    ok: true,
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'auctionninja-account-dom',
+    context: { source: 'AuctionNinja', pageKind: 'followed-items' },
+    items: [{ source: 'AuctionNinja', pageKind: 'followed-items', title: 'Wrong Site' }],
+  }, 'catalog', outbid.route)), {
+    ok: false,
+    reason: 'catalog-source-mismatch',
+  });
+
+  const winningHtml = core.buildPanelHtml({ mode: 'catalog', route: winning.route, debugEnabled: false });
+  const outbidHtml = core.buildPanelHtml({ mode: 'catalog', route: outbid.route, debugEnabled: false });
+  const watchlistHtml = core.buildPanelHtml({ mode: 'catalog', route: bareWatchlist.route, debugEnabled: false });
+  assert.match(winningHtml, /Winning Bids Export/);
+  assert.match(winningHtml, /class="hiba-chip neutral">winning</);
+  assert.match(outbidHtml, /Outbid Bids Export/);
+  assert.match(outbidHtml, /class="hiba-chip neutral">outbid</);
+  assert.match(watchlistHtml, /Watchlist Export/);
+  assert.match(watchlistHtml, /class="hiba-chip neutral">watchlist</);
+  assert.doesNotMatch(`${winningHtml}${outbidHtml}${watchlistHtml}`, /Prepare Bid|Snipe Now|Auto-confirm|Max plan/i);
+});
+
+test('assistant keeps HiBid watchlist cards out of the no-match early exit', () => {
+  const core = loadCore({ location: new URL('https://hibid.com/account/watchlist') });
+  const lotLink = makeFakeNode({
+    text: 'Lot 26 | LEVOIT Core300-P Air Purifier',
+    attrs: { href: '/lot/311743157/levoit-core300-p-air-purifier' },
+  });
+  const card = makeFakeNode({
+    text: 'Lot 26 | LEVOIT Core300-P Air Purifier Unwatch Notes Current Bid: 14.00 USD 9 Bids Outbid',
+    attrs: { class: 'bid-status-border bid-status-border-default current-bids-card' },
+    selectors: {
+      'a[href*="/lot/"]': lotLink,
+      '.lot-title, h2': makeFakeNode({ text: 'LEVOIT Core300-P Air Purifier' }),
+      '.lot-number-lead .text-primary': makeFakeNode({ text: 'Lot 26' }),
+    },
+  });
+  card.id = 'lot-311743157';
+  card.offsetParent = {};
+  card.getClientRects = () => [{ width: 1, height: 1 }];
+
+  const root = {
+    body: { textContent: 'No matches found Lot 26 | LEVOIT Core300-P Air Purifier' },
+    querySelectorAll(selector) {
+      return selector.includes('bid-status-border') ? [card] : [];
+    },
+  };
+
+  const visibleState = core.extractHibidVisiblePageState(root, new URL('https://hibid.com/account/watchlist'));
+  assert.equal(visibleState.routeKind, 'watchlist');
+  assert.equal(visibleState.isAccountExportRoute, true);
+  assert.equal(visibleState.noMatches, false);
+  assert.equal(visibleState.visibleLotCount, 1);
+
+  const tiles = core.getLotTiles(root);
+  assert.equal(tiles.length, 1);
+  const lot = core.extractCurrentBidsLot(tiles[0]);
+  assert.equal(lot.lot, '26');
+  assert.equal(lot.id, '311743157');
+  assert.equal(lot.eventItemId, '311743157');
+  assert.equal(lot.title, 'LEVOIT Core300-P Air Purifier');
+  assert.equal(lot.userBidStatus, 'Outbid');
+});
+
+test('assistant keeps reused HiBid account lot numbers distinct by event-item ID', () => {
+  const core = loadCore();
+  const lots = core.uniqueLots([
+    { id: '311743157', eventItemId: '311743157', lot: '26', title: 'Auction A lot 26' },
+    { id: '399100026', eventItemId: '399100026', lot: '26', title: 'Auction B lot 26' },
+    { id: '311743157', eventItemId: '311743157', lot: '26', title: 'Duplicate tile' },
+  ]);
+
+  assert.equal(lots.length, 2);
+  assert.deepEqual(plain(lots.map(lot => lot.eventItemId)), ['311743157', '399100026']);
+});
+
+test('assistant treats the visible HiBid account total as authoritative', () => {
+  const core = loadCore();
+  const root = {
+    body: { textContent: 'Showing 1 - 74 of 74 lots' },
+    querySelectorAll() {
+      return [];
+    },
+  };
+
+  const visibleState = core.extractHibidVisiblePageState(root, new URL('https://hibid.com/account/watchlist'));
+  assert.equal(visibleState.isAccountExportRoute, true);
+  assert.equal(visibleState.expectedTotal, 74);
+});
+
+test('assistant does not coerce an unknown expected total to zero', () => {
+  const core = loadCore();
+  assert.equal(core.expectedTotalFromScraperResult({ expectedTotal: null, context: { expectedTotal: null } }), null);
+});
+
+test('assistant parses HiBid current-bids account card text fallback', () => {
+  const core = loadCore();
+  const root = {
+    body: {
+      textContent: `
+        Showing 1 to 18 of 18 lots
+        Lot 15 CARD READER
+        Unwatch Notes
+        10 Bids
+        Bidding Closed
+        Price Realized:
+        50.00 USD / Lot
+        Won
+        Lot 17 LENOVO TABLETS
+        Unwatch Notes
+        5 Bids
+        Current Bid: 37.50 USD
+        Winning
+      `,
+    },
+  };
+
+  const lots = core.extractTextLots(root);
+  assert.equal(lots.length, 2);
+  assert.deepEqual(plain(lots.map(lot => ({
+    lot: lot.lot,
+    title: lot.title,
+    highBid: lot.highBid,
+    bidCount: lot.bidCount,
+    userBidStatus: lot.userBidStatus,
+  }))), [
+    {
+      lot: '15',
+      title: 'CARD READER',
+      highBid: 'High Bid: 50.00 USD / Lot',
+      bidCount: '10 Bids',
+      userBidStatus: 'Won',
+    },
+    {
+      lot: '17',
+      title: 'LENOVO TABLETS',
+      highBid: 'High Bid: 37.50 USD',
+      bidCount: '5 Bids',
+      userBidStatus: 'Winning',
+    },
+  ]);
+});
+
+test('assistant preserves description and image evidence from a HiBid DOM lot tile', () => {
+  const core = loadCore();
+  const tile = makeFakeNode({
+    text: 'Lot 677 | GROUP ELECTRONICS RACK Description: Cisco switch and Dell server',
+    selectors: {
+      'a.lot-number-lead[href]': makeFakeNode({
+        text: 'Lot 677',
+        attrs: { href: '/lot/677/group-electronics-rack' },
+      }),
+      '.lot-title, h2': makeFakeNode({ text: 'GROUP ELECTRONICS RACK' }),
+      '.lot-number-lead .text-primary': makeFakeNode({ text: '677' }),
+      '.lot-description': makeFakeNode({ text: 'Cisco switch and Dell server' }),
+      'img': makeFakeNode({ attrs: { src: '/images/lot-677.jpg' } }),
+    },
+  });
+  tile.id = 'lot-677';
+
+  const lot = core.extractLot(tile);
+
+  assert.equal(lot.lot, '677');
+  assert.equal(lot.description, 'Cisco switch and Dell server');
+  assert.equal(lot.image, 'https://hibid.com/images/lot-677.jpg');
+  assert.match(lot.rawText, /GROUP ELECTRONICS RACK/);
+});
+
+test('assistant parses HiBid current-bids card text without filter status contamination', () => {
+  const core = loadCore();
+  const tile = {
+    id: 'lot-17',
+    textContent: `
+      Lot 17 | LENOVO TABLETS
+      Unwatch Notes
+      5 Bids
+      Bidding Closed
+      Price Realized:
+      37.50 USD / Lot
+      12.50 USD / ea
+      Won
+    `,
+    querySelector(selector) {
+      if (/img/.test(selector)) {
+        return {
+          getAttribute(name) {
+            return name === 'src' ? '/images/lot17.jpg' : '';
+          },
+        };
+      }
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+
+  assert.deepEqual(plain({
+    lot: core.extractCurrentBidsLot(tile).lot,
+    title: core.extractCurrentBidsLot(tile).title,
+    highBid: core.extractCurrentBidsLot(tile).highBid,
+    bidCount: core.extractCurrentBidsLot(tile).bidCount,
+    userBidStatus: core.extractCurrentBidsLot(tile).userBidStatus,
+  }), {
+    lot: '17',
+    title: 'LENOVO TABLETS',
+    highBid: 'High Bid: 37.50 USD / Lot',
+    bidCount: '5 Bids',
+    userBidStatus: 'Won',
+  });
+});
+
+test('assistant rejects incomplete HiBid current-bids account rows', () => {
+  const core = loadCore();
+  const route = { kind: 'currentbids-winning', source: 'hibid' };
+  const result = {
+    source: 'hibid-currentbids-dom',
+    items: [
+      { lot: '15', title: 'CARD READER', userBidStatus: 'Won', highBid: 'High Bid: 50.00 USD' },
+      { lot: '17', title: 'LENOVO TABLETS', userBidStatus: 'Won', highBid: 'High Bid: 37.50 USD / Lot' },
+    ],
+    lots: [
+      { lot: '15', title: 'CARD READER', userBidStatus: 'Won', highBid: 'High Bid: 50.00 USD' },
+      { lot: '17', title: 'LENOVO TABLETS', userBidStatus: 'Won', highBid: 'High Bid: 37.50 USD / Lot' },
+    ],
+    expectedTotal: 18,
+    incomplete: true,
+    visibleState: {
+      expectedTotal: 18,
+      visibleLotCount: 7,
+      noMatches: false,
+      hasActiveFilters: false,
+      activeFilterKeys: [],
+      filters: {},
+    },
+  };
+
+  assert.equal(core.isHibidCurrentBidsRoute(route), true);
+  assert.deepEqual(plain(core.validateCatalogExportAgainstVisibleState(result, result.visibleState, route)), { ok: true });
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', route)), {
+    ok: false,
+    reason: 'currentbids-winning-incomplete',
+  });
+});
+
+test('assistant accepts an exact HiBid account export with distinct stable identities', () => {
+  const core = loadCore();
+  const route = { kind: 'watchlist', source: 'hibid' };
+  const items = [
+    { id: '311743157', eventItemId: '311743157', lot: '26', title: 'Auction A lot 26' },
+    { id: '399100026', eventItemId: '399100026', lot: '26', title: 'Auction B lot 26' },
+  ];
+  const result = {
+    source: 'hibid-watchlist-dom',
+    items,
+    lots: items,
+    expectedTotal: 2,
+    incomplete: false,
+    coverage: { proof: 'scoped-current-page' },
+  };
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', route)), { ok: true });
+  const readiness = core.assessExportReadiness(result, 'catalog', route, {
+    locationLike: new URL('https://hibid.com/account/watchlist'),
+  });
+  assert.equal(readiness.ok, true);
+  assert.equal(readiness.coverage.collectedCount, 2);
+  assert.equal(readiness.coverage.uniqueIdentityCount, 2);
+});
+
+test('assistant still rejects incomplete normal HiBid catalog exports', () => {
+  const core = loadCore();
+  const result = {
+    source: 'dom-fallback',
+    items: [{ lot: '1', title: 'Visible Lot' }],
+    lots: [{ lot: '1', title: 'Visible Lot' }],
+    expectedTotal: 18,
+    incomplete: true,
+  };
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', { kind: 'catalog', source: 'hibid' })), {
+    ok: false,
+    reason: 'catalog-incomplete',
+  });
+});
+
+test('assistant accepts a DOM export that proves it settled at the virtualized bottom', () => {
+  const core = loadCore();
+  const rows = Array.from({ length: 108 }, (_, index) => ({ lot: String(index + 1), title: `Lot ${index + 1}` }));
+  const result = {
+    source: 'dom-fallback',
+    items: rows,
+    lots: rows,
+    expectedTotal: 111,
+    incomplete: true,
+    coverage: {
+      proof: 'dom-bottom-settled',
+      reachedBottom: true,
+      discoverableCount: 108,
+      expectedTotal: 111,
+    },
+  };
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute(result, 'catalog', { kind: 'catalog', source: 'hibid' })), {
+    ok: true,
+  });
+});
+
+test('assistant keeps shared research settings editable and includes them in GovDeals briefs', () => {
+  const storage = new Map();
+  const core = loadCore({ storage });
+  assert.deepEqual(plain(core.getResearchSettings()), {
+    originLabel: 'Edison, NJ 08817',
+    radiusMiles: 100,
+    salesTaxRate: '6.625%',
+    vehicleProfile: 'CT200h sedan',
+    researchNotes: '',
+  });
+
+  core.saveResearchSettings({
+    originLabel: 'Metuchen, NJ 08840',
+    radiusMiles: 75,
+    salesTaxRate: '6.625%',
+    vehicleProfile: 'Transit Connect',
+    researchNotes: 'Prefer pickup lots with removable components.',
+  });
+
+  assert.deepEqual(plain(core.getResearchSettings()), {
+    originLabel: 'Metuchen, NJ 08840',
+    radiusMiles: 75,
+    salesTaxRate: '6.625%',
+    vehicleProfile: 'Transit Connect',
+    researchNotes: 'Prefer pickup lots with removable components.',
+  });
+  assert.deepEqual(plain(core.getAarResearchSettings()), {
+    originLabel: 'Metuchen, NJ 08840',
+    radiusMiles: 75,
+  });
+
+  const brief = core.buildGovDealsLlmBrief([], {
+    source: 'GovDeals',
+    pageKind: 'govdeals-new-listings',
+    zipcode: '07008',
+    miles: '25',
+  }, core.getResearchSettings());
+  assert.match(brief, /Metuchen, NJ 08840/);
+  assert.match(brief, /75 miles/);
+  assert.match(brief, /Transit Connect/);
+  assert.match(brief, /Prefer pickup lots/);
+  assert.match(brief, /6\.625%/);
+  assert.match(brief, /zipcode.*07008/is);
+  assert.match(brief, /radius filter.*25 miles/is);
+});
+
+test('assistant exposes explicit debug menu state without leaking debug controls when off', () => {
+  const storage = new Map();
+  const core = loadCore({ storage });
+  assert.match(core.getDebugMenuLabel(), /OFF\]$/);
+  storage.set('flipperaddon-debug-enabled-v1', 'false');
+  assert.equal(core.getStoredDebugEnabled(), false);
+  const html = core.buildPanelHtml({ mode: 'govdeals', debugEnabled: false, route: { kind: 'govdeals-seller' } });
+  assert.doesNotMatch(html, /Copy Debug|Clear Debug/);
+  storage.set('flipperaddon-debug-enabled-v1', true);
+  assert.match(core.getDebugMenuLabel(), /ON\]$/);
+  const debugHtml = core.buildPanelHtml({ mode: 'govdeals', debugEnabled: true, route: { kind: 'govdeals-seller' } });
+  assert.match(debugHtml, /Copy Debug/);
+  assert.match(debugHtml, /Download Debug/);
+  assert.match(debugHtml, /Clear Debug/);
+  assert.match(debugHtml, /id="hibid-debug-export"/);
+});
+
+test('assistant can bootstrap debug mode from the page hash when Tampermonkey commands are hidden', () => {
+  const core = loadCore({ location: new URL('https://hibid.com/catalog/761703/example#flipperdebug') });
+  assert.equal(core.isDebugBootstrapRequested(new URL('https://hibid.com/catalog/761703/example#flipperdebug')), true);
+  assert.equal(core.isDebugBootstrapRequested(new URL('https://hibid.com/catalog/761703/example#other')), false);
+  assert.equal(core.getStoredDebugEnabled(), true);
+  assert.match(core.getDebugMenuLabel(), /ON\]$/);
+  assert.match(core.getDebugLogPayload(), /FlipperAddon.*debug export/);
+  const html = core.buildPanelHtml({ mode: 'catalog', debugEnabled: true, route: { kind: 'catalog' } });
+  assert.match(html, /Copy Debug/);
+  assert.match(html, /Clear Debug/);
+});
+
+test('assistant debug instrumentation is verbose, safe, and gated by debug mode', () => {
+  const core = loadCore();
+  assert.equal(core.DEBUG_LOG_LIMIT, 2000);
+  assert.equal(core.DEBUG_HEARTBEAT_INTERVAL_MS, 60000);
+
+  const secretInput = {
+    tagName: 'INPUT',
+    id: 'research-notes',
+    className: 'hiba-input',
+    value: 'private notes that must not be logged',
+    getAttribute(name) {
+      return {
+        type: 'text',
+        'aria-label': 'Research notes',
+      }[name] || '';
+    },
+  };
+  const metadata = core.debugTargetMetadata(secretInput);
+  assert.equal(metadata.tag, 'input');
+  assert.equal(metadata.valueLength, secretInput.value.length);
+  assert.equal(metadata.text, undefined);
+  assert.doesNotMatch(JSON.stringify(metadata), /private notes/);
+
+  const storage = new Map([['flipperaddon-debug-enabled-v1', false]]);
+  const disabledCore = loadCore({ storage });
+  assert.equal(disabledCore.installDebugInstrumentation(), false);
+
+  const enabledStorage = new Map([['flipperaddon-debug-enabled-v1', true]]);
+  const enabledCore = loadCore({ storage: enabledStorage });
+  enabledCore.debugEvent('unit.test.checkpoint', { control: 'copy-debug', bytes: 42 });
+  assert.match(enabledCore.getDebugLogPayload(), /event:unit\.test\.checkpoint/);
+  assert.match(enabledCore.getDebugLogPayload(), /"bytes":42/);
+});
+
+test('clipboard writer awaits modern Tampermonkey clipboard before reporting success', async () => {
+  const calls = [];
+  let legacyCalls = 0;
+  const core = loadCore({
+    GM: {
+      async setClipboard(payload, type) {
+        calls.push({ payload, type });
+      },
+    },
+    GM_setClipboard() {
+      legacyCalls += 1;
+    },
+  });
+
+  assert.equal(await core.writeClipboard('verified payload'), true);
+  assert.deepEqual(calls, [{ payload: 'verified payload', type: 'text' }]);
+  assert.equal(legacyCalls, 0);
+});
+
+test('clipboard writer waits for the documented legacy Tampermonkey callback', async () => {
+  let stored = '';
+  let callbackCompleted = false;
+  const core = loadCore({
+    GM_setClipboard(payload, type, callback) {
+      assert.equal(type, 'text');
+      setTimeout(() => {
+        stored = payload;
+        callbackCompleted = true;
+        callback();
+      }, 5);
+    },
+  });
+
+  assert.equal(await core.writeClipboard('legacy callback payload'), true);
+  assert.equal(callbackCompleted, true);
+  assert.equal(stored, 'legacy callback payload');
+});
+
+test('clipboard writer falls through a rejected modern bridge to browser clipboard', async () => {
+  const calls = [];
+  const core = loadCore({
+    GM: {
+      async setClipboard() {
+        throw new Error('bridge rejected');
+      },
+    },
+    navigator: {
+      clipboard: {
+        async writeText(payload) {
+          calls.push(payload);
+        },
+      },
+    },
+  });
+
+  assert.equal(await core.writeClipboard('browser fallback payload'), true);
+  assert.deepEqual(calls, ['browser fallback payload']);
+});
+
+test('clipboard writer uses the selectable textarea fallback and reports false when none work', async () => {
+  let appended;
+  let removed = false;
+  const textarea = {
+    value: '',
+    style: {},
+    setAttribute() {},
+    focus() {},
+    select() {},
+    setSelectionRange() {},
+    remove() { removed = true; },
+  };
+  const document = {
+    body: {
+      appendChild(node) { appended = node; },
+    },
+    createElement() { return textarea; },
+    execCommand(command) {
+      assert.equal(command, 'copy');
+      return true;
+    },
+  };
+  const core = loadCore({ document });
+
+  assert.equal(await core.writeClipboard('textarea payload'), true);
+  assert.equal(appended, textarea);
+  assert.equal(textarea.value, 'textarea payload');
+  assert.equal(removed, true);
+
+  const unavailable = loadCore();
+  assert.equal(await unavailable.writeClipboard('cannot copy'), false);
+});
+
+test('assistant binds debug controls through one delegated panel handler', async () => {
+  const storage = new Map([['flipperaddon-debug-enabled-v1', true]]);
+  const core = loadCore({ storage });
+  const buttons = new Map();
+  ['hibid-debug-copy', 'hibid-debug-download', 'hibid-debug-clear'].forEach(id => {
+    const button = {
+      id,
+      disabled: false,
+      closest: () => button,
+      getAttribute: () => '',
+      textContent: id,
+    };
+    buttons.set(id, button);
+  });
+  const field = {
+    hidden: true,
+    value: '',
+    focusCalled: false,
+    selectCalled: false,
+    focus() { this.focusCalled = true; },
+    select() { this.selectCalled = true; },
+    removeAttribute() {},
+  };
+  let delegatedClick;
+  const panel = {
+    dataset: {},
+    querySelector(selector) {
+      if (selector === '#hibid-debug-export') return field;
+      const id = selector.replace(/^#/, '');
+      return buttons.get(id) || null;
+    },
+    addEventListener(type, handler) {
+      if (type === 'click') delegatedClick = handler;
+    },
+    contains(target) { return buttons.get(target?.id) === target; },
+  };
+
+  assert.equal(core.installDebugControlDelegation(panel), true);
+  assert.equal(panel.dataset.flipperaddonDebugBinding, 'delegated');
+  assert.deepEqual(plain(core.getDebugControlBindingState(panel)), {
+    requiredIds: ['hibid-debug-copy', 'hibid-debug-download', 'hibid-debug-clear'],
+    presentIds: ['hibid-debug-copy', 'hibid-debug-download', 'hibid-debug-clear'],
+    missingIds: [],
+    allPresent: true,
+    delegated: true,
+  });
+
+  const clearButton = buttons.get('hibid-debug-clear');
+  await delegatedClick({
+    target: clearButton,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  assert.equal(field.hidden, false);
+  assert.equal(field.focusCalled, true);
+  assert.equal(field.selectCalled, true);
+  const payload = core.getDebugLogPayload();
+  assert.doesNotMatch(payload, /event:debug\.control\.handler\.enter/);
+  assert.match(payload, /debug log cleared from delegated handler/);
+  assert.match(payload, /event:debug\.control\.result/);
+  assert.match(payload, /event:debug\.control\.handler\.exit/);
+  assert.match(payload, /"id":"hibid-debug-clear"/);
+});
+
+test('assistant blocks AAR exports from the wrong route or auction id', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'aar-dom',
+    context: { source: 'AAR Auctions', pageKind: 'aar-auction-catalog', auctionId: '8563' },
+    items: [{ source: 'AAR Auctions', pageKind: 'aar-auction-catalog', auctionId: '8563', title: 'Catalog Lot' }],
+  }, 'aar', { kind: 'aar-auction-list' })), {
+    ok: false,
+    reason: 'aar-page-kind-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'aar-dom',
+    context: { source: 'AAR Auctions', pageKind: 'aar-auction-catalog', auctionId: '9999' },
+    lots: [{ source: 'AAR Auctions', pageKind: 'aar-auction-catalog', auctionId: '9999', title: 'Wrong Auction Lot' }],
+  }, 'aar', { kind: 'aar-auction-catalog', auctionId: '8563' })), {
+    ok: false,
+    reason: 'aar-auction-id-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'aar-dom',
+    context: { source: 'AAR Auctions', pageKind: 'aar-auction-list' },
+    sales: [{ source: 'AAR Auctions', pageKind: 'aar-auction-list', auctionId: '8563', title: 'Auction Calendar Entry' }],
+  }, 'aar', { kind: 'aar-auction-list' })), {
+    ok: true,
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'aar-dom',
+    context: { source: 'AAR Auctions', pageKind: 'aar-auction-list' },
+    sales: [{ source: 'AAR Auctions', pageKind: 'aar-auction-list', auctionId: '8563', title: 'Partial Auction Calendar Entry' }],
+    expectedTotal: 2,
+    incomplete: true,
+  }, 'aar', { kind: 'aar-auction-list' })), {
+    ok: false,
+    reason: 'aar-incomplete',
+  });
+});
+
+test('assistant blocks GovDeals exports from the wrong route or URL filters', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'govdeals-dom',
+    context: { source: 'GovDeals', pageKind: 'govdeals-seller' },
+    listings: [{ source: 'GovDeals', pageKind: 'govdeals-seller', title: 'Rutgers Asset' }],
+  }, 'govdeals', { kind: 'govdeals-new-listings', zipcode: '07008', miles: '25' })), {
+    ok: false,
+    reason: 'govdeals-page-kind-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'govdeals-dom',
+    context: { source: 'GovDeals', pageKind: 'govdeals-new-listings', zipcode: '07008', miles: '100' },
+    listings: [{ source: 'GovDeals', pageKind: 'govdeals-new-listings', title: 'Nearby Asset' }],
+  }, 'govdeals', { kind: 'govdeals-new-listings', zipcode: '07008', miles: '25' })), {
+    ok: false,
+    reason: 'govdeals-filter-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'govdeals-dom',
+    context: { source: 'GovDeals', pageKind: 'govdeals-new-listings', zipcode: '07008', miles: '25' },
+    listings: [{ source: 'GovDeals', pageKind: 'govdeals-new-listings', title: 'Nearby Asset' }],
+  }, 'govdeals', { kind: 'govdeals-new-listings', zipcode: '07008', miles: '25' })), {
+    ok: true,
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'govdeals-dom',
+    context: { source: 'GovDeals', pageKind: 'govdeals-new-listings', zipcode: '07008', miles: '25' },
+    listings: [{ source: 'GovDeals', pageKind: 'govdeals-new-listings', title: 'Partial Nearby Asset' }],
+    expectedTotal: 2,
+    incomplete: true,
+  }, 'govdeals', { kind: 'govdeals-new-listings', zipcode: '07008', miles: '25' })), {
+    ok: false,
+    reason: 'govdeals-incomplete',
+  });
+});
+
+test('assistant blocks catalog and live exports from the wrong active route', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'hibid-state',
+    context: { source: 'hibid', pageKind: 'catalog' },
+    items: [{ title: 'HiBid stale lot' }],
+  }, 'catalog', { kind: 'catalog', source: 'ajwillner', auctionId: '164037' })), {
+    ok: false,
+    reason: 'catalog-source-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'ajwillner-virtual-list',
+    context: { source: 'ajwillner', pageKind: 'catalog' },
+    items: [{ source: 'ajwillner', title: 'AJ stale lot' }],
+  }, 'catalog', { kind: 'catalog', source: 'hibid', auctionId: '757032' })), {
+    ok: false,
+    reason: 'catalog-source-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'ajwillner-virtual-list',
+    context: { source: 'ajwillner', pageKind: 'catalog' },
+    items: [{ source: 'ajwillner', title: 'Wrong AJ auction lot', url: 'https://bid.ajwillnerauctions.com/ui/auctions/999999/24887841' }],
+  }, 'catalog', { kind: 'catalog', source: 'ajwillner', auctionId: '164037' })), {
+    ok: false,
+    reason: 'catalog-auction-id-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'ajwillner-virtual-list',
+    context: { source: 'ajwillner', pageKind: 'catalog' },
+    items: [{ source: 'ajwillner', title: 'Partial AJ lot', url: 'https://bid.ajwillnerauctions.com/ui/auctions/164037/24887841' }],
+    expectedTotal: 866,
+    incomplete: true,
+  }, 'catalog', { kind: 'catalog', source: 'ajwillner', auctionId: '164037' })), {
+    ok: false,
+    reason: 'catalog-incomplete',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'hibid-live-dom',
+    context: { source: 'hibid', pageKind: 'live' },
+    lots: [{ lot: '1627sf', title: 'Chloe Eau De Toilette' }],
+    expectedTotal: 1,
+  }, 'live', { kind: 'live', source: 'hibid', auctionId: '752334' })), {
+    ok: true,
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'dom-fallback',
+    context: { source: 'hibid', pageKind: 'catalog' },
+    lots: [{ lot: '1', title: 'Catalog Lot' }],
+  }, 'live', { kind: 'catalog', source: 'hibid', auctionId: '752334' })), {
+    ok: false,
+    reason: 'live-route-mismatch',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'hibid-live-dom',
+    context: { source: 'hibid', pageKind: 'live' },
+    lots: [
+      { source: 'hibid', pageKind: 'live', lot: '1', title: 'Live Lot 1' },
+      { source: 'hibid', pageKind: 'live', lot: '2', title: 'Live Lot 2' },
+    ],
+    expectedTotal: 1,
+  }, 'live', { kind: 'live', source: 'hibid', auctionId: '752334' })), {
+    ok: false,
+    reason: 'live-count-exceeds-expected',
+  });
+
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'hibid-live-dom',
+    context: { source: 'hibid', pageKind: 'live' },
+    lots: [{ source: 'hibid', pageKind: 'live', lot: '1', title: 'Live Lot 1' }],
+    expectedTotal: 3,
+    incomplete: true,
+  }, 'live', { kind: 'live', source: 'hibid', auctionId: '752334' })), {
+    ok: false,
+    reason: 'live-incomplete',
+  });
+});
+
+test('assistant marks partial data-first catalog scrapes incomplete', () => {
+  const core = loadCore();
+  const complete = {
+    source: 'hibid-state',
+    items: new Array(222).fill(null).map((_item, index) => ({ id: String(index) })),
+    expectedTotal: 222,
+    incomplete: false,
+  };
+  const partial = {
+    source: 'hibid-state',
+    items: new Array(100).fill(null).map((_item, index) => ({ id: String(index) })),
+    expectedTotal: 222,
+    incomplete: true,
+    failedPage: 2,
+    stopReason: 'missing-page-state',
+  };
+
+  assert.equal(core.isCatalogScrapeComplete(complete), true);
+  assert.equal(core.isCatalogScrapeComplete(partial), false);
+});
+
+test('assistant panel exposes scraper-first catalog controls and gates debug controls', () => {
+  const core = loadCore();
+  const html = core.buildPanelHtml({ mode: 'catalog', debugEnabled: true });
+
+  assert.match(html, /id="hibid-catalog-copy-json"/);
+  assert.match(html, /id="hibid-catalog-copy-llm"/);
+  assert.match(html, /id="hibid-scraper-stop"/);
+  assert.match(html, /id="hibid-debug-copy"/);
+  assert.match(html, /id="hibid-debug-download"/);
+  assert.match(html, /id="hibid-debug-clear"/);
+  assert.match(html, /id="hibid-debug-export"/);
+  assert.doesNotMatch(html, /Prepare Bid|Prepare Next|Snipe Now|Auto-confirm|Max plan|hibid-max-plan-details|hibid-bid-plan-json/);
+  assert.doesNotMatch(html, /id="hibid-bid-results"/);
+  assert.match(html, /id="flipperaddon-toast"/);
+  assert.doesNotMatch(html, /id="hibid-live-copy-json"/);
+  assert.doesNotMatch(html, /id="hibid-live-copy-llm"/);
+  assert.equal(core.DEBUG_PREFIX, '[FlipperAddon]');
+  assert.deepEqual(Array.from(core.MENU_COMMANDS), [
+    'Remount FlipperAddon',
+    'Toggle FlipperAddon Debug Mode',
+    'Copy FlipperAddon Debug Log',
+    'Clear FlipperAddon Debug Log',
+    'Copy HiBid Lots Now',
+    'Set FlipTracker Sync Token',
+  ]);
+});
+
+test('assistant is branded as FlipperAddon by ALOS with FlipperAddon menu commands', () => {
+  const core = loadCore();
+
+  assert.equal(core.APP_NAME, 'FlipperAddon by ALOS');
+  assert.equal(core.DEBUG_PREFIX, '[FlipperAddon]');
+  assert.deepEqual(Array.from(core.MENU_COMMANDS), [
+    'Remount FlipperAddon',
+    'Toggle FlipperAddon Debug Mode',
+    'Copy FlipperAddon Debug Log',
+    'Clear FlipperAddon Debug Log',
+    'Copy HiBid Lots Now',
+    'Set FlipTracker Sync Token',
+  ]);
+});
+
+test('assistant site shortcuts preserve five auction rows and add seven nested selling tools', () => {
+  const core = loadCore();
+  const shortcuts = core.getSiteShortcuts(new URL('https://www.govdeals.com/en/rutgers'));
+  const auctionRows = shortcuts.filter(item => item.id !== 'selling-tools');
+  const sellingTools = shortcuts.find(item => item.id === 'selling-tools');
+
+  assert.deepEqual(plain(auctionRows.map(item => item.id)), [
+    'hibid',
+    'ajwillner',
+    'auctionninja',
+    'aar',
+    'govdeals',
+  ]);
+  assert.deepEqual(plain(auctionRows.map(item => item.url)), [
+    'https://hibid.com/lots',
+    'https://bid.ajwillnerauctions.com/',
+    'https://www.auctionninja.com/auctions',
+    'https://aarauctions.com/auctions/',
+    'https://www.govdeals.com/en/search',
+  ]);
+  assert.equal(auctionRows.length, 5);
+  assert.equal(auctionRows.find(item => item.id === 'govdeals').current, true);
+  assert.equal(shortcuts.filter(item => item.current).length, 1);
+  assert.equal(auctionRows.some(item => /ebay|facebook|marketplace/i.test(`${item.id} ${item.label} ${item.site} ${item.url}`)), false);
+  assert.ok(sellingTools, 'missing Selling Tools row');
+  assert.equal(sellingTools.url, '');
+  assert.deepEqual(plain(sellingTools.children.map(item => item.id)), [
+    'ebay-active',
+    'ebay-bulk',
+    'ebay-ended',
+    'ebay-sold',
+    'ebay-transactions',
+    'facebook-selling',
+    'facebook-create',
+  ]);
+  assert.deepEqual(plain(sellingTools.children.map(item => item.url)), [
+    'https://www.ebay.com/sh/lst/active',
+    'https://www.ebay.com/sh/lst/active#flipperaddon-bulk-edit',
+    'https://www.ebay.com/sh/lst/ended',
+    'https://www.ebay.com/mys/sold',
+    'https://www.ebay.com/mes/transactionlist?sh=true',
+    'https://www.facebook.com/marketplace/you/selling',
+    'https://www.facebook.com/marketplace/create/item',
+  ]);
+  assert.deepEqual(plain(core.getSellingToolShortcuts().map(item => item.id)), plain(sellingTools.children.map(item => item.id)));
+  assert.doesNotMatch(JSON.stringify(shortcuts), /workspaceId|auctionId=|zipcode=|[?&]an=/i);
+
+  const ajWillner = core.getSiteShortcuts(new URL('https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active'));
+  assert.equal(ajWillner.find(item => item.id === 'ajwillner').current, true);
+  assert.equal(ajWillner.filter(item => item.current).length, 1);
+});
+
+test('assistant panel renders compact site switcher with active and busy states', () => {
+  const core = loadCore();
+  const govDealsHtml = core.buildPanelHtml({
+    mode: 'govdeals',
+    route: { kind: 'govdeals-new-listings', host: 'www.govdeals.com' },
+    debugEnabled: false,
+  });
+  const busyHtml = core.buildPanelHtml({
+    mode: 'govdeals',
+    route: { kind: 'govdeals-new-listings', host: 'www.govdeals.com' },
+    debugEnabled: false,
+    busy: true,
+  });
+
+  assert.match(govDealsHtml, /id="flipperaddon-site-switcher-toggle"/);
+  assert.match(govDealsHtml, /id="flipperaddon-site-switcher-menu"/);
+  assert.match(govDealsHtml, /id="flipperaddon-selling-tools-toggle"/);
+  assert.match(govDealsHtml, /id="flipperaddon-selling-tools-menu"/);
+  assert.match(govDealsHtml, /data-site-shortcut-url="https:\/\/aarauctions\.com\/auctions\/"/);
+  assert.match(govDealsHtml, /data-site-shortcut-id="govdeals"[^>]*aria-current="page"/);
+  assert.equal((govDealsHtml.match(/class="hiba-shortcut hiba-selling-shortcut/g) || []).length, 7);
+  assert.match(govDealsHtml, /data-site-shortcut-id="ebay-active"/);
+  assert.match(govDealsHtml, /data-site-shortcut-id="facebook-create"/);
+
+  const disabledShortcutCount = (busyHtml.match(/data-site-shortcut-url="[^"]+"[^>]*disabled/g) || []).length;
+  assert.equal(disabledShortcutCount, 12);
+  assert.match(busyHtml, /id="flipperaddon-selling-tools-toggle"[^>]*disabled/);
+  assert.match(busyHtml, /id="hibid-scraper-stop"/);
+});
+
+test('assistant exposes a page-window canary when unsafeWindow is available', () => {
+  const pageWindow = {};
+  loadCore({ unsafeWindow: pageWindow });
+
+  assert.equal(pageWindow.__HIBID_UNIFIED_ASSISTANT_ACTIVE__, true);
+  assert.match(pageWindow.__FLIPPERADDON_VERSION__, /^0\.\d+\.\d+$/);
+});
+
+test('assistant mode resolver activates only the current page module', () => {
+  const core = loadCore();
+  const cases = [
+    ['https://hibid.com/newjersey/lots/40196/computers-and-electronics', 'catalog'],
+    ['https://hibid.com/account/watchlist?status=OUTBID', 'catalog'],
+    ['https://hibid.com/account/watchlist', 'catalog'],
+    ['https://www.hibid.com/account/watchlist', 'catalog'],
+    ['https://hibid.com/NEWJERSEY/LOTS/40196/computers-and-electronics', 'catalog'],
+    ['https://hibid.com/account/currentbids?status=WINNING', 'catalog'],
+    ['https://hibid.com/account/currentbids?status=OUTBID', 'catalog'],
+    ['https://hibid.com/livecatalog/752334/the-luxe-edit', 'live'],
+    ['https://www.ebay.com/sh/lst/active', 'fliptracker'],
+    ['https://www.ebay.com/mys/active', 'fliptracker'],
+    ['https://www.ebay.com/mys/sold', 'fliptracker'],
+    ['https://www.ebay.com/mes/transactionlist?sh=true', 'fliptracker'],
+    ['https://www.facebook.com/marketplace/you/selling', 'fliptracker'],
+    ['https://hibid.com/help', 'unsupported'],
+  ];
+
+  cases.forEach(([href, mode]) => {
+    assert.equal(core.resolveAssistantMode(new URL(href)).mode, mode, href);
+  });
+
+  assert.deepEqual(plain(core.resolveAssistantMode(new URL('https://www.ebay.com/sh/lst/active')).route), {
+    supported: true,
+    kind: 'fliptracker-ebay-active',
+    source: 'ebay',
+    host: 'www.ebay.com',
+    reason: 'eBay active listing export route',
+  });
+  assert.deepEqual(plain(core.resolveAssistantMode(new URL('https://www.facebook.com/marketplace/you/selling')).route), {
+    supported: true,
+    kind: 'fliptracker-facebook',
+    source: 'facebook',
+    host: 'www.facebook.com',
+    reason: 'Facebook Marketplace listing export route',
+  });
+});
+
+test('assistant classifies both eBay bulk routes outside lifecycle export', () => {
+  const core = loadCore();
+  const routes = [
+    new URL('https://www.ebay.com/bulksell?ru=https%3A%2F%2Fwww.ebay.com%2Fsh%2Flst%2Factive'),
+    new URL('https://www.ebay.com/sh/lst/active/bulkedit?offset=0&limit=2000&sort=listingSKU'),
+  ];
+
+  routes.forEach(loc => {
+    const resolved = core.resolveAssistantMode(loc);
+    assert.equal(resolved.supported, true, loc.href);
+    assert.equal(resolved.mode, 'fliptracker', loc.href);
+    assert.equal(resolved.route.kind, 'fliptracker-ebay-bulk', loc.href);
+    assert.equal(core.ebayLifecyclePageKind(resolved.route), '', loc.href);
+    const html = core.buildPanelHtml({ mode: resolved.mode, route: resolved.route, debugEnabled: false });
+    assert.match(html, /id="ebay-bulk-sell-export-mode"/, loc.href);
+    assert.match(html, /id="ebay-bulk-copy-json"/, loc.href);
+    assert.doesNotMatch(html, /id="fliptracker-lifecycle-sync-page"/, loc.href);
+  });
+});
+
+test('assistant blocks incomplete eBay lifecycle envelopes even when records exist', () => {
+  const core = loadCore();
+  const incomplete = {
+    source: 'eBay',
+    page_kind: 'active',
+    records: [{ record_type: 'active_listing', item_id: '123456789012', title: 'Incomplete listing' }],
+    completeness: {
+      complete: false,
+      expected_count: 59,
+      parsed_count: 1,
+      reason: 'More eBay result pages remain.',
+    },
+  };
+  const complete = {
+    ...incomplete,
+    completeness: { complete: true, expected_count: 1, parsed_count: 1, reason: 'complete' },
+  };
+  const completeZero = {
+    source: 'eBay',
+    page_kind: 'active',
+    records: [],
+    completeness: { complete: true, expected_count: 0, parsed_count: 0, reason: 'complete-empty' },
+  };
+
+  assert.equal(core.canExportEbayLifecycleEnvelope(incomplete), false);
+  assert.equal(core.canExportEbayLifecycleEnvelope(complete), true);
+  assert.equal(core.canExportEbayLifecycleEnvelope(completeZero), true);
+});
+
+test('assistant Facebook panels are scraper-only on every supported Facebook route', () => {
+  const core = loadCore();
+  const routes = [
+    'https://www.facebook.com/marketplace/you/selling',
+    'https://www.facebook.com/marketplace/create/item',
+    'https://www.facebook.com/marketplace/create/',
+    'https://www.facebook.com/marketplace/item/123456789012345/',
+  ];
+
+  routes.forEach(href => {
+    const resolved = core.resolveAssistantMode(new URL(href));
+    assert.equal(resolved.supported, true, href);
+    assert.equal(resolved.mode, 'fliptracker', href);
+    const html = core.buildPanelHtml({ mode: resolved.mode, route: resolved.route, debugEnabled: false });
+    assert.doesNotMatch(html, /id="fliptracker-crosslist-(?:fill|confirm-published|queue|queue-all)"/, href);
+    assert.doesNotMatch(html, />\s*(?:Open \+ Fill Next|Confirm Published|Save Draft|Publish)\s*</i, href);
+    assert.doesNotMatch(html, /id="fliptracker-lifecycle-connect"/, href);
+  });
+});
+
+test('assistant cross-site smoke matrix resolves every supported export page to its own module', () => {
+  const core = loadCore();
+  const cases = [
+    ['hibid-catalog', 'https://hibid.com/lots', 'catalog', 'hibid-bid-controls'],
+    ['hibid-filtered-catalog', 'https://hibid.com/newjersey/lots/40198/computers?q=gaming%20pc', 'catalog', 'hibid-bid-controls'],
+    ['hibid-live', 'https://hibid.com/livecatalog/752334/the-luxe-edit', 'live', 'hibid-live-mode'],
+    ['hibid-watchlist', 'https://hibid.com/account/watchlist?status=OUTBID', 'catalog', 'hibid-bid-controls'],
+    ['hibid-winning', 'https://hibid.com/account/currentbids?status=WINNING', 'catalog', 'hibid-bid-controls'],
+    ['aj-willner', 'https://bid.ajwillnerauctions.com/ui/auctions/164037?category=All&subCategory=Active', 'catalog', 'hibid-bid-controls'],
+    ['auctionninja-sale', 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/example--17395.html?an=20260709202533', 'auctionninja', 'auctionninja-catalog-mode'],
+    ['auctionninja-category', 'https://www.auctionninja.com/category/electronics?miles=30&zip=07008', 'auctionninja', 'auctionninja-category-mode'],
+    ['auctionninja-followed', 'https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo', 'auctionninja', 'auctionninja-account-mode'],
+    ['auctionninja-won', 'https://www.auctionninja.com/items-won?an=hwfmhr2h2qi', 'auctionninja', 'auctionninja-account-mode'],
+    ['auctionninja-history', 'https://www.auctionninja.com/bid-history?an=sp2i8ac5q0n', 'auctionninja', 'auctionninja-account-mode'],
+    ['auctionninja-search', 'https://www.auctionninja.com/auctions?an=6av06rjyogk', 'auctionninja', 'auctionninja-auctions-mode'],
+    ['aar-calendar', 'https://aarauctions.com/auctions/', 'aar', 'aar-auctions-mode'],
+    ['aar-catalog', 'https://aarauctions.com/servlet/Search.do?auctionId=8563', 'aar', 'aar-auctions-mode'],
+    ['govdeals-seller', 'https://www.govdeals.com/en/rutgers', 'govdeals', 'govdeals-mode'],
+    ['govdeals-location', 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0', 'govdeals', 'govdeals-mode'],
+    ['govdeals-new-listings', 'https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25', 'govdeals', 'govdeals-mode'],
+    ['ebay', 'https://www.ebay.com/sh/lst/active', 'fliptracker', 'fliptracker-listing-export-mode'],
+    ['facebook', 'https://www.facebook.com/marketplace/you/selling', 'fliptracker', 'fliptracker-listing-export-mode'],
+  ];
+
+  cases.forEach(([label, href, mode, moduleId]) => {
+    const location = new URL(href);
+    const resolved = core.resolveAssistantMode(location);
+    assert.equal(resolved.mode, mode, label);
+    assert.equal(resolved.supported, true, label);
+    const html = core.buildPanelHtml({ mode, route: resolved.route, debugEnabled: false });
+    assert.match(html, new RegExp(`id="${moduleId}"`), label);
+  });
+});
+
+test('assistant explains export guard failures with the actual rejection reason and count', () => {
+  const core = loadCore();
+  assert.equal(
+    core.describeExportGuardFailure('catalog-incomplete', { count: 62, expectedTotal: 193 }),
+    'scrape stopped before the page total was collected (62/193).'
+  );
+  assert.equal(
+    core.describeExportGuardFailure('filtered-search-results-do-not-match-query'),
+    'copied lots do not match the active search.'
+  );
+});
+
+test('panel markup is active-mode only, scraper-first, and keeps debug controls gated', () => {
+  const core = loadCore();
+
+  const catalog = core.buildPanelHtml({ mode: 'catalog', debugEnabled: false });
+  assert.match(catalog, /FlipperAddon by ALOS/);
+  assert.match(catalog, /<span class="hiba-title">FlipperAddon by ALOS<\/span>/);
+  assert.match(catalog, /#flipperaddon-panel\.hiba-minimized #hibid-bid-close \{ display:none; \}/);
+  assert.match(catalog, /#flipperaddon-panel\.hiba-minimized \{ width:min\(228px/);
+  assert.match(catalog, /id="hibid-catalog-copy-llm"/);
+  assert.match(catalog, /id="hibid-catalog-copy-json"/);
+  assert.match(catalog, /id="hibid-scraper-stop"/);
+  assert.doesNotMatch(catalog, /id="hibid-bid-load"/);
+  assert.doesNotMatch(catalog, /id="hibid-bid-scan"/);
+  assert.doesNotMatch(catalog, /id="hibid-bid-next"/);
+  assert.doesNotMatch(catalog, /id="hibid-live-snipe"/);
+  assert.doesNotMatch(catalog, /id="hibid-max-plan-details"|id="hibid-bid-plan-json"|Max plan/);
+  assert.doesNotMatch(catalog, /id="fliptracker-listing-download"/);
+  assert.doesNotMatch(catalog, /id="hibid-debug-copy"/);
+  assert.doesNotMatch(catalog, /id="hibid-bid-results"/);
+
+  const live = core.buildPanelHtml({ mode: 'live', debugEnabled: false });
+  assert.match(live, /id="hibid-live-copy-llm"/);
+  assert.match(live, /id="hibid-live-copy-json"/);
+  assert.match(live, /id="hibid-scraper-stop"/);
+  assert.doesNotMatch(live, /id="hibid-live-snipe"/);
+  assert.doesNotMatch(live, /id="hibid-live-arm"/);
+  assert.doesNotMatch(live, /id="hibid-bid-plan-json"|Max plan|Auto-confirm/);
+  assert.doesNotMatch(live, /id="hibid-bid-load"/);
+  assert.doesNotMatch(live, /id="hibid-catalog-copy-llm"/);
+  assert.doesNotMatch(live, /id="fliptracker-listing-download"/);
+  assert.doesNotMatch(live, /id="hibid-bid-results"/);
+
+  const fliptracker = core.buildPanelHtml({ mode: 'fliptracker', debugEnabled: true });
+  assert.match(fliptracker, /id="fliptracker-listing-download"/);
+  assert.match(fliptracker, /id="hibid-debug-copy"/);
+  assert.doesNotMatch(fliptracker, /id="hibid-bid-plan-json"/);
+  assert.doesNotMatch(fliptracker, /id="hibid-live-snipe"/);
+  assert.doesNotMatch(fliptracker, /id="hibid-bid-results"/);
+  assert.doesNotMatch(fliptracker, /fliptracker-listing-results/);
+});
+
+test('max plan helpers use per-auction storage keys and add blank max entries', () => {
+  const core = loadCore();
+
+  assert.equal(
+    core.getPlanStorageKey(new URL('https://hibid.com/catalog/752334/the-luxe-edit')),
+    'flipperaddon-max-plan-v2:hibid.com:auction:752334'
+  );
+  assert.equal(
+    core.getPlanStorageKey(new URL('https://hibid.com/newjersey/lots/40196/computers-and-electronics')),
+    'flipperaddon-max-plan-v2:hibid.com:auction:40196'
+  );
+
+  const text = core.addLotToPlanText('{}', {
+    lot: '1627sf',
+    title: "Chloe L'eau by Chloe Eau De Toilette Spray",
+  });
+
+  assert.deepEqual(JSON.parse(text), {
+    '1627sf': {
+      max: null,
+      title: "Chloe L'eau by Chloe Eau De Toilette Spray",
+    },
+  });
+});
+
+test('legacy max plan migration only imports into one scoped plan once', () => {
+  const storage = new Map([
+    ['hibid-bid-assistant-plan-v1', JSON.stringify({ 78: { max: 70, title: 'BlueParrott' } })],
+  ]);
+  const core = loadCore({ storage });
+
+  const first = core.getStoredPlanText(new URL('https://hibid.com/catalog/752334/the-luxe-edit'));
+  const second = core.getStoredPlanText(new URL('https://hibid.com/catalog/40196/computers-and-electronics'));
+
+  assert.deepEqual(JSON.parse(first), { 78: { max: 70, title: 'BlueParrott' } });
+  assert.deepEqual(JSON.parse(second), {});
+  assert.equal(storage.get('flipperaddon-legacy-plan-migrated-v1'), true);
+});
+
+test('panel remount policy rebuilds on module changes and unsupported routes', () => {
+  const core = loadCore();
+
+  assert.equal(core.shouldRebuildPanelForMode('catalog', 'catalog', true), false);
+  assert.equal(core.shouldRebuildPanelForMode('', 'catalog', true, true), true);
+  assert.equal(core.shouldRebuildPanelForMode('', 'catalog', true, false), false);
+  assert.equal(core.shouldRebuildPanelForMode('catalog', 'live', true), true);
+  assert.equal(core.shouldRebuildPanelForMode('catalog', 'fliptracker', true), true);
+  assert.equal(core.shouldRebuildPanelForMode('catalog', 'unsupported', false), true);
+});
+
+test('panel rebuild reasons that remove a panel require teardown cleanup', () => {
+  const core = loadCore();
+
+  assert.equal(core.shouldTeardownPanelForRebuild('mode-change:catalog:live:urlchange'), true);
+  assert.equal(core.shouldTeardownPanelForRebuild('unsupported:mutation'), true);
+  assert.equal(core.shouldTeardownPanelForRebuild('debug-toggle'), true);
+  assert.equal(core.shouldTeardownPanelForRebuild('noop'), false);
+});
+
+test('managed same-route pagination preserves the panel until collection finishes', () => {
+  const core = loadCore();
+
+  assert.equal(core.shouldPreservePanelDuringManagedNavigation('true', 'fliptracker', 'fliptracker', true), true);
+  assert.equal(core.shouldPreservePanelDuringManagedNavigation('', 'fliptracker', 'fliptracker', true), false);
+  assert.equal(core.shouldPreservePanelDuringManagedNavigation('true', 'fliptracker', 'catalog', true), false);
+  assert.equal(core.shouldPreservePanelDuringManagedNavigation('true', 'fliptracker', 'unsupported', false), false);
+});
+
+test('LLM auction brief includes the advanced resale coordinator prompt and full lot fields', () => {
+  const core = loadCore();
+  const brief = core.buildLlmAuctionBrief([
+    {
+      lot: '4432i',
+      title: '$499 NEW! MONSTER GI30 PRO HIGH POWER 2000W BLUETOOTH',
+      url: 'https://hibid.com/lot/307763539/4432i',
+      image: 'https://cdn.example.test/4432i.jpg',
+      images: ['https://cdn.example.test/4432i.jpg', 'https://cdn.example.test/4432i-detail.jpg'],
+      imageCount: 2,
+      category: 'Consumer Electronics',
+      categoryPath: ['Computers & Electronics', 'Consumer Electronics'],
+      highBidAmount: 165,
+      nextBidAmount: 170,
+      bidCountNumber: 28,
+      timeLeft: '9h 39m',
+      description: 'Factory sealed speaker',
+      auctionTitle: 'Overstock Product Liquidation NJ W27',
+      buyerPremium: '15%',
+    },
+  ], {
+    title: 'Overstock Product Liquidation NJ W27',
+    url: 'https://hibid.com/newjersey/lots/40196/computers-and-electronics',
+    totalLots: 222,
+  });
+
+  assert.match(brief, /You are an auction resale analysis coordinator/);
+  assert.match(brief, /Coverage first, confirmation second/);
+  assert.match(brief, /Sold\/completed comps first, profit second, hunches last/);
+  assert.match(brief, /Rough screening only: auction all-in can be approximated as bid x 1\.25/);
+  assert.match(brief, /Use eBay sold\/completed listings first/);
+  assert.match(brief, /VERIFIED EBAY SOLD DATA - MANDATORY/);
+  assert.match(brief, /legitimate, visible eBay sold evidence/);
+  assert.match(brief, /direct sold-listing URL/);
+  assert.match(brief, /A Confirmed Lead must have visible exact or close eBay sold evidence/);
+  assert.match(brief, /profit_if_won_now/);
+  assert.match(brief, /profit_at_recommended_max_bid/);
+  assert.match(brief, /recommended_max_bid =[\s\S]*MAX\(0/);
+  assert.match(brief, /Never calculate or label `profit_at_recommended_max_bid` using the current bid/);
+  assert.match(brief, /COLUMN ORDER/);
+  assert.match(brief, /SORTING/);
+  assert.match(brief, /SPREADSHEET VISIBILITY AND FORMATTING/);
+  assert.match(brief, /sold_comp_median/);
+  assert.match(brief, /Highlight `current_bid` in red whenever it exceeds `recommended_max_bid`/);
+  assert.match(brief, /Parsing \/ Mandatory Analysis/);
+  assert.match(brief, /Mixed \/ Group Lot Rule .* Mandatory Component Extraction/);
+  assert.match(brief, /A generic group lot may not be marked Garbage until each named or visually identifiable component has been checked/);
+  assert.match(brief, /Mixed Lot \/ Component Review/);
+  assert.match(brief, /component_reviewed = yes/);
+  assert.match(brief, /number with extracted named components/);
+  assert.match(brief, /sedan risk/i);
+  assert.match(brief, /Factory sealed speaker/);
+  assert.match(brief, /https:\/\/hibid\.com\/lot\/307763539\/4432i/);
+  assert.match(brief, /https:\/\/cdn\.example\.test\/4432i\.jpg/);
+  assert.match(brief, /https:\/\/cdn\.example\.test\/4432i-detail\.jpg/);
+  assert.match(brief, /"category": "Consumer Electronics"/);
+  assert.match(brief, /"buyerPremium": "15%"/);
+});
+
+test('assistant resolves supported and blocked AuctionNinja route families', () => {
+  const core = loadCore();
+  const cases = [
+    ['https://www.auctionninja.com/auctions?an=6av06rjyogk', 'auction-search'],
+    ['https://www.auctionninja.com/nj/carteret/07008?miles=50&an=', 'auction-search'],
+    ['https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo', 'followed-items'],
+    ['https://www.auctionninja.com/items-won?an=hwfmhr2h2qi', 'items-won'],
+    ['https://www.auctionninja.com/bid-history?an=sp2i8ac5q0n', 'bid-history'],
+    ['https://www.auctionninja.com/clearinghouseestatesales/sales/details/example-sale--17395.html?an=20260709202533', 'sale-catalog'],
+    ['https://www.auctionninja.com/clearinghouseestatesales/product/example-lot--123456.html', 'item-detail'],
+  ];
+
+  cases.forEach(([href, kind]) => {
+    const url = new URL(href);
+    const resolved = core.resolveAuctionNinjaPage(url);
+    assert.equal(resolved.supported, true, href);
+    assert.equal(resolved.kind, kind, href);
+    assert.equal(core.shouldInitOnLocation(url), true, href);
+    assert.equal(core.resolveAssistantMode(url).mode, 'auctionninja', href);
+    assert.equal(core.resolveAssistantMode(url).source, 'auctionninja', href);
+  });
+
+  [
+    'https://www.auctionninja.com/account',
+    'https://www.auctionninja.com/invoices',
+    'https://www.auctionninja.com/payment-methods',
+    'https://www.auctionninja.com/checkout',
+    'https://www.auctionninja.com/support',
+  ].forEach((href) => {
+    const url = new URL(href);
+    assert.equal(core.resolveAuctionNinjaPage(url).supported, false, href);
+    assert.equal(core.shouldInitOnLocation(url), false, href);
+  });
+});
+
+test('assistant resolves supported and blocked AAR Auctions route families', () => {
+  const core = loadCore();
+  const list = new URL('https://aarauctions.com/auctions/');
+  const catalog = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8563');
+  const item = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8573&itemId=221770');
+
+  assert.deepEqual(plain(core.resolveAarAuctionsPage(list)), {
+    supported: true,
+    kind: 'aar-auction-list',
+    host: 'aarauctions.com',
+    reason: 'AAR auction calendar route',
+  });
+  assert.deepEqual(plain(core.resolveAarAuctionsPage(catalog)), {
+    supported: true,
+    kind: 'aar-auction-catalog',
+    host: 'aarauctions.com',
+    auctionId: '8563',
+    reason: 'AAR auction catalog route',
+  });
+  assert.deepEqual(plain(core.resolveAarAuctionsPage(item)), {
+    supported: true,
+    kind: 'aar-item-detail',
+    host: 'aarauctions.com',
+    auctionId: '8573',
+    itemId: '221770',
+    reason: 'AAR single-item detail route',
+  });
+  assert.equal(core.shouldInitOnLocation(list), true);
+  assert.equal(core.shouldInitOnLocation(catalog), true);
+  assert.equal(core.shouldInitOnLocation(item), true);
+  assert.equal(core.resolveAssistantMode(list).mode, 'aar');
+  assert.equal(core.resolveAssistantMode(catalog).source, 'aar');
+  assert.equal(core.resolveAssistantMode(item).route.kind, 'aar-item-detail');
+
+  [
+    'https://aarauctions.com/login',
+    'https://aarauctions.com/register',
+    'https://aarauctions.com/servlet/Login.do',
+    'https://aarauctions.com/servlet/Bid.do?auctionId=8563',
+    'https://aarauctions.com/servlet/Payment.do',
+  ].forEach((href) => {
+    const url = new URL(href);
+    assert.equal(core.resolveAarAuctionsPage(url).supported, false, href);
+    assert.equal(core.shouldInitOnLocation(url), false, href);
+  });
+});
+
+test('assistant extracts and validates an AAR single-item detail export', () => {
+  const core = loadCore();
+  const script = makeFakeNode({
+    text: `var lot221770 = new Lot(8573, 0, '39', '221770', '', 'Pallet of HPE / Aruba network switches. Approx 69 total network switches.', '', '', '', '', '', '', '', '', 'One Lot', 1, 0, 'seller', '', 325, 0, 350, 0, 0, '325.00', '0.00', '350.00', '0.00', '0.00', 1, 2, 3, 1784159400, 1784159430, '08:19 PM', '08:19 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`,
+  });
+  const root = makeFakeNode({
+    selectors: {
+      'script': [script],
+      'h1': makeFakeNode({ text: 'Longwood Central School District Surplus Auction Ending 7/21' }),
+      'img': makeFakeNode({ attrs: { src: '/images/network-switches.jpg' } }),
+    },
+  });
+  const loc = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8573&itemId=221770');
+  const item = core.extractAarItemDetail(root, loc);
+  const context = core.extractAarItemContext(root, loc, { originLabel: 'Edison, NJ 08817', radiusMiles: 100 });
+
+  assert.equal(item.itemId, '221770');
+  assert.equal(item.pageKind, 'aar-item-detail');
+  assert.equal(item.lot, '39');
+  assert.match(item.title, /HPE \/ Aruba network switches/i);
+  assert.equal(context.pageKind, 'aar-item-detail');
+  assert.equal(context.expectedTotal, 1);
+  assert.equal(context.itemId, '221770');
+  assert.deepEqual(plain(core.validateScraperExportAgainstRoute({
+    source: 'aar-item-dom',
+    context,
+    items: [item],
+    expectedTotal: 1,
+  }, 'aar', { kind: 'aar-item-detail', auctionId: '8573', itemId: '221770' })), { ok: true });
+  assert.match(core.buildAarItemLlmBrief(item, context), /single-item research task/i);
+  assert.match(core.buildAarItemLlmBrief(item, context), /221770/);
+});
+
+test('assistant extracts AAR auction calendar cards', () => {
+  const core = loadCore();
+  const catalogLink = makeFakeNode({
+    text: 'Catalog',
+    attrs: { href: '/servlet/Search.do?auctionId=8565' },
+  });
+  const registerLink = makeFakeNode({
+    text: 'Register for Auction',
+    attrs: { href: '/servlet/Register.do?auctionId=8565' },
+  });
+  const image = makeFakeNode({
+    attrs: { src: '/images/summer-equipment.jpg', alt: 'Summer Equipment' },
+  });
+  const card = makeFakeNode({
+    text: `Vehicles, Equipment, Tools
+Summer Equipment #2 Auction Ending 7/12
+Closing at 7:00 PM, Sun, Jul. 12, 2026
+Pleasant Valley, NY
+Bid Online Now
+Catalog`,
+    selectors: {
+      'a[href*="Search.do?auctionId="]': catalogLink,
+      'a[href*="Register"]': registerLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Auction Calendar',
+    selectors: {
+      'a[href*="Search.do?auctionId="]': catalogLink,
+      '.et_pb_column': [card],
+    },
+  });
+
+  const sales = core.extractAarAuctionCards(root, new URL('https://aarauctions.com/auctions/'));
+
+  assert.deepEqual(plain(sales), [
+    {
+      source: 'AAR Auctions',
+      pageKind: 'aar-auction-list',
+      auctionId: '8565',
+      title: 'Summer Equipment #2 Auction Ending 7/12',
+      url: 'https://aarauctions.com/servlet/Search.do?auctionId=8565',
+      image: 'https://aarauctions.com/images/summer-equipment.jpg',
+      category: 'Vehicles, Equipment, Tools',
+      closingText: 'Closing at 7:00 PM, Sun, Jul. 12, 2026',
+      description: 'Pleasant Valley, NY Bid Online Now Catalog',
+      registerUrl: 'https://aarauctions.com/servlet/Register.do?auctionId=8565',
+      locationHint: 'Pleasant Valley, NY',
+      mapSearchUrl: 'https://www.google.com/maps/search/?api=1&query=Pleasant%20Valley%2C%20NY%20to%20Edison%2C%20NJ%2008817',
+      rawText: 'Vehicles, Equipment, Tools Summer Equipment #2 Auction Ending 7/12 Closing at 7:00 PM, Sun, Jul. 12, 2026 Pleasant Valley, NY Bid Online Now Catalog',
+    },
+  ]);
+});
+
+test('assistant extracts AAR catalog context and lot fields', () => {
+  const core = loadCore();
+  const lotLink = makeFakeNode({
+    text: 'More Info / Bid Now',
+    attrs: { href: '/servlet/Search.do?auctionId=8563&itemId=1' },
+  });
+  const image = makeFakeNode({ attrs: { src: '/live/images/auction-8563/jeep.jpg' } });
+  const lotRow = makeFakeNode({
+    text: `#1 - 1994 Jeep Wrangler 4WD
+More Info / Bid Now
+Closes On: Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST
+High Bid: $1,550.00 - moose1214
+Auction Type: One Lot
+Quantity: 1
+Minimum Next Bid: $1,600.00
+More Details
+Runs and drives. Odometer shows 122,000 miles.`,
+    selectors: {
+      'a[href*="itemId"]': lotLink,
+      'a[href*="Search.do"]': lotLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: `By Appointment Only - Items Must Be Picked Up By Friday July 17 at 3PM
+10% buyers premium.
+Payment for vehicles and equipment is cash, cashier's check, money order, or wire only.
+Items located at Absolute Auction Center: 45 South Ave, Pleasant Valley, NY 12569.
+All Items (7)
+#1 - 1994 Jeep Wrangler 4WD`,
+    selectors: {
+      'h1': makeFakeNode({ text: 'Summer Equipment Auction Ending 7/15' }),
+      'a[href*="maps"]': makeFakeNode({ attrs: { href: 'https://maps.example.test/pleasant-valley' } }),
+      'tr': [lotRow],
+      '.auction-item': [lotRow],
+    },
+  });
+  const loc = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8563');
+
+  const context = core.extractAarCatalogContext(root, loc);
+  const lots = core.extractAarCatalogLots(root, loc);
+
+  assert.equal(context.source, 'AAR Auctions');
+  assert.equal(context.pageKind, 'aar-auction-catalog');
+  assert.equal(context.auctionId, '8563');
+  assert.equal(context.title, 'Summer Equipment Auction Ending 7/15');
+  assert.equal(context.buyerPremium, '10%');
+  assert.match(context.pickupText, /Picked Up By Friday July 17/i);
+  assert.match(context.paymentText, /cash, cashier's check/i);
+  assert.equal(context.location, '45 South Ave, Pleasant Valley, NY 12569');
+  assert.equal(context.expectedTotal, 7);
+
+  assert.deepEqual(plain(lots), [
+    {
+      source: 'AAR Auctions',
+      pageKind: 'aar-auction-catalog',
+      auctionId: '8563',
+      itemId: '1',
+      lot: '1',
+      title: '1994 Jeep Wrangler 4WD',
+      url: 'https://aarauctions.com/servlet/Search.do?auctionId=8563&itemId=1',
+      image: 'https://aarauctions.com/live/images/auction-8563/jeep.jpg',
+      images: ['https://aarauctions.com/live/images/auction-8563/jeep.jpg'],
+      description: 'Runs and drives. Odometer shows 122,000 miles.',
+      highBid: '$1,550.00',
+      highBidAmount: 1550,
+      currentBid: 1550,
+      nextBid: '$1,600.00',
+      nextBidAmount: 1600,
+      quantity: 1,
+      auctionType: 'One Lot',
+      closingText: 'Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST',
+      rawText: 'Lot 1 | 1994 Jeep Wrangler 4WD | Runs and drives. Odometer shows 122,000 miles. | High Bid: $1,550.00 | Minimum Next Bid: $1,600.00 | Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST',
+    },
+  ]);
+});
+
+test('assistant extracts AAR servlet lots from embedded Lot scripts', () => {
+  const core = loadCore();
+  const duplicateRow = makeFakeNode({
+    text: `#1 - 1994 Jeep Wrangler 4WD 2.5L L4 engine
+More Info / Bid Now
+Closes On: Jul 15, 2026 07:50:00 PM - 07:50:30 PM EST
+High Bid: $1,550.00
+Auction Type: One Lot
+Quantity: 1
+Minimum Next Bid: $1,600.00
+More Details
+Duplicate visible row should not create an extra lot.`,
+    selectors: {
+      'a[href*="itemId"]': makeFakeNode({ attrs: { href: '/servlet/Search.do?auctionId=8563&itemId=222210&visible=1' } }),
+    },
+  });
+  const root = makeFakeNode({
+    text: 'All Items (2)',
+    selectors: {
+      'script': [
+        makeFakeNode({
+          text: `var lot222210 = new Lot( 8563, 0, '1', '222210', '', '1994 Jeep Wrangler 4WD 2.5L L4 engine. VIN: 1J4FY19P2RP440051. Runs and drives.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0.0, 'moose1214', '', 1550.0, 1750.0, 1600.0, 0.0, 0.0, '1,550.00', '1,750.00', '1,600.00', '0.00', '0.00', 26, 497465, 497495, 1784159400, 1784159430, '07:50 PM', '07:50 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`
+        }),
+        makeFakeNode({
+          text: `var lot222211 = new Lot(8563, 0, '2', '222211', '', '2012 Chevrolet Express Van handicap accessible. Braun Millennium power lift.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0.0, 'bidder42', '', 3000.0, 3250.0, 3100.0, 0.0, 0.0, '3,000.00', '3,250.00', '3,100.00', '0.00', '0.00', 26, 497495, 497525, 1784159430, 1784159460, '07:50 PM', '07:51 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`
+        }),
+      ],
+      '.auction-item': [duplicateRow],
+    },
+  });
+
+  const lots = core.extractAarCatalogLots(root, new URL('https://aarauctions.com/servlet/Search.do?auctionId=8563'));
+
+  assert.equal(lots.length, 2);
+  assert.deepEqual(plain(lots.map(lot => ({
+    lot: lot.lot,
+    title: lot.title,
+    url: lot.url,
+    currentBid: lot.currentBid,
+    nextBidAmount: lot.nextBidAmount,
+    auctionType: lot.auctionType,
+    quantity: lot.quantity,
+  }))), [
+    {
+      lot: '1',
+      title: '1994 Jeep Wrangler 4WD 2.5L L4 engine',
+      url: 'https://aarauctions.com/servlet/Search.do?auctionId=8563&itemId=222210',
+      currentBid: 1550,
+      nextBidAmount: 1600,
+      auctionType: 'One Lot',
+      quantity: 1,
+    },
+    {
+      lot: '2',
+      title: '2012 Chevrolet Express Van handicap accessible',
+      url: 'https://aarauctions.com/servlet/Search.do?auctionId=8563&itemId=222211',
+      currentBid: 3000,
+      nextBidAmount: 3100,
+      auctionType: 'One Lot',
+      quantity: 1,
+    },
+  ]);
+  assert.match(lots[0].description, /Runs and drives/);
+  assert.doesNotMatch(lots[0].rawText, /moose1214|bidder42/i);
+});
+
+test('assistant builds deterministic AAR catalog pages and binds active filters', () => {
+  const core = loadCore();
+  const loc = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649&keyword=PowerBlock&categoryName=No%20Category&lotId=1&itemId=223844');
+  const filters = core.extractAarCatalogFilters(loc);
+  assert.deepEqual(plain(filters), {
+    categoryName: 'No Category',
+    keyword: 'PowerBlock',
+    lotId: '1',
+    orderBy: '',
+  });
+  const pageUrl = new URL(core.buildAarCatalogPageUrl(loc, 2, 100, filters));
+  assert.equal(pageUrl.pathname, '/servlet/Search.do');
+  assert.equal(pageUrl.searchParams.get('auctionId'), '8649');
+  assert.equal(pageUrl.searchParams.get('keyword'), 'PowerBlock');
+  assert.equal(pageUrl.searchParams.get('categoryName'), 'No Category');
+  assert.equal(pageUrl.searchParams.get('lotId'), '1');
+  assert.equal(pageUrl.searchParams.get('itemId'), null);
+  assert.equal(pageUrl.searchParams.get('page'), '2');
+  assert.equal(pageUrl.searchParams.get('perPage'), '100');
+  assert.equal(core.aarCatalogResponseMatchesRequest(pageUrl.href, pageUrl.href, filters), true);
+  assert.equal(core.aarCatalogResponseMatchesRequest(
+    'https://aarauctions.com/servlet/Search.do?auctionId=9999&keyword=PowerBlock&categoryName=No%20Category&lotId=1&page=2&perPage=100',
+    pageUrl.href,
+    filters,
+  ), false);
+});
+
+test('assistant normalizes every AAR item photo to its large same-auction URL', () => {
+  const core = loadCore();
+  const root = makeFakeNode({
+    selectors: {
+      'img[src]': [
+        makeFakeNode({ attrs: { src: '/live/images/auction-8649/thumb-364409.0_100.jpeg?v=1' } }),
+        makeFakeNode({ attrs: { src: '/live/images/auction-8649/large-364409.0_101.JPG?v=2' } }),
+        makeFakeNode({ attrs: { src: '/live/images/auction-9999/large-wrong.jpg' } }),
+        makeFakeNode({ attrs: { src: '/assets/logo.png' } }),
+      ],
+    },
+  });
+  assert.deepEqual(plain(core.extractAarItemImages(
+    root,
+    new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649&itemId=223844'),
+  )), [
+    'https://aarauctions.com/live/images/auction-8649/large-364409.0_100.jpeg',
+    'https://aarauctions.com/live/images/auction-8649/large-364409.0_101.JPG',
+  ]);
+});
+
+test('assistant audits AAR calendar uniqueness by canonical auction id', async () => {
+  const core = loadCore();
+  const firstLink = makeFakeNode({
+    text: 'Catalog',
+    attrs: { href: '/servlet/Search.do?auctionId=8565&utm_source=calendar' },
+  });
+  const secondLink = makeFakeNode({
+    text: 'Catalog',
+    attrs: { href: '/servlet/Search.do?auctionId=8565&ref=duplicate' },
+  });
+  const makeCard = (link) => makeFakeNode({
+    text: 'Vehicles Summer Equipment Auction Closing at 7:00 PM Pleasant Valley, NY Catalog',
+    selectors: { 'a[href*="Search.do?auctionId="]': link },
+  });
+  const root = makeFakeNode({
+    text: 'Auction Calendar',
+    selectors: { '.et_pb_column': [makeCard(firstLink), makeCard(secondLink)] },
+  });
+
+  const settled = await core.settleAarAuctionCalendarDom(root, () => {}, () => false);
+
+  assert.equal(settled.items.length, 1);
+  assert.deepEqual(plain(settled.duplicateIds), ['aar-auction:8565']);
+  assert.equal(settled.missingIdentityCount, 0);
+  assert.equal(core.aarAuctionCalendarIdentity(settled.items[0]), 'aar-auction:8565');
+});
+
+test('assistant certifies exact AAR servlet coverage and hydrates item photos', async () => {
+  const location = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649');
+  const lotScript = (lot, itemId, title) => makeFakeNode({
+    text: `var lot${itemId} = new Lot(8649, 0, '${lot}', '${itemId}', '', '${title}. Full catalog description.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0, 'private-bidder-alias', '', 25, 0, 30, 0, 0, '25.00', '0.00', '30.00', '0.00', '0.00', 1, 2, 3, 1784159400, 1784159430, '07:15 PM', '07:15 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`,
+  });
+  const catalogDoc = makeFakeNode({
+    text: 'All Items (2)',
+    selectors: {
+      'script': [lotScript('1', '223844', 'PowerBlock Elite EXP'), lotScript('2', '223845', 'Hydraulic Adapter Kit')],
+    },
+  });
+  const detailDoc = (lot, itemId, title, image) => makeFakeNode({
+    text: 'All Items (2)',
+    selectors: {
+      'script': [lotScript(lot, itemId, title)],
+      'img[src]': [makeFakeNode({ attrs: { src: image } })],
+    },
+  });
+  const documents = new Map([
+    ['catalog', catalogDoc],
+    ['detail-223844', detailDoc('1', '223844', 'PowerBlock Elite EXP', '/live/images/auction-8649/thumb-1.jpg?v=1')],
+    ['detail-223845', detailDoc('2', '223845', 'Hydraulic Adapter Kit', '/live/images/auction-8649/thumb-2.jpg?v=2')],
+  ]);
+  class FixtureDomParser {
+    parseFromString(value) { return documents.get(String(value)) || null; }
+  }
+  const requested = [];
+  const fetch = async (url) => {
+    const parsed = new URL(url);
+    requested.push(parsed.href);
+    const itemId = parsed.searchParams.get('itemId');
+    return {
+      ok: true,
+      status: 200,
+      url: parsed.href,
+      async text() { return itemId ? `detail-${itemId}` : 'catalog'; },
+    };
+  };
+  const core = loadCore({ location, fetch, DOMParser: FixtureDomParser });
+  const result = await core.scrapeAarCatalogLots(() => {}, () => false, catalogDoc);
+
+  assert.equal(result.source, 'aar-servlet');
+  assert.equal(result.incomplete, false);
+  assert.equal(result.expectedTotal, 2);
+  assert.equal(result.items.length, 2);
+  assert.equal(new Set(result.items.map(item => item.itemId)).size, 2);
+  assert.equal(result.coverage.proofTier, 'pagination-exact');
+  assert.equal(result.coverage.enrichment.requested, 2);
+  assert.equal(result.coverage.enrichment.succeeded, 2);
+  assert.deepEqual(plain(result.items.map(item => item.images[0])), [
+    'https://aarauctions.com/live/images/auction-8649/large-1.jpg',
+    'https://aarauctions.com/live/images/auction-8649/large-2.jpg',
+  ]);
+  assert.equal(requested.filter(url => /perPage=100/.test(url)).length, 1);
+  assert.equal(requested.filter(url => /itemId=/.test(url)).length, 2);
+  assert.doesNotMatch(JSON.stringify(result.items), /private-bidder-alias/);
+  assert.deepEqual(plain(core.assessExportReadiness(result, 'aar', {
+    source: 'aar', kind: 'aar-auction-catalog', auctionId: '8649',
+  }, { locationLike: location })), {
+    ok: true,
+    reason: 'complete',
+    coverage: plain(core.buildProofTierCoverage(result, 'aar', {
+      source: 'aar', kind: 'aar-auction-catalog', auctionId: '8649',
+    }, { locationLike: location })),
+    routeValidation: { ok: true },
+  });
+});
+
+test('assistant certifies filtered AAR results by deterministic exhaustion instead of the broad auction total', async () => {
+  const location = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649&keyword=PowerBlock');
+  const lotScript = makeFakeNode({
+    text: `var lot223844 = new Lot(8649, 0, '1', '223844', '', 'PowerBlock Elite EXP. Full description.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0, 'private-bidder-alias', '', 25, 0, 30, 0, 0, '25.00', '0.00', '30.00', '0.00', '0.00', 1, 2, 3, 1784159400, 1784159430, '07:15 PM', '07:15 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`,
+  });
+  const catalogDoc = makeFakeNode({ text: 'All Items (80)', selectors: { script: [lotScript] } });
+  const detailDoc = makeFakeNode({
+    text: 'PowerBlock Elite EXP. Full item detail.',
+    selectors: {
+      script: [lotScript],
+      'img[src]': [makeFakeNode({ attrs: { src: '/live/images/auction-8649/thumb-1.jpg?v=1' } })],
+    },
+  });
+  class FixtureDomParser {
+    parseFromString(value) { return String(value).startsWith('detail-') ? detailDoc : catalogDoc; }
+  }
+  const fetch = async (url) => {
+    const parsed = new URL(url);
+    return {
+      ok: true,
+      status: 200,
+      url: parsed.href,
+      async text() { return parsed.searchParams.has('itemId') ? 'detail-223844' : 'catalog'; },
+    };
+  };
+  const core = loadCore({ location, fetch, DOMParser: FixtureDomParser });
+  const result = await core.scrapeAarCatalogLots(() => {}, () => false, catalogDoc);
+
+  assert.equal(result.context.advertisedAuctionTotal, 80);
+  assert.equal(result.context.filtered, true);
+  assert.equal(result.expectedTotal, 1);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].itemId, '223844');
+  assert.equal(result.incomplete, false);
+  assert.equal(result.stopReason, 'deterministic-pagination-exhausted');
+  assert.equal(result.coverage.proofTier, 'pagination-exact');
+  assert.deepEqual(plain(result.coverage.observedTotals), []);
+  assert.doesNotMatch(JSON.stringify(result.items), /private-bidder-alias/);
+});
+
+test('assistant follows an advertised AAR next page even when a filtered page is short', async () => {
+  const location = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649&keyword=PowerBlock');
+  const lotScript = (lot, itemId, title) => makeFakeNode({
+    text: `var lot${itemId} = new Lot(8649, 0, '${lot}', '${itemId}', '', '${title}. Full description.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0, 'private-bidder-alias', '', 25, 0, 30, 0, 0, '25.00', '0.00', '30.00', '0.00', '0.00', 1, 2, 3, 1784159400, 1784159430, '07:15 PM', '07:15 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`,
+  });
+  const nextLink = makeFakeNode({
+    text: 'Next',
+    attrs: { href: '/servlet/Search.do?auctionId=8649&keyword=PowerBlock&page=2&perPage=100' },
+  });
+  const pageOne = makeFakeNode({
+    text: 'All Items (80)',
+    selectors: {
+      script: [lotScript('1', '223844', 'PowerBlock Elite EXP')],
+      'a[href*="Search.do"]': [nextLink],
+    },
+  });
+  const pageTwo = makeFakeNode({
+    text: 'All Items (80)',
+    selectors: { script: [lotScript('2', '223845', 'PowerBlock Stand')], 'a[href*="Search.do"]': [] },
+  });
+  const detailDocs = new Map([
+    ['223844', makeFakeNode({ text: 'PowerBlock Elite EXP detail', selectors: { script: [lotScript('1', '223844', 'PowerBlock Elite EXP')] } })],
+    ['223845', makeFakeNode({ text: 'PowerBlock Stand detail', selectors: { script: [lotScript('2', '223845', 'PowerBlock Stand')] } })],
+  ]);
+  class FixtureDomParser {
+    parseFromString(value) {
+      const key = String(value);
+      if (key.startsWith('detail-')) return detailDocs.get(key.slice(7));
+      return key === 'page-2' ? pageTwo : pageOne;
+    }
+  }
+  const fetch = async (url) => {
+    const parsed = new URL(url);
+    const itemId = parsed.searchParams.get('itemId');
+    const page = parsed.searchParams.get('page');
+    return {
+      ok: true,
+      status: 200,
+      url: parsed.href,
+      async text() { return itemId ? `detail-${itemId}` : (page === '2' ? 'page-2' : 'page-1'); },
+    };
+  };
+  const core = loadCore({ location, fetch, DOMParser: FixtureDomParser });
+  const result = await core.scrapeAarCatalogLots(() => {}, () => false, pageOne);
+
+  assert.equal(result.expectedTotal, 2);
+  assert.equal(result.items.length, 2);
+  assert.equal(result.coverage.pageAudits.length, 2);
+  assert.equal(result.coverage.pageAudits[0].hasHigherPage, true);
+  assert.equal(result.incomplete, false);
+  assert.equal(result.coverage.proofTier, 'pagination-exact');
+});
+
+test('assistant fails closed when AAR item hydration redirects to another item', async () => {
+  const location = new URL('https://aarauctions.com/servlet/Search.do?auctionId=8649');
+  const script = makeFakeNode({
+    text: `var lot223844 = new Lot(8649, 0, '1', '223844', '', 'PowerBlock Elite EXP. Full description.', '', '', '', '', '', '', null, null, 'One Lot', 1, 0, 'alias', '', 25, 0, 30, 0, 0, '25.00', '0.00', '30.00', '0.00', '0.00', 1, 2, 3, 1784159400, 1784159430, '07:15 PM', '07:15 PM', 0, -1, -1, 0, 0, '', '', 0, -1, -1, false, false, false, false);`,
+  });
+  const catalogDoc = makeFakeNode({ text: 'All Items (1)', selectors: { script: [script] } });
+  class FixtureDomParser { parseFromString() { return catalogDoc; } }
+  const fetch = async (url) => {
+    const parsed = new URL(url);
+    const isDetail = parsed.searchParams.has('itemId');
+    return {
+      ok: true,
+      status: 200,
+      url: isDetail
+        ? 'https://aarauctions.com/servlet/Search.do?auctionId=8649&itemId=999999'
+        : parsed.href,
+      async text() { return 'fixture'; },
+    };
+  };
+  const core = loadCore({ location, fetch, DOMParser: FixtureDomParser });
+  const result = await core.scrapeAarCatalogLots(() => {}, () => false, catalogDoc);
+  assert.equal(result.incomplete, true);
+  assert.equal(result.stopReason, 'detail-enrichment-incomplete');
+  assert.deepEqual(plain(result.coverage.failedBatches), [{ id: '223844', reason: 'detail-identity-mismatch' }]);
+});
+
+test('assistant persists AAR research settings and builds distance-aware briefs', () => {
+  const storage = new Map();
+  const core = loadCore({ storage });
+
+  assert.deepEqual(plain(core.getAarResearchSettings()), {
+    originLabel: 'Edison, NJ 08817',
+    radiusMiles: 100,
+  });
+
+  core.saveAarResearchSettings({ originLabel: 'Metuchen, NJ 08840', radiusMiles: 75 });
+  assert.deepEqual(plain(core.getAarResearchSettings()), {
+    originLabel: 'Metuchen, NJ 08840',
+    radiusMiles: 75,
+  });
+
+  const brief = core.buildAarAuctionListLlmBrief([
+    {
+      source: 'AAR Auctions',
+      pageKind: 'aar-auction-list',
+      title: 'Summer Equipment #2 Auction Ending 7/12',
+      locationHint: 'Pleasant Valley, NY',
+      mapSearchUrl: 'https://www.google.com/maps/search/?api=1&query=Pleasant%20Valley%2C%20NY%20to%20Metuchen%2C%20NJ%2008840',
+    },
+  ], {
+    source: 'AAR Auctions',
+    pageKind: 'aar-auction-list',
+    title: 'AAR Auction Calendar',
+  }, core.getAarResearchSettings());
+
+  assert.match(brief, /You are an auction resale analysis coordinator/);
+  assert.match(brief, /Distance Agent/i);
+  assert.match(brief, /Metuchen, NJ 08840/);
+  assert.match(brief, /75 miles/i);
+  assert.match(brief, /live map\/search results, not assumptions/i);
+  assert.match(brief, /distance_miles/);
+  assert.match(brief, /distance_proof_url/);
+  assert.match(brief, /assigned_agent/);
+  assert.match(brief, /Summer Equipment #2 Auction Ending 7\/12/);
+});
+
+test('assistant renders AAR copy controls and research settings only', () => {
+  const core = loadCore();
+  const listHtml = core.buildPanelHtml({
+    mode: 'aar',
+    debugEnabled: false,
+    route: { kind: 'aar-auction-list' },
+  });
+  const catalogHtml = core.buildPanelHtml({
+    mode: 'aar',
+    debugEnabled: false,
+    route: { kind: 'aar-auction-catalog' },
+  });
+  const itemHtml = core.buildPanelHtml({
+    mode: 'aar',
+    debugEnabled: false,
+    route: { kind: 'aar-item-detail' },
+  });
+
+  assert.match(listHtml, /Copy Auctions LLM/);
+  assert.match(listHtml, /id="aar-auctions-copy-json"/);
+  assert.match(listHtml, /Research Settings/);
+  assert.match(listHtml, /Edison, NJ 08817/);
+  assert.doesNotMatch(listHtml, /Prepare Bid|Snipe Now|Auto-confirm|Max plan|checkout|payment/i);
+
+  assert.match(catalogHtml, /Copy Catalog LLM/);
+  assert.match(catalogHtml, /id="aar-catalog-copy-json"/);
+  assert.match(catalogHtml, /radius/i);
+  assert.doesNotMatch(catalogHtml, /Copy Auctions LLM|Prepare Bid|Snipe Now|Max plan|checkout|payment/i);
+
+  assert.match(itemHtml, /Copy Item LLM/);
+  assert.match(itemHtml, /id="aar-item-copy-json"/);
+  assert.doesNotMatch(itemHtml, /Copy Catalog LLM|Copy Auctions LLM|Prepare Bid|Snipe Now|Max plan|checkout|payment/i);
+});
+
+test('assistant resolves supported and blocked GovDeals route families', () => {
+  const core = loadCore();
+  const seller = new URL('https://www.govdeals.com/en/rutgers');
+  const search = new URL('https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25');
+  const locationSearch = new URL('https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search');
+  const categorySearch = new URL('https://www.govdeals.com/en/search?category=2&categoryName=Consumer%20Electronics&zipcode=07008&miles=25');
+  const asset = new URL('https://www.govdeals.com/en/asset/43147/7484');
+
+  assert.deepEqual(plain(core.resolveGovDealsPage(seller)), {
+    supported: true,
+    kind: 'govdeals-seller',
+    host: 'www.govdeals.com',
+    sellerSlug: 'rutgers',
+    reason: 'GovDeals seller route',
+  });
+  assert.deepEqual(plain(core.resolveGovDealsPage(search)), {
+    supported: true,
+    kind: 'govdeals-new-listings',
+    host: 'www.govdeals.com',
+    zipcode: '07008',
+    miles: '25',
+    category: '',
+    categoryName: '',
+    reason: 'GovDeals new listings route',
+  });
+  assert.deepEqual(plain(core.resolveGovDealsPage(locationSearch)), {
+    supported: true,
+    kind: 'govdeals-new-listings',
+    host: 'www.govdeals.com',
+    zipcode: '07008',
+    miles: '50',
+    category: '',
+    categoryName: '',
+    reason: 'GovDeals search route',
+  });
+  assert.deepEqual(plain(core.resolveGovDealsPage(categorySearch)), {
+    supported: true,
+    kind: 'govdeals-new-listings',
+    host: 'www.govdeals.com',
+    zipcode: '07008',
+    miles: '25',
+    category: '2',
+    categoryName: 'Consumer Electronics',
+    reason: 'GovDeals search route',
+  });
+  assert.deepEqual(plain(core.resolveGovDealsPage(asset)), {
+    supported: true,
+    kind: 'govdeals-asset',
+    host: 'www.govdeals.com',
+    assetId: '43147',
+    accountId: '7484',
+    reason: 'GovDeals asset route',
+  });
+  assert.equal(core.shouldInitOnLocation(seller), true);
+  assert.equal(core.shouldInitOnLocation(search), true);
+  assert.equal(core.shouldInitOnLocation(locationSearch), true);
+  assert.equal(core.shouldInitOnLocation(categorySearch), true);
+  assert.equal(core.shouldInitOnLocation(asset), true);
+  assert.equal(core.resolveAssistantMode(seller).mode, 'govdeals');
+  assert.equal(core.resolveAssistantMode(search).source, 'govdeals');
+  assert.equal(core.resolveAssistantMode(locationSearch).source, 'govdeals');
+  assert.equal(core.resolveAssistantMode(categorySearch).source, 'govdeals');
+
+  [
+    'https://www.govdeals.com/en/login',
+    'https://www.govdeals.com/en/register',
+    'https://www.govdeals.com/en/account',
+    'https://www.govdeals.com/en/cart',
+    'https://www.govdeals.com/en/checkout',
+    'https://www.govdeals.com/en/payment',
+    'https://www.govdeals.com/en/bid/43147/7484',
+    'https://www.govdeals.com/en/offer/43147/7484',
+  ].forEach((href) => {
+    const url = new URL(href);
+    assert.equal(core.resolveGovDealsPage(url).supported, false, href);
+    assert.equal(core.shouldInitOnLocation(url), false, href);
+  });
+});
+
+test('assistant extracts GovDeals seller context and visible listings', () => {
+  const core = loadCore();
+  const assetLink = makeFakeNode({
+    text: 'Trailer with 6 Current Designs Crosswind Kayaks',
+    attrs: { href: '/en/asset/43147/7484' },
+  });
+  const sellerLink = makeFakeNode({
+    text: 'Rutgers University',
+    attrs: { href: '/en/rutgers' },
+  });
+  const image = makeFakeNode({
+    attrs: { src: '/photos/43147-main.jpg', alt: 'Kayak trailer' },
+  });
+  const card = makeFakeNode({
+    text: `Trailer with 6 Current Designs Crosswind Kayaks
+Rutgers University
+Asset ID 43147
+Lot Number 7484-43147
+Current Bid $1,250.00
+9 Bids
+Ends Jul 14, 2026 8:05 PM ET
+Item Location: Piscataway, New Jersey 08854
+Shipping Available
+Used/See Description`,
+    selectors: {
+      'a[href*="/asset/"]': assetLink,
+      'a[href*="/en/rutgers"]': sellerLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: `Rutgers University
+Piscataway, NJ
+13 Search Results in Rutgers University, NJ
+Trailer with 6 Current Designs Crosswind Kayaks`,
+    selectors: {
+      'h1': makeFakeNode({ text: 'Rutgers University' }),
+      'a[href*="/asset/"]': assetLink,
+      'a[href*="/en/rutgers"]': sellerLink,
+      'article': [card],
+    },
+  });
+  root.title = 'Rutgers University | GovDeals';
+  const loc = new URL('https://www.govdeals.com/en/rutgers');
+
+  const context = core.extractGovDealsSellerContext(root, loc);
+  const listings = core.extractGovDealsListings(root, loc, 'govdeals-seller');
+
+  assert.deepEqual(plain(context), {
+    source: 'GovDeals',
+    pageKind: 'govdeals-seller',
+    title: 'Rutgers University',
+    sellerName: 'Rutgers University',
+    seller: 'Rutgers University',
+    sellerSlug: 'rutgers',
+    url: 'https://www.govdeals.com/en/rutgers',
+    locationHint: 'Piscataway, NJ',
+    visibleCount: 13,
+    renderedCount: 1,
+    advertisedTotal: 13,
+  });
+  assert.deepEqual(plain(listings), [
+    {
+      source: 'GovDeals',
+      pageKind: 'govdeals-seller',
+      assetId: '43147',
+      accountId: '7484',
+      lotNumber: '7484-43147',
+      title: 'Trailer with 6 Current Designs Crosswind Kayaks',
+      url: 'https://www.govdeals.com/en/asset/43147/7484',
+      image: 'https://www.govdeals.com/photos/43147-main.jpg',
+      seller: 'Rutgers University',
+      sellerUrl: 'https://www.govdeals.com/en/rutgers',
+      category: '',
+      status: 'Used/See Description',
+      currentBid: '$1,250.00',
+      currentBidAmount: 1250,
+      bidCount: '9 Bids',
+      bidCountNumber: 9,
+      closeTime: 'Jul 14, 2026 8:05 PM ET',
+      location: 'Piscataway, New Jersey 08854',
+      distanceText: '',
+      shippingText: 'Shipping Available',
+      pickupText: '',
+      condition: 'Used/See Description',
+      specs: {},
+      description: '',
+      rawText: 'Trailer with 6 Current Designs Crosswind Kayaks Rutgers University Asset ID 43147 Lot Number 7484-43147 Current Bid $1,250.00 9 Bids Ends Jul 14, 2026 8:05 PM ET Item Location: Piscataway, New Jersey 08854 Shipping Available Used/See Description',
+    },
+  ]);
+});
+
+test('assistant extracts GovDeals new-listings search context and listing cards', () => {
+  const core = loadCore();
+  const assetLink = makeFakeNode({
+    text: 'Current Tools Conduit Organizer',
+    attrs: { href: '/asset/132/25567' },
+  });
+  const image = makeFakeNode({ attrs: { src: 'https://cdn.govdeals.test/132.jpg' } });
+  const card = makeFakeNode({
+    text: `Computers and Electronics
+Current Tools Conduit Organizer
+Seller: Borough of Carteret
+Asset ID 132
+Lot Number 25567-132
+Current Bid: $58.00 USD
+15 Bids
+Ends: Jul 12, 2026 6:00 PM ET
+Location: Carteret, NJ 07008
+Distance: 2.1 miles
+Local Pickup Only
+Condition Used/See Description`,
+    selectors: {
+      'a[href*="/asset/"]': assetLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: `New Listings
+Filters Zipcode 07008 Miles 25
+Sort Latest
+Showing 1 to 1 of 1
+Current Tools Conduit Organizer`,
+    selectors: {
+      'h1': makeFakeNode({ text: 'New Listings' }),
+      'article': [card],
+      'a[href*="/asset/"]': assetLink,
+    },
+  });
+  root.title = 'New Listings | GovDeals';
+  const loc = new URL('https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25');
+  const directSearchLoc = new URL('https://www.govdeals.com/en/search?category=2&categoryName=Consumer%20Electronics&zipcode=07008&miles=25');
+
+  const context = core.extractGovDealsSearchContext(root, loc);
+  const directSearchContext = core.extractGovDealsSearchContext(root, directSearchLoc);
+  const listings = core.extractGovDealsListings(root, loc, 'govdeals-new-listings');
+
+  assert.equal(context.source, 'GovDeals');
+  assert.equal(context.pageKind, 'govdeals-new-listings');
+  assert.equal(context.zipcode, '07008');
+  assert.equal(context.miles, '25');
+  assert.equal(context.visibleCount, 1);
+  assert.equal(directSearchContext.category, '2');
+  assert.equal(directSearchContext.categoryName, 'Consumer Electronics');
+  assert.equal(listings.length, 1);
+  assert.deepEqual(plain({
+    title: listings[0].title,
+    category: listings[0].category,
+    seller: listings[0].seller,
+    currentBid: listings[0].currentBid,
+    bidCount: listings[0].bidCount,
+    location: listings[0].location,
+    distanceText: listings[0].distanceText,
+    pickupText: listings[0].pickupText,
+    status: listings[0].status,
+  }), {
+    title: 'Current Tools Conduit Organizer',
+    category: 'Computers and Electronics',
+    seller: 'Borough of Carteret',
+    currentBid: '$58.00 USD',
+    bidCount: '15 Bids',
+    location: 'Carteret, NJ 07008',
+    distanceText: '2.1 miles',
+    pickupText: 'Local Pickup Only',
+    status: 'Used/See Description',
+  });
+});
+
+test('assistant rejects GovDeals DOM exports that collect one of 44 advertised listings', async () => {
+  const loc = new URL('https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0');
+  const core = loadCore({ location: loc });
+  const assetLink = makeFakeNode({
+    text: 'Current Tools Conduit Organizer',
+    attrs: { href: '/asset/132/25567' },
+  });
+  const card = makeFakeNode({
+    text: `Computers and Electronics
+Current Tools Conduit Organizer
+Seller: Borough of Carteret
+Asset ID 132
+Lot Number 25567-132
+Current Bid: $58.00 USD
+15 Bids
+Ends: Jul 12, 2026 6:00 PM ET
+Location: Carteret, NJ 07008
+Local Pickup Only`,
+    selectors: {
+      'a[href*="/asset/"]': assetLink,
+      'img': makeFakeNode({ attrs: { src: 'https://cdn.govdeals.test/132.jpg' } }),
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Search Results Showing 1 to 1 of 44 Current Tools Conduit Organizer',
+    selectors: {
+      h1: makeFakeNode({ text: 'Search Results' }),
+      article: [card],
+      'a[href*="/asset/"]': assetLink,
+    },
+  });
+  root.title = 'Search Results | GovDeals';
+
+  const result = await core.scrapeGovDealsListings(() => {}, () => false, root);
+  const route = core.resolveSiteRoute(loc);
+  const readiness = plain(core.assessExportReadiness(result, 'govdeals', route, { locationLike: loc }));
+
+  assert.equal(result.context.advertisedTotal, 44);
+  assert.equal(result.expectedTotal, 44);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.incomplete, true);
+  assert.equal(readiness.ok, false);
+  assert.equal(readiness.coverage.expectedTotal, 44);
+  assert.equal(readiness.coverage.collectedCount, 1);
+  assert.match(readiness.reason, /count-mismatch|incomplete/);
+});
+
+test('assistant parses compact GovDeals card text from the real new-listings grid', () => {
+  const core = loadCore();
+  const compactText = 'New ListingOnline AuctionLot of 5 Dell Optiplex 7070 i5-9500Edison, New Jersey, USAUSD 10.006D10H(July 16, 2026 12:44 PM EDT)Lot#: 7529-6874 Watch';
+  const possessiveText = "New ListingOnline AuctionLot of 3 Microsoft Surface Book 3'sEdison, New Jersey, USAUSD 215.005D14H(July 15, 2026 04:35 PM EDT)Lot#: 7529-6816 Watch";
+  const assetLink = makeFakeNode({
+    text: compactText,
+    attrs: { href: '/en/asset/6874/7529' },
+  });
+  const possessiveAssetLink = makeFakeNode({
+    text: possessiveText,
+    attrs: { href: '/en/asset/6816/7529' },
+  });
+  const card = makeFakeNode({
+    text: compactText,
+    selectors: {
+      'a[href*="/asset/"]': assetLink,
+    },
+  });
+  const possessiveCard = makeFakeNode({
+    text: possessiveText,
+    selectors: {
+      'a[href*="/asset/"]': possessiveAssetLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: `44 Results for New Listings
+${compactText}`,
+    selectors: {
+      'article': [card],
+      'a[href*="/asset/"]': assetLink,
+    },
+  });
+  root.title = 'New Surplus Inventory Listings for Sale | GovDeals';
+  const browserLoc = {
+    href: 'https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25',
+    hostname: 'www.govdeals.com',
+    pathname: '/en/new-listings/filters',
+  };
+
+  const route = core.resolveGovDealsPage(browserLoc);
+  const context = core.extractGovDealsSearchContext(root, browserLoc);
+  const listings = core.extractGovDealsListings(root, browserLoc, 'govdeals-new-listings');
+
+  assert.equal(route.zipcode, '07008');
+  assert.equal(route.miles, '25');
+  assert.equal(context.zipcode, '07008');
+  assert.equal(context.miles, '25');
+  assert.equal(context.visibleCount, 44);
+  assert.equal(listings.length, 1);
+  assert.deepEqual(plain({
+    title: listings[0].title,
+    lotNumber: listings[0].lotNumber,
+    currentBid: listings[0].currentBid,
+    currentBidAmount: listings[0].currentBidAmount,
+    closeTime: listings[0].closeTime,
+    location: listings[0].location,
+    url: listings[0].url,
+  }), {
+    title: 'Lot of 5 Dell Optiplex 7070 i5-9500',
+    lotNumber: '7529-6874',
+    currentBid: 'USD 10.00',
+    currentBidAmount: 10,
+    closeTime: '6D10H(July 16, 2026 12:44 PM EDT)',
+    location: 'Edison, New Jersey, USA',
+    url: 'https://www.govdeals.com/en/asset/6874/7529',
+  });
+
+  const possessiveListing = core.extractGovDealsListings(makeFakeNode({
+    text: possessiveText,
+    selectors: {
+      'article': [possessiveCard],
+      'a[href*="/asset/"]': possessiveAssetLink,
+    },
+  }), browserLoc, 'govdeals-seller')[0];
+  assert.equal(possessiveListing.title, "Lot of 3 Microsoft Surface Book 3's");
+  assert.equal(possessiveListing.location, 'Edison, New Jersey, USA');
+  assert.equal(possessiveListing.currentBid, 'USD 215.00');
+  assert.equal(possessiveListing.lotNumber, '7529-6816');
+});
+
+test('assistant extracts GovDeals direct search card-search grid cards', () => {
+  const core = loadCore();
+  const firstTitle = 'Lot of 4 Microsoft Surface Pro 7 Laptops';
+  const secondTitle = 'Lot of 2 Dell Latitude 5420 Laptops';
+  const firstText = `ONLINE AUCTION
+${firstTitle}
+Edison, New Jersey, USA
+USD 389.00
+1D18H(July 14, 2026 04:08 PM EDT)
+LOT#: 7529-6823
+Watching`;
+  const secondText = `ONLINE AUCTION
+${secondTitle}
+Carteret, New Jersey, USA
+USD 155.00
+1D20H(July 14, 2026 06:15 PM EDT)
+LOT#: 7529-6824
+Watch`;
+  const firstTitleLink = makeFakeNode({
+    text: firstTitle,
+    attrs: { href: '/en/asset/6823/7529', title: firstTitle },
+  });
+  const firstImageLink = makeFakeNode({
+    attrs: { href: '/en/asset/6823/7529', title: firstTitle },
+  });
+  const firstImage = makeFakeNode({
+    attrs: { src: 'https://cdn.govdeals.test/6823.jpg', title: firstTitle },
+  });
+  const secondTitleLink = makeFakeNode({
+    text: secondTitle,
+    attrs: { href: '/en/asset/6824/7529', title: secondTitle },
+  });
+  const firstCard = makeFakeNode({
+    text: firstText,
+    selectors: {
+      'a[name="lnkAssetDetails"][href*="/asset/"]': firstTitleLink,
+      'a[name="lnkImageAssetDetails"][href*="/asset/"]': firstImageLink,
+      'a[href*="/asset/"]': [firstImageLink, firstTitleLink],
+      'img': firstImage,
+    },
+  });
+  const secondCard = makeFakeNode({
+    text: secondText,
+    selectors: {
+      'a[name="lnkAssetDetails"][href*="/asset/"]': secondTitleLink,
+      'a[href*="/asset/"]': secondTitleLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: `53 Results for Consumer Electronics
+${firstText}
+${secondText}`,
+    selectors: {
+      '.card-search': [firstCard, secondCard],
+      'a[href*="/asset/"]': [firstTitleLink, secondTitleLink],
+    },
+  });
+  root.title = 'Consumer Electronics For Sale | GovDeals';
+  const loc = new URL('https://www.govdeals.com/en/search?category=2&categoryName=Consumer%20Electronics&zipcode=07008&miles=25');
+
+  const context = core.extractGovDealsSearchContext(root, loc);
+  const listings = core.extractGovDealsListings(root, loc, 'govdeals-new-listings');
+
+  assert.equal(context.visibleCount, 53);
+  assert.equal(context.category, '2');
+  assert.equal(context.categoryName, 'Consumer Electronics');
+  assert.equal(listings.length, 2);
+  assert.deepEqual(plain({
+    firstTitle: listings[0].title,
+    firstUrl: listings[0].url,
+    firstImage: listings[0].image,
+    firstLot: listings[0].lotNumber,
+    firstPrice: listings[0].currentBid,
+    secondTitle: listings[1].title,
+    secondLocation: listings[1].location,
+  }), {
+    firstTitle,
+    firstUrl: 'https://www.govdeals.com/en/asset/6823/7529',
+    firstImage: 'https://cdn.govdeals.test/6823.jpg',
+    firstLot: '7529-6823',
+    firstPrice: 'USD 389.00',
+    secondTitle,
+    secondLocation: 'Carteret, New Jersey, USA',
+  });
+});
+
+test('assistant extracts GovDeals asset detail fields for enrichment', () => {
+  const core = loadCore();
+  const root = makeFakeNode({
+    text: `Trailer with 6 Current Designs Crosswind Kayaks
+Asset ID 43147
+Lot Number 7484-43147
+Manufacturer Current Designs
+Model Crosswind
+Condition Used/See Description
+Current Bid $1,250.00
+Bids 9
+Item Location: Piscataway, New Jersey 08854
+OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer.
+Pickup only by appointment.`,
+    selectors: {
+      'h1': makeFakeNode({ text: 'Trailer with 6 Current Designs Crosswind Kayaks' }),
+      'img': makeFakeNode({ attrs: { src: '/images/kayak.jpg' } }),
+    },
+  });
+  root.title = 'Trailer with 6 Current Designs Crosswind Kayaks | GovDeals';
+
+  const asset = core.extractGovDealsAssetDetail(root, new URL('https://www.govdeals.com/en/asset/43147/7484'));
+
+  assert.deepEqual(plain(asset), {
+    source: 'GovDeals',
+    pageKind: 'govdeals-asset',
+    assetId: '43147',
+    accountId: '7484',
+    lotNumber: '7484-43147',
+    title: 'Trailer with 6 Current Designs Crosswind Kayaks',
+    url: 'https://www.govdeals.com/en/asset/43147/7484',
+    image: 'https://www.govdeals.com/images/kayak.jpg',
+    images: ['https://www.govdeals.com/images/kayak.jpg'],
+    seller: '',
+    sellerUrl: '',
+    category: '',
+    status: 'Used/See Description',
+    currentBid: '$1,250.00',
+    currentBidAmount: 1250,
+    bidCount: '9',
+    bidCountNumber: 9,
+    closeTime: '',
+    location: 'Piscataway, New Jersey 08854',
+    distanceText: '',
+    shippingText: '',
+    pickupText: 'Pickup only by appointment.',
+    condition: 'Used/See Description',
+    specs: {
+      Manufacturer: 'Current Designs',
+      Model: 'Crosswind',
+      Condition: 'Used/See Description',
+    },
+    description: 'OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer.',
+    rawText: 'Trailer with 6 Current Designs Crosswind Kayaks | OFFERED FOR AUCTION: A lot of 6 Current Designs Crosswind Kayaks with trailer. | Used/See Description | $1,250.00 | 9 | Piscataway, New Jersey 08854 | Pickup only by appointment.',
+  });
+});
+
+test('assistant scopes GovDeals asset exports to the item DOM for both observed shapes', () => {
+  const core = loadCore();
+  const printer = core.extractGovDealsAssetDetail(
+    makeGovDealsAssetDomFixture({
+      title: 'HP LaserJet Enterprise 600 m601n Laser Printer CE989A',
+      assetId: '72',
+      accountId: '6332',
+      currentBid: '$30.00',
+      bidCount: 1,
+      closeTime: '14h42m(Jul 15, 2026 03:30 PM EDT)',
+      seller: 'South Toms River Borough, NJ',
+      sellerUrl: 'http://boroughofsouthtomsriver.com',
+      location: '19 Double Trouble Rd, Toms River, New Jersey, 08757, USA',
+      image: 'https://webassets.lqdt1.com/assets/photos/6332/6332_72.jpg',
+      specs: { Condition: 'Used/See Description' },
+      description: 'HP LaserJet Enterprise 600 m601n Laser Printer CE989A Monochrome Black Printer Operational / Recently Removed from Use Sold As Is / Where Is',
+    }),
+    new URL('https://www.govdeals.com/en/asset/72/6332'),
+  );
+  const surfaces = core.extractGovDealsAssetDetail(
+    makeGovDealsAssetDomFixture({
+      title: "Lot of 3 Microsoft Surface Book 3's",
+      assetId: '6816',
+      accountId: '7529',
+      currentBid: '$321.00',
+      bidCount: 13,
+      closeTime: '15h54m(Jul 15, 2026 04:35 PM EDT)',
+      seller: 'Rutgers University, NJ',
+      sellerUrl: 'https://www.rutgers.edu',
+      location: '84 Warehouse Rd, Edison, New Jersey, 08817, USA',
+      image: 'https://webassets.lqdt1.com/assets/photos/7529/7529_6816.jpg',
+      specs: { Manufacturer: 'Microsoft', Model: '1867', Condition: 'Used/See Description' },
+      description: "Up for Auction is a Lot of 3 Used Microsoft Surface Book 3's. Does not come with wall charger. Pick Up ONLY - Rutgers does not pack or ship items. Pickup Location: 76 Warehouse Rd, Piscataway, NJ 08854",
+    }),
+    new URL('https://www.govdeals.com/en/asset/6816/7529'),
+  );
+
+  assert.deepEqual(plain({
+    title: printer.title,
+    image: printer.image,
+    seller: printer.seller,
+    sellerUrl: printer.sellerUrl,
+    location: printer.location,
+    closeTime: printer.closeTime,
+    description: printer.description,
+  }), {
+    title: 'HP LaserJet Enterprise 600 m601n Laser Printer CE989A',
+    image: 'https://webassets.lqdt1.com/assets/photos/6332/6332_72.jpg',
+    seller: 'South Toms River Borough, NJ',
+    sellerUrl: 'http://boroughofsouthtomsriver.com/',
+    location: 'New Jersey, 08757, USA',
+    closeTime: '14h42m(Jul 15, 2026 03:30 PM EDT)',
+    description: 'HP LaserJet Enterprise 600 m601n Laser Printer CE989A Monochrome Black Printer Operational / Recently Removed from Use Sold As Is / Where Is',
+  });
+  assert.equal(surfaces.image, 'https://webassets.lqdt1.com/assets/photos/7529/7529_6816.jpg');
+  assert.equal(surfaces.seller, 'Rutgers University, NJ');
+  assert.equal(surfaces.location, 'New Jersey, 08817, USA');
+  assert.equal(surfaces.closeTime, '15h54m(Jul 15, 2026 04:35 PM EDT)');
+  assert.equal(surfaces.specs.Manufacturer, 'Microsoft');
+  assert.equal(surfaces.specs.Model, '1867');
+  assert.match(surfaces.description, /does not come with wall charger/i);
+  assert.match(surfaces.pickupText, /76 Warehouse Rd, Piscataway/i);
+  assert.doesNotMatch(surfaces.image, /logo|allsurplus/i);
+  assert.doesNotMatch(surfaces.seller, /about us/i);
+  assert.doesNotMatch(surfaces.closeTime, /sign in|bid/i);
+  assert.doesNotMatch(surfaces.location, /Account Type|Inspection/i);
+  assert.doesNotMatch(surfaces.specs.Model, /reinstall|operating system/i);
+});
+
+test('assistant builds GovDeals distance-aware briefs and renders scraper-only UI', () => {
+  const storage = new Map();
+  const core = loadCore({ storage });
+  const settings = core.getAarResearchSettings();
+  const listings = [
+    {
+      source: 'GovDeals',
+      pageKind: 'govdeals-new-listings',
+      title: 'Current Tools Conduit Organizer',
+      url: 'https://www.govdeals.com/asset/132/25567',
+      currentBid: '$58.00 USD',
+      location: 'Carteret, NJ 07008',
+      distanceText: '2.1 miles',
+    },
+  ];
+  const context = {
+    source: 'GovDeals',
+    pageKind: 'govdeals-new-listings',
+    title: 'New Listings',
+    url: 'https://www.govdeals.com/en/new-listings/filters?zipcode=07008&miles=25',
+    zipcode: '07008',
+    miles: '25',
+    visibleCount: 1,
+    enrichment: { eligible: 749, limit: 90, requested: 90, succeeded: 90, failed: 0, skippedDueLimit: 659 },
+  };
+
+  const brief = core.buildGovDealsLlmBrief(listings, context, settings);
+  const sellerHtml = core.buildPanelHtml({
+    mode: 'govdeals',
+    debugEnabled: false,
+    route: { kind: 'govdeals-seller' },
+  });
+  const searchHtml = core.buildPanelHtml({
+    mode: 'govdeals',
+    debugEnabled: false,
+    route: { kind: 'govdeals-new-listings' },
+  });
+  const assetHtml = core.buildPanelHtml({
+    mode: 'govdeals',
+    debugEnabled: false,
+    route: { kind: 'govdeals-asset' },
+  });
+
+  assert.match(brief, /You are an auction resale analysis coordinator/);
+  assert.match(brief, /GovDeals safety boundary/i);
+  assert.match(brief, /Edison, NJ 08817/);
+  assert.match(brief, /100 miles/i);
+  assert.match(brief, /zipcode.*07008/is);
+  assert.match(brief, /distance_miles/);
+  assert.match(brief, /distance_proof_url/);
+  assert.match(brief, /live map\/search proof/i);
+  assert.match(brief, /Detail enrichment was deliberately capped/i);
+  assert.match(brief, /blank description is not evidence of low value/i);
+  assert.match(brief, /Current Tools Conduit Organizer/);
+
+  assert.match(sellerHtml, /Copy Seller LLM/);
+  assert.match(sellerHtml, /id="govdeals-seller-copy-json"/);
+  assert.match(searchHtml, /Copy Listings LLM/);
+  assert.match(searchHtml, /id="govdeals-listings-copy-json"/);
+  assert.match(assetHtml, /Copy Asset LLM/);
+  assert.match(assetHtml, /id="govdeals-asset-copy-json"/);
+  [sellerHtml, searchHtml, assetHtml].forEach((html) => {
+    assert.match(html, /GovDeals/);
+    assert.doesNotMatch(html, /Prepare Bid|Snipe Now|Auto-confirm|Max plan|checkout|payment|offer|\bcart\b/i);
+  });
+});
+
+test('assistant parses AuctionNinja catalog ranges for guarded loading', () => {
+  const core = loadCore();
+
+  assert.deepEqual(plain(core.parseAuctionNinjaCatalogRange('1-40 of 60 items')), {
+    start: 1,
+    end: 40,
+    total: 60,
+    pageSize: 40,
+    complete: false,
+  });
+  assert.deepEqual(plain(core.parseAuctionNinjaCatalogRange('41-60 of 60 items')), {
+    start: 41,
+    end: 60,
+    total: 60,
+    pageSize: 20,
+    complete: true,
+  });
+  assert.equal(core.parseAuctionNinjaCatalogRange('no count here'), null);
+});
+
+test('assistant parses AuctionNinja JSON pagination without retaining map or account payloads', () => {
+  const core = loadCore();
+  const parsed = plain(core.parseAuctionNinjaPagedResponse(JSON.stringify({
+    head: '<div class="location-search-result-head-left"><span>118 sales</span></div>',
+    body: '<div class="location-search-result-all_"><a href="/seller/sales/details/example--1.html">Example</a></div>',
+    pagination: '<a onclick="pagination(\'marketplace_ajax.php?Page=2&miles=50&zip=07008\')">2</a>',
+    location: ['private map popup'],
+    SlrVals: '<input value="private-account-filter">',
+    DefLati: '40.0000',
+  })));
+  assert.equal(parsed.responseKind, 'auctionninja-json-fragment');
+  assert.equal(parsed.totalSales, 118);
+  assert.match(parsed.html, /location-search-result-all_/);
+  assert.match(parsed.html, /marketplace_ajax\.php/);
+  assert.doesNotMatch(parsed.html, /private map popup|private-account-filter|40\.0000/);
+  assert.deepEqual(parsed.ignoredSensitiveKeys, ['DefLati', 'SlrVals', 'location']);
+});
+
+test('assistant validates AuctionNinja exact page coverage and rejects gaps, overlap, and duplicates', () => {
+  const core = loadCore();
+  const exact = [
+    { page: 1, start: 1, end: 2, total: 5, count: 2, ids: ['p1', 'p2'] },
+    { page: 2, start: 3, end: 4, total: 5, count: 2, ids: ['p3', 'p4'] },
+    { page: 3, start: 5, end: 5, total: 5, count: 1, ids: ['p5'] },
+  ];
+  assert.equal(core.validateAuctionNinjaPageCoverage(exact, 5).complete, true);
+  assert.equal(core.validateAuctionNinjaPageCoverage(exact.map(page => ({
+    ...page,
+    start: null,
+    end: null,
+  })), 5).complete, true);
+  assert.equal(core.validateAuctionNinjaPageCoverage(exact.map(page => ({
+    ...page,
+    start: null,
+    end: null,
+  })), 5, { requireRanges: true }).reason, 'missing-range-proof');
+  assert.equal(core.validateAuctionNinjaPageCoverage([
+    exact[0],
+    { ...exact[1], start: null, end: null },
+    exact[2],
+  ], 5).reason, 'incomplete-range-proof');
+  assert.equal(core.validateAuctionNinjaPageCoverage([exact[0], exact[2]], 5).reason, 'missing-pages');
+  assert.equal(core.validateAuctionNinjaPageCoverage([
+    exact[0],
+    { page: 2, start: 2, end: 3, total: 5, count: 2, ids: ['p2', 'p3'] },
+    { page: 3, start: 4, end: 5, total: 5, count: 2, ids: ['p4', 'p5'] },
+  ], 5).reason, 'duplicate-identities');
+  assert.equal(core.validateAuctionNinjaPageCoverage(exact.map(page => ({ ...page, total: page.page === 2 ? 6 : 5 })), 5).reason, 'total-drift');
+  assert.deepEqual(plain(core.buildAuctionNinjaPageAudit([], 'https://www.auctionninja.com/category/electronics?Page=1', null, null)), {
+    page: 1,
+    total: null,
+    start: null,
+    end: null,
+    count: 0,
+    ids: [],
+  });
+});
+
+test('assistant preserves AuctionNinja category and auction-search pagination scope', () => {
+  const core = loadCore();
+  const category = 'https://www.auctionninja.com/category/electronics?miles=50&zip=07008';
+  assert.equal(core.auctionNinjaCategoryPageMatches(category, `${category}&Page=2&srt=Distance`), true);
+  assert.equal(core.auctionNinjaCategoryPageMatches(category, 'https://www.auctionninja.com/category/electronics?miles=100&zip=07008&Page=2&srt=Distance'), false);
+  assert.equal(core.auctionNinjaCategoryPageMatches(category, 'https://www.auctionninja.com/category/jewelry?miles=50&zip=07008&Page=2&srt=Distance'), false);
+
+  const search = 'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=opaque';
+  const page2 = 'https://www.auctionninja.com/marketplace_ajax.php?Page=2&miles=50&zip=07008&shipping=s&pickup=p';
+  const scope = core.auctionNinjaPaginationScope(page2);
+  assert.equal(core.auctionNinjaSearchPageMatches(search, page2, scope), true);
+  assert.equal(core.auctionNinjaSearchPageMatches(search, page2.replace('miles=50', 'miles=100'), scope), false);
+
+  const activeFilters = { miles: '50', zip: '07008', shipping: 's', pickup: 'p', srt: 'Distance' };
+  assert.equal(core.auctionNinjaSearchPageMatches(search, page2, scope, activeFilters), true);
+  assert.equal(core.auctionNinjaSearchPageMatches(search, page2.replace('shipping=s', 'shipping=x'), '', activeFilters), false);
+  assert.equal(core.auctionNinjaSearchPageMatches(search, page2.replace('&shipping=s', ''), '', activeFilters), false);
+
+  const scopeA = makeFakeNode({
+    text: '2',
+    attrs: { href: '/marketplace_ajax.php?Page=2&miles=50&zip=07008&shipping=s&pickup=p' },
+  });
+  const scopeB = makeFakeNode({
+    text: '3',
+    attrs: { href: '/marketplace_ajax.php?Page=3&miles=50&zip=07008&shipping=x&pickup=p' },
+  });
+  const paging = makeFakeNode({ selectors: { 'a[href]': [scopeA, scopeB] } });
+  const ambiguousRoot = makeFakeNode({ selectors: { '.paging-deta': [paging] } });
+  assert.deepEqual(plain(core.findAuctionNinjaAuctionSearchPageUrls(ambiguousRoot, new URL(search))), []);
+});
+
+test('assistant unwraps AuctionNinja external sale redirects into unique canonical identities', () => {
+  const core = loadCore();
+  const redirect = 'https://www.blackrockgalleries.com/an-to-brg.php?email=&backurl=https%3A%2F%2Fwww.blackrockgalleries.com%2Fsales%2Fdetails%2Fexample-sale-3053.html%3Fbrgtkn%3Dopaque';
+  assert.equal(core.auctionNinjaSaleStableIdentity(redirect), 'www.blackrockgalleries.com/sales/details/example-sale-3053.html');
+});
+
+test('assistant requires explicit AuctionNinja account totals before certifying empty pages', () => {
+  const core = loadCore();
+  assert.equal(core.parseAuctionNinjaAccountTotal('Items Won (Total: 0)'), 0);
+  assert.equal(core.parseAuctionNinjaAccountTotal('Bid History (Total: 27)'), 27);
+  assert.equal(core.parseAuctionNinjaAccountTotal('Items I am following'), null);
+  assert.equal(
+    core.sanitizeAuctionNinjaAccountUrl('https://www.auctionninja.com/items-won?an=private-account-value&Page=3'),
+    'https://www.auctionninja.com/items-won?Page=3',
+  );
+});
+
+test('assistant rejects an unknown-total AuctionNinja account page without a real bottom audit', async () => {
+  const loc = new URL('https://www.auctionninja.com/followed-items?an=private-account-value');
+  const core = loadCore({ location: loc });
+  const itemLink = makeFakeNode({
+    text: 'Portable Receiver',
+    attrs: { href: 'https://www.auctionninja.com/testseller/product/portable-receiver-12345.html' },
+  });
+  const row = makeFakeNode({
+    text: 'Portable Receiver Lot #: 7 Current Bid: $5 Following Pickup: 123 Private Street Bidder: private_alias',
+    selectors: { 'a[href*="/product/"]': itemLink },
+  });
+  const root = makeFakeNode({
+    text: 'Items I am following',
+    selectors: { '.account-item-card': [row] },
+  });
+  root.title = 'Items I am following | AuctionNinja';
+
+  const result = await core.scrapeAuctionNinjaAccountItems('followed-items', () => {}, () => false, root);
+
+  assert.equal(result.expectedTotal, null);
+  assert.equal(result.incomplete, true);
+  assert.equal(result.coverage.proofTier, 'unproven');
+  assert.equal(result.coverage.reachedBottom, false);
+  assert.equal(result.context.url, 'https://www.auctionninja.com/followed-items');
+  assert.doesNotMatch(result.items[0].rawText, /private_alias|123 Private Street/i);
+});
+
+test('assistant accumulates recycled AuctionNinja account windows before certifying bottom', async () => {
+  const documentRoot = {
+    documentElement: { scrollTop: 0, scrollHeight: 1000 },
+    body: { scrollHeight: 1000 },
+    scrollingElement: { scrollHeight: 1000 },
+    querySelectorAll() { return []; },
+  };
+  const windowRoot = {
+    scrollY: 0,
+    innerHeight: 500,
+    scrollTo({ top }) { this.scrollY = Number(top || 0); },
+  };
+  const loc = new URL('https://www.auctionninja.com/followed-items');
+  const core = loadCore({
+    document: documentRoot,
+    window: windowRoot,
+    location: loc,
+    setTimeout(callback) { callback(); return 0; },
+  });
+  const a = { id: 'a', stableId: 'a', title: 'First' };
+  const b = { id: 'b', stableId: 'b', title: 'Second' };
+  const c = { id: 'c', stableId: 'c', title: 'Third' };
+  const windows = [[a], [b], [b, c], [c], [c], [c], [c]];
+  let call = 0;
+
+  const settled = await core.settleAuctionNinjaAccountDom(
+    () => windows[Math.min(call++, windows.length - 1)],
+    documentRoot,
+    () => {},
+    () => false,
+  );
+
+  assert.equal(settled.audit.complete, true);
+  assert.equal(settled.audit.finalCount, 3);
+  assert.deepEqual(plain(settled.items.map(item => item.id)), ['a', 'b', 'c']);
+});
+
+test('assistant sanitizes AuctionNinja account detail enrichment at the export boundary', () => {
+  const core = loadCore();
+  const safe = core.sanitizeAuctionNinjaAccountExport({
+    source: 'AuctionNinja',
+    pageKind: 'items-won',
+    url: 'https://www.auctionninja.com/items-won?an=private-account-value',
+  }, [{
+    id: '12345',
+    stableId: '12345',
+    title: 'Portable Receiver',
+    url: 'https://www.auctionninja.com/testseller/product/portable-receiver-12345.html?an=private-account-value',
+    description: 'Pickup contact private@example.test at 123 Private Street',
+    pickupText: 'Pickup: 123 Private Street',
+    rawText: 'Bidder Alias: private_alias Current Bid: $5',
+  }]);
+  const serialized = JSON.stringify(plain(safe));
+
+  assert.equal(safe.context.url, 'https://www.auctionninja.com/items-won');
+  assert.equal(safe.items[0].url, 'https://www.auctionninja.com/testseller/product/portable-receiver-12345.html');
+  assert.doesNotMatch(serialized, /private-account-value|private@example\.test|123 Private Street|private_alias/i);
+});
+
+test('assistant ignores unrelated empty widgets on AuctionNinja account pages', () => {
+  const core = loadCore();
+  const root = makeFakeNode({
+    selectors: {
+      main: makeFakeNode({ text: 'Search widget: no results' }),
+    },
+  });
+  assert.equal(core.hasAuctionNinjaExplicitEmptyState(root), false);
+});
+
+test('assistant rejects redirected AuctionNinja detail pages and prefers full detail descriptions', () => {
+  const core = loadCore();
+  const detailSurface = makeFakeNode({ text: 'Sign in to continue' });
+  const redirected = makeFakeNode({
+    selectors: {
+      'link[rel="canonical"]': makeFakeNode({ attrs: { href: 'https://www.auctionninja.com/login' } }),
+      '.item-detail-main': detailSurface,
+      'h1.item-detail-box-title': makeFakeNode({ text: 'Sign In' }),
+    },
+  });
+  assert.equal(core.extractAuctionNinjaItemDetail(
+    redirected,
+    new URL('https://www.auctionninja.com/testseller/product/portable-receiver-12345.html'),
+  ), null);
+
+  const merged = core.mergeAuctionNinjaItemDetail(
+    { id: '12345', description: 'Short card teaser', images: [] },
+    { id: '12345', description: 'Complete product detail description', images: ['https://images.example.test/full.jpg'] },
+  );
+  assert.equal(merged.cardDescription, 'Short card teaser');
+  assert.equal(merged.description, 'Complete product detail description');
+  assert.deepEqual(plain(merged.images), ['https://images.example.test/full.jpg']);
+});
+
+test('assistant rejects a direct AuctionNinja item whose canonical product id changed', async () => {
+  const requested = new URL('https://www.auctionninja.com/testseller/product/portable-receiver-12345.html');
+  const core = loadCore({ location: requested });
+  const detailSurface = makeFakeNode({ text: 'Wrong Product Lot # 9 Current Bid $4.00' });
+  const root = makeFakeNode({
+    selectors: {
+      'link[rel="canonical"]': makeFakeNode({ attrs: { href: 'https://www.auctionninja.com/testseller/product/wrong-product-99999.html' } }),
+      '.item-detail-main': detailSurface,
+      'h1.item-detail-box-title': makeFakeNode({ text: 'Wrong Product' }),
+    },
+  });
+
+  const result = await core.scrapeAuctionNinjaItemDetail(() => {}, () => false, root);
+
+  assert.equal(result.incomplete, true);
+  assert.equal(result.stopReason, 'direct-item-identity-mismatch');
+  assert.deepEqual(plain(result.items), []);
+  assert.deepEqual(plain(result.coverage.unexpectedIds), ['99999']);
+});
+
+test('assistant treats the item range as authoritative when AuctionNinja also shows a broader result count', () => {
+  const core = loadCore();
+  const root = makeFakeNode({
+    text: 'Electronics 193 results Showing 1-20 of 177 items',
+    selectors: {
+      '.category-search-item-title.desktop-show': makeFakeNode({ text: 'Electronics 193 results' }),
+    },
+  });
+  const context = core.extractAuctionNinjaCategoryContext(root, new URL('https://www.auctionninja.com/category/electronics?miles=50&zip=07008'));
+  assert.equal(context.totalItems, 177);
+});
+
+test('assistant rejects foreign-sale links while discovering AuctionNinja catalog pages', () => {
+  const core = loadCore();
+  const sameSale = makeFakeNode({
+    text: '2',
+    attrs: { href: 'https://www.auctionninja.com/seller-a/sales/details/sale-a--100.html?Page=2#items' },
+  });
+  const foreignSale = makeFakeNode({
+    text: '2',
+    attrs: { href: 'https://www.auctionninja.com/seller-b/sales/details/sale-b--200.html?Page=2#items' },
+  });
+  const root = makeFakeNode({
+    text: '1-20 of 40 items',
+    selectors: { '.auction-paging a[href]': [sameSale, foreignSale] },
+  });
+  assert.deepEqual(plain(core.findAuctionNinjaCatalogPageUrls(root, new URL('https://www.auctionninja.com/seller-a/sales/details/sale-a--100.html'))), [
+    'https://www.auctionninja.com/seller-a/sales/details/sale-a--100.html?Page=2#items',
+  ]);
+});
+
+test('assistant discovers AuctionNinja catalog pagination URLs without product or account links', () => {
+  const core = loadCore();
+  const page2 = makeFakeNode({
+    text: '2',
+    attrs: { href: 'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=2#items' },
+  });
+  const page3 = makeFakeNode({
+    text: '3',
+    attrs: { href: 'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=3#items' },
+  });
+  const activePage = makeFakeNode({
+    text: '1',
+    attrs: { class: 'active' },
+  });
+  const productLink = makeFakeNode({
+    text: 'Lot 2',
+    attrs: { href: 'https://www.auctionninja.com/seller/product/example-lot--123.html' },
+  });
+  const accountLink = makeFakeNode({
+    text: 'Payment',
+    attrs: { href: 'https://www.auctionninja.com/payment-methods' },
+  });
+  const root = makeFakeNode({
+    text: '1-40 of 106 items',
+    selectors: {
+      'a[href': [activePage, productLink, page3, accountLink, page2],
+    },
+  });
+
+  assert.deepEqual(plain(core.findAuctionNinjaCatalogPageUrls(root, new URL('https://www.auctionninja.com/seller/sales/details/example--17395.html'))), [
+    'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=2#items',
+    'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=3#items',
+  ]);
+});
+
+test('assistant backfills AuctionNinja catalog pages when opened mid-catalog', () => {
+  const core = loadCore();
+  const root = makeFakeNode({
+    text: '41-80 of 106 items',
+    selectors: {
+      'a[href': [
+        makeFakeNode({
+          text: '3',
+          attrs: { href: 'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=3#items' },
+        }),
+      ],
+    },
+  });
+
+  assert.deepEqual(plain(core.findAuctionNinjaCatalogPageUrls(root, new URL('https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=2#items'))), [
+    'https://www.auctionninja.com/seller/sales/details/example--17395.html#items',
+    'https://www.auctionninja.com/seller/sales/details/example--17395.html?Page=3#items',
+  ]);
+});
+
+test('assistant extracts AuctionNinja sale context including terms and pickup friction', () => {
+  const core = loadCore();
+  const title = 'A Glamorous Upper West Side Brownstone With Interiors By Jonathan Adler';
+  const root = makeFakeNode({
+    text: `${title}
+Moving & Estate Sales, Online Auction
+Auction Location:
+New York, NY
+Clearing House Estate Sales
+Shipping Available
+Private Residence
+New York, New York 10024
+When to Pickup
+Saturday, 7/11, 12:00 pm to 3:00 pm
+About the Sale
+Hedge Auctions New York presents curated contents of an elegant Upper West Side brownstone.
+Special Instructions
+Local Pick Up
+Date: Saturday, June 11th From 12PM - 3PM
+Items not picked up within this timeframe are forfeited without refund.
+Auction Manager
+Hedge Auctions New York | (914) 458-2420 | bid@hedge-auctions.com
+Buyer's Premium
+Bidding increment chart
+18%
+Item Catalog`,
+    selectors: {
+      'h1': makeFakeNode({ text: title }),
+      'link[rel="canonical"]': makeFakeNode({ attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/example--17395.html' } }),
+    },
+  });
+
+  const context = core.extractAuctionNinjaSaleContext(root, new URL('https://www.auctionninja.com/clearinghouseestatesales/sales/details/example--17395.html'));
+
+  assert.equal(context.source, 'AuctionNinja');
+  assert.equal(context.title, title);
+  assert.equal(context.seller, 'Clearing House Estate Sales');
+  assert.equal(context.location, 'New York, NY');
+  assert.equal(context.buyerPremium, '18%');
+  assert.match(context.pickupWindow, /Saturday, 7\/11/);
+  assert.match(context.shipping, /Shipping Available/);
+  assert.match(context.specialInstructions, /Items not picked up/);
+});
+
+test('assistant extracts AuctionNinja lot cards without treating bid controls as actions', () => {
+  const core = loadCore();
+  const lotLink = makeFakeNode({
+    text: "An Antique French Mahogany Sideboard, C. 1930's.",
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/product/sideboard--555.html' },
+  });
+  const image = makeFakeNode({
+    attrs: {
+      src: 'https://images.example.test/sideboard.jpg',
+      alt: 'An Antique French Mahogany Sideboard',
+    },
+  });
+  const card = makeFakeNode({
+    text: `Current Bid
+$920.00
+3 minutes 40 seconds left
+An Antique French Mahogany Sideboard, C. 1930's.
+Lot #: 16
+Bid Now`,
+    selectors: {
+      'a[href*="/product/"]': lotLink,
+      'img': image,
+      '.description': makeFakeNode({ text: 'Solid mahogany sideboard with original hardware.' }),
+    },
+  });
+  const root = makeFakeNode({
+    text: '1-40 of 60 items',
+    selectors: {
+      '.search-catalog-item-box': [card],
+    },
+  });
+
+  const lots = core.extractAuctionNinjaCatalogLots(root);
+
+  assert.deepEqual(plain(lots), [
+    {
+      source: 'AuctionNinja',
+      pageKind: 'sale-catalog',
+      id: '555',
+      stableId: '555',
+      lot: '16',
+      title: "An Antique French Mahogany Sideboard, C. 1930's.",
+      url: 'https://www.auctionninja.com/clearinghouseestatesales/product/sideboard--555.html',
+      image: 'https://images.example.test/sideboard.jpg',
+      highBid: 'Current Bid: $920.00',
+      highBidAmount: 920,
+      currentPrice: 920,
+      currentBid: 920,
+      timeLeft: '3 minutes 40 seconds left',
+      status: '',
+      description: 'Solid mahogany sideboard with original hardware.',
+      watched: false,
+    },
+  ]);
+  assert.equal(JSON.stringify(lots).includes('Bid Now'), false);
+});
+
+test('assistant renders AuctionNinja scraper-only drawer controls and brief context', () => {
+  const core = loadCore();
+  const html = core.buildPanelHtml({ mode: 'auctionninja', debugEnabled: false });
+
+  assert.match(html, /AuctionNinja/);
+  assert.match(html, /id="auctionninja-catalog-copy-json"/);
+  assert.match(html, /id="auctionninja-catalog-copy-llm"/);
+  assert.match(html, /id="hibid-scraper-stop"/);
+  assert.doesNotMatch(html, /id="auctionninja-catalog-load"/);
+  assert.doesNotMatch(html, /id="hibid-max-plan-details"|id="hibid-bid-plan-json"|Max plan/);
+  assert.doesNotMatch(html, /id="hibid-bid-next"/);
+  assert.doesNotMatch(html, /id="hibid-live-snipe"/);
+  assert.doesNotMatch(html, /id="fliptracker-listing-download"/);
+  assert.doesNotMatch(html, /id="hibid-debug-copy"/);
+  assert.doesNotMatch(html, /id="hibid-bid-results"/);
+  assert.match(html, /id="flipperaddon-toast"/);
+
+  const brief = core.buildAuctionNinjaLlmBrief([
+    {
+      source: 'AuctionNinja',
+      lot: '16',
+      title: "An Antique French Mahogany Sideboard, C. 1930's.",
+      highBidAmount: 920,
+      timeLeft: '3 minutes 40 seconds left',
+    },
+  ], {
+    source: 'AuctionNinja',
+    title: 'Upper West Side Brownstone',
+    buyerPremium: '18%',
+    pickupWindow: 'Saturday, 7/11, 12:00 pm to 3:00 pm',
+    shipping: 'Shipping Available',
+    specialInstructions: 'Items not picked up within this timeframe are forfeited without refund.',
+  });
+
+  assert.match(brief, /AuctionNinja sale terms/i);
+  assert.match(brief, /buyer premium: 18%/i);
+  assert.match(brief, /Saturday, 7\/11/);
+  assert.match(brief, /sold\/completed comps first, profit second, hunches last/i);
+});
+
+test('assistant extracts AuctionNinja followed item rows for watchlist export', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    text: 'Chloe Eau De Toilette Spray',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/product/chloe-spray--243760.html' },
+  });
+  const saleLink = makeFakeNode({
+    text: 'The Luxe Edit',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/the-luxe-edit--17395.html' },
+  });
+  const image = makeFakeNode({ attrs: { src: 'https://images.example.test/chloe.jpg' } });
+  const row = makeFakeNode({
+    text: `The Luxe Edit
+Chloe Eau De Toilette Spray
+Lot #: 1627sf
+Current Bid
+$38.00
+1 Bid
+10s
+Shipping Available
+New York, NY
+Following`,
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'a[href*="/sales/details/"]': saleLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Items I am following',
+    selectors: {
+      '.account-item-card': [row],
+    },
+  });
+
+  const items = core.extractAuctionNinjaFollowedItems(root, new URL('https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo'));
+
+  assert.deepEqual(plain(items), [
+    {
+      source: 'AuctionNinja',
+      pageKind: 'followed-items',
+      id: '243760',
+      stableId: '243760',
+      lot: '1627sf',
+      title: 'Chloe Eau De Toilette Spray',
+      url: 'https://www.auctionninja.com/clearinghouseestatesales/product/chloe-spray--243760.html',
+      image: 'https://images.example.test/chloe.jpg',
+      saleTitle: 'The Luxe Edit',
+      saleUrl: 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/the-luxe-edit--17395.html',
+      seller: '',
+      status: 'Following',
+      priceText: 'Current Bid: $38.00',
+      price: 38,
+      bidCount: 1,
+      timeText: '10s',
+      location: 'New York, NY',
+      shippingText: 'Shipping Available',
+      pickupText: '',
+      rawText: 'The Luxe Edit Chloe Eau De Toilette Spray Lot #: 1627sf Current Bid $38.00 1 Bid 10s Shipping Available New York, NY Following',
+    },
+  ]);
+});
+
+test('assistant infers AuctionNinja account titles when product links have no readable text', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    text: '',
+    attrs: { href: 'https://www.auctionninja.com/timeless-treasures-estate-sales/product/9pc-media-tower-audiosource-nikko-panasonic-dbx-nakamichi-985797.html' },
+  });
+  const saleLink = makeFakeNode({
+    text: 'Levittown - Online Estate Sale - Fiction Books, Womens Clothing, Outdo...',
+    attrs: { href: 'https://www.auctionninja.com/timeless-treasures-estate-sales/sales/details/levittown-online-estate-sale--3667.html' },
+  });
+  const row = makeFakeNode({
+    text: `Current Bid$5.00
+Your Max Bid: $150.00
+21 hours 17 minutes left
+HIGH BIDDER
+if(document.getElementById("MAXBIDID_3667_985797")){ document.getElementById("MAXBIDID_3667_985797").style.color="#21732E"; }
+9pc Media Tower- AudioSource, Nikko, Panasonic, DBX, Nakamichi
+Levittown - Online Estate Sale - Fiction Books, Womens Clothing, Outdo...
+Lot #: 178
+Bid Now
+Timeless Treasures Estate Sales
+Levittown, New York`,
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'a[href*="/sales/details/"]': saleLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Items I am following (Total: 1)',
+    selectors: {
+      '.account-item-card': [row],
+    },
+  });
+
+  const items = core.extractAuctionNinjaFollowedItems(root, new URL('https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo'));
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, '9pc Media Tower- AudioSource, Nikko, Panasonic, DBX, Nakamichi');
+  assert.equal(items[0].timeText, '21 hours 17 minutes left');
+});
+
+test('assistant does not treat item model years as AuctionNinja countdown text', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    text: '',
+    attrs: { href: 'https://www.auctionninja.com/the-pickers-alley/product/voigtlnder-perkeo-i-folding-camera-1950s-4347245.html' },
+  });
+  const saleLink = makeFakeNode({
+    text: "Grandma's Attic - Christmas in July! Holiday Decor, Vintage, Collectib...",
+    attrs: { href: 'https://www.auctionninja.com/the-pickers-alley/sales/details/grandmas-attic--20000.html' },
+  });
+  const row = makeFakeNode({
+    text: `Current Bid$5.00
+3 days 21 hours left
+Voigtlnder Perkeo I Folding Camera - 1950s
+Grandma's Attic - Christmas in July! Holiday Decor, Vintage, Collectib...
+Lot #: 4
+Bid Now
+The Pickers Alley
+Morganville, New Jersey`,
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'a[href*="/sales/details/"]': saleLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Items I am following (Total: 1)',
+    selectors: {
+      '.account-item-card': [row],
+    },
+  });
+
+  const items = core.extractAuctionNinjaFollowedItems(root, new URL('https://www.auctionninja.com/followed-items?an=b7k7t5kpfyo'));
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, 'Voigtlnder Perkeo I Folding Camera - 1950s');
+  assert.equal(items[0].timeText, '3 days 21 hours left');
+});
+
+test('assistant extracts AuctionNinja won item rows for inventory export', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    text: 'Smart Cat Feeder - 6-L Dispenser',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/product/smart-cat-feeder--10016.html' },
+  });
+  const saleLink = makeFakeNode({
+    text: 'Warehouse Finds',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/warehouse-finds--18000.html' },
+  });
+  const row = makeFakeNode({
+    text: `Warehouse Finds
+Smart Cat Feeder - 6-L Dispenser
+Lot #: 16
+Price Realized:
+$8.00
+Won
+Shipping Available
+Pickup: Saturday 10 AM`,
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'a[href*="/sales/details/"]': saleLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Items Won (Total: 1) 2026 Quick Search',
+    selectors: {
+      '.account-item-card': [row],
+    },
+  });
+
+  const items = core.extractAuctionNinjaWonItems(root, new URL('https://www.auctionninja.com/items-won?an=hwfmhr2h2qi'));
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].pageKind, 'items-won');
+  assert.equal(items[0].title, 'Smart Cat Feeder - 6-L Dispenser');
+  assert.equal(items[0].priceText, 'Price Realized: $8.00');
+  assert.equal(items[0].price, 8);
+  assert.equal(items[0].status, 'Won');
+  assert.equal(items[0].pickupText, 'Pickup: Saturday 10 AM');
+  assert.equal(items[0].saleTitle, 'Warehouse Finds');
+});
+
+test('assistant extracts AuctionNinja bid history rows for decision review', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    text: 'Antique Brass Floor Lamp',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/product/antique-brass-floor-lamp--777.html' },
+  });
+  const saleLink = makeFakeNode({
+    text: 'Brownstone Downsizing',
+    attrs: { href: 'https://www.auctionninja.com/clearinghouseestatesales/sales/details/brownstone-downsizing--18077.html' },
+  });
+  const row = makeFakeNode({
+    text: `Brownstone Downsizing
+Antique Brass Floor Lamp
+Lot #: 44
+Your Max Bid: $70.00
+Current Bid
+$52.00
+Outbid
+7 Bids
+Bidding Closed
+New York, NY
+Clearing House Estate Sales`,
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'a[href*="/sales/details/"]': saleLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Bid History (Total: 1)',
+    selectors: {
+      '.account-item-card': [row],
+    },
+  });
+
+  const items = core.extractAuctionNinjaBidHistoryItems(root, new URL('https://www.auctionninja.com/bid-history?an=sp2i8ac5q0n'));
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].pageKind, 'bid-history');
+  assert.equal(items[0].title, 'Antique Brass Floor Lamp');
+  assert.equal(items[0].priceText, 'Current Bid: $52.00');
+  assert.equal(items[0].yourBidText, 'Your Max Bid: $70.00');
+  assert.equal(items[0].yourBid, 70);
+  assert.equal(items[0].status, 'Outbid');
+  assert.equal(items[0].bidCount, 7);
+  assert.equal(items[0].timeText, 'Bidding Closed');
+});
+
+test('assistant extracts AuctionNinja nearby auction search sales', () => {
+  const core = loadCore();
+  const saleLink = makeFakeNode({
+    text: 'Dumont New Jersey Estate Sale',
+    attrs: { href: 'https://www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html' },
+  });
+  const countLink = makeFakeNode({
+    text: '561 Lots',
+    attrs: { href: 'https://www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html' },
+  });
+  const sellerLink = makeFakeNode({
+    text: 'Pink Lady Liquidation',
+    attrs: { href: 'https://www.auctionninja.com/pinkladyliquidation/' },
+  });
+  const image = makeFakeNode({ attrs: { src: 'https://images.example.test/dumont.jpg' } });
+  const row = makeFakeNode({
+    text: `Dumont New Jersey Estate Sale
+Dumont, NJ Local Pickup Only
+Begins to close
+Thu, Jul 16 2026 @ 8:00 PM EDT
+Pink Lady Liquidation
+561 Lots`,
+    selectors: {
+      'a[href*="/sales/details/"]': [countLink, saleLink],
+      'a[href]:not([href*="/sales/details/"])': sellerLink,
+      'img': image,
+    },
+  });
+  const duplicateTrackedSaleLink = makeFakeNode({
+    text: 'Dumont New Jersey Estate Sale',
+    attrs: { href: 'https://www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html?an=20260710124520' },
+  });
+  const duplicateTrackedRow = makeFakeNode({
+    text: `Dumont New Jersey Estate Sale
+Dumont, NJ Local Pickup Only
+Begins to close
+Thu, Jul 16 2026 @ 8:00 PM EDT
+Pink Lady Liquidation
+561 Lots`,
+    selectors: {
+      'a[href*="/sales/details/"]': duplicateTrackedSaleLink,
+      'a[href]:not([href*="/sales/details/"])': sellerLink,
+      'img': image,
+    },
+  });
+  const root = makeFakeNode({
+    text: '108 auctions near Carteret, NJ 1 2 3 Next',
+    selectors: {
+      'a[href*="/sales/details/"]': saleLink,
+      '.auction-item': [row, duplicateTrackedRow],
+    },
+  });
+
+  const sales = core.extractAuctionNinjaAuctionSearchSales(root, new URL('https://www.auctionninja.com/nj/carteret/07008?miles=50&an='));
+
+  assert.deepEqual(plain(sales), [
+    {
+      source: 'AuctionNinja',
+      pageKind: 'auction-search',
+      id: '21001',
+      stableId: 'www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html',
+      title: 'Dumont New Jersey Estate Sale',
+      url: 'https://www.auctionninja.com/pinkladyliquidation/sales/details/dumont-new-jersey-estate-sale--21001.html',
+      image: 'https://images.example.test/dumont.jpg',
+      seller: 'Pink Lady Liquidation',
+      sellerUrl: 'https://www.auctionninja.com/pinkladyliquidation/',
+      location: 'Dumont, NJ',
+      shippingText: 'Local Pickup Only',
+      closingText: 'Thu, Jul 16 2026 @ 8:00 PM EDT',
+      itemCount: 561,
+      rawText: 'Dumont New Jersey Estate Sale Dumont, NJ Local Pickup Only Begins to close Thu, Jul 16 2026 @ 8:00 PM EDT Pink Lady Liquidation 561 Lots',
+    },
+  ]);
+});
+
+test('assistant preserves and rejects AuctionNinja overcounts instead of trimming contamination', async () => {
+  const loc = new URL('https://www.auctionninja.com/nj/carteret/07008?miles=50&an=');
+  const core = loadCore({ location: loc });
+  const makeSale = (id, title) => {
+    const link = makeFakeNode({
+      text: title,
+      attrs: { href: `https://www.auctionninja.com/testseller/sales/details/${title.toLowerCase().replace(/\s+/g, '-')}--${id}.html` },
+    });
+    return makeFakeNode({
+      text: `${title}\nCarteret, NJ\nLocal Pickup Only\nBegins to close\nThu, Jul 16 2026 @ 8:00 PM EDT\n10 Lots`,
+      selectors: {
+        'a[href*="/sales/details/"]': link,
+        'a[href]:not([href*="/sales/details/"])': makeFakeNode({
+          text: 'Test Seller',
+          attrs: { href: 'https://www.auctionninja.com/testseller/' },
+        }),
+      },
+    });
+  };
+  const root = makeFakeNode({
+    text: '2 auctions near Carteret, NJ',
+    selectors: {
+      '.auction-item': [
+        makeSale('21001', 'First Auction'),
+        makeSale('21002', 'Second Auction'),
+        makeSale('99999', 'Stale Unrelated Auction'),
+      ],
+    },
+  });
+  root.title = 'Auctions near Carteret, NJ | AuctionNinja';
+
+  const result = await core.scrapeAuctionNinjaAuctionSearchSales(() => {}, () => false, root);
+  const route = core.resolveSiteRoute(loc);
+  const readiness = plain(core.assessExportReadiness(result, 'auctionninja', route, { locationLike: loc }));
+
+  assert.equal(result.expectedTotal, 2);
+  assert.equal(result.items.length, 3, 'unexpected records must remain visible to validation');
+  assert.equal(result.incomplete, true);
+  assert.notEqual(result.stopReason, 'trimmed-to-expected-total');
+  assert.equal(readiness.ok, false);
+  assert.match(readiness.reason, /count-exceeds-expected|count-mismatch|incomplete/);
+});
+
+test('assistant mounts AuctionNinja category pages and preserves location filters', () => {
+  const core = loadCore();
+  const loc = new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008');
+  const route = core.resolveAuctionNinjaPage(loc);
+
+  assert.equal(route.supported, true);
+  assert.equal(route.kind, 'category-search');
+  assert.equal(route.categorySlug, 'electronics');
+  assert.equal(route.zip, '07008');
+  assert.equal(route.miles, '30');
+  assert.equal(core.shouldInitOnLocation(loc), true);
+  assert.equal(core.resolveAssistantMode(loc).mode, 'auctionninja');
+
+  const context = core.extractAuctionNinjaCategoryContext(
+    makeFakeNode({ text: 'Electronics & Computers 193 results' }),
+    loc,
+  );
+  assert.equal(context.totalItems, 193);
+
+  const emptyRoot = makeFakeNode({
+    text: 'Electronics & Computers 0 results',
+    selectors: {
+      '.category-search-item-title.desktop-show': makeFakeNode({ text: 'Electronics & Computers 0 results' }),
+    },
+  });
+  emptyRoot.title = 'Electronics & Computers Online Auctions';
+  assert.equal(core.extractAuctionNinjaCategoryContext(emptyRoot, loc).totalItems, 0);
+});
+
+test('assistant certifies an exact empty AuctionNinja category result', async () => {
+  const loc = new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008');
+  const core = loadCore({ location: loc });
+  const root = makeFakeNode({
+    text: 'Electronics & Computers 0 results',
+    selectors: {
+      '.category-search-item-title.desktop-show': makeFakeNode({ text: 'Electronics & Computers 0 results' }),
+    },
+  });
+  root.title = 'Electronics & Computers Online Auctions';
+
+  const result = await core.scrapeAuctionNinjaCategoryItems(() => {}, () => false, root);
+
+  assert.equal(result.expectedTotal, 0);
+  assert.equal(result.items.length, 0);
+  assert.equal(result.incomplete, false);
+  assert.equal(result.stopReason, 'verified-total-reached');
+});
+
+test('assistant rejects AuctionNinja category pagination redirected to another category', async () => {
+  const loc = new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008');
+  const makeCategoryCard = (id, title) => makeFakeNode({
+    text: `${title} Starting Bid $5.00`,
+    selectors: {
+      'a[href*="/product/"]': makeFakeNode({ attrs: { href: `https://www.auctionninja.com/testseller/product/item-${id}.html` } }),
+      img: makeFakeNode({ attrs: { src: `https://images.example.test/${id}.jpg`, alt: title } }),
+      'hot-items-bottoms': makeFakeNode({ text: '$5.00' }),
+    },
+  });
+  const pageTwoLink = makeFakeNode({
+    text: 'Page 2',
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?Page=2&srt=Distance&miles=30&zip=07008' },
+  });
+  const root = makeFakeNode({
+    text: 'Electronics & Computers 2 results',
+    selectors: {
+      '.category-search-item-title.desktop-show': makeFakeNode({ text: 'Electronics & Computers 2 results' }),
+      '.hot-items-box': [makeCategoryCard('10001', 'First Item')],
+      'a[href]': [pageTwoLink],
+    },
+  });
+  root.title = 'Electronics & Computers Online Auctions';
+  const parsedDoc = makeFakeNode({ text: 'Jewelry 2 results' });
+  parsedDoc.title = 'Jewelry Online Auctions';
+  const core = loadCore({
+    location: loc,
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      url: 'https://www.auctionninja.com/category/jewelry?Page=2&srt=Distance&miles=30&zip=07008',
+      text: async () => '<html></html>',
+    }),
+    DOMParser: class { parseFromString() { return parsedDoc; } },
+  });
+
+  const result = await core.scrapeAuctionNinjaCategoryItems(() => {}, () => false, root);
+
+  assert.equal(result.incomplete, true);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.failedPages[0].error, 'category-filter-drift');
+});
+
+test('assistant accepts only safe same-category View All links for AuctionNinja category loading', () => {
+  const core = loadCore();
+  const loc = new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008');
+  const viewAll = makeFakeNode({
+    text: 'View All Items',
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?show=all' },
+  });
+  const bidLink = makeFakeNode({
+    text: 'Bid Now',
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?show=all&bid=1' },
+  });
+  const pageFour = makeFakeNode({
+    text: '4',
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?Page=4&srt=Distance&miles=30&zip=07008' },
+  });
+  const pageSix = makeFakeNode({
+    text: '6',
+    attrs: { href: 'https://www.auctionninja.com/category/electronics?Page=6&srt=Distance&miles=30&zip=07008' },
+  });
+  const root = makeFakeNode({ selectors: { 'a[href]': [viewAll, bidLink, pageFour, pageSix] } });
+
+  assert.deepEqual(plain(core.findAuctionNinjaCategoryPageUrls(root, loc)), [
+    'https://www.auctionninja.com/category/electronics?Page=4&srt=Distance&miles=30&zip=07008',
+    'https://www.auctionninja.com/category/electronics?Page=6&srt=Distance&miles=30&zip=07008',
+  ]);
+});
+
+test('assistant extracts AuctionNinja category item cards from the category DOM', () => {
+  const core = loadCore();
+  const itemLink = makeFakeNode({
+    attrs: { href: 'https://www.auctionninja.com/billy-reyes/product/olympus-50mm-f-1-8-lens-canon-powershot-cameras-yashica-cs-14-flash-sony-m-527v-lot-206233.html' },
+  });
+  const image = makeFakeNode({
+    attrs: {
+      src: 'https://images.example.test/olympus.jpg',
+      alt: 'Olympus 50mm F/1.8 Lens, Canon PowerShot Cameras, Yashica CS-14 Flash & Sony M-527V Lot',
+    },
+  });
+  const sellerLink = makeFakeNode({
+    text: 'Billy Reyes',
+    attrs: { href: 'https://www.auctionninja.com/billy-reyes/' },
+  });
+  const card = makeFakeNode({
+    text: 'Starting Bid $5.00 2 days 9 hours left Bid Now Billy Reyes Carteret, NJ',
+    selectors: {
+      'a[href*="/product/"]': itemLink,
+      'hot-items-title': makeFakeNode({ text: 'Olympus 50mm F/1.8 Lens, Canon PowerShot Cameras...' }),
+      'img': image,
+      'hot-items-bottoms': makeFakeNode({ text: '$5.00' }),
+      'day-left': makeFakeNode({ text: '2 days 9 hours left' }),
+      'hi-auction-company-title': sellerLink,
+      'hi-auction-company p': makeFakeNode({ text: 'Carteret, NJ' }),
+    },
+  });
+  const root = makeFakeNode({
+    text: 'Electronics & Computers 1-1 of 1 items',
+    selectors: { '.hot-items-box': [card] },
+  });
+  root.title = 'Electronics & Computers Online Auctions - Consumer Electronics Auctions';
+
+  const items = core.extractAuctionNinjaCategoryItems(root, new URL('https://www.auctionninja.com/category/electronics?miles=30&zip=07008'));
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].pageKind, 'category-search');
+  assert.equal(items[0].title, 'Olympus 50mm F/1.8 Lens, Canon PowerShot Cameras, Yashica CS-14 Flash & Sony M-527V Lot');
+  assert.equal(items[0].id, '206233');
+  assert.equal(items[0].currentBid, 5);
+  assert.equal(items[0].timeText, '2 days 9 hours left');
+  assert.equal(items[0].location, 'Carteret, NJ');
+  assert.equal(items[0].seller, 'Billy Reyes');
+});
+
+test('assistant renders AuctionNinja category-only copy controls and brief context', () => {
+  const core = loadCore();
+  const html = core.buildPanelHtml({
+    mode: 'auctionninja',
+    debugEnabled: false,
+    route: { kind: 'category-search' },
+  });
+  assert.match(html, /Category Item Export/);
+  assert.match(html, /id="auctionninja-category-copy-llm"/);
+  assert.match(html, /id="auctionninja-category-copy-json"/);
+  assert.doesNotMatch(html, /Copy Auctions LLM|Sale Catalog Research|Copy Watchlist LLM|Prepare Bid|Snipe Now|Max plan/i);
+
+  const brief = core.buildAuctionNinjaCategoryLlmBrief([
+    { source: 'AuctionNinja', pageKind: 'category-search', title: 'Portable Receiver', currentBid: 5, location: 'Carteret, NJ' },
+  ], {
+    source: 'AuctionNinja',
+    pageKind: 'category-search',
+    category: 'Electronics',
+    zip: '07008',
+    miles: '30',
+  });
+  assert.match(brief, /AuctionNinja category-search task/i);
+  assert.match(brief, /07008/);
+  assert.match(brief, /Portable Receiver/);
+});
+
+test('assistant recovers AuctionNinja auction-search title when sale link is count-only', () => {
+  const core = loadCore();
+  const countOnlySaleLink = makeFakeNode({
+    text: '(9)',
+    attrs: { href: 'https://www.auctionninja.com/estatepros/sales/details/designer-handbags-and-estate-jewelry--22009.html' },
+  });
+  const sellerLink = makeFakeNode({
+    text: 'Estate Pros',
+    attrs: { href: 'https://www.auctionninja.com/estatepros/' },
+  });
+  const row = makeFakeNode({
+    text: `Designer Handbags And Estate Jewelry
+(9)
+Paramus, NJ Shipping Available
+Begins to close
+Sat, Jul 18 2026 @ 7:30 PM EDT
+Estate Pros`,
+    selectors: {
+      'a[href*="/sales/details/"]': countOnlySaleLink,
+      'a[href]:not([href*="/sales/details/"])': sellerLink,
+    },
+  });
+  const root = makeFakeNode({
+    text: '108 auctions near Carteret, NJ',
+    selectors: {
+      '.auction-item': [row],
+      'a[href*="/sales/details/"]': countOnlySaleLink,
+    },
+  });
+
+  const sales = core.extractAuctionNinjaAuctionSearchSales(root, new URL('https://www.auctionninja.com/nj/carteret/07008?miles=50&an='));
+
+  assert.equal(sales.length, 1);
+  assert.equal(sales[0].title, 'Designer Handbags And Estate Jewelry');
+  assert.equal(sales[0].url, 'https://www.auctionninja.com/estatepros/sales/details/designer-handbags-and-estate-jewelry--22009.html');
+});
+
+test('assistant renders AuctionNinja account-page copy controls only', () => {
+  const core = loadCore();
+  const followed = core.buildPanelHtml({
+    mode: 'auctionninja',
+    debugEnabled: false,
+    route: { kind: 'followed-items' },
+  });
+  const won = core.buildPanelHtml({
+    mode: 'auctionninja',
+    debugEnabled: false,
+    route: { kind: 'items-won' },
+  });
+  const bidHistory = core.buildPanelHtml({
+    mode: 'auctionninja',
+    debugEnabled: false,
+    route: { kind: 'bid-history' },
+  });
+  const auctionSearch = core.buildPanelHtml({
+    mode: 'auctionninja',
+    debugEnabled: false,
+    route: { kind: 'auction-search' },
+  });
+
+  assert.match(followed, /Copy Watchlist LLM/);
+  assert.match(followed, /id="auctionninja-account-copy-json"/);
+  assert.doesNotMatch(followed, /Copy LLM Brief|Sale Catalog Research|Max plan|Prepare Bid|Snipe Now|checkout|invoice|payment/i);
+
+  assert.match(won, /Copy Won Items LLM/);
+  assert.match(won, /id="auctionninja-account-copy-json"/);
+  assert.doesNotMatch(won, /Copy LLM Brief|Sale Catalog Research|Max plan|Prepare Bid|Snipe Now|checkout|invoice|payment/i);
+
+  assert.match(bidHistory, /Copy Bid History LLM/);
+  assert.match(bidHistory, /id="auctionninja-account-copy-json"/);
+  assert.doesNotMatch(bidHistory, /Copy LLM Brief|Sale Catalog Research|Copy Won Items LLM|Max plan|Prepare Bid|Snipe Now|checkout|invoice|payment/i);
+
+  assert.match(auctionSearch, /Copy Auctions LLM/);
+  assert.match(auctionSearch, /id="auctionninja-auctions-copy-json"/);
+  assert.doesNotMatch(auctionSearch, /Copy Watchlist LLM|Copy Won Items LLM|Sale Catalog Research|Max plan|Prepare Bid|Snipe Now|checkout|invoice|payment/i);
+});
+
+test('assistant builds AuctionNinja account briefs and empty account exports', () => {
+  const core = loadCore();
+  const emptyRoot = makeFakeNode({ text: 'Items I am following DASHBOARD' });
+
+  assert.deepEqual(plain(core.extractAuctionNinjaFollowedItems(emptyRoot, new URL('https://www.auctionninja.com/followed-items'))), []);
+  assert.deepEqual(plain(core.extractAuctionNinjaWonItems(emptyRoot, new URL('https://www.auctionninja.com/items-won'))), []);
+
+  const followedBrief = core.buildAuctionNinjaFollowedItemsLlmBrief([
+    {
+      source: 'AuctionNinja',
+      pageKind: 'followed-items',
+      lot: '1627sf',
+      title: 'Chloe Eau De Toilette Spray',
+      priceText: 'Current Bid: $38.00',
+      timeText: '10s',
+    },
+  ], { source: 'AuctionNinja', pageKind: 'followed-items', title: 'Items I am following' });
+  const wonBrief = core.buildAuctionNinjaWonItemsLlmBrief([
+    {
+      source: 'AuctionNinja',
+      pageKind: 'items-won',
+      lot: '16',
+      title: 'Smart Cat Feeder',
+      priceText: 'Price Realized: $8.00',
+      status: 'Won',
+    },
+  ], { source: 'AuctionNinja', pageKind: 'items-won', title: 'Items Won' });
+
+  assert.match(followedBrief, /You are an auction resale analysis coordinator/);
+  assert.match(followedBrief, /active opportunity review/i);
+  assert.match(followedBrief, /Do not bid from this brief/i);
+  assert.match(followedBrief, /"pageKind": "followed-items"/);
+
+  assert.match(wonBrief, /post-win inventory/i);
+  assert.match(wonBrief, /listing priority/i);
+  assert.match(wonBrief, /reconciliation/i);
+  assert.match(wonBrief, /"pageKind": "items-won"/);
+
+  const bidBrief = core.buildAuctionNinjaBidHistoryLlmBrief([
+    {
+      source: 'AuctionNinja',
+      pageKind: 'bid-history',
+      lot: '44',
+      title: 'Antique Brass Floor Lamp',
+      priceText: 'Current Bid: $52.00',
+      yourBidText: 'Your Max Bid: $70.00',
+      status: 'Outbid',
+    },
+  ], { source: 'AuctionNinja', pageKind: 'bid-history', title: 'Bid History' });
+
+  assert.match(bidBrief, /bid history review/i);
+  assert.match(bidBrief, /missed opportunities/i);
+  assert.match(bidBrief, /Do not bid from this brief/i);
+  assert.match(bidBrief, /"pageKind": "bid-history"/);
+});
+
+test('assistant builds AuctionNinja auction-search brief for whole-sale triage', () => {
+  const core = loadCore();
+  const brief = core.buildAuctionNinjaAuctionSearchLlmBrief([
+    {
+      source: 'AuctionNinja',
+      pageKind: 'auction-search',
+      title: 'Dumont New Jersey Estate Sale',
+      location: 'Dumont, NJ',
+      shippingText: 'Local Pickup Only',
+      closingText: 'Thu, Jul 16 2026 @ 8:00 PM EDT',
+      itemCount: 561,
+    },
+  ], {
+    source: 'AuctionNinja',
+    pageKind: 'auction-search',
+    title: 'Auction search near Carteret, NJ',
+    url: 'https://www.auctionninja.com/nj/carteret/07008?miles=50&an=',
+    searchLocation: 'Carteret, NJ 07008',
+    miles: '50',
+  });
+
+  assert.match(brief, /whole-auction triage/i);
+  assert.match(brief, /rank sales/i);
+  assert.match(brief, /sold\/completed comps first/i);
+  assert.match(brief, /"pageKind": "auction-search"/);
+});
+
+function hibidJsonResponse(payload, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async json() {
+      return payload;
+    },
+  };
+}
+
+function makeRichHibidApiLot(id, overrides = {}) {
+  const numericId = Number(id);
+  return {
+    id: numericId,
+    itemId: numericId + 900000,
+    lotNumber: String(numericId),
+    lead: `API Lot ${numericId}`,
+    description: '<p>Factory sealed component</p><br>Model: ZX-900',
+    estimate: '$80 - $120',
+    quantity: 2,
+    shippingOffered: true,
+    pictureCount: 2,
+    distanceMiles: 18.5,
+    featuredPicture: {
+      fullSizeLocation: `https://cdn.example.test/${numericId}-1.jpg`,
+    },
+    pictures: [
+      { fullSizeLocation: `https://cdn.example.test/${numericId}-1.jpg` },
+      { fullSizeLocation: `https://cdn.example.test/${numericId}-2.jpg` },
+    ],
+    category: [
+      {
+        id: 40198,
+        categoryName: 'Computers',
+        fullCategory: 'Computers & Electronics - Computers',
+      },
+      {
+        id: 700005,
+        categoryName: 'Computers & Electronics',
+        fullCategory: 'Computers & Electronics',
+      },
+    ],
+    lotState: {
+      bidCount: 4,
+      highBid: { amount: 25 },
+      minBid: { amount: 30 },
+      buyerBidStatus: 'OUTBID',
+      isWatching: true,
+      productUrl: `/lot/${numericId}/api-lot-${numericId}`,
+      status: 'OPEN',
+      timeLeft: '2h 15m',
+      timeLeftSeconds: 8100,
+    },
+    auction: {
+      id: 769123,
+      eventName: 'API Reliability Auction',
+      description: '<p>Pickup by appointment</p>',
+      buyerPremium: '15% Credit / Debit Card',
+      buyerPremiumRate: 0.15,
+      eventAddress: '100 Main St',
+      eventCity: 'Paterson',
+      eventState: 'NJ',
+      eventZip: '07501',
+      eventDateInfo: 'Closes tonight',
+      auctioneer: { id: 9, name: 'Reliable Auctions' },
+    },
+    ...overrides,
+  };
+}
+
+function makeHibidGraphqlPayload(pageNumber, pageLength, total, lots) {
+  return {
+    data: {
+      lotSearch: {
+        pagedResults: {
+          pageNumber,
+          pageLength,
+          totalCount: total,
+          filteredCount: total,
+          results: lots,
+        },
+      },
+    },
+  };
+}
+
+test('HiBid API-first contract exports helpers and grants search endpoint access', () => {
+  const source = fs.readFileSync(new URL('../hibid-bid-assistant.user.js', import.meta.url), 'utf8');
+  const core = loadCore();
+
+  assert.match(source, /^\/\/\s*@connect\s+hibid-api\.io$/m);
+  assert.match(source, /GM_xmlhttpRequest/);
+  [
+    'buildHibidSearchRequest',
+    'buildHibidGraphqlVariables',
+    'enumerateHibidLotIds',
+    'hydrateHibidLots',
+    'scrapeHibidApiCatalog',
+    'validateHibidApiCoverage',
+  ].forEach(name => assert.equal(typeof core[name], 'function', name));
+});
+
+test('HiBid API request builders distinguish auctions from categories and preserve filters', () => {
+  const core = loadCore();
+  const catalogUrl = new URL('https://hibid.com/catalog/769123/api-reliability-auction');
+  const liveUrl = new URL('https://hibid.com/livecatalog/769123/api-reliability-auction');
+  const categoryUrl = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&zip=Carteret,%20NJ%2007008,%20USA&miles=50&countryname=United%20States&shippingoffered=true&status=OPEN&status=UPCOMING&status=CLOSING_TODAY&s=TIME_LEFT');
+
+  const catalogRoute = core.resolveHiBidPage(catalogUrl);
+  const liveRoute = core.resolveHiBidPage(liveUrl);
+  const categoryRoute = core.resolveHiBidPage(categoryUrl);
+  const catalogSearch = core.buildHibidSearchRequest(catalogRoute, catalogUrl);
+  const catalogGraphql = core.buildHibidGraphqlVariables(catalogRoute, catalogUrl, 1);
+  const liveGraphql = core.buildHibidGraphqlVariables(liveRoute, liveUrl, 1);
+  const categorySearch = core.buildHibidSearchRequest(categoryRoute, categoryUrl);
+
+  assert.equal(catalogSearch.options.auctionId, 769123);
+  assert.equal(catalogSearch.options.categoryId, null);
+  assert.equal(catalogGraphql.auctionId, 769123);
+  assert.equal(liveGraphql.auctionId, 769123);
+  assert.equal(liveGraphql.status, 'OPEN');
+  assert.equal(categorySearch.options.auctionId, null);
+  assert.equal(categorySearch.options.categoryId, 40198);
+  assert.equal(categorySearch.query, 'gaming pc');
+  assert.deepEqual(plain(categorySearch.options.location), { zipcode: 'Carteret, NJ 07008, USA', radius: 50 });
+  assert.equal(categorySearch.options.country, 'USA');
+  assert.equal(categorySearch.options.shipping, true);
+  assert.deepEqual(plain(categorySearch.options.status), ['OPEN', 'UPCOMING', 'CLOSING_TODAY']);
+  assert.equal(categorySearch.options.sortOrder, 'TIME_LEFT');
+});
+
+test('HiBid state-prefixed search uses the portal auctioneer scope from hibid-state', () => {
+  const core = loadCore();
+  const url = new URL('https://hibid.com/newjersey/lots/40196/computers-and-electronics');
+  const route = core.resolveHiBidPage(url);
+  const root = {
+    querySelector() {
+      return {
+        textContent: JSON.stringify({
+          'apollo.state': {
+            ROOT_QUERY: {
+              currentSite: {
+                companyName: 'New Jersey HiBid Portal',
+                portalChildren: '32001,33256,44770,32001',
+              },
+            },
+          },
+        }),
+      };
+    },
+  };
+  const portal = core.extractHibidPortalSearchContext(root, route);
+  const request = core.buildHibidSearchRequest({ ...route, ...portal }, url);
+
+  assert.deepEqual(plain(portal), {
+    portalAuctioneerIds: ['32001', '33256', '44770'],
+    siteType: 2,
+  });
+  assert.deepEqual(plain(request.options.auctioneerId), ['32001', '33256', '44770']);
+  assert.equal(request.options.siteType, 2);
+  assert.deepEqual(plain(request.options.status), ['OPEN', 'UPCOMING']);
+  assert.equal(request.options.sortOrder, 'NO_ORDER');
+  assert.equal(request.options.categoryId, 40196);
+});
+
+test('HiBid route fingerprints are stable across parameter order and sensitive to scope changes', () => {
+  const core = loadCore();
+  const one = new URL('https://hibid.com/lots/40198/computers?q=gaming+pc&status=OPEN&status=UPCOMING&apage=1#top');
+  const two = new URL('https://hibid.com/lots/40198/computers?status=UPCOMING&apage=9&status=OPEN&q=gaming+pc#other');
+  const changed = new URL('https://hibid.com/lots/40198/computers?status=UPCOMING&status=OPEN&q=office+pc');
+
+  const first = core.getHibidRouteFingerprint(core.resolveHiBidPage(one), one);
+  const second = core.getHibidRouteFingerprint(core.resolveHiBidPage(two), two);
+  const third = core.getHibidRouteFingerprint(core.resolveHiBidPage(changed), changed);
+  assert.equal(first, second);
+  assert.notEqual(first, third);
+});
+
+test('HiBid GraphQL normalizer preserves rich resale evidence', () => {
+  const core = loadCore();
+  const item = core.normalizeHibidGraphqlLot(makeRichHibidApiLot(317828112), {
+    url: 'https://hibid.com/catalog/769123/api-reliability-auction',
+    route: { kind: 'catalog' },
+  });
+
+  assert.equal(item.id, '317828112');
+  assert.equal(item.title, 'API Lot 317828112');
+  assert.match(item.description, /Factory sealed component\n+Model: ZX-900/);
+  assert.equal(item.descriptionHtml, '<p>Factory sealed component</p><br>Model: ZX-900');
+  assert.equal(item.category, 'Computers & Electronics - Computers');
+  assert.deepEqual(plain(item.categories), ['Computers & Electronics - Computers', 'Computers & Electronics']);
+  assert.equal(item.categoryId, '40198');
+  assert.deepEqual(plain(item.images), [
+    'https://cdn.example.test/317828112-1.jpg',
+    'https://cdn.example.test/317828112-2.jpg',
+  ]);
+  assert.equal(item.highBidAmount, 25);
+  assert.equal(item.nextBidAmount, 30);
+  assert.equal(item.bidCountNumber, 4);
+  assert.equal(item.quantity, 2);
+  assert.equal(item.shippingOffered, true);
+  assert.equal(item.auctionId, '769123');
+  assert.equal(item.buyerPremiumRate, 0.15);
+  assert.match(item.location, /Paterson, NJ 07501/);
+});
+
+test('HiBid API coverage validates exact identity sets, duplicates, and total drift', () => {
+  const core = loadCore();
+  const wrongSet = core.validateHibidApiCoverage({
+    expectedTotal: 2,
+    enumeratedIds: ['1', '2'],
+    hydratedItems: [{ id: '1' }, { id: '3' }],
+  });
+  assert.equal(wrongSet.complete, false);
+  assert.deepEqual(plain(wrongSet.missingIds), ['2']);
+  assert.deepEqual(plain(wrongSet.unexpectedIds), ['3']);
+
+  const duplicate = core.validateHibidApiCoverage({
+    expectedTotal: 288,
+    enumeratedIds: [...Array.from({ length: 288 }, (_value, index) => String(index + 1)), '288'],
+    hydratedItems: Array.from({ length: 288 }, (_value, index) => ({ id: String(index + 1) })),
+  });
+  assert.equal(duplicate.complete, false);
+  assert.equal(duplicate.reason, 'api-duplicate-ids');
+  assert.deepEqual(plain(duplicate.duplicateIds), ['288']);
+
+  const drift = core.validateHibidApiCoverage({
+    expectedTotal: 288,
+    enumeratedIds: Array.from({ length: 288 }, (_value, index) => String(index + 1)),
+    hydratedItems: Array.from({ length: 288 }, (_value, index) => ({ id: String(index + 1) })),
+    totalDrift: [{ page: 2, reportedTotal: 287 }],
+  });
+  assert.equal(drift.complete, false);
+  assert.equal(drift.reason, 'api-total-drift');
+
+  const wrongVisibleScope = core.validateHibidApiCoverage({
+    expectedTotal: 26887,
+    visibleExpectedTotal: 247,
+    requireVisibleTotalMatch: true,
+    enumeratedIds: Array.from({ length: 2 }, (_value, index) => String(index + 1)),
+    hydratedItems: Array.from({ length: 2 }, (_value, index) => ({ id: String(index + 1) })),
+  });
+  assert.equal(wrongVisibleScope.complete, false);
+  assert.equal(wrongVisibleScope.reason, 'api-visible-total-mismatch');
+  assert.equal(wrongVisibleScope.visibleExpectedCount, 247);
+  assert.equal(wrongVisibleScope.visibleTotalMatches, false);
+});
+
+test('HiBid API-first catalogs enumerate 245, 618, and 287 exact unique IDs', async () => {
+  for (const [auctionId, total] of [[769123, 245], [765261, 618], [767103, 287]]) {
+    const calls = [];
+    const fetchImpl = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      const { pageNumber, pageLength } = body.variables;
+      calls.push(pageNumber);
+      const start = (pageNumber - 1) * pageLength;
+      const count = Math.max(0, Math.min(pageLength, total - start));
+      const lots = Array.from({ length: count }, (_value, index) => makeRichHibidApiLot(start + index + 1, {
+        auction: { ...makeRichHibidApiLot(1).auction, id: auctionId },
+      }));
+      return hibidJsonResponse(makeHibidGraphqlPayload(pageNumber, pageLength, total, lots));
+    };
+    const core = loadCore({ fetch: fetchImpl });
+    const url = new URL(`https://hibid.com/catalog/${auctionId}/api-reliability-auction`);
+    const route = core.resolveHiBidPage(url);
+    const root = auctionId === 767103
+      ? {
+        location: url,
+        querySelector() {
+          throw new Error('stale 1105-lot Apollo state must not be read by the API pipeline');
+        },
+      }
+      : { location: url };
+    const result = await core.scrapeHibidApiCatalog(() => {}, () => false, root, {
+      location: url,
+      route,
+      visibleState: { expectedTotal: total, filters: {}, noMatches: false },
+      getCurrentUrl: () => url.href,
+      fetchImpl,
+      retryDelayMs: 0,
+    });
+
+    assert.equal(result.coverage.complete, true, `${auctionId} coverage`);
+    assert.equal(result.expectedTotal, total, `${auctionId} total`);
+    assert.equal(result.items.length, total, `${auctionId} items`);
+    assert.equal(new Set(result.items.map(item => item.id)).size, total, `${auctionId} unique IDs`);
+    assert.equal(calls.length, Math.ceil(total / 100), `${auctionId} page calls`);
+    assert.deepEqual(plain(result.pageStats.map(page => page.returned)), [
+      ...Array.from({ length: Math.floor(total / 100) }, () => 100),
+      ...(total % 100 ? [total % 100] : []),
+    ]);
+  }
+});
+
+test('HiBid filtered search hydrates only the six enumerated API IDs', async () => {
+  const ids = ['501', '503', '507', '509', '511', '513'];
+  const graphqlRequests = [];
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).includes('hibid-api.io')) {
+      assert.equal(body.query, 'gaming pc');
+      assert.equal(body.options.categoryId, 40198);
+      return hibidJsonResponse({
+        data: {
+          pageNumber: 1,
+          pageSize: 100,
+          totalCount: 6,
+          filteredCount: 6,
+          totalPages: 1,
+          noExactMatches: false,
+          lots: ids.map(id => ({ id: Number(id) })),
+        },
+      });
+    }
+    graphqlRequests.push(body.variables.eventItemIds.map(String));
+    const lots = body.variables.eventItemIds.map(id => makeRichHibidApiLot(id));
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, lots.length, lots.length, lots));
+  };
+  const core = loadCore({ fetch: fetchImpl });
+  const url = new URL('https://hibid.com/lots/40198/computers-and-electronics/computers/desktop---all-in-ones?q=gaming%20pc&zip=Carteret,%20NJ%2007008,%20USA&miles=-1&countryname=United%20States&shippingoffered=true&status=OPEN&status=UPCOMING&status=CLOSING_TODAY&s=TIME_LEFT');
+  const result = await core.scrapeHibidApiCatalog(() => {}, () => false, { location: url }, {
+    location: url,
+    route: core.resolveHiBidPage(url),
+    visibleState: { expectedTotal: 6, filters: { q: 'gaming pc' }, noMatches: false },
+    getCurrentUrl: () => url.href,
+    fetchImpl,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(result.source, 'hibid-search-api');
+  assert.equal(result.coverage.complete, true);
+  assert.deepEqual(plain(result.items.map(item => item.id)), ids);
+  assert.deepEqual(graphqlRequests, [ids]);
+});
+
+test('HiBid state-prefixed API scrape stays inside its portal auctioneer set', async () => {
+  const total = 247;
+  const portalIds = ['32001', '33256', '44770'];
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).includes('hibid-api.io')) {
+      assert.deepEqual(body.options.auctioneerId, portalIds);
+      assert.equal(body.options.siteType, 2);
+      const start = (body.options.page - 1) * body.options.size;
+      const count = Math.max(0, Math.min(body.options.size, total - start));
+      return hibidJsonResponse({
+        data: {
+          pageNumber: body.options.page,
+          pageSize: body.options.size,
+          totalCount: total,
+          filteredCount: total,
+          totalPages: 3,
+          noExactMatches: false,
+          lots: Array.from({ length: count }, (_value, index) => ({ id: start + index + 1 })),
+        },
+      });
+    }
+    const lots = body.variables.eventItemIds.map(makeRichHibidApiLot);
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, lots.length, lots.length, lots));
+  };
+  const core = loadCore({ fetch: fetchImpl });
+  const url = new URL('https://hibid.com/newjersey/lots/40196/computers-and-electronics');
+  const root = {
+    location: url,
+    querySelector() {
+      return {
+        textContent: JSON.stringify({
+          'apollo.state': {
+            ROOT_QUERY: { currentSite: { portalChildren: portalIds.join(',') } },
+          },
+        }),
+      };
+    },
+  };
+  const result = await core.scrapeHibidApiCatalog(() => {}, () => false, root, {
+    location: url,
+    route: core.resolveHiBidPage(url),
+    visibleState: { expectedTotal: total, filters: {}, noMatches: false },
+    getCurrentUrl: () => url.href,
+    fetchImpl,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.expectedTotal, total);
+  assert.equal(result.items.length, total);
+  assert.equal(new Set(result.items.map(item => item.id)).size, total);
+  assert.deepEqual(plain(result.pageStats.map(page => page.returned)), [100, 100, 47]);
+});
+
+test('HiBid noExactMatches search completes as an empty exact export', async () => {
+  let graphqlCalls = 0;
+  const fetchImpl = async (url, init) => {
+    if (!String(url).includes('hibid-api.io')) {
+      graphqlCalls += 1;
+      throw new Error('GraphQL must not hydrate suggestions for noExactMatches');
+    }
+    const body = JSON.parse(init.body);
+    assert.equal(body.query, 'lebron');
+    return hibidJsonResponse({
+      data: {
+        pageNumber: 1,
+        pageSize: 100,
+        totalCount: 455,
+        filteredCount: 0,
+        totalPages: 1,
+        noExactMatches: true,
+        lots: [{ id: 999001 }, { id: 999002 }],
+      },
+    });
+  };
+  const core = loadCore({ fetch: fetchImpl });
+  const url = new URL('https://hibid.com/lots?q=lebron');
+  const result = await core.scrapeHibidApiCatalog(() => {}, () => false, { location: url }, {
+    location: url,
+    route: core.resolveHiBidPage(url),
+    visibleState: { expectedTotal: 0, filters: { q: 'lebron' }, noMatches: true },
+    getCurrentUrl: () => url.href,
+    fetchImpl,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.expectedTotal, 0);
+  assert.deepEqual(plain(result.items), []);
+  assert.equal(graphqlCalls, 0);
+});
+
+test('HiBid API retries transient failures and caps hydration concurrency at three', async () => {
+  let attempts = 0;
+  const retryFetch = async (_url, init) => {
+    attempts += 1;
+    if (attempts < 3) throw new Error('temporary network failure');
+    const body = JSON.parse(init.body);
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, 100, 1, [makeRichHibidApiLot(1, {
+      auction: { ...makeRichHibidApiLot(1).auction, id: body.variables.auctionId },
+    })]));
+  };
+  const retryCore = loadCore({ fetch: retryFetch });
+  const retryUrl = new URL('https://hibid.com/catalog/769123/retry-test');
+  const retried = await retryCore.scrapeHibidApiCatalog(() => {}, () => false, { location: retryUrl }, {
+    location: retryUrl,
+    route: retryCore.resolveHiBidPage(retryUrl),
+    visibleState: { expectedTotal: 1, filters: {}, noMatches: false },
+    getCurrentUrl: () => retryUrl.href,
+    fetchImpl: retryFetch,
+    retries: 3,
+    retryDelayMs: 0,
+  });
+  assert.equal(attempts, 3);
+  assert.equal(retried.coverage.complete, true);
+
+  let active = 0;
+  let peak = 0;
+  const concurrencyFetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    active += 1;
+    peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const ids = body.variables.eventItemIds;
+    active -= 1;
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, ids.length, ids.length, ids.map(makeRichHibidApiLot)));
+  };
+  const concurrencyCore = loadCore({ fetch: concurrencyFetch });
+  const ids = Array.from({ length: 301 }, (_value, index) => String(index + 1));
+  const hydrated = await concurrencyCore.hydrateHibidLots(ids, { kind: 'catalog' }, retryUrl, {
+    fetchImpl: concurrencyFetch,
+    retries: 1,
+    retryDelayMs: 0,
+    concurrency: 3,
+  });
+  assert.equal(hydrated.items.length, 301);
+  assert.deepEqual(plain(hydrated.items.map(item => item.id)), ids);
+  assert.equal(peak, 3);
+});
+
+test('HiBid API retries HTTP-200 short pages and missing hydration IDs', async () => {
+  const pageCalls = new Map();
+  const shortPageFetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    const page = body.variables.pageNumber;
+    pageCalls.set(page, (pageCalls.get(page) || 0) + 1);
+    const lots = page === 1
+      ? Array.from({ length: 100 }, (_value, index) => makeRichHibidApiLot(index + 1))
+      : (pageCalls.get(page) === 1 ? [] : [makeRichHibidApiLot(101)]);
+    return hibidJsonResponse(makeHibidGraphqlPayload(page, 100, 101, lots));
+  };
+  const shortCore = loadCore({ fetch: shortPageFetch });
+  const url = new URL('https://hibid.com/catalog/769123/short-page-retry');
+  const result = await shortCore.scrapeHibidApiCatalog(() => {}, () => false, { location: url }, {
+    location: url,
+    route: shortCore.resolveHiBidPage(url),
+    visibleState: { expectedTotal: 101, filters: {}, noMatches: false },
+    getCurrentUrl: () => url.href,
+    fetchImpl: shortPageFetch,
+    retryDelayMs: 0,
+  });
+  assert.equal(pageCalls.get(2), 2);
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.items.length, 101);
+  assert.equal(result.pageStats[1].coverageAttempts, 2);
+
+  let hydrationCalls = 0;
+  const missingIdFetch = async (_url, init) => {
+    hydrationCalls += 1;
+    const body = JSON.parse(init.body);
+    const requested = body.variables.eventItemIds.map(String);
+    const returned = hydrationCalls === 1 ? requested.filter(id => id !== '2') : requested;
+    const lots = returned.map(makeRichHibidApiLot);
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, requested.length, requested.length, lots));
+  };
+  const hydrationCore = loadCore({ fetch: missingIdFetch });
+  const hydrated = await hydrationCore.hydrateHibidLots(['1', '2'], { kind: 'catalog' }, url, {
+    fetchImpl: missingIdFetch,
+    retryDelayMs: 0,
+  });
+  assert.equal(hydrationCalls, 2);
+  assert.deepEqual(plain(hydrated.items.map(item => item.id)), ['1', '2']);
+  assert.deepEqual(plain(hydrated.failedBatches), []);
+  assert.equal(hydrated.batchStats[0].coverageAttempts, 2);
+});
+
+test('HiBid API does not retry permanent client failures', async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return hibidJsonResponse({ error: 'forbidden' }, 403);
+  };
+  const core = loadCore({ fetch: fetchImpl });
+  const url = new URL('https://hibid.com/catalog/769123/permanent-failure');
+  const result = await core.scrapeHibidApiCatalog(() => {}, () => false, { location: url }, {
+    location: url,
+    route: core.resolveHiBidPage(url),
+    visibleState: { expectedTotal: 245, filters: {}, noMatches: false },
+    getCurrentUrl: () => url.href,
+    fetchImpl,
+    retries: 3,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.coverage.reason, 'api-page-failure');
+  assert.equal(result.items.length, 0);
+});
+
+test('HiBid API cancellation and route changes fail closed', async () => {
+  let stopped = false;
+  let calls = 0;
+  const stopFetch = async (_url, init) => {
+    calls += 1;
+    const body = JSON.parse(init.body);
+    const lots = Array.from({ length: 100 }, (_value, index) => makeRichHibidApiLot(index + 1));
+    stopped = true;
+    return hibidJsonResponse(makeHibidGraphqlPayload(body.variables.pageNumber, 100, 245, lots));
+  };
+  const stopCore = loadCore({ fetch: stopFetch });
+  const stopUrl = new URL('https://hibid.com/catalog/769123/stop-test');
+  const stoppedResult = await stopCore.scrapeHibidApiCatalog(() => {}, () => stopped, { location: stopUrl }, {
+    location: stopUrl,
+    route: stopCore.resolveHiBidPage(stopUrl),
+    visibleState: { expectedTotal: 245, filters: {}, noMatches: false },
+    getCurrentUrl: () => stopUrl.href,
+    fetchImpl: stopFetch,
+    retryDelayMs: 0,
+  });
+  assert.equal(calls, 1);
+  assert.equal(stoppedResult.coverage.complete, false);
+  assert.equal(stoppedResult.coverage.reason, 'user-stop');
+
+  let currentHref = 'https://hibid.com/lots/40198/computers?q=gaming+pc';
+  const routeFetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).includes('hibid-api.io')) {
+      currentHref = 'https://hibid.com/lots/40198/computers?q=office+pc';
+      return hibidJsonResponse({ data: { pageNumber: 1, pageSize: 100, totalCount: 1, filteredCount: 1, totalPages: 1, noExactMatches: false, lots: [{ id: 41 }] } });
+    }
+    return hibidJsonResponse(makeHibidGraphqlPayload(1, 1, 1, [makeRichHibidApiLot(body.variables.eventItemIds[0])]));
+  };
+  const routeCore = loadCore({ fetch: routeFetch });
+  const routeUrl = new URL(currentHref);
+  const changed = await routeCore.scrapeHibidApiCatalog(() => {}, () => false, { location: routeUrl }, {
+    location: routeUrl,
+    route: routeCore.resolveHiBidPage(routeUrl),
+    visibleState: { expectedTotal: 1, filters: { q: 'gaming pc' }, noMatches: false },
+    getCurrentUrl: () => currentHref,
+    fetchImpl: routeFetch,
+    retryDelayMs: 0,
+  });
+  assert.equal(changed.coverage.complete, false);
+  assert.equal(changed.coverage.reason, 'route-fingerprint-changed');
+});
+
+test('HiBid verified partial payload and controls are explicit and audited', () => {
+  const core = loadCore();
+  const result = {
+    source: 'hibid-graphql-api',
+    sourceUrl: 'https://hibid.com/catalog/769123/reliability-test',
+    routeFingerprint: 'fingerprint',
+    expectedTotal: 3,
+    items: [{ id: '1', title: 'One' }, { id: '2', title: 'Two' }],
+    coverage: {
+      complete: false,
+      reason: 'api-missing-hydration',
+      expectedCount: 3,
+      missingIds: ['3'],
+      routeMatches: true,
+    },
+  };
+  const payload = JSON.parse(core.buildHibidPartialExportPayload(result, 'json', { source: 'HiBid' }));
+  assert.equal(payload.audit.complete, false);
+  assert.equal(payload.audit.partial, true);
+  assert.equal(payload.audit.expectedTotal, 3);
+  assert.deepEqual(plain(payload.audit.coverage.missingIds), ['3']);
+  assert.equal(payload.items.length, 2);
+
+  const normalHtml = core.buildPanelHtml({ mode: 'catalog', route: { kind: 'catalog' }, debugEnabled: false });
+  const debugHtml = core.buildPanelHtml({ mode: 'catalog', route: { kind: 'catalog' }, debugEnabled: true });
+  const liveHtml = core.buildPanelHtml({ mode: 'live', route: { kind: 'live' }, debugEnabled: true });
+  assert.match(normalHtml, /id="hibid-catalog-copy-partial"[^>]*hidden/);
+  assert.doesNotMatch(normalHtml, /id="hibid-diagnostic-download"/);
+  assert.match(debugHtml, /id="hibid-diagnostic-download"[^>]*hidden/);
+  assert.match(liveHtml, /id="hibid-catalog-copy-partial"[^>]*hidden/);
+  assert.match(liveHtml, /id="hibid-diagnostic-download"[^>]*hidden/);
+
+  const diagnostic = core.buildHibidDiagnosticBundle({
+    request: {
+      variables: { auctionId: 769123 },
+      headers: { authorization: 'Bearer secret', cookie: 'session=secret' },
+      accountInfo: { token: 'private' },
+    },
+    items: [],
+  });
+  const diagnosticText = JSON.stringify(diagnostic);
+  assert.match(diagnosticText, /auctionId/);
+  assert.doesNotMatch(diagnosticText, /Bearer secret|session=secret|private|authorization|cookie|accountInfo|token/i);
+});
+
+function makeGovDealsNetworkCapture(overrides = {}) {
+  const sourceUrl = overrides.sourceUrl
+    || 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0&source=location-search';
+  const body = {
+    categoryIds: [],
+    businessId: 'GD',
+    searchText: '*',
+    isQAL: false,
+    locationId: null,
+    model: '',
+    makebrand: '',
+    auctionTypeId: null,
+    page: 1,
+    displayRows: 24,
+    sortField: 'bestfit',
+    sortOrder: '',
+    sessionId: 'synthetic-session-body-secret',
+    requestType: 'search',
+    responseStyle: 'fullResponse',
+    facets: ['assetCategory', 'auctionTypeId', 'sellerTypeId'],
+    facetsFilter: {},
+    timeType: null,
+    sellerTypeId: null,
+    accountIds: [],
+    zipcode: '07008',
+    proximityWithinDistance: '50',
+    ...(overrides.body || {}),
+  };
+  return {
+    url: 'https://maestro.lqdt1.com/search/list',
+    method: 'POST',
+    sourceUrl,
+    routeHref: overrides.routeHref || sourceUrl,
+    headers: {
+      'content-type': 'application/json',
+      'ocp-apim-subscription-key': 'synthetic-subscription-secret',
+      'x-api-key': 'synthetic-api-key-secret',
+      'x-ecom-session-id': 'synthetic-session-header-secret',
+      'x-page-unique-id': 'synthetic-page-id',
+      'x-referer': 'https://www.govdeals.com/en/search/filters',
+      'x-user-id': 'synthetic-user-id',
+      'x-user-timezone': 'America/New_York',
+      ...(overrides.headers || {}),
+    },
+    body,
+    capturedAt: '2026-08-18T12:00:00.000Z',
+    ...Object.fromEntries(Object.entries(overrides).filter(([key]) => !['body', 'headers', 'sourceUrl', 'routeHref'].includes(key))),
+  };
+}
+
+function makeGovDealsApiRow(assetId, overrides = {}) {
+  const accountId = Number(overrides.accountId ?? 7529);
+  const numericAssetId = Number(assetId);
+  return {
+    accountId,
+    assetId: numericAssetId,
+    auctionId: numericAssetId + 100000,
+    inventoryId: numericAssetId + 200000,
+    assetShortDescription: `GovDeals API Asset ${numericAssetId}`,
+    assetLongDescription: `<p>Full description for asset ${numericAssetId}</p>`,
+    assetCategory: 'Computers and Electronics',
+    categoryDescription: 'Desktop Computers',
+    currentBid: 25 + numericAssetId,
+    minimumBid: 30 + numericAssetId,
+    bidCount: 3,
+    lotNumber: `${accountId}-${numericAssetId}`,
+    city: 'Edison',
+    state: 'New Jersey',
+    postalCode: '08817',
+    country: 'USA',
+    distance: 8.4,
+    companyName: 'Public University Surplus',
+    displaySeller: 'Public University Surplus',
+    auctionEndDate: '2026-08-20T20:00:00Z',
+    status: 'OPEN',
+    currencyCode: 'USD',
+    photo: `https://webassets.lqdt1.com/assets/photos/${accountId}/${numericAssetId}/main.jpg`,
+    clickUrl: `/en/asset/${numericAssetId}/${accountId}`,
+    ...overrides,
+  };
+}
+
+function govDealsJsonResponse(payload, total, status = 200, url = 'https://maestro.lqdt1.com/search/list') {
+  const responseHeaders = new Map([
+    ['content-type', 'application/json'],
+    ['x-total-count', String(total)],
+  ]);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    url,
+    headers: {
+      get(name) {
+        return responseHeaders.get(String(name || '').toLowerCase()) || null;
+      },
+    },
+    async json() {
+      return payload;
+    },
+  };
+}
+
+function parseFetchBody(init = {}) {
+  return typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+}
+
+test('GovDeals sanitized Chrome fixture records exact public contracts without secrets', () => {
+  const fixture = JSON.parse(fs.readFileSync(new URL('../fixtures/govdeals-network.sanitized.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.site, 'govdeals');
+  assert.equal(fixture.releaseCandidate, '0.8.25');
+  assert.equal(fixture.capture.authority, 'Chrome DevTools Protocol Network and Runtime');
+  assert.equal(fixture.capture.rawCaptureCommitted, false);
+  assert.equal(fixture.search.endpoint, 'https://maestro.lqdt1.com/search/list');
+  assert.equal(fixture.search.authoritativeTotalHeader, 'x-total-count');
+  assert.equal(fixture.search.stableIdentity, 'accountId:assetId');
+  assert.equal(fixture.locationSearchEvidence.expectedTotal, 749);
+  assert.equal(fixture.locationSearchEvidence.pageSize, 24);
+  assert.equal(fixture.locationSearchEvidence.pageCount, 32);
+  assert.equal(fixture.locationSearchEvidence.fullPageCount, 31);
+  assert.equal(fixture.locationSearchEvidence.finalPageCount, 5);
+  assert.equal(fixture.locationSearchEvidence.collected, fixture.locationSearchEvidence.uniqueStableIds);
+  assert.equal(fixture.locationSearchEvidence.searchRowsWithImages, 749);
+  assert.equal(fixture.locationSearchEvidence.searchRowsWithDescriptions, 0);
+  assert.equal(fixture.sellerEvidence.publicSeller, 'Rutgers');
+  assert.deepEqual(fixture.sellerEvidence.accountIds, [7529]);
+  assert.equal(fixture.sellerEvidence.expectedTotal, 13);
+  assert.equal(fixture.sellerEvidence.collected, fixture.sellerEvidence.uniqueStableIds);
+  assert.equal(fixture.asset.assetPhotoCount, 4);
+  assert.equal(fixture.asset.allAssetPhotosRetained, true);
+  assert.equal(fixture.enrichment.defaultMaximumAssets, 90);
+  assert.equal(fixture.enrichment.sampledDescriptionsPresent, 3);
+  assert.equal(fixture.privacy.sessionIdsCommitted, false);
+  assert.equal(fixture.privacy.sellerEmailsCommitted, false);
+  assert.equal(fixture.privacy.sellerPhonesCommitted, false);
+  const serialized = JSON.stringify(fixture);
+  assert.doesNotMatch(serialized, /(?:bearer\s+|set-cookie|password|@[a-z0-9.-]+\.[a-z]{2,}|\b\d{3}[-.) ]\d{3}[-. ]\d{4}\b)/i);
+});
+
+test('GovDeals v0.8.25 network contract exports all planned helpers', () => {
+  const core = loadCore();
+  [
+    'buildGovDealsSearchRequest',
+    'govDealsRequestFingerprint',
+    'normalizeGovDealsSearchResult',
+    'normalizeGovDealsAssetResponse',
+    'enumerateGovDealsApiListings',
+    'validateGovDealsApiCoverage',
+    'sanitizeGovDealsNetworkCapture',
+  ].forEach(name => assert.equal(typeof core[name], 'function', name));
+});
+
+test('GovDeals request builder preserves active filters and fingerprint ignores only volatile page/session fields', () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture();
+  const request = core.buildGovDealsSearchRequest(capture, 32);
+
+  assert.equal(request.url, 'https://maestro.lqdt1.com/search/list');
+  assert.equal(request.method, 'POST');
+  assert.equal(request.body.page, 32);
+  assert.equal(request.body.displayRows, 24);
+  assert.equal(request.body.zipcode, '07008');
+  assert.equal(request.body.proximityWithinDistance, '50');
+  assert.equal(request.body.searchText, '*');
+  assert.deepEqual(plain(request.body.accountIds), []);
+  assert.equal(request.headers['x-api-key'], 'synthetic-api-key-secret');
+  assert.equal(capture.body.page, 1, 'request builder must not mutate the observed request template');
+
+  const first = core.govDealsRequestFingerprint(capture.body);
+  const reordered = core.govDealsRequestFingerprint({
+    ...capture.body,
+    sessionId: 'another-live-session',
+    page: 19,
+  });
+  const changedRadius = core.govDealsRequestFingerprint({ ...capture.body, proximityWithinDistance: '25' });
+  const changedQuery = core.govDealsRequestFingerprint({ ...capture.body, searchText: 'laptop' });
+  const changedSeller = core.govDealsRequestFingerprint({ ...capture.body, accountIds: [7529] });
+  assert.equal(first, reordered);
+  assert.notEqual(first, changedRadius);
+  assert.notEqual(first, changedQuery);
+  assert.notEqual(first, changedSeller);
+});
+
+test('GovDeals GM transport returns authoritative totals and aborts immediately on Stop', async () => {
+  let abortCalls = 0;
+  const responses = [];
+  const core = loadCore({
+    GM_xmlhttpRequest(options) {
+      responses.push(options);
+      const timer = setTimeout(() => options.onload({
+        status: 200,
+        responseText: JSON.stringify({ assetSearchResults: [makeGovDealsApiRow(6883)], isAPIFailureActive: false }),
+        responseHeaders: 'content-type: application/json\r\nx-total-count: 1\r\n',
+      }), 0);
+      return {
+        abort() {
+          abortCalls += 1;
+          clearTimeout(timer);
+          options.onabort?.();
+        },
+      };
+    },
+  });
+  const capture = makeGovDealsNetworkCapture();
+  const result = await core.requestGovDealsJson(core.buildGovDealsSearchRequest(capture, 1), { retries: 1 });
+  assert.equal(result.total, 1);
+  assert.equal(result.json.assetSearchResults.length, 1);
+  assert.equal(responses[0].anonymous, true);
+  assert.equal(Object.keys(responses[0].headers).some(name => /cookie|authorization/i.test(name)), false);
+
+  const pendingCore = loadCore({
+    GM_xmlhttpRequest(options) {
+      return {
+        abort() {
+          abortCalls += 1;
+          options.onabort?.();
+        },
+      };
+    },
+  });
+  const controller = new AbortController();
+  const pending = pendingCore.requestGovDealsJson(
+    pendingCore.buildGovDealsSearchRequest(capture, 1),
+    { retries: 3, signal: controller.signal },
+  );
+  controller.abort();
+  await assert.rejects(pending, error => error?.stopped === true);
+  assert.equal(abortCalls > 0, true);
+
+  let forbiddenCalls = 0;
+  const forbiddenCore = loadCore({
+    GM_xmlhttpRequest(options) {
+      forbiddenCalls += 1;
+      setTimeout(() => options.onload({ status: 403, responseText: '{}', responseHeaders: '' }), 0);
+      return { abort() {} };
+    },
+  });
+  await assert.rejects(
+    forbiddenCore.requestGovDealsJson(forbiddenCore.buildGovDealsSearchRequest(capture, 1), { retries: 3 }),
+    /HTTP 403/,
+  );
+  assert.equal(forbiddenCalls, 1, 'permanent client failures must not be retried');
+});
+
+test('GovDeals API normalizers preserve rich fields, all asset photos, and reject mismatched asset identity', () => {
+  const core = loadCore();
+  const searchItem = core.normalizeGovDealsSearchResult(makeGovDealsApiRow(6883), 'govdeals-new-listings');
+  assert.equal(searchItem.id, '7529:6883');
+  assert.equal(searchItem.assetId, '6883');
+  assert.equal(searchItem.accountId, '7529');
+  assert.equal(searchItem.title, 'GovDeals API Asset 6883');
+  assert.match(searchItem.description, /Full description for asset 6883/);
+  assert.equal(searchItem.url, 'https://www.govdeals.com/en/asset/6883/7529');
+  assert.equal(searchItem.currentBid, 6908);
+  assert.equal(searchItem.currentBidText, '6908.00 USD');
+  assert.equal(searchItem.currentBidAmount, 6908);
+  assert.equal(searchItem.bidCount, 3);
+  assert.equal(searchItem.category, 'Computers and Electronics');
+  assert.match(searchItem.location, /Edison.*New Jersey.*08817/i);
+  assert.deepEqual(plain(searchItem.images), [
+    'https://webassets.lqdt1.com/assets/photos/7529/6883/main.jpg',
+  ]);
+
+  const liveSearchShape = core.normalizeGovDealsSearchResult({
+    accountId: 3559,
+    assetId: 133,
+    assetShortDescription: 'Live schema sample',
+    assetLongDescription: null,
+    assetCategory: '101',
+    categoryDescription: 'Public Surplus',
+    photo: '3559_133_sample.jpg',
+    locationCity: 'Edison',
+    locationState: 'NJ',
+    locationZip: '08817',
+    countryDescription: 'USA',
+    proximityDistance: 0,
+    assetAuctionEndDate: '2026-08-20T20:00:00Z',
+  }, 'govdeals-new-listings');
+  assert.equal(liveSearchShape.image, 'https://webassets.lqdt1.com/assets/photos/3559/3559_133_sample.jpg');
+  assert.match(liveSearchShape.location, /Edison.*NJ.*08817.*USA/i);
+  assert.equal(liveSearchShape.distanceText, '0');
+
+  const route = { kind: 'govdeals-asset', assetId: '6883', accountId: '7529' };
+  const assetJson = {
+    accountId: 7529,
+    assetId: 6883,
+    assetShortDesc: 'HP EliteDesk Computers',
+    assetLongDesc: '<p>Ten tested desktop computers with power cables. Contact private-contact@example.invalid or 555-010-9999.</p>',
+    lotNumber: '7529-6883',
+    city: 'Edison',
+    state: 'New Jersey',
+    zipCode: '08817',
+    companyName: 'Public University Surplus',
+    sellerContactName: 'Synthetic Private Contact',
+    sellerContactEmail: 'private-contact@example.invalid',
+    sellerContactPhone: '555-010-9999',
+    address1: '1 Synthetic Private Street',
+    assetPhotos: [
+      { url: 'https://webassets.lqdt1.com/assets/photos/7529/6883/1.jpg' },
+      { url: 'https://webassets.lqdt1.com/assets/photos/7529/6883/2.jpg' },
+      { url: 'https://webassets.lqdt1.com/assets/photos/7529/6883/3.jpg' },
+      { url: 'https://webassets.lqdt1.com/assets/photos/7529/6883/4.jpg' },
+    ],
+  };
+  const asset = core.normalizeGovDealsAssetResponse(assetJson, route);
+  assert.equal(asset.id, '7529:6883');
+  assert.equal(asset.title, 'HP EliteDesk Computers');
+  assert.match(asset.description, /Ten tested desktop computers/);
+  assert.equal(asset.images.length, 4);
+  assert.deepEqual(plain(asset.images), assetJson.assetPhotos.map(photo => photo.url));
+  assert.doesNotMatch(JSON.stringify(asset), /Synthetic Private Contact|private-contact@example\.invalid|555-010-9999|Synthetic Private Street/);
+
+  assert.throws(() => core.normalizeGovDealsAssetResponse({ ...assetJson, assetId: 9999 }, route), /asset-identity-mismatch/i);
+  assert.throws(() => core.normalizeGovDealsAssetResponse({ ...assetJson, accountId: 9999 }, route), /asset-identity-mismatch/i);
+});
+
+test('GovDeals detail enrichment is bounded and audits deferred descriptions', async () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture();
+  const items = Array.from({ length: 8 }, (_value, index) => ({
+    ...core.normalizeGovDealsSearchResult(makeGovDealsApiRow(index + 1), 'govdeals-new-listings'),
+    description: '',
+    descriptionHtml: '',
+    image: '',
+    images: [],
+  }));
+  let requests = 0;
+  const enriched = await core.enrichGovDealsApiListings(items, capture, () => {}, () => false, {
+    enrichmentLimit: 3,
+    enrichmentConcurrency: 2,
+    retries: 1,
+    fetchImpl: async url => {
+      requests += 1;
+      const match = String(url).match(/\/assets\/(\d+)\/(\d+)\/false/i);
+      return govDealsJsonResponse({
+        assetId: Number(match[1]),
+        accountId: Number(match[2]),
+        assetShortDesc: `Asset ${match[1]}`,
+        assetLongDesc: `<p>Description ${match[1]}</p>`,
+        assetPhotos: [{ url: `https://webassets.lqdt1.com/assets/photos/${match[2]}/${match[1]}.jpg` }],
+      }, null, 200, String(url));
+    },
+  });
+  assert.equal(requests, 3);
+  assert.equal(enriched.length, 8);
+  assert.equal(enriched.audit.eligible, 8);
+  assert.equal(enriched.audit.limit, 3);
+  assert.equal(enriched.audit.requested, 3);
+  assert.equal(enriched.audit.succeeded, 3);
+  assert.equal(enriched.audit.skippedDueLimit, 5);
+  assert.equal(enriched.slice(0, 3).every(item => item.description), true);
+  assert.equal(enriched.slice(3).every(item => !item.description), true);
+});
+
+test('GovDeals API enumerates 749 filtered listings at 24 per page with an exact final five', async () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture();
+  const location = new URL(capture.routeHref);
+  const route = core.resolveGovDealsPage(location);
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    assert.equal(String(url), capture.url);
+    const body = parseFetchBody(init);
+    calls.push(body.page);
+    assert.equal(body.zipcode, '07008');
+    assert.equal(body.proximityWithinDistance, '50');
+    const start = (body.page - 1) * body.displayRows;
+    const count = Math.max(0, Math.min(body.displayRows, 749 - start));
+    return govDealsJsonResponse({
+      assetSearchResults: Array.from({ length: count }, (_value, index) => makeGovDealsApiRow(start + index + 1)),
+      assetSearchFacets: [],
+      assetSearchFacetsShortened: [],
+      isAPIFailureActive: false,
+      easMsg: '',
+    }, 749);
+  };
+
+  const result = await core.enumerateGovDealsApiListings(capture, () => {}, () => false, {
+    fetchImpl,
+    retries: 3,
+    retryDelayMs: 0,
+    concurrency: 3,
+    getActiveRequestBody: () => capture.body,
+    route,
+    locationLike: location,
+    currentRoute: route,
+    currentLocationLike: location,
+  });
+  const coverage = core.validateGovDealsApiCoverage(result, route, {
+    activeRequestBody: capture.body,
+    locationLike: location,
+  });
+
+  assert.equal(result.expectedTotal, 749);
+  assert.equal(result.items.length, 749);
+  assert.equal(new Set(result.items.map(item => item.id)).size, 749);
+  assert.deepEqual(calls.slice().sort((a, b) => a - b), Array.from({ length: 32 }, (_value, index) => index + 1));
+  assert.deepEqual(plain(result.coverage.pageAudits.map(page => page.count)), [
+    ...Array.from({ length: 31 }, () => 24),
+    5,
+  ]);
+  assert.equal(coverage.complete, true);
+  assert.equal(coverage.reason, 'complete');
+  assert.equal(coverage.expectedCount, 749);
+  assert.equal(coverage.collectedCount, 749);
+  assert.equal(coverage.uniqueCount, 749);
+});
+
+test('GovDeals API scopes Rutgers seller enumeration to accountIds 7529 and proves 13 of 13', async () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture({
+    sourceUrl: 'https://www.govdeals.com/en/rutgers',
+    body: {
+      accountIds: [7529],
+      zipcode: '',
+      proximityWithinDistance: '',
+    },
+  });
+  const location = new URL(capture.routeHref);
+  const route = core.resolveGovDealsPage(location);
+  const fetchImpl = async (_url, init) => {
+    const body = parseFetchBody(init);
+    assert.deepEqual(body.accountIds, [7529]);
+    assert.equal(body.page, 1);
+    return govDealsJsonResponse({
+      assetSearchResults: Array.from({ length: 13 }, (_value, index) => makeGovDealsApiRow(6800 + index)),
+      isAPIFailureActive: false,
+    }, 13);
+  };
+  const result = await core.enumerateGovDealsApiListings(capture, () => {}, () => false, {
+    fetchImpl,
+    retryDelayMs: 0,
+    getActiveRequestBody: () => capture.body,
+    pageKind: 'govdeals-seller',
+    route,
+    locationLike: location,
+    currentRoute: route,
+    currentLocationLike: location,
+  });
+  const coverage = core.validateGovDealsApiCoverage(result, route, {
+    activeRequestBody: capture.body,
+    expectedAccountIds: ['7529'],
+    locationLike: location,
+  });
+
+  assert.equal(result.expectedTotal, 13);
+  assert.equal(result.items.length, 13);
+  assert.equal(new Set(result.items.map(item => item.id)).size, 13);
+  assert.equal(result.items.every(item => item.accountId === '7529'), true);
+  assert.equal(coverage.complete, true);
+});
+
+test('GovDeals API coverage rejects duplicate and missing stable IDs', () => {
+  const core = loadCore();
+  const body = makeGovDealsNetworkCapture().body;
+  const fingerprint = core.govDealsRequestFingerprint(body);
+  const route = { source: 'govdeals', kind: 'govdeals-new-listings', zipcode: '07008', miles: '50' };
+  const duplicate = core.validateGovDealsApiCoverage({
+    expectedTotal: 3,
+    items: [
+      { id: '7529:1', accountId: '7529', assetId: '1' },
+      { id: '7529:2', accountId: '7529', assetId: '2' },
+      { id: '7529:2', accountId: '7529', assetId: '2' },
+    ],
+    incomplete: false,
+    coverage: {
+      proofTier: 'api-exact',
+      routeMatches: true,
+      requestMatches: true,
+      enumeratedIds: ['7529:1', '7529:2'],
+      duplicateIds: ['7529:2'],
+      failedPages: [],
+      requestFingerprint: fingerprint,
+      currentRequestFingerprint: fingerprint,
+    },
+  }, route, { activeRequestBody: body });
+  assert.equal(duplicate.complete, false);
+  assert.equal(duplicate.reason, 'api-duplicate-ids');
+  assert.deepEqual(plain(duplicate.duplicateIds), ['7529:2']);
+
+  const missing = core.validateGovDealsApiCoverage({
+    expectedTotal: 2,
+    items: [
+      { id: '7529:1', accountId: '7529', assetId: '1' },
+      { id: '7529:3', accountId: '7529', assetId: '3' },
+    ],
+    incomplete: false,
+    coverage: {
+      proofTier: 'api-exact',
+      routeMatches: true,
+      requestMatches: true,
+      enumeratedIds: ['7529:1', '7529:2', '7529:3'],
+      duplicateIds: [],
+      failedPages: [],
+      requestFingerprint: fingerprint,
+      currentRequestFingerprint: fingerprint,
+    },
+  }, route, { activeRequestBody: body });
+  assert.equal(missing.complete, false);
+  assert.equal(missing.reason, 'api-missing-ids');
+  assert.deepEqual(plain(missing.missingIds), ['7529:2']);
+});
+
+test('GovDeals API retries transient failures and rejects x-total-count drift', async () => {
+  const retryCore = loadCore();
+  const retryCapture = makeGovDealsNetworkCapture();
+  const retryLocation = new URL(retryCapture.routeHref);
+  const retryRoute = retryCore.resolveGovDealsPage(retryLocation);
+  let attempts = 0;
+  const retried = await retryCore.enumerateGovDealsApiListings(retryCapture, () => {}, () => false, {
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error('synthetic transient failure');
+      return govDealsJsonResponse({ assetSearchResults: [makeGovDealsApiRow(1)], isAPIFailureActive: false }, 1);
+    },
+    retries: 3,
+    retryDelayMs: 0,
+    getActiveRequestBody: () => retryCapture.body,
+    route: retryRoute,
+    locationLike: retryLocation,
+    currentRoute: retryRoute,
+    currentLocationLike: retryLocation,
+  });
+  assert.equal(attempts, 3);
+  assert.equal(retried.items.length, 1);
+  assert.equal(retryCore.validateGovDealsApiCoverage(retried, retryRoute, {
+    activeRequestBody: retryCapture.body,
+    locationLike: retryLocation,
+  }).complete, true);
+
+  const driftCore = loadCore();
+  const driftCapture = makeGovDealsNetworkCapture();
+  const driftLocation = new URL(driftCapture.routeHref);
+  const driftRoute = driftCore.resolveGovDealsPage(driftLocation);
+  const drifted = await driftCore.enumerateGovDealsApiListings(driftCapture, () => {}, () => false, {
+    fetchImpl: async (_url, init) => {
+      const body = parseFetchBody(init);
+      const reportedTotal = body.page === 1 ? 49 : 48;
+      const start = (body.page - 1) * body.displayRows;
+      const count = Math.max(0, Math.min(body.displayRows, 49 - start));
+      return govDealsJsonResponse({
+        assetSearchResults: Array.from({ length: count }, (_value, index) => makeGovDealsApiRow(start + index + 1)),
+        isAPIFailureActive: false,
+      }, reportedTotal);
+    },
+    retries: 1,
+    retryDelayMs: 0,
+    getActiveRequestBody: () => driftCapture.body,
+    route: driftRoute,
+    locationLike: driftLocation,
+    currentRoute: driftRoute,
+    currentLocationLike: driftLocation,
+  });
+  const driftCoverage = driftCore.validateGovDealsApiCoverage(drifted, driftRoute, {
+    activeRequestBody: driftCapture.body,
+    locationLike: driftLocation,
+  });
+  assert.equal(drifted.coverage.failedPages.length > 0, true);
+  assert.match(drifted.coverage.failedPages.map(page => page.reason).join(' '), /x-total-count drifted/i);
+  assert.equal(drifted.totalDrift.length > 0, true);
+  assert.equal(drifted.stopReason, 'api-total-drift');
+  assert.equal(driftCoverage.complete, false);
+  assert.equal(driftCoverage.reason, 'api-total-drift');
+});
+
+test('GovDeals API cancellation, zero results, and active filter drift all fail or complete explicitly', async () => {
+  const core = loadCore();
+  const zeroCapture = makeGovDealsNetworkCapture({ body: { searchText: 'no-such-public-asset' } });
+  const zeroLocation = new URL(zeroCapture.routeHref);
+  const zeroRoute = core.resolveGovDealsPage(zeroLocation);
+  let zeroCalls = 0;
+  const zero = await core.enumerateGovDealsApiListings(zeroCapture, () => {}, () => false, {
+    fetchImpl: async () => {
+      zeroCalls += 1;
+      return govDealsJsonResponse({ assetSearchResults: [], isAPIFailureActive: false }, 0);
+    },
+    retryDelayMs: 0,
+    getActiveRequestBody: () => zeroCapture.body,
+    route: zeroRoute,
+    locationLike: zeroLocation,
+    currentRoute: zeroRoute,
+    currentLocationLike: zeroLocation,
+  });
+  assert.equal(zeroCalls, 1);
+  assert.equal(zero.expectedTotal, 0);
+  assert.deepEqual(plain(zero.items), []);
+  assert.equal(core.validateGovDealsApiCoverage(zero, zeroRoute, {
+    activeRequestBody: zeroCapture.body,
+    locationLike: zeroLocation,
+  }).complete, true);
+
+  const stopCapture = makeGovDealsNetworkCapture();
+  const stopLocation = new URL(stopCapture.routeHref);
+  const stopRoute = core.resolveGovDealsPage(stopLocation);
+  let stopped = false;
+  let stopCalls = 0;
+  const cancelled = await core.enumerateGovDealsApiListings(stopCapture, () => {}, () => stopped, {
+    fetchImpl: async (_url, init) => {
+      stopCalls += 1;
+      const body = parseFetchBody(init);
+      stopped = true;
+      return govDealsJsonResponse({
+        assetSearchResults: Array.from({ length: 24 }, (_value, index) => makeGovDealsApiRow(index + 1)),
+        isAPIFailureActive: false,
+      }, 49);
+    },
+    retryDelayMs: 0,
+    getActiveRequestBody: () => stopCapture.body,
+    route: stopRoute,
+    locationLike: stopLocation,
+    currentRoute: stopRoute,
+    currentLocationLike: stopLocation,
+  });
+  assert.equal(stopCalls, 1);
+  assert.equal(cancelled.stopped, true);
+  assert.equal(cancelled.stopReason, 'user-stop');
+  assert.equal(core.validateGovDealsApiCoverage(cancelled, stopRoute, {
+    activeRequestBody: stopCapture.body,
+    locationLike: stopLocation,
+  }).complete, false);
+
+  const driftCapture = makeGovDealsNetworkCapture();
+  const activeCapture = makeGovDealsNetworkCapture();
+  const driftLocation = new URL(driftCapture.routeHref);
+  const driftRoute = core.resolveGovDealsPage(driftLocation);
+  const drifted = await core.enumerateGovDealsApiListings(driftCapture, () => {}, () => false, {
+    fetchImpl: async () => {
+      activeCapture.body.searchText = 'changed-while-scraping';
+      return govDealsJsonResponse({
+        assetSearchResults: Array.from({ length: 24 }, (_value, index) => makeGovDealsApiRow(index + 1)),
+        isAPIFailureActive: false,
+      }, 49);
+    },
+    retryDelayMs: 0,
+    currentCapture: activeCapture,
+    route: driftRoute,
+    locationLike: driftLocation,
+    currentRoute: driftRoute,
+    currentLocationLike: driftLocation,
+  });
+  const driftCoverage = core.validateGovDealsApiCoverage(drifted, driftRoute, {
+    activeRequestBody: activeCapture.body,
+    locationLike: driftLocation,
+  });
+  assert.equal(drifted.stopReason, 'request-fingerprint-changed');
+  assert.equal(driftCoverage.complete, false);
+  assert.equal(driftCoverage.reason, 'request-fingerprint-changed');
+});
+
+test('GovDeals network sanitizer removes session, header, and contact PII while retaining coverage evidence', () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture({
+    headers: {
+      authorization: 'Bearer synthetic-authorization-secret',
+      cookie: 'session=synthetic-cookie-secret',
+    },
+    response: {
+      totalCount: 1,
+      assetSearchResults: [{
+        ...makeGovDealsApiRow(9001),
+        sellerContactName: 'Synthetic Private Contact',
+        sellerEmail: 'private-contact@example.invalid',
+        sellerPhone: '555-010-9999',
+        address1: '1 Synthetic Private Street',
+      }],
+    },
+    responseHeaders: { 'x-total-count': '1' },
+  });
+  const sanitized = core.sanitizeGovDealsNetworkCapture(capture);
+  const serialized = JSON.stringify(sanitized);
+
+  assert.match(serialized, /maestro\.lqdt1\.com\/search\/list/);
+  assert.match(serialized, /07008/);
+  assert.equal(sanitized.total, 1);
+  assert.equal(sanitized.resultCount, 1);
+  assert.doesNotMatch(serialized, /synthetic-session-body-secret|synthetic-subscription-secret|synthetic-api-key-secret|synthetic-session-header-secret|synthetic-page-id|synthetic-user-id/);
+  assert.doesNotMatch(serialized, /synthetic-authorization-secret|synthetic-cookie-secret|Synthetic Private Contact|private-contact@example\.invalid|555-010-9999|Synthetic Private Street/);
+  assert.equal(capture.body.sessionId, 'synthetic-session-body-secret', 'sanitizer must not mutate the in-memory capture');
+});
+
+test('GovDeals capture matching rejects stale searches and different seller slugs', () => {
+  const core = loadCore();
+  const laptopsUrl = 'https://www.govdeals.com/en/search/filters?q=laptops&zipcode=07008&miles=50';
+  const serversUrl = 'https://www.govdeals.com/en/search/filters?q=servers&zipcode=07008&miles=50';
+  const laptopsCapture = makeGovDealsNetworkCapture({
+    sourceUrl: laptopsUrl,
+    routeHref: laptopsUrl,
+    body: { searchText: 'laptops' },
+  });
+  laptopsCapture.kind = 'search';
+  laptopsCapture.routeScopeFingerprint = core.govDealsRouteScopeFingerprint(core.resolveGovDealsPage(new URL(laptopsUrl)), new URL(laptopsUrl));
+
+  const laptopsRoute = core.resolveGovDealsPage(new URL(laptopsUrl));
+  const serversRoute = core.resolveGovDealsPage(new URL(serversUrl));
+  assert.equal(core.govDealsCaptureMatchesRoute(laptopsCapture, laptopsRoute, new URL(laptopsUrl)), true);
+  assert.equal(core.govDealsCaptureMatchesRoute(laptopsCapture, serversRoute, new URL(serversUrl)), false);
+
+  const rutgersUrl = 'https://www.govdeals.com/en/rutgers';
+  const anotherSellerUrl = 'https://www.govdeals.com/en/another-public-seller';
+  const sellerCapture = makeGovDealsNetworkCapture({
+    sourceUrl: rutgersUrl,
+    routeHref: rutgersUrl,
+    body: { accountIds: [7529], zipcode: '', proximityWithinDistance: '' },
+  });
+  sellerCapture.kind = 'search';
+  sellerCapture.routeScopeFingerprint = core.govDealsRouteScopeFingerprint(core.resolveGovDealsPage(new URL(rutgersUrl)), new URL(rutgersUrl));
+  assert.equal(core.govDealsCaptureMatchesRoute(
+    sellerCapture,
+    core.resolveGovDealsPage(new URL(rutgersUrl)),
+    new URL(rutgersUrl),
+  ), true);
+  assert.equal(core.govDealsCaptureMatchesRoute(
+    sellerCapture,
+    core.resolveGovDealsPage(new URL(anotherSellerUrl)),
+    new URL(anotherSellerUrl),
+  ), false);
+});
+
+test('GovDeals observer preserves the last accepted native capture after a failed response', () => {
+  const core = loadCore();
+  const url = 'https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50';
+  const body = makeGovDealsNetworkCapture({ sourceUrl: url, routeHref: url }).body;
+  assert.equal(core.captureGovDealsNetworkExchange({
+    url: 'https://maestro.lqdt1.com/search/list',
+    method: 'POST',
+    body,
+    headers: { 'content-type': 'application/json' },
+    response: { assetSearchResults: [makeGovDealsApiRow(6883)], isAPIFailureActive: false },
+    responseHeaders: { 'x-total-count': '1' },
+    status: 200,
+    routeHref: url,
+  }), true);
+  assert.equal(core.captureGovDealsNetworkExchange({
+    url: 'https://maestro.lqdt1.com/search/list',
+    method: 'POST',
+    body,
+    headers: { 'content-type': 'application/json' },
+    response: null,
+    responseHeaders: {},
+    status: 403,
+    routeHref: url,
+  }), false);
+  const route = core.resolveGovDealsPage(new URL(url));
+  const capture = core.getGovDealsSearchCapture(route, new URL(url));
+  assert.equal(capture.status, 200);
+  assert.equal(capture.total, 1);
+  assert.equal(capture.response.assetSearchResults.length, 1);
+});
+
+test('GovDeals exact coverage requires both account and asset IDs and enforces seller account scope', () => {
+  const core = loadCore();
+  const body = makeGovDealsNetworkCapture().body;
+  const fingerprint = core.govDealsRequestFingerprint(body);
+  const searchRoute = { source: 'govdeals', kind: 'govdeals-new-listings', zipcode: '07008', miles: '50' };
+  const malformed = core.validateGovDealsApiCoverage({
+    expectedTotal: 1,
+    items: [{ id: 'asset:6883', assetId: '6883', accountId: '' }],
+    incomplete: false,
+    coverage: {
+      proofTier: 'api-exact',
+      routeMatches: true,
+      requestMatches: true,
+      enumeratedIds: ['asset:6883'],
+      failedPages: [],
+      requestFingerprint: fingerprint,
+      currentRequestFingerprint: fingerprint,
+    },
+  }, searchRoute, { activeRequestBody: body });
+  assert.equal(malformed.complete, false);
+  assert.match(malformed.reason, /account-scope|stable/i);
+
+  const sellerBody = { ...body, accountIds: [7529], zipcode: '', proximityWithinDistance: '' };
+  const sellerFingerprint = core.govDealsRequestFingerprint(sellerBody);
+  const sellerScope = core.validateGovDealsApiCoverage({
+    expectedTotal: 1,
+    context: { pageKind: 'govdeals-seller', accountIds: [7529] },
+    items: [{ id: '9999:6883', assetId: '6883', accountId: '9999' }],
+    incomplete: false,
+    coverage: {
+      proofTier: 'api-exact',
+      routeMatches: true,
+      requestMatches: true,
+      enumeratedIds: ['9999:6883'],
+      failedPages: [],
+      requestFingerprint: sellerFingerprint,
+      currentRequestFingerprint: sellerFingerprint,
+    },
+  }, { source: 'govdeals', kind: 'govdeals-seller' }, {
+    activeRequestBody: sellerBody,
+    expectedAccountIds: ['7529'],
+  });
+  assert.equal(sellerScope.complete, false);
+  assert.equal(sellerScope.reason, 'api-account-scope-mismatch');
+});
+
+test('GovDeals rejects API failure fallback rows and request-drift partial coverage', async () => {
+  const core = loadCore();
+  const capture = makeGovDealsNetworkCapture();
+  const location = new URL(capture.routeHref);
+  const route = core.resolveGovDealsPage(location);
+  let calls = 0;
+  const failed = await core.enumerateGovDealsApiListings(capture, () => {}, () => false, {
+    fetchImpl: async () => {
+      calls += 1;
+      return govDealsJsonResponse({
+        assetSearchResults: [makeGovDealsApiRow(6883)],
+        isAPIFailureActive: true,
+        easMsg: 'synthetic upstream fallback',
+      }, 1);
+    },
+    retries: 3,
+    retryDelayMs: 0,
+    getActiveRequestBody: () => capture.body,
+    route,
+    locationLike: location,
+    currentRoute: route,
+    currentLocationLike: location,
+  });
+  assert.equal(calls, 3);
+  assert.equal(failed.items.length, 0);
+  assert.equal(failed.incomplete, true);
+  assert.match(failed.failedPages[0].reason, /API failure flag active/i);
+
+  const driftCoverage = core.buildProofTierCoverage({
+    source: 'govdeals-api',
+    expectedTotal: 1,
+    items: [makeGovDealsApiRow(6883)],
+    incomplete: false,
+    coverage: {
+      proofTier: 'api-exact',
+      routeMatches: true,
+      requestMatches: false,
+      accountScopeMatches: true,
+      enumeratedIds: ['7529:6883'],
+      failedPages: [],
+      failedBatches: [],
+      requestFingerprint: 'start-filter',
+      currentRequestFingerprint: 'changed-filter',
+    },
+  }, 'govdeals', route, { locationLike: location });
+  assert.equal(driftCoverage.complete, false);
+  assert.equal(driftCoverage.reason, 'request-fingerprint-changed');
+  assert.equal(driftCoverage.requestMatches, false);
+});
+
+test('GovDeals asset DOM fallback remains explicitly unproven', async () => {
+  const location = new URL('https://www.govdeals.com/en/asset/43147/7484');
+  const core = loadCore({ location });
+  const root = makeFakeNode({
+    text: 'Asset ID 43147 Lot Number 7484-43147 Item Location: 1 Private St, Edison, New Jersey 08817',
+    selectors: { h1: makeFakeNode({ text: 'Synthetic asset' }) },
+  });
+  root.title = 'Synthetic asset | GovDeals';
+  const result = await core.scrapeGovDealsListings(() => {}, () => false, root, {
+    route: core.resolveGovDealsPage(location),
+    locationLike: location,
+  });
+  assert.equal(result.source, 'govdeals-dom-asset');
+  assert.equal(result.incomplete, true);
+  assert.equal(result.coverage.proofTier, 'unproven');
+  assert.match(result.stopReason, /api-capture-unavailable/i);
+  assert.doesNotMatch(result.items[0].rawText, /Private St/i);
+});
+
+test('GovDeals asset scraper rejects failed captured responses instead of certifying their rows', async () => {
+  const core = loadCore();
+  const location = new URL('https://www.govdeals.com/en/asset/6883/7529');
+  const route = core.resolveGovDealsPage(location);
+  const failedCapture = {
+    kind: 'asset',
+    url: 'https://maestro.lqdt1.com/assets/6883/7529/false',
+    routeHref: location.href,
+    status: 503,
+    body: { businessId: 'GD', siteId: 1 },
+    response: {
+      accountId: 7529,
+      assetId: 6883,
+      assetShortDesc: 'This row came from a failed response',
+      assetLongDesc: '<p>It must never be certified.</p>',
+      isAPIFailureActive: true,
+    },
+  };
+  let requests = 0;
+  const result = await core.scrapeGovDealsApiAsset(route, () => {}, () => false, {
+    capture: failedCapture,
+    locationLike: location,
+    currentLocationLike: location,
+    retries: 1,
+    retryDelayMs: 0,
+    fetchImpl: async () => {
+      requests += 1;
+      throw new Error('synthetic asset transport failure');
+    },
+  });
+
+  assert.equal(requests, 1, 'the failed capture must trigger one fresh bounded request');
+  assert.equal(result.coverage.complete, false);
+  assert.equal(result.incomplete, true);
+  assert.equal(result.items.length, 0);
+  assert.equal(result.stopReason, 'asset-api-request-failed');
+  assert.equal(result.audit.captureRejectedReason, 'captured-asset-http-503');
+  assert.equal(result.coverage.failedBatches.length, 1);
+});
+
+test('GovDeals DOM enrichment Stop aborts active detail fetches immediately', async () => {
+  let fetchStarted = false;
+  let fetchAborted = false;
+  const core = loadCore({
+    DOMParser: class {},
+    fetch(_url, init = {}) {
+      fetchStarted = true;
+      return new Promise((_resolve, reject) => {
+        const abort = () => {
+          fetchAborted = true;
+          reject(new Error('synthetic fetch abort'));
+        };
+        if (init.signal?.aborted) abort();
+        else init.signal?.addEventListener?.('abort', abort, { once: true });
+      });
+    },
+  });
+  const controller = new AbortController();
+  const pending = core.enrichGovDealsListings([{
+    source: 'GovDeals',
+    id: '7529:6883',
+    accountId: '7529',
+    assetId: '6883',
+    title: 'Synthetic asset needing DOM enrichment',
+    url: 'https://www.govdeals.com/en/asset/6883/7529',
+    description: '',
+    image: '',
+    images: [],
+  }], () => {}, () => false, {
+    signal: controller.signal,
+    timeoutMs: 20000,
+    concurrency: 1,
+  });
+  controller.abort();
+  const result = await Promise.race([
+    pending,
+    new Promise((_resolve, reject) => setTimeout(() => reject(new Error('Stop did not abort DOM enrichment')), 500)),
+  ]);
+
+  assert.equal(fetchStarted, true);
+  assert.equal(fetchAborted, true);
+  assert.equal(result.audit.stopped, true);
+  assert.equal(result.audit.succeeded, 0);
+  assert.deepEqual(plain(result.audit.failed), []);
+});
+
+test('GovDeals DOM-only advertised equality is never certified as pagination-exact', async () => {
+  const loc = new URL('https://www.govdeals.com/en/search/filters?zipcode=07008&miles=50&showMap=0');
+  const core = loadCore({ location: loc });
+  const cards = [1, 2].map(assetId => {
+    const link = makeFakeNode({
+      text: `Synthetic Asset ${assetId}`,
+      attrs: { href: `/en/asset/${assetId}/7529` },
+    });
+    return makeFakeNode({
+      text: `Online Auction Synthetic Asset ${assetId} Edison, New Jersey, USA USD 10.00 2D Lot#: 7529-${assetId}`,
+      selectors: {
+        'a[href*="/asset/"]': link,
+        img: makeFakeNode({ attrs: { src: `https://cdn.govdeals.test/${assetId}.jpg` } }),
+      },
+    });
+  });
+  const root = makeFakeNode({
+    text: 'Search Results Showing 1 to 2 of 2 lots Synthetic Asset 1 Synthetic Asset 2',
+    selectors: {
+      h1: makeFakeNode({ text: 'Search Results' }),
+      article: cards,
+      'a[href*="/asset/"]': cards.map(card => card.querySelector('a[href*="/asset/"]')),
+    },
+  });
+  root.title = 'Search Results | GovDeals';
+
+  const result = await core.scrapeGovDealsListings(() => {}, () => false, root);
+  const readiness = core.assessExportReadiness(result, 'govdeals', core.resolveSiteRoute(loc), { locationLike: loc });
+  assert.notEqual(result.coverage.proofTier, 'pagination-exact');
+  assert.equal(result.incomplete, true);
+  assert.equal(readiness.ok, false);
+});

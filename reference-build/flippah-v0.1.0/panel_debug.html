@@ -1,0 +1,73 @@
+
+    <style>:host{color:#202522;max-width:100%;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;font-size:13px;line-height:1.4;display:block}*{box-sizing:border-box}.lotlens-panel{background:#fafaf8;border:1px solid #e2e2df;border-radius:8px;width:100%;max-width:100%;margin:12px 0;padding:14px;overflow:hidden;box-shadow:0 1px 2px #14231c0d}.lotlens-header,.lotlens-row,.lotlens-tax-control,.lotlens-inline-input,.lotlens-budget-input{align-items:center;display:flex}.lotlens-header{justify-content:space-between;gap:12px;margin-bottom:10px}.lotlens-wordmark{color:#1565c0;letter-spacing:-0.02em;font-size:16px;font-weight:900}.lotlens-premium-source{color:#66706a;text-align:right;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.lotlens-degraded{color:#744f00;background:#fff6dc;border-radius:6px;margin:0 0 10px;padding:8px 10px;font-size:12px}.lotlens-report-link{color:#0d47a1;margin-left:5px;font-weight:700}.lotlens-alert-gate{color:#66706a;margin:8px 0 0;font-size:11px}.lotlens-pro-pill{color:#fff;background:#1565c0;border-radius:999px;padding:2px 5px;font-size:10px;font-weight:800}.lotlens-upgrade-link{color:#0d47a1;font:inherit;cursor:pointer;background:0 0;border:0;padding:0;font-weight:800;text-decoration:underline}[hidden]{display:none!important}.lotlens-cost-table{gap:8px;display:grid}.lotlens-row{justify-content:space-between;gap:12px;min-width:0}.lotlens-row>:last-child{text-align:right}.lotlens-inline-input,.lotlens-budget-input{justify-content:flex-end;gap:3px}input,select,button{color:#202522;min-height:30px;font:inherit;background:#fff;border:1px solid #cfd4d0;border-radius:6px}input{text-align:right;width:74px;padding:5px 7px}input[type=text]{text-align:left;width:100%}input:focus-visible,select:focus-visible,button:focus-visible{outline-offset:2px;outline:2px solid #1565c0}button:disabled{cursor:not-allowed;opacity:.55}select{width:min(150px,42vw);padding:5px 26px 5px 7px}.lotlens-tax-control{justify-content:flex-end;gap:8px;min-width:0}.lotlens-tax-rate{min-width:44px}.lotlens-money-input{width:92px}.lotlens-pill{color:#59615c;background:#ebece9;border-radius:999px;padding:3px 7px;font-size:11px;font-weight:650}.lotlens-divider{background:#e2e2df;height:1px;margin:2px 0}.lotlens-total-row{align-items:baseline;font-weight:750}.lotlens-true-cost{color:#0d47a1;font-size:18px;transition:opacity .15s}.lotlens-true-cost.lotlens-updated{animation:.15s lotlens-fade}.lotlens-cards{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin-top:12px;display:grid}.lotlens-card{background:#fff;border:1px solid #e2e2df;border-radius:8px;flex-direction:column;gap:7px;min-width:0;min-height:100px;padding:10px;display:flex}.lotlens-card-label{color:#66706a;text-transform:uppercase;letter-spacing:.03em;font-size:11px;font-weight:650}.lotlens-card strong,.lotlens-max-bid,.lotlens-profit-output{font-size:12px}.lotlens-comps{gap:6px;margin-top:12px;display:grid}.lotlens-comps-controls{grid-template-columns:minmax(0,1fr) auto auto;gap:7px;display:grid}.lotlens-button{color:#fff;white-space:nowrap;background:#1565c0;border:1px solid #1565c0;border-radius:6px;justify-content:center;align-items:center;min-height:30px;padding:5px 10px;font-weight:700;text-decoration:none;display:inline-flex}.lotlens-button:focus-visible{outline-offset:2px;outline:2px solid #1565c0}.lotlens-actions{gap:7px;margin-top:10px;display:flex}.lotlens-actions .lotlens-button{flex:1}.lotlens-watching{color:#0d47a1;background:#e3f2fd;border-color:#90caf9}.lotlens-secondary-button{color:#2f3732;background:#fff;padding:5px 10px}.lotlens-watch-status{color:#66706a;min-height:17px;margin:5px 0 0;font-size:11px}.lotlens-note-editor{gap:5px;margin-top:7px;display:grid}.lotlens-note-editor label{color:#66706a;font-size:11px;font-weight:650}.lotlens-note-editor textarea{resize:vertical;color:#202522;width:100%;font:inherit;background:#fff;border:1px solid #cfd4d0;border-radius:6px;padding:7px}.lotlens-note-editor textarea:focus-visible{outline-offset:2px;outline:2px solid #1565c0}.lotlens-max-bid{color:#0d47a1;font-weight:750}.lotlens-profit-output{font-weight:750}.lotlens-profit-positive{background:#e8f4fd;border-color:#64b5f6}.lotlens-profit-positive .lotlens-profit-output{color:#0d47a1}.lotlens-profit-neutral{background:#fffdf3;border-color:#d8d4b5}.lotlens-profit-negative{background:#fff5f4;border-color:#e2b9b4}.lotlens-profit-negative .lotlens-profit-output{color:#a03328}@keyframes lotlens-fade{0%{opacity:.45}to{opacity:1}}@media (width<=380px){.lotlens-panel{padding:12px}.lotlens-cards{grid-template-columns:1fr}.lotlens-tax-control{flex-direction:column;align-items:flex-end;gap:3px}.lotlens-comps-controls{grid-template-columns:1fr}}@media (prefers-reduced-motion:reduce){.lotlens-true-cost{transition:none;animation:none!important}}</style>
+    <section class="lotlens-panel" aria-label="Flippah true cost calculator">
+      <header class="lotlens-header">
+        <span class="lotlens-wordmark">Flippah</span>
+        <span class="lotlens-premium-source" title="estimated — tap to set">estimated — tap to set</span>
+      </header>
+      <p class="lotlens-degraded" hidden="">
+        Couldn't read this page automatically. Enter the current bid below.
+        <a class="lotlens-report-link" target="_blank" rel="noopener noreferrer" href="https://github.com/Halid-ab/lotlens/issues/new?title=HiBid+page+parsing+failure&amp;body=Flippah+couldn%27t+parse+this+page%3A%0A%0Ahttps%3A%2F%2Fhibid.com%2Flot%2F200000001%2Ftest1%0A%0AWhat+I+expected%3A%0A">Report this page</a>
+      </p>
+      <div class="lotlens-cost-table">
+        <div class="lotlens-row">
+          <label for="lotlens-current-bid">Current bid</label>
+          <input id="lotlens-current-bid" class="lotlens-money-input" inputmode="decimal" aria-label="Current bid" placeholder="0.00" hidden="">
+          <output class="lotlens-current-bid-output">$10.00</output>
+        </div>
+        <div class="lotlens-row">
+          <label for="lotlens-premium">Buyer's premium</label>
+          <span class="lotlens-inline-input"><input id="lotlens-premium" type="number" min="0" max="30" step="0.1" aria-label="Buyer's premium percentage"><span>%</span></span>
+        </div>
+        <div class="lotlens-row lotlens-tax-row">
+          <label for="lotlens-state">Sales tax</label>
+          <span class="lotlens-tax-control">
+            <select id="lotlens-state" aria-label="Sales tax state"><option value="" selected="">Set your state</option><option value="AL">Alabama</option><option value="AK">Alaska</option><option value="AZ">Arizona</option><option value="AR">Arkansas</option><option value="CA">California</option><option value="CO">Colorado</option><option value="CT">Connecticut</option><option value="DE">Delaware</option><option value="DC">District of Columbia</option><option value="FL">Florida</option><option value="GA">Georgia</option><option value="HI">Hawaii</option><option value="ID">Idaho</option><option value="IL">Illinois</option><option value="IN">Indiana</option><option value="IA">Iowa</option><option value="KS">Kansas</option><option value="KY">Kentucky</option><option value="LA">Louisiana</option><option value="ME">Maine</option><option value="MD">Maryland</option><option value="MA">Massachusetts</option><option value="MI">Michigan</option><option value="MN">Minnesota</option><option value="MS">Mississippi</option><option value="MO">Missouri</option><option value="MT">Montana</option><option value="NE">Nebraska</option><option value="NV">Nevada</option><option value="NH">New Hampshire</option><option value="NJ">New Jersey</option><option value="NM">New Mexico</option><option value="NY">New York</option><option value="NC">North Carolina</option><option value="ND">North Dakota</option><option value="OH">Ohio</option><option value="OK">Oklahoma</option><option value="OR">Oregon</option><option value="PA">Pennsylvania</option><option value="RI">Rhode Island</option><option value="SC">South Carolina</option><option value="SD">South Dakota</option><option value="TN">Tennessee</option><option value="TX">Texas</option><option value="UT">Utah</option><option value="VT">Vermont</option><option value="VA">Virginia</option><option value="WA">Washington</option><option value="WV">West Virginia</option><option value="WI">Wisconsin</option><option value="WY">Wyoming</option></select>
+            <output class="lotlens-tax-rate">0.00%</output>
+          </span>
+        </div>
+        <div class="lotlens-row">
+          <label for="lotlens-shipping">Shipping</label>
+          <span class="lotlens-inline-input lotlens-shipping-input"><span>$</span><input id="lotlens-shipping" type="number" min="0" step="0.01" inputmode="decimal" aria-label="Estimated shipping cost" placeholder="0.00"></span>
+        </div>
+        <div class="lotlens-divider"></div>
+        <div class="lotlens-row lotlens-total-row">
+          <span>True cost if you win now</span>
+          <output class="lotlens-true-cost lotlens-updated">$11.50</output>
+        </div>
+      </div>
+      <div class="lotlens-cards">
+        <section class="lotlens-card lotlens-profit-card">
+          <label class="lotlens-card-label" for="lotlens-resale">Est. resale value</label>
+          <span class="lotlens-budget-input"><span>$</span><input id="lotlens-resale" type="number" min="0" step="0.01" inputmode="decimal" aria-label="Estimated resale value" placeholder="100.00"></span>
+          <output class="lotlens-profit-output">Enter resale value</output>
+        </section>
+        <section class="lotlens-card">
+          <label class="lotlens-card-label" for="lotlens-budget">Max bid</label>
+          <span class="lotlens-budget-input"><span>$</span><input id="lotlens-budget" type="number" min="0" step="0.01" inputmode="decimal" aria-label="Max bid" placeholder="10.00"></span>
+          <output class="lotlens-max-bid">All-in cost: $57.50</output>
+        </section>
+      </div>
+      <div class="lotlens-comps">
+        <label class="lotlens-card-label" for="lotlens-comps-query">eBay sold search</label>
+        <div class="lotlens-comps-controls">
+          <input id="lotlens-comps-query" type="text" aria-label="eBay sold listings search query">
+          <a class="lotlens-button lotlens-comps-link" target="_blank" rel="noopener noreferrer" href="https://www.ebay.com/sch/i.html?_nkw=test+lot&amp;LH_Sold=1&amp;LH_Complete=1">View solds</a>
+          <a class="lotlens-button lotlens-deep-link" target="_blank" rel="noopener noreferrer" href="https://www.ebay.com/sh/research?marketplace=EBAY-US&amp;dayRange=1095&amp;tabName=SOLD&amp;tz=America%2FNew_York&amp;q=test+lot">Deep research</a>
+        </div>
+      </div>
+      <div class="lotlens-actions">
+        <button class="lotlens-button lotlens-watch-button" type="button">Watch + alert me</button>
+        <button class="lotlens-secondary-button lotlens-note-button" type="button">Note</button>
+      </div>
+      <p class="lotlens-alert-gate" hidden="">
+        <span class="lotlens-pro-pill">Pro</span> Ending-soon and over-max alerts are locked.
+        <button class="lotlens-upgrade-link" type="button">Upgrade</button>
+      </p>
+      <p class="lotlens-watch-status" aria-live="polite"></p>
+      <div class="lotlens-note-editor" hidden="">
+        <label for="lotlens-note">Private lot note</label>
+        <textarea id="lotlens-note" rows="3" aria-label="Private lot note" placeholder="Condition, pickup plan, research…"></textarea>
+      </div>
+    </section>
+  

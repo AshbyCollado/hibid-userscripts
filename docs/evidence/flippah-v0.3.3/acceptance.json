@@ -1,0 +1,29 @@
+{
+  "version": "0.3.3",
+  "browser": "Chrome",
+  "installedPath": "C:\\Users\\ashby\\Documents\\lotlens-local",
+  "installedVersionReloaded": true,
+  "installedBundleHashesMatchDist": true,
+  "automatedTests": { "passed": 73, "failed": 0 },
+  "catalogs": [
+    { "auctionId": "769995", "amazonIndicators": 100, "ebayIndicators": 100, "allInState": "bid-enabled" },
+    { "auctionId": "765731", "amazonIndicators": 100, "ebayIndicators": 100, "allInState": "bid-enabled" },
+    { "auctionId": "767962", "amazonIndicators": 100, "ebayIndicators": 100, "allInState": "not-shown-before-bidding-opens" }
+  ],
+  "lots": [
+    { "auctionId": "769995", "eventItemId": "318090139", "lot": "602av", "title": "AV - PLAYSTATION 5 CONSOLE", "indicators": true, "visibleDescription": false },
+    { "auctionId": "769995", "eventItemId": "318090218", "lot": "604av", "title": "AV - ASUS GEFORCE RTX4060 8GB VIDEO CARD", "indicators": true, "visibleDescription": false },
+    { "auctionId": "769995", "eventItemId": "318090710", "lot": "616av", "title": "AV - PLAYSTATION 5 CONSOLE", "indicators": true, "visibleDescription": false },
+    { "auctionId": "765731", "eventItemId": "315720511", "lot": "17", "title": "LOT OF 3: WESTERN DIGITAL 2 TB HARD DRIVES", "indicators": true, "visibleDescription": true },
+    { "auctionId": "765731", "eventItemId": "315720512", "lot": "18", "title": "LOT OF 3: WESTERN DIGITAL 2 TB HARD DRIVES", "indicators": true, "visibleDescription": true },
+    { "auctionId": "765731", "eventItemId": "315720513", "lot": "19", "title": "NOVUS OYEN DIGITAL 6TB HARD DRIVE", "indicators": true, "visibleDescription": true },
+    { "auctionId": "767962", "eventItemId": "317279368", "lot": "1109zv", "title": "Tower Workstation Computers", "indicators": true, "visibleDescription": true },
+    { "auctionId": "767962", "eventItemId": "317279375", "lot": "1116zv", "title": "Lenovo P3 Ultra Workstation", "indicators": true, "visibleDescription": true },
+    { "auctionId": "767962", "eventItemId": "317279377", "lot": "1119zv", "title": "Custom Workstation Computer", "indicators": true, "visibleDescription": true }
+  ],
+  "removedUi": {
+    "shippingInput": false,
+    "auctionTermsSection": false,
+    "feeEvidenceSection": false
+  }
+}

@@ -1,0 +1,50 @@
+FLIPPAH BY ALOS - CHROME BETA
+Version 0.4.2
+
+INSTALL
+
+1. Extract the ZIP to a permanent folder. Do not run it from inside the ZIP.
+2. In Chrome, open: chrome://extensions
+3. Turn on Developer mode in the upper-right corner.
+4. Click Load unpacked.
+5. Select the extracted Flippah-Chrome-v0.4.2 folder. Select the folder that contains manifest.json.
+6. Pin Flippah from Chrome's Extensions menu so its toolbar button is easy to reach.
+7. Open or refresh a HiBid page.
+
+USING FLIPPAH
+
+- Click the Flippah toolbar button.
+- Watchlist opens first. Scraper is the tab on the right.
+- On a HiBid catalog or search page, open Scraper and click Copy JSON to copy every verified lot.
+- Copy for AI copies the same auction data with the resale-analysis instructions included.
+- Price checks run automatically on visible HiBid catalog lots.
+- A colored Amazon price means Flippah found a plausible new-product match.
+- A colored price includes a hover explanation for its deal band.
+- An Amazon or eBay search pill means no verified value is saved; click it to research that lot manually.
+- Open an individual lot page for the full calculator, product evidence, notes, and manual eBay sold search.
+
+IMPORTANT
+
+- Flippah does not place bids, confirm bids, buy items, or change your HiBid account.
+- Amazon prices are current retail references. They are not guaranteed resale prices.
+- eBay sold prices must still be checked manually.
+- Mixed lots, incomplete lots, and lots with unclear quantities need manual review.
+- Leave the extracted extension folder in place after installing it.
+
+UPDATING
+
+1. Extract the new ZIP over the existing Flippah folder.
+2. Wait a few seconds.
+3. Refresh the HiBid page. The unpacked extension normally reloads itself when the version changes.
+4. If Chrome still shows the old version, open chrome://extensions and click Reload on Flippah once.
+
+REPORTING A PROBLEM
+
+Send these four things:
+
+1. The HiBid page or lot link.
+2. A screenshot showing the result.
+3. What Flippah displayed.
+4. What you expected it to display.
+
+GitHub: https://github.com/AshbyCollado/hibid-userscripts

@@ -1,0 +1,20534 @@
+// ==UserScript==
+// @name         FlipperAddon by ALOS
+// @namespace    http://tampermonkey.net/
+// @version      0.8.25
+// @description  Modular resale scraper/exporter for HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay, and Facebook LLM/JSON workflows.
+// @updateURL    https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
+// @downloadURL  https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
+// @match        https://hibid.com/lots*
+// @match        https://hibid.com/lots/*
+// @match        https://hibid.com/catalog/*
+// @match        https://hibid.com/livecatalog/*
+// @match        https://hibid.com/account/watchlist*
+// @match        https://hibid.com/account/currentbids*
+// @match        https://hibid.com/account/pastbidsm*
+// @match        https://hibid.com/account/pastwatchlist*
+// @match        https://hibid.com/*
+// @match        https://www.hibid.com/*
+// @match        https://*.hibid.com/*
+// @match        https://bid.ajwillnerauctions.com/ui/auctions/*
+// @match        https://www.ebay.com/sh/lst*
+// @match        https://www.ebay.com/mys/*
+// @match        https://www.ebay.com/bulksell*
+// @match        https://www.ebay.com/mes/*
+// @match        https://www.facebook.com/marketplace/you/*
+// @match        https://www.facebook.com/marketplace/profile/*
+// @match        https://www.facebook.com/marketplace/create*
+// @match        https://www.facebook.com/marketplace/item/*
+// @match        https://www.auctionninja.com/auctions*
+// @match        https://www.auctionninja.com/bid-history*
+// @match        https://www.auctionninja.com/followed-items*
+// @match        https://www.auctionninja.com/items-won*
+// @match        https://www.auctionninja.com/*
+// @match        https://auctionninja.com/*
+// @match        https://*.auctionninja.com/*
+// @match        https://aarauctions.com/auctions*
+// @match        https://aarauctions.com/servlet/Search.do*
+// @match        https://aarauctions.com/*
+// @match        https://www.aarauctions.com/*
+// @match        https://*.aarauctions.com/*
+// @match        https://www.govdeals.com/*
+// @match        https://govdeals.com/*
+// @match        https://*.govdeals.com/*
+// @match        https://facebook.com/marketplace/you/*
+// @match        https://facebook.com/marketplace/profile/*
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_setClipboard
+// @grant        GM_download
+// @grant        GM.setClipboard
+// @grant        GM_addStyle
+// @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
+// @grant        window.onurlchange
+// @run-at       document-start
+// @connect      127.0.0.1
+// @connect      i.ebayimg.com
+// @connect      vi.vipr.ebaydesc.com
+// @connect      itm.ebaydesc.com
+// @connect      hibid-api.io
+// @connect      maestro.lqdt1.com
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  const PANEL_ID = 'flipperaddon-panel';
+  const APP_NAME = 'FlipperAddon by ALOS';
+  const APP_SHORT_NAME = 'FlipperAddon';
+  const SCRIPT_VERSION = '0.8.25';
+  const CLIPBOARD_WRITE_TIMEOUT_MS = 4000;
+  const DEBUG_CLIPBOARD_TIMEOUT_MS = 1500;
+  const LEGACY_PLAN_KEY = 'hibid-bid-assistant-plan-v1';
+  const LEGACY_PLAN_MIGRATED_KEY = 'flipperaddon-legacy-plan-migrated-v1';
+  const PLAN_KEY_PREFIX = 'flipperaddon-max-plan-v2';
+  const AUTO_REFRESH_KEY = 'flipperaddon-auto-refresh-v1';
+  const MINIMIZED_KEY = 'flipperaddon-minimized-v1';
+  const DEBUG_ENABLED_KEY = 'flipperaddon-debug-enabled-v1';
+  const DEBUG_BOOTSTRAP_HASH = 'flipperdebug';
+  const DEBUG_LOG_KEY = 'flipperaddon-debug-log-v1';
+  const RESEARCH_SETTINGS_KEY = 'flipperaddon-research-settings-v2';
+  const AAR_RESEARCH_SETTINGS_KEY = 'flipperaddon-aar-research-settings-v1';
+  const PENDING_CATALOG_COPY_KEY = 'flipperaddon-pending-catalog-copy-v1';
+  const FLIPTRACKER_SYNC_TOKEN_KEY = 'flipperaddon-fliptracker-sync-token-v1';
+  const FLIPTRACKER_BRIDGE_URL = 'http://127.0.0.1:8468';
+  const EBAY_LIFECYCLE_SCHEMA = 'fliptracker.ebay.lifecycle.v1';
+  const CROSSLIST_SCHEMA = 'fliptracker.crosslist.draft.v1';
+  const CROSSLIST_LOCATION_KEY = 'flipperaddon-crosslist-location-v1';
+  const CROSSLIST_IMAGE_MODE_KEY = 'flipperaddon-crosslist-image-mode-v1';
+  const CROSSLIST_IMAGE_MODE_VERIFIED = 'verified-original';
+  const CROSSLIST_IMAGE_MODE_OPTIMIZED = 'facebook-optimized';
+  const FACEBOOK_PHOTO_LIMIT = 10;
+  const CROSSLIST_SOURCE_PHOTO_LIMIT = 24;
+  const CROSSLIST_PENDING_KEY = 'flipperaddon-crosslist-pending-v1';
+  const CROSSLIST_AUTOFILL_PARAM = 'flipperaddon_autofill';
+  const CROSSLIST_ITEM_PARAM = 'flipperaddon_item_id';
+  const CROSSLIST_AUTOSAVE_PARAM = 'flipperaddon_autosave';
+  const CROSSLIST_AUTOSAVE_RESET_PARAM = 'flipperaddon_autosave_reset';
+  const CROSSLIST_AUTOSAVE_STORAGE_KEY = 'flipperaddon_crosslist_autosave_active';
+  const CROSSLIST_AUTOSAVE_LEASE_KEY = 'flipperaddon_crosslist_autosave_lease';
+  const CROSSLIST_AUTOSAVE_PENDING_KEY = 'flipperaddon_crosslist_autosave_pending';
+  const CROSSLIST_AUTOSAVE_TAB_KEY = 'flipperaddon_crosslist_tab_id';
+  const CROSSLIST_AUTOSAVE_LEASE_MS = 120000;
+  const DEBUG_LOG_LIMIT = 2000;
+  const DEBUG_HEARTBEAT_INTERVAL_MS = 60000;
+  const DEBUG_SCROLL_THROTTLE_MS = 500;
+  const DEBUG_EVENT_TEXT_LIMIT = 160;
+  const DEBUG_EVENT_URL_LIMIT = 320;
+  const OUTBID_WATCHLIST_URL = 'https://hibid.com/account/watchlist?status=OUTBID';
+  const LEGACY_SCRAPER_IDS = [
+    'hibid-lot-catalog-scraper-copy-button',
+    'hibid-lot-catalog-scraper-json',
+    'hibid-scraper-copy-button',
+    'hibid-scraper-json',
+    'auction-scraper-copy-button',
+    'auction-scraper-json'
+  ];
+  const LEGACY_PANEL_IDS = [
+    'hibid-bid-assistant-panel'
+  ];
+  const MENU_COMMANDS = [
+    'Remount FlipperAddon',
+    'Toggle FlipperAddon Debug Mode',
+    'Copy FlipperAddon Debug Log',
+    'Clear FlipperAddon Debug Log',
+    'Copy HiBid Lots Now',
+    'Set FlipTracker Sync Token'
+  ];
+  const DEBUG_CONTROL_IDS = Object.freeze([
+    'hibid-debug-copy',
+    'hibid-debug-download',
+    'hibid-debug-clear'
+  ]);
+  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const HIBID_STATE_FETCH_TIMEOUT_MS = 6500;
+  const HIBID_STATE_HYDRATION_WAIT_MS = 5000;
+  const HIBID_STATE_HYDRATION_POLL_MS = 100;
+  // Large HiBid catalogs can require one same-origin state fetch per page.
+  // Keep a finite upper bound, but allow a 1,999-lot catalog to finish before
+  // falling back to a partial DOM scrape that must be rejected as incomplete.
+  const HIBID_STATE_SCRAPE_MAX_MS = 180000;
+  const HIBID_STATE_MAX_PAGES = 24;
+  const HIBID_DOM_SCRAPE_MAX_MS = 90000;
+  const HIBID_DOM_SCRAPE_MAX_STEPS = 500;
+  const HIBID_DOM_BOTTOM_SETTLE_MS = 900;
+  const HIBID_DOM_BOTTOM_SETTLE_RETRIES = 4;
+  const HIBID_API_PAGE_SIZE = 100;
+  const HIBID_API_CONCURRENCY = 3;
+  const HIBID_API_RETRIES = 3;
+  const HIBID_API_TIMEOUT_MS = 15000;
+  const HIBID_SEARCH_ENDPOINT = 'https://hibid-api.io/sr/main/v1/search/lot';
+  const GOVDEALS_SEARCH_ENDPOINT = 'https://maestro.lqdt1.com/search/list';
+  const GOVDEALS_ASSET_ENDPOINT_RE = /^https:\/\/maestro\.lqdt1\.com\/assets\/(\d+)\/(\d+)\/false(?:[?#]|$)/i;
+  const GOVDEALS_API_CONCURRENCY = 3;
+  const GOVDEALS_ENRICH_CONCURRENCY = 8;
+  const GOVDEALS_MAX_ENRICHMENT = 90;
+  const GOVDEALS_API_RETRIES = 3;
+  const GOVDEALS_API_TIMEOUT_MS = 20000;
+  const GOVDEALS_NETWORK_CAPTURE = {
+    installed: false,
+    binding: '',
+    search: null,
+    assets: new Map(),
+    errors: []
+  };
+  const GOVDEALS_INTERNAL_XHRS = new WeakSet();
+  const DEBUG_PREFIX = '[FlipperAddon]';
+  let DEBUG_EVENT_SEQUENCE = 0;
+
+  if (!globalThis.__HIBID_BID_ASSISTANT_TEST__
+    && typeof location !== 'undefined'
+    && isGovDealsHost(location.hostname)) {
+    installGovDealsNetworkObserver();
+  }
+
+  function readSharedCatalogCopyIntent() {
+    const candidates = [
+      globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__,
+      (typeof unsafeWindow !== 'undefined' ? unsafeWindow.__FLIPPERADDON_PENDING_CATALOG_COPY__ : null)
+    ];
+    for (const candidate of candidates) {
+      if (candidate && ['json', 'llm'].includes(candidate.mode)) return candidate;
+    }
+    try {
+      const stored = sessionStorage.getItem(PENDING_CATALOG_COPY_KEY);
+      const parsed = stored ? JSON.parse(stored) : null;
+      if (parsed && ['json', 'llm'].includes(parsed.mode)) return parsed;
+    } catch {
+      // Session storage is best-effort on restricted pages.
+    }
+    return null;
+  }
+
+  function writeSharedCatalogCopyIntent(value) {
+    globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ = value;
+    try {
+      if (typeof unsafeWindow !== 'undefined') {
+        unsafeWindow.__FLIPPERADDON_PENDING_CATALOG_COPY__ = value;
+      }
+    } catch {
+      // Page-window sharing is best-effort in isolated userscript sandboxes.
+    }
+    try {
+      sessionStorage.setItem(PENDING_CATALOG_COPY_KEY, JSON.stringify(value));
+    } catch {
+      // Session storage is best-effort on restricted pages.
+    }
+  }
+
+  function clearSharedCatalogCopyIntent() {
+    try {
+      delete globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__;
+    } catch {
+      globalThis.__FLIPPERADDON_PENDING_CATALOG_COPY__ = null;
+    }
+    try {
+      if (typeof unsafeWindow !== 'undefined') {
+        delete unsafeWindow.__FLIPPERADDON_PENDING_CATALOG_COPY__;
+      }
+    } catch {
+      // Page-window sharing is best-effort on isolated userscript sandboxes.
+    }
+    try {
+      sessionStorage.removeItem(PENDING_CATALOG_COPY_KEY);
+    } catch {
+      // Session storage is best-effort on restricted pages.
+    }
+  }
+  const AUCTION_RESALE_COORDINATOR_PROMPT = `You are an auction resale analysis coordinator.
+
+Goal:
+Find profitable resale deals from a full auction export without missing hidden value. Do not skim only obvious items. Every lot must be parsed, classified, and included in the final spreadsheet.
+
+Context:
+I am buying to resell for profit. I do not want $10-$20 time-wasters unless they are tiny, easy, or bundled into a larger profitable pickup. I may be driving about an hour and I am in a sedan, so bulky items need much higher profit and must be marked with sedan risk.
+Sold/completed comps first, profit second, hunches last.
+
+Core rule:
+Coverage first, confirmation second. Every lot gets classified. Nothing silently disappears.
+
+Parsing / Mandatory Analysis:
+## Mixed / Group Lot Rule — Mandatory Component Extraction
+
+Never classify a lot solely from its title. For every lot titled or described as
+"group," "assorted," "contents," "equipment," "rack," "cabinet," "with components,"
+"electronics," "office," or similar:
+
+1. Read the full description and inspect every available photo before assigning a status.
+2. Extract every identifiable brand, model, quantity, and potentially resellable component into a component list.
+3. A generic group lot may not be marked Garbage until each named or visually identifiable component has been checked for resale relevance.
+4. If a component has meaningful possible resale value, research that component separately. Do not value the lot only as a generic bundle.
+5. For every mixed lot, record:
+   - identified components and models
+   - what is visibly confirmed versus description-only
+   - portability / CT200h fit
+   - removal risk, missing-power-cable risk, lock/reset risk, test risk, and completeness risk
+   - conservative hammer max and all-in max, or an explicit PASS reason
+6. Create a visible \`Mixed Lot / Component Review\` tab or section containing every lot that triggered this rule, including passes. Do not bury these rows only in Garbage.
+7. Pin any portable mixed-lot candidate with a strict-profit path into \`Best Bids\`, even if its generic title would otherwise rank poorly.
+8. In the coverage audit, report:
+   - number of mixed/group lots reviewed
+   - number with extracted named components
+   - number elevated to a lead
+   - number passed with an explicit component-level reason
+
+A lot with named models in its description or photo must receive \`component_reviewed = yes\`.
+The important sentence is: "A generic group lot may not be marked Garbage until each named or visually identifiable component has been checked."
+
+When a description or image is unavailable in the export, say so explicitly in the row and do not invent component details. Use every supplied description field, raw text field, and image URL before deciding that a lot has no resale value.
+
+Statuses:
+- Confirmed Lead: exact or close sold comps support meaningful profit after all fees.
+- Research Lead: possible value, but proof is incomplete, active-only, model uncertain, or condition-sensitive.
+- Local Flip Lead: better for Facebook/Craigslist/local marketplace than eBay.
+- Bundle/Parts Lead: value comes from quantity, parts, accessories, or splitting.
+- Garbage: unlikely worth time.
+
+Do not mark something garbage just because the title is generic.
+Look for hidden value in vague titles, bundles, quantities, pro gear, tools, electronics, restaurant equipment, industrial, medical, camera/audio, baby gear, and local bulky flips.
+
+Profit math:
+Assume auction buyer premium is 15%.
+Assume sales tax applies to hammer price plus buyer premium unless stated otherwise.
+Use the configured sales tax rate from the Research Settings block below. If it is missing, state the assumption instead of hiding it.
+Rough screening only: auction all-in can be approximated as bid x 1.25 for a quick triage estimate, and eBay net as sold price x 0.87 before shipping complications. The final workbook must use the explicit buyer_premium_rate and sales_tax_rate formulas below.
+Assume eBay resale has seller fees and promoted listing friction:
+- eBay final value fee default: 13.25%
+- Promoted listing ad rate default: 2%
+- Total default eBay selling friction: 15.25%
+
+Assume buyer pays shipping, so shipping is not deducted from profit unless the item is oversized, fragile, hard to pack, likely to need packing materials, or commonly causes shipping damage/returns.
+
+For local flips:
+- Do not apply eBay fees.
+- Use lower local resale estimate.
+- Apply extra caution for pickup, storage, meetup time, and sedan fit.
+
+Calculations:
+Show two separate profit calculations. Do not confuse them:
+
+1. \`profit_if_won_now\`
+   Profit based on the current auction bid.
+
+2. \`profit_at_recommended_max_bid\`
+   Profit remaining if I bid the full recommended maximum.
+
+For eBay resale:
+
+auction_all_in_cost =
+bid * (1 + buyer_premium_rate) * (1 + sales_tax_rate)
+
+profit_if_won_now =
+ebay_net - current_bid * (1 + buyer_premium_rate) * (1 + sales_tax_rate)
+
+recommended_max_bid =
+MAX(0, (ebay_net - target_profit) /
+((1 + buyer_premium_rate) * (1 + sales_tax_rate)))
+
+profit_at_recommended_max_bid =
+ebay_net - recommended_max_bid *
+(1 + buyer_premium_rate) * (1 + sales_tax_rate)
+
+For Local Flip Leads, replace \`ebay_net\` with \`estimated_local_resale\`.
+
+Never calculate or label \`profit_at_recommended_max_bid\` using the current bid. It must use the recommended maximum bid.
+
+Normally, \`profit_at_recommended_max_bid\` should equal the target profit. If the recommended maximum is $0 and the target still cannot be achieved, highlight the profit-at-max cell in red.
+
+Also show the supporting values \`ebay_net\`, \`estimated_net_profit\`, \`local_net_profit\`, \`auction_all_in_cost\`, and \`breakeven_bid\` when they are applicable. Use the configured buyer premium and sales tax rates in every formula and label assumptions explicitly.
+
+Default target profit:
+- Small easy ship item: minimum $30 profit
+- Medium item: minimum $50 profit
+- Heavy/fragile/restaurant equipment: minimum $100-$150 profit
+- One-hour pickup trip: total expected profit should be $150+ minimum, preferably $250+
+- Sedan-risk bulky item: only include if profit is large enough to justify logistics
+
+Comping rules:
+- Use eBay sold/completed listings first.
+- Exact sold comps are strongest.
+- Close sold comps are acceptable but mark speculative.
+- Active listings alone cannot make a Confirmed Lead.
+- If proof is only an eBay search/shop/category page, mark Research Lead unless there is very strong market context.
+- For local-only bulky items, use local market intuition only if potential profit justifies pickup.
+- Every lead needs proof URL or must be explicitly marked local/speculative.
+
+## VERIFIED EBAY SOLD DATA - MANDATORY
+
+Use the internal in-app browser to research eBay Sold and Completed listings. Use the existing signed-in eBay session when available.
+
+Every populated eBay resale estimate must be supported by legitimate, visible eBay sold evidence. Never invent or estimate a sold price, sale date, listing title, model, condition, or URL.
+
+For each item, record:
+
+- sold-comp title
+- sold price
+- sold date when visible
+- condition
+- direct sold-listing URL
+- number of sold comps used
+- sold-comp low, median, and high
+- whether the comp is exact or close
+
+Use exact model matches whenever possible. Close matches are allowed only when clearly labeled \`close_ebay_sold\` and adjusted conservatively.
+
+Do not treat active listings, asking prices, retail prices, search-result snippets, or unsold listings as completed sales.
+
+If no legitimate exact or close sold evidence can be found:
+
+- Do not fabricate a resale value.
+- Leave the eBay estimate blank or label it \`UNVERIFIED\`.
+- Set \`proof_type\` to \`no_proof\`, \`active_only\`, or \`sold_search_page\`, as appropriate.
+- Classify the item as Research Lead or Garbage - not Confirmed Lead.
+- Explain exactly why a legitimate resale number could not be established.
+
+A Confirmed Lead must have visible exact or close eBay sold evidence.
+
+This sold-proof restriction governs eBay resale estimates. A Local Flip Lead may use \`estimated_local_resale\` only with explicit local proof; leave \`estimated_resale\` blank or \`UNVERIFIED\` and never call it a Confirmed Lead based on local intuition alone.
+
+Proof levels:
+- exact_ebay_sold
+- close_ebay_sold
+- sold_search_page
+- active_only
+- retail_reference
+- local_speculative
+- no_proof
+
+Only exact_ebay_sold or close_ebay_sold can be Confirmed Lead.
+
+Spreadsheet output:
+Create an Excel workbook with these tabs:
+- Best Bids
+- Research Leads
+- Local Flip Leads
+- Bundle/Parts Leads
+- All Lots
+- Garbage
+- Mixed Lot / Component Review
+- Audit
+
+## COLUMN ORDER
+
+Decision-making columns must be near the front in this exact order:
+row_id
+lot
+title
+item_url
+current_bid
+next_bid
+status
+estimated_resale
+profit_if_won_now
+recommended_max_bid
+profit_at_recommended_max_bid
+proof_type
+reason
+risk_notes
+sedan_fit
+shipping_assumption
+
+Supporting calculation, evidence, and audit columns come after those decision columns:
+quantity
+category
+estimated_local_resale
+buyer_premium_rate
+sales_tax_rate
+auction_all_in_cost
+ebay_fee_rate
+promo_fee_rate
+ebay_net
+target_profit
+profit_if_won_now_basis
+estimated_net_profit
+local_net_profit
+breakeven_bid
+sold_comp_title
+sold_comp_price
+sold_comp_date
+sold_comp_condition
+sold_comp_url
+sold_comp_count
+sold_comp_low
+sold_comp_median
+sold_comp_high
+sold_comp_match_type
+proof_urls
+assigned_agent
+component_reviewed
+audit_flag
+
+The \`item_url\` and every direct \`sold_comp_url\` must be clickable hyperlinks. Keep \`profit_if_won_now\` immediately before \`recommended_max_bid\`, and keep \`profit_at_recommended_max_bid\` immediately beside \`recommended_max_bid\` as shown above.
+
+## SORTING
+
+Automatically sort every decision sheet by \`profit_if_won_now\`, highest profit first. This applies to Best Bids, Research Leads, Local Flip Leads, Bundle/Parts Leads, All Lots, and Garbage when practical. Do not sort by current bid or estimated resale alone.
+
+## SPREADSHEET VISIBILITY AND FORMATTING
+
+- Freeze only the top header row so category names remain visible while scrolling.
+- Do not freeze any columns and do not create a left/right split-screen view.
+- Do not hide any rows or columns.
+- Make the entire populated portion of each important column bold, not only its header: \`lot\`, \`title\`, \`item_url\`, \`current_bid\`, \`status\`, \`estimated_resale\`, \`profit_if_won_now\`, \`recommended_max_bid\`, \`profit_at_recommended_max_bid\`, and \`proof_type\`.
+- Use distinct, easy-to-see colors for current bid, estimated resale, profit if won now, recommended maximum bid, profit at recommended maximum bid, and proof type.
+- Highlight \`current_bid\` in red whenever it exceeds \`recommended_max_bid\`.
+- Highlight the profit-at-max cell in red when \`recommended_max_bid\` is $0 and the target profit cannot be achieved.
+
+Classification instructions:
+1. Parse every lot into normalized rows.
+2. Assign stable row_id and lot number.
+3. Identify quantity and {each} lots. Treat {each} lots carefully because bid may be per unit.
+4. Estimate resale conservatively.
+5. Calculate max bid backwards from target profit.
+6. If current bid is already above recommended max bid, mark audit_flag: current_bid_over_max.
+7. If item is bulky, fragile, restaurant equipment, refrigerated, gas-powered, or needs truck/rigging, mark sedan_fit as No or Maybe.
+8. If sell-through is uncertain, mark Research Lead, not Confirmed Lead.
+9. Garbage rows must have a reason, not a blank dismissal.
+
+Garbage reason must be one or more of:
+- low ASP
+- no sold comps
+- active-only weak proof
+- current bid too high
+- bulky/sedan risk
+- refrigeration risk
+- gas/electrical install risk
+- hygiene risk
+- missing-parts risk
+- generic saturated item
+- slow local sale
+- admin/info lot
+
+Audit requirements:
+- 100% of lots must appear in All Lots.
+- Missing row count must be zero.
+- Duplicate row IDs must be zero.
+- Every non-garbage row must have proof URL or be marked local_speculative.
+- Every Confirmed Lead must have exact or close sold-comp proof.
+- Recheck any Garbage row with brand/model/quantity/value signals.
+- Recheck every {each} lot for per-unit bid math.
+- Recheck all current bids over recommended max bid.
+
+Final summary:
+After creating the spreadsheet, summarize:
+- total lots parsed
+- total confirmed leads
+- total research leads
+- total local flip leads
+- total bundle/parts leads
+- total garbage
+- missing row count
+- top 10 best bids
+- max bid for each
+- what needs inspection
+- whether pickup is worth the drive
+- number of mixed/group lots reviewed
+- number of mixed/group lots with extracted named components
+- number of mixed/group lots elevated to a lead
+- number of mixed/group lots passed with an explicit component-level reason
+- number of populated eBay resale estimates with visible exact or close sold evidence
+- number of eBay estimates left blank or marked UNVERIFIED
+- number of Confirmed Leads with valid sold proof
+
+Tone:
+Be skeptical, but do not be lazy. The mission is to avoid missing profitable deals while not fooling me with fake profit before fees.`;
+
+  function safeClone(value) {
+    if (value === undefined) return undefined;
+    try {
+      return JSON.parse(JSON.stringify(value, (_key, item) => {
+        if (typeof item === 'function') return '[function]';
+        if (item && typeof item === 'object') {
+          const ctor = item.constructor?.name || '';
+          if (/^(HTML|SVG|Window|Document|Node)/.test(ctor)) return `[${ctor}]`;
+        }
+        return item;
+      }));
+    } catch {
+      return String(value);
+    }
+  }
+
+  function getDebugLog() {
+    try {
+      const stored = GM_getValue(DEBUG_LOG_KEY, []);
+      return Array.isArray(stored) ? stored : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function setDebugLog(entries) {
+    try {
+      GM_setValue(DEBUG_LOG_KEY, entries.slice(-DEBUG_LOG_LIMIT));
+    } catch {
+      // Tampermonkey storage may be unavailable in tests or blocked pages.
+    }
+  }
+
+  function clearDebugLog() {
+    setDebugLog([]);
+  }
+
+  function formatDebugLog(entries = getDebugLog()) {
+    return entries.map(entry => {
+      const suffix = entry.data === undefined ? '' : ` ${JSON.stringify(entry.data)}`;
+      return `${entry.at} ${entry.version} ${entry.url} ${entry.message}${suffix}`;
+    }).join('\n');
+  }
+
+  function isDebugBootstrapRequested(loc = (typeof location !== 'undefined' ? location : null)) {
+    const hash = String(loc?.hash || '').replace(/^#/, '');
+    return hash.split(/[&;]/).some(token => new RegExp(`^${DEBUG_BOOTSTRAP_HASH}(?:=1)?$`, 'i').test(token.trim()));
+  }
+
+  function getStoredDebugEnabled() {
+    const bootstrapEnabled = isDebugBootstrapRequested();
+    let enabled = bootstrapEnabled;
+    try {
+      const stored = GM_getValue(DEBUG_ENABLED_KEY, false);
+      enabled = enabled || stored === true || stored === 1 || String(stored).toLowerCase() === 'true';
+    } catch {
+      enabled = bootstrapEnabled;
+    }
+    try {
+      globalThis.__FLIPPERADDON_DEBUG_MODE__ = enabled;
+      if (typeof unsafeWindow !== 'undefined') unsafeWindow.__FLIPPERADDON_DEBUG_MODE__ = enabled;
+    } catch {
+      // The runtime flag is diagnostic only.
+    }
+    return enabled;
+  }
+
+  function saveDebugEnabled(value) {
+    const enabled = Boolean(value);
+    try {
+      GM_setValue(DEBUG_ENABLED_KEY, enabled);
+    } catch {
+      // Tampermonkey storage may be unavailable in tests.
+    }
+    try {
+      globalThis.__FLIPPERADDON_DEBUG_MODE__ = enabled;
+      if (typeof unsafeWindow !== 'undefined') unsafeWindow.__FLIPPERADDON_DEBUG_MODE__ = enabled;
+    } catch {
+      // The runtime flag is diagnostic only.
+    }
+    return enabled;
+  }
+
+  function getDebugMenuLabel() {
+    return `${MENU_COMMANDS[1]} [${getStoredDebugEnabled() ? 'ON' : 'OFF'}]`;
+  }
+
+  function debug(message, data) {
+    if (!getStoredDebugEnabled()) return;
+    const entry = {
+      at: new Date().toISOString(),
+      version: SCRIPT_VERSION,
+      url: typeof location !== 'undefined' ? location.href : '',
+      message,
+      data: safeClone(data)
+    };
+    try {
+      if (data === undefined) console.debug(DEBUG_PREFIX, message);
+      else console.debug(DEBUG_PREFIX, message, data);
+    } catch {
+      // Console logging is best-effort.
+    }
+    const log = getDebugLog();
+    log.push(entry);
+    setDebugLog(log);
+  }
+
+  function debugText(value, limit = DEBUG_EVENT_TEXT_LIMIT) {
+    return String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, limit);
+  }
+
+  function debugHref(value, limit = DEBUG_EVENT_URL_LIMIT) {
+    if (!value) return '';
+    try {
+      const parsed = new URL(String(value), typeof location !== 'undefined' ? location.href : undefined);
+      const currentOrigin = typeof location !== 'undefined' ? location.origin : parsed.origin;
+      const visible = parsed.origin === currentOrigin
+        ? `${parsed.pathname}${parsed.search}${parsed.hash}`
+        : `${parsed.origin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+      return visible.slice(0, limit);
+    } catch {
+      return debugText(value, limit);
+    }
+  }
+
+  function debugTargetMetadata(target) {
+    const element = target?.nodeType === 3 ? target.parentElement : target;
+    if (!element) return { tag: 'unknown' };
+    const tag = String(element.tagName || element.nodeName || 'unknown').toLowerCase();
+    const isField = /^(input|textarea|select)$/.test(tag);
+    const metadata = {
+      tag,
+      id: debugText(element.id || '', 100),
+      className: debugText(typeof element.className === 'string' ? element.className : '', 160),
+      role: debugText(element.getAttribute?.('role') || '', 80),
+      ariaLabel: debugText(element.getAttribute?.('aria-label') || '', DEBUG_EVENT_TEXT_LIMIT),
+      title: debugText(element.getAttribute?.('title') || '', DEBUG_EVENT_TEXT_LIMIT),
+      name: debugText(element.getAttribute?.('name') || '', 100),
+      type: debugText(element.getAttribute?.('type') || '', 60),
+      text: isField ? '' : debugText(element.textContent || ''),
+      valueLength: isField && typeof element.value === 'string' ? element.value.length : undefined,
+      checked: typeof element.checked === 'boolean' ? element.checked : undefined,
+      disabled: typeof element.disabled === 'boolean' ? element.disabled : undefined,
+      href: debugHref(element.getAttribute?.('href') || element.href || ''),
+      testId: debugText(element.getAttribute?.('data-testid') || '', 100),
+    };
+    return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== ''));
+  }
+
+  function debugPageSnapshot() {
+    const snapshot = {
+      href: typeof location !== 'undefined' ? debugHref(location.href) : '',
+      readyState: typeof document !== 'undefined' ? document.readyState : '',
+      visibility: typeof document !== 'undefined' ? document.visibilityState : '',
+      bodyReady: Boolean(typeof document !== 'undefined' && document.body),
+      panelPresent: Boolean(typeof document !== 'undefined' && document.getElementById?.(PANEL_ID)),
+    };
+    try {
+      const modeInfo = resolveAssistantMode();
+      snapshot.mode = modeInfo.mode;
+      snapshot.routeKind = modeInfo.route?.kind || '';
+    } catch (error) {
+      snapshot.routeResolveError = debugText(error?.message || error, 180);
+    }
+    try {
+      const panel = typeof document !== 'undefined' ? document.getElementById(PANEL_ID) : null;
+      if (panel) {
+        snapshot.panelMode = panel.dataset?.flipperaddonMode || '';
+        snapshot.panelVersion = panel.dataset?.flipperaddonVersion || '';
+        snapshot.panelMinimized = panel.classList?.contains('hiba-minimized') || false;
+        snapshot.panelBusy = panel.querySelector?.('#hiba-session-chip')?.textContent === 'busy';
+      }
+    } catch (error) {
+      snapshot.panelSnapshotError = debugText(error?.message || error, 180);
+    }
+    return snapshot;
+  }
+
+  function debugEvent(name, data = {}) {
+    if (!getStoredDebugEnabled()) return;
+    const detail = safeClone(data);
+    debug(`event:${name}`, {
+      sequence: ++DEBUG_EVENT_SEQUENCE,
+      ...debugPageSnapshot(),
+      ...(detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : { detail }),
+    });
+  }
+
+  function installDebugInstrumentation() {
+    if (!getStoredDebugEnabled()) return false;
+    if (globalThis.__FLIPPERADDON_DEBUG_INSTRUMENTATION__) {
+      debugEvent('debug.instrumentation.reused', {
+        installedAt: globalThis.__FLIPPERADDON_DEBUG_INSTRUMENTATION__.installedAt,
+        listenerCount: globalThis.__FLIPPERADDON_DEBUG_INSTRUMENTATION__.listenerCount,
+      });
+      return true;
+    }
+    if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return false;
+
+    const runtime = typeof window !== 'undefined' ? window : globalThis;
+    const installedAt = Date.now();
+    let listenerCount = 0;
+    let lastScrollAt = 0;
+    let mutationCount = 0;
+    let mutationTimer = null;
+    const listeners = [];
+    const listen = (target, type, handler, options) => {
+      if (!target?.addEventListener) return;
+      target.addEventListener(type, handler, options);
+      listeners.push({ target, type, handler, options });
+      listenerCount += 1;
+    };
+    const eventBase = event => ({
+      trusted: event?.isTrusted !== false,
+      defaultPrevented: Boolean(event?.defaultPrevented),
+      target: debugTargetMetadata(event?.target),
+    });
+
+    listen(document, 'click', event => debugEvent('ui.click', {
+      ...eventBase(event),
+      button: event.button,
+      detail: event.detail,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    }), true);
+    listen(document, 'dblclick', event => debugEvent('ui.dblclick', eventBase(event)), true);
+    listen(document, 'pointerdown', event => debugEvent('ui.pointerdown', {
+      ...eventBase(event),
+      pointerType: event.pointerType,
+      button: event.button,
+    }), true);
+    listen(document, 'keydown', event => debugEvent('ui.keydown', {
+      ...eventBase(event),
+      key: debugText(event.key, 40),
+      code: debugText(event.code, 60),
+      repeat: Boolean(event.repeat),
+      altKey: Boolean(event.altKey),
+      ctrlKey: Boolean(event.ctrlKey),
+      metaKey: Boolean(event.metaKey),
+      shiftKey: Boolean(event.shiftKey),
+    }), true);
+    listen(document, 'keyup', event => debugEvent('ui.keyup', {
+      ...eventBase(event),
+      key: debugText(event.key, 40),
+      code: debugText(event.code, 60),
+    }), true);
+    listen(document, 'input', event => debugEvent('ui.input', {
+      ...eventBase(event),
+      valueLength: typeof event.target?.value === 'string' ? event.target.value.length : undefined,
+      checked: typeof event.target?.checked === 'boolean' ? event.target.checked : undefined,
+    }), true);
+    listen(document, 'change', event => debugEvent('ui.change', {
+      ...eventBase(event),
+      valueLength: typeof event.target?.value === 'string' ? event.target.value.length : undefined,
+      checked: typeof event.target?.checked === 'boolean' ? event.target.checked : undefined,
+    }), true);
+    listen(document, 'focusin', event => debugEvent('ui.focusin', eventBase(event)), true);
+    listen(document, 'focusout', event => debugEvent('ui.focusout', eventBase(event)), true);
+    listen(document, 'scroll', event => {
+      const now = Date.now();
+      if (now - lastScrollAt < DEBUG_SCROLL_THROTTLE_MS) return;
+      lastScrollAt = now;
+      const scrollingElement = document.scrollingElement || document.documentElement;
+      debugEvent('ui.scroll', {
+        ...eventBase(event),
+        scrollX: Number(runtime.scrollX || 0),
+        scrollY: Number(runtime.scrollY || scrollingElement?.scrollTop || 0),
+        scrollHeight: Number(scrollingElement?.scrollHeight || 0),
+        viewportHeight: Number(runtime.innerHeight || 0),
+      });
+    }, true);
+    listen(document, 'visibilitychange', () => debugEvent('lifecycle.visibilitychange', {
+      visibility: document.visibilityState,
+    }), true);
+    listen(document, 'DOMContentLoaded', () => debugEvent('lifecycle.domcontentloaded'), true);
+    listen(runtime, 'load', () => debugEvent('lifecycle.load'), true);
+    listen(runtime, 'pageshow', event => debugEvent('lifecycle.pageshow', { persisted: Boolean(event.persisted) }), true);
+    listen(runtime, 'pagehide', event => debugEvent('lifecycle.pagehide', { persisted: Boolean(event.persisted) }), true);
+    listen(runtime, 'beforeunload', () => debugEvent('lifecycle.beforeunload'), true);
+    listen(runtime, 'hashchange', event => debugEvent('route.hashchange', {
+      oldUrl: debugHref(event.oldURL),
+      newUrl: debugHref(event.newURL),
+    }), true);
+    listen(runtime, 'popstate', event => debugEvent('route.popstate', {
+      stateType: typeof event.state,
+      stateKeys: event.state && typeof event.state === 'object' ? Object.keys(event.state).slice(0, 20) : [],
+    }), true);
+    listen(runtime, 'online', () => debugEvent('runtime.online'), true);
+    listen(runtime, 'offline', () => debugEvent('runtime.offline'), true);
+    listen(runtime, 'error', event => debugEvent('runtime.error', {
+      message: debugText(event.message, 240),
+      source: debugHref(event.filename),
+      line: Number(event.lineno || 0),
+      column: Number(event.colno || 0),
+    }), true);
+    listen(runtime, 'unhandledrejection', event => debugEvent('runtime.unhandledrejection', {
+      reason: debugText(event.reason?.message || event.reason, 280),
+    }), true);
+
+    if (typeof MutationObserver === 'function' && document.documentElement) {
+      const observer = new MutationObserver(records => {
+        mutationCount += records.length;
+        if (mutationTimer) return;
+        mutationTimer = runtime.setTimeout(() => {
+          mutationTimer = null;
+          debugEvent('dom.mutation', { records: mutationCount });
+          mutationCount = 0;
+        }, 350);
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+      listeners.push({ observer });
+    }
+
+    const heartbeatTimer = runtime.setInterval(() => {
+      debugEvent('lifecycle.heartbeat', {
+        uptimeMs: Date.now() - installedAt,
+        listenerCount,
+        storedEntries: getDebugLog().length,
+      });
+    }, DEBUG_HEARTBEAT_INTERVAL_MS);
+    globalThis.__FLIPPERADDON_DEBUG_INSTRUMENTATION__ = {
+      installedAt,
+      listenerCount,
+      listeners,
+      heartbeatTimer,
+    };
+    debugEvent('debug.instrumentation.installed', {
+      listenerCount,
+      heartbeatMs: DEBUG_HEARTBEAT_INTERVAL_MS,
+      scrollThrottleMs: DEBUG_SCROLL_THROTTLE_MS,
+    });
+    return true;
+  }
+
+  function debugNow() {
+    return typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  }
+
+  function getDebugControlBindingState(root = (typeof document !== 'undefined' ? document : null)) {
+    const presentIds = DEBUG_CONTROL_IDS.filter(id => Boolean(root?.querySelector?.(`#${id}`)));
+    const missingIds = DEBUG_CONTROL_IDS.filter(id => !presentIds.includes(id));
+    return {
+      requiredIds: Array.from(DEBUG_CONTROL_IDS),
+      presentIds,
+      missingIds,
+      allPresent: missingIds.length === 0,
+      delegated: root?.dataset?.flipperaddonDebugBinding === 'delegated'
+    };
+  }
+
+  const debugControlBindingState = getDebugControlBindingState;
+
+  function showDebugPanelMessage(panel, message, tone = 'neutral') {
+    if (!panel) return false;
+    const chip = panel.querySelector?.('#hiba-session-chip');
+    const toast = panel.querySelector?.('#flipperaddon-toast');
+    const normalizedTone = tone === 'danger' ? 'danger' : (tone === 'success' ? 'success' : 'neutral');
+    if (chip) {
+      chip.className = `hiba-chip ${normalizedTone}`;
+      chip.textContent = normalizedTone === 'danger' ? 'error' : (normalizedTone === 'success' ? 'ready' : 'idle');
+    }
+    if (toast) {
+      const previousTimer = panel.__FLIPPERADDON_DEBUG_TOAST_TIMER__;
+      if (previousTimer && typeof clearTimeout === 'function') clearTimeout(previousTimer);
+      toast.textContent = String(message || '').replace(/\s+/g, ' ').slice(0, 180);
+      toast.className = `hiba-toast show ${normalizedTone === 'danger' ? 'danger' : ''}`.trim();
+      const timer = typeof setTimeout === 'function' ? setTimeout : globalThis.setTimeout;
+      if (typeof timer === 'function') {
+        panel.__FLIPPERADDON_DEBUG_TOAST_TIMER__ = timer(() => {
+          toast.classList.remove('show');
+        }, normalizedTone === 'danger' ? 3600 : 2200);
+      }
+    }
+    return Boolean(chip || toast);
+  }
+
+  function installDebugControlDelegation(panel) {
+    if (!getStoredDebugEnabled() || !panel?.addEventListener) return false;
+    if (panel.__FLIPPERADDON_DEBUG_CONTROL_DELEGATION__) {
+      debugEvent('debug.control.binding.reused', getDebugControlBindingState(panel));
+      return true;
+    }
+
+    const handler = async event => {
+      const target = event.target?.closest?.(`#${DEBUG_CONTROL_IDS.join(', #')}`);
+      if (!target || !panel.contains?.(target)) return;
+      const id = target.id;
+      if (!DEBUG_CONTROL_IDS.includes(id)) return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+
+      const startedAt = debugNow();
+      const binding = getDebugControlBindingState(panel);
+      debugEvent('debug.control.handler.enter', {
+        id,
+        binding,
+        target: debugTargetMetadata(target)
+      });
+
+      let copied = false;
+      let downloaded = false;
+      let revealed = false;
+      let errorText = '';
+      try {
+        if (id === 'hibid-debug-copy') {
+          debugEvent('debug.control.copy.start', { binding });
+          downloaded = downloadDebugLog();
+          copied = await copyDebugLog();
+          if (!copied && !downloaded) downloaded = downloadDebugLog();
+          revealed = revealDebugExportField(panel);
+        } else if (id === 'hibid-debug-download') {
+          debugEvent('debug.control.download.start', { binding });
+          downloaded = downloadDebugLog();
+          revealed = revealDebugExportField(panel);
+        } else if (id === 'hibid-debug-clear') {
+          debugEvent('debug.control.clear', { binding });
+          clearDebugLog();
+          debug('debug log cleared from delegated handler');
+          revealed = revealDebugExportField(panel);
+        }
+      } catch (error) {
+        errorText = debugText(error?.message || error, 280);
+        debugEvent('debug.control.error', { id, error: errorText });
+      }
+
+      const durationMs = Math.round((debugNow() - startedAt) * 100) / 100;
+      const result = { id, copied, downloaded, revealed, durationMs, error: errorText };
+      debugEvent('debug.control.result', result);
+      showDebugPanelMessage(
+        panel,
+        id === 'hibid-debug-clear'
+          ? (revealed ? 'Debug log cleared.' : 'Debug log cleared; text field unavailable.')
+          : (copied
+            ? `Debug copied; ${getDebugLog().length} entries shown below.`
+            : (downloaded
+              ? 'Debug download requested; log shown below.'
+              : (revealed ? 'Clipboard/download failed; select the log below.' : 'Debug export failed.'))),
+        errorText ? 'danger' : (copied || downloaded ? 'success' : 'neutral')
+      );
+      debugEvent('debug.control.handler.exit', result);
+    };
+
+    panel.addEventListener('click', handler);
+    panel.dataset.flipperaddonDebugBinding = 'delegated';
+    panel.__FLIPPERADDON_DEBUG_CONTROL_DELEGATION__ = handler;
+    debugEvent('debug.control.binding', getDebugControlBindingState(panel));
+    return true;
+  }
+
+  function getDebugLogPayload() {
+    const payload = formatDebugLog();
+    if (payload) return payload;
+    return [
+      `${DEBUG_PREFIX} debug export`,
+      `version=${SCRIPT_VERSION}`,
+      `url=${typeof location !== 'undefined' ? location.href : ''}`,
+      'No stored debug entries were available.'
+    ].join('\n');
+  }
+
+  async function copyDebugLog() {
+    debugEvent('debug-export.requested', { storedEntries: getDebugLog().length });
+    const payload = getDebugLogPayload();
+    debugEvent('debug-export.payload-ready', { payloadLength: payload.length, storedEntries: getDebugLog().length });
+    debug('debug export started', {
+      payloadLength: payload.length,
+      storedEntries: getDebugLog().length,
+      hasNavigatorClipboard: Boolean(typeof navigator !== 'undefined' && navigator.clipboard?.writeText),
+      hasLegacyUserscriptClipboard: typeof GM_setClipboard === 'function',
+      hasModernUserscriptClipboard: Boolean(globalThis.GM?.setClipboard),
+      hasExecCommand: Boolean(typeof document !== 'undefined' && typeof document.execCommand === 'function')
+    });
+    const copied = await copyTextForDebug(payload).catch((error) => {
+      debug('debug export rejected', { error: String(error?.message || error) });
+      return false;
+    });
+    debug('debug export finished', { copied, payloadLength: payload.length, storedEntries: getDebugLog().length });
+    debugEvent('debug-export.finished', { copied, payloadLength: payload.length, storedEntries: getDebugLog().length });
+    return copied;
+  }
+
+  function routeDebug(loc = (typeof location !== 'undefined' ? location : null)) {
+    if (!loc) return {};
+    const mode = resolveAssistantMode(loc);
+    return {
+      href: loc.href,
+      mode,
+      route: mode.route || resolveHiBidPage(loc),
+      readyState: typeof document !== 'undefined' ? document.readyState : ''
+    };
+  }
+
+  function removeLegacyScraperArtifacts(reason = 'cleanup') {
+    if (typeof document === 'undefined') return 0;
+    let removed = 0;
+    const removedIds = [];
+    LEGACY_SCRAPER_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.remove();
+      removed += 1;
+      removedIds.push(id);
+    });
+    LEGACY_PANEL_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.remove();
+      removed += 1;
+      removedIds.push(id);
+    });
+    if (removed) debug('removed legacy scraper artifacts', { reason, removed, ids: removedIds });
+    return removed;
+  }
+
+  function textOf(el) {
+    return (el?.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function rawTextOf(el) {
+    return (el?.innerText || el?.textContent || '')
+      .replace(/\r/g, '')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n[ \t]+/g, '\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .trim();
+  }
+
+  function moneyFromText(value) {
+    const match = (value || '').match(/(?:\$|\bUSD\b\s*)\s*([\d,]+(?:\.\d{2})?)|([\d,]+(?:\.\d{2})?)\s*USD/i);
+    const amount = match?.[1] || match?.[2] || '';
+    return amount ? Number(amount.replace(/,/g, '')) : null;
+  }
+
+  function moneyLabelFromText(value) {
+    const match = (value || '').match(/(?:\$|\bUSD\b\s*)\s*([\d,]+(?:\.\d{2})?)|([\d,]+(?:\.\d{2})?)\s*USD/i);
+    if (!match) return '';
+    const amount = match[1] || match[2];
+    return match[2] ? `${amount} USD` : `$${amount}`;
+  }
+
+  function percentFromText(value) {
+    const match = String(value || '').match(/(\d+(?:\.\d+)?)\s*%/);
+    return match ? `${match[1]}%` : '';
+  }
+
+  function lineAfter(raw, label) {
+    const lines = String(raw || '').split(/\n+/).map(line => line.trim()).filter(Boolean);
+    const index = lines.findIndex(line => new RegExp(`^${label}\\b`, 'i').test(line));
+    return index >= 0 ? (lines[index + 1] || '') : '';
+  }
+
+  function sectionBetween(raw, start, endPattern) {
+    const pattern = new RegExp(`${start}\\s*([\\s\\S]*?)(?:${endPattern})`, 'i');
+    const match = String(raw || '').match(pattern);
+    return match ? match[1].replace(/\s+/g, ' ').trim() : '';
+  }
+
+  function pickFirstText(root, selectors = []) {
+    for (const selector of selectors) {
+      const value = textOf(root?.querySelector?.(selector));
+      if (value) return value;
+    }
+    return '';
+  }
+
+  function pickFirstHref(root, selectors = [], base) {
+    for (const selector of selectors) {
+      const el = root?.querySelector?.(selector);
+      const href = controlHref(el);
+      if (href) return absoluteUrl(href, base);
+    }
+    return '';
+  }
+
+  function pickFirstImage(root, base) {
+    const images = Array.from(root?.querySelectorAll?.('img') || []);
+    for (const image of images) {
+      const src = image?.getAttribute?.('data-src')
+        || image?.getAttribute?.('data-original')
+        || image?.getAttribute?.('src')
+        || image?.src
+        || '';
+      if (src && !/spacer|blank|pixel/i.test(src)) return absoluteUrl(src, base);
+    }
+    return '';
+  }
+
+  function pickFirstDescription(root) {
+    const direct = root?.getAttribute?.('data-description')
+      || root?.getAttribute?.('data-notes')
+      || root?.getAttribute?.('aria-description')
+      || '';
+    if (direct.trim()) return direct.trim();
+
+    const selectors = [
+      '.lot-description',
+      '.description',
+      '.lot-notes',
+      '[class*="lot-description"]',
+      '[class*="description"]',
+      '[class*="lot-notes"]',
+      '[data-testid*="description"]',
+      '[data-testid*="notes"]'
+    ];
+    for (const selector of selectors) {
+      const element = root?.querySelector?.(selector);
+      const value = descriptionTextOf(element);
+      if (value && !/^read description$/i.test(value)) return value;
+    }
+    return '';
+  }
+
+  function numberFromText(value) {
+    const match = (value || '').match(/([\d,]+)/);
+    return match ? Number(match[1].replace(/,/g, '')) : null;
+  }
+
+  function parseBidPlan(raw) {
+    const parsed = JSON.parse(raw || '{}');
+    const out = {};
+
+    Object.entries(parsed).forEach(([lot, value]) => {
+      if (typeof value === 'number') {
+        out[String(lot)] = { max: value, title: '' };
+        return;
+      }
+
+      if (value && typeof value === 'object') {
+        const max = Number(value.max);
+        out[String(lot)] = {
+          max: Number.isFinite(max) && max > 0 ? max : null,
+          title: String(value.title || '').trim()
+        };
+      }
+    });
+
+    return out;
+  }
+
+  function titleMatches(title, expected) {
+    if (!expected) return true;
+    return String(title || '').toLowerCase().includes(String(expected).toLowerCase());
+  }
+
+  function extractUserBidStatus(value) {
+    if (/outbid|losing|not winning/i.test(value || '')) return 'Outbid';
+    if (/winning|high bidder|you'?re winning|you are winning/i.test(value || '')) return 'Winning';
+    if (/you'?ve bid|you have bid|your bid/i.test(value || '')) return 'Bid Placed';
+    return '';
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const win = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : null);
+    const style = win?.getComputedStyle ? win.getComputedStyle(el) : null;
+    if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+    // DOMParser documents have no layout box. Their cards are still valid
+    // scrape records, so treat elements from a detached document as visible.
+    if (el.ownerDocument && !el.ownerDocument.defaultView) return true;
+    return Boolean(el.offsetParent || el.getClientRects?.().length);
+  }
+
+  function controlLabel(el) {
+    return [
+      textOf(el),
+      el?.getAttribute?.('aria-label') || '',
+      el?.getAttribute?.('title') || '',
+      el?.getAttribute?.('class') || '',
+      el?.getAttribute?.('id') || el?.id || ''
+    ].join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function controlHref(el) {
+    return el?.getAttribute?.('href') || el?.href || '';
+  }
+
+  function absoluteUrl(href, base = (typeof location !== 'undefined' ? location.href : 'https://hibid.com/')) {
+    if (!href) return '';
+    try {
+      return new URL(href, base).href;
+    } catch {
+      if (/^https?:\/\//i.test(String(href))) return String(href);
+      const origin = String(base || '').match(/^(https?:\/\/[^/]+)/i)?.[1] || 'https://hibid.com';
+      if (String(href).startsWith('/')) return `${origin}${href}`;
+      return String(href);
+    }
+  }
+
+  function getRootText(root = document) {
+    return rawTextOf(root.body || root.documentElement || root);
+  }
+
+  function hasLikelyHibidLotTiles(root = document) {
+    const selectors = [
+      'app-lot-tile',
+      'app-lot-card',
+      'lot-card',
+      '.lot-card',
+      '[class*="lot-card"]',
+      '[class*="lotTile"]',
+      '[class*="lot-tile"]',
+      '.bid-status-border',
+      '[class*="current-bids-card"]',
+      '[class*="watchlist-card"]',
+      '[data-testid*="watchlist"]',
+      '[data-testid*="current-bid"]'
+    ].join(',');
+    return Array.from(root?.querySelectorAll?.(selectors) || [])
+      .filter(isVisible)
+      .some(tile => {
+        if (tile.id && /^lot-\d+/i.test(tile.id)) return true;
+        const label = `${textOf(tile)} ${tile.getAttribute?.('aria-label') || ''}`;
+        return /\bLot\s+\S+/i.test(label) && Boolean(tile.querySelector?.('a, img, button'));
+      });
+  }
+
+  function getVisibleHibidLotCount(root = document) {
+    const canonicalTiles = Array.from(root?.querySelectorAll?.('app-lot-tile[id^="lot-"]') || [])
+      .filter(tile => isVisible(tile));
+    if (canonicalTiles.length) {
+      return new Set(canonicalTiles.map(tile => String(tile.id || '').replace(/^lot-/i, '')).filter(Boolean)).size;
+    }
+
+    const selectors = [
+      'app-lot-tile',
+      'app-lot-card',
+      'lot-card',
+      '.lot-card',
+      '[class*="lot-card"]',
+      '[class*="lotTile"]',
+      '[class*="lot-tile"]',
+      '.bid-status-border',
+      '[class*="current-bids-card"]',
+      '[class*="watchlist-card"]',
+      '[data-testid*="watchlist"]',
+      '[data-testid*="current-bid"]'
+    ].join(',');
+    const visible = Array.from(root?.querySelectorAll?.(selectors) || [])
+      .filter(tile => isVisible(tile));
+    if (!visible.length) return 0;
+
+    const identities = new Set();
+    visible.forEach(tile => {
+      const href = tile.querySelector?.('a[href*="/lot/"], a[href*="/ui/lot/"]')?.getAttribute?.('href') || '';
+      const lotLabel = textOf(tile.querySelector?.('.lot-number-lead, [class*="lot-number"]'))
+        || textOf(tile).match(/\bLot\s+\S+/i)?.[0]
+        || '';
+      const eventItemId = tile.querySelector?.('[data-event-item-id]')?.getAttribute?.('data-event-item-id') || '';
+      const identity = href || lotLabel || eventItemId || tile.id || '';
+      if (identity) identities.add(identity);
+    });
+    return identities.size;
+  }
+
+  function getExpectedLotTotal(root = document) {
+    const text = getRootText(root);
+    const totalMatch = text.match(/\bTotal Lots:\s*([\d,]+)/i);
+    if (totalMatch) return Number(totalMatch[1].replace(/,/g, ''));
+
+    const openMatch = text.match(/\bOpen Lots:\s*([\d,]+)/i);
+    if (openMatch) return Number(openMatch[1].replace(/,/g, ''));
+
+    const showingMatch = text.match(/\bShowing\s+[\d,]+\s*(?:to|-)\s*[\d,]+\s+of\s+([\d,]+)\s+lots\b/i);
+    if (showingMatch) return Number(showingMatch[1].replace(/,/g, ''));
+
+    const ofMatch = text.match(/\b(?:of|total)\s+([\d,]+)\s+lots\b/i);
+    if (ofMatch) return Number(ofMatch[1].replace(/,/g, ''));
+    return null;
+  }
+
+  function findCatalogNextPageButton(root = document) {
+    const textNodeType = typeof NodeFilter !== 'undefined' ? NodeFilter.SHOW_TEXT : 4;
+    const walker = root.createTreeWalker?.(root.body || root.documentElement, textNodeType);
+    while (walker) {
+      const node = walker.nextNode();
+      if (!node) break;
+      if (!/^next\s*>?$/i.test((node.textContent || '').trim())) continue;
+      const control = node.parentElement?.closest?.('a[href], button, [role="button"]');
+      if (control && !control.disabled && !control.getAttribute?.('aria-disabled') && isVisible(control)) {
+        debug('catalog next-page text-node control', { label: controlLabel(control), href: controlHref(control) });
+        return control;
+      }
+    }
+
+    const candidates = Array.from(root.querySelectorAll?.('a[href], button, [role="button"]') || [])
+      .filter(button => !button.disabled && !button.getAttribute?.('aria-disabled'))
+      .filter(isVisible)
+      .map(button => {
+        const label = controlLabel(button);
+        const href = controlHref(button);
+        let score = 0;
+        if (/\bbid\b|history|watch|unwatch|notes?|close|confirm|share|print|search/i.test(label)) score = -100;
+        else if (/^next\s*>?$/i.test(textOf(button))) score = 120;
+        else if (/\bnext\b/i.test(label) && /(?:apage|page)=\d+/i.test(href)) score = 110;
+        else if (/\bnext\b/i.test(label) && /page|pagination|pager/i.test(button.closest?.('[class]')?.getAttribute?.('class') || '')) score = 100;
+        else if (/(?:apage|page)=\d+/i.test(href) && /\bnext\b/i.test(label)) score = 80;
+        return { button, score, label, href };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    debug('catalog next-page candidates', candidates.map(item => ({ score: item.score, label: item.label, href: item.href })).slice(0, 10));
+    return candidates[0]?.button || null;
+  }
+
+  function findBidButton(tile) {
+    const candidates = Array.from(tile.querySelectorAll('.lot-bid-button, button.lot-bid-button, .lot-bid-button button, .lot-bid-button[role="button"], button, [role="button"]'))
+      .filter(button => !button.disabled && !button.getAttribute('aria-disabled'))
+      .filter(isVisible)
+      .map(button => {
+        const label = controlLabel(button);
+        const amount = moneyFromText(label);
+        const className = button.getAttribute?.('class') || '';
+        let score = 0;
+
+        if (/bid\s+history|history|\b\d+\s+bids?\b|\bbids?\b/i.test(label) && !amount) {
+          score = -100;
+        } else if (/\blot-bid-button\b/i.test(className)) {
+          score = 100;
+        } else if (/\bbid\s+[\d,.]+\s*USD\b/i.test(label)) {
+          score = 80;
+        } else if (/\bplace\s+bid\b|\bnext\s+bid\b/i.test(label) && amount) {
+          score = 70;
+        } else if (/\bbid\b/i.test(label) && amount) {
+          score = 60;
+        } else if (amount && /\bUSD\b/i.test(label)) {
+          score = 30;
+        }
+
+        return { button, label, amount, score };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    debug('findBidButton candidates', candidates.map(item => ({
+      label: item.label,
+      amount: item.amount,
+      score: item.score
+    })).slice(0, 8));
+
+    return candidates[0]?.button || null;
+  }
+
+  function findLiveBidButton(root = document) {
+    const candidates = Array.from(root.querySelectorAll?.('.live-bid-button, .lot-bid-button, button, [role="button"], input[type="button"], input[type="submit"]') || [])
+      .filter(button => !button.disabled && !button.getAttribute?.('aria-disabled'))
+      .filter(isVisible)
+      .map(button => {
+        const label = controlLabel(button);
+        const amount = moneyFromText(label);
+        const className = button.getAttribute?.('class') || '';
+        let score = 0;
+
+        if (/bid\s+history|history|\b\d+\s+bids?\b|\bbids?\b|watch|unwatch|notes?|close|catalog|view\s+catalog/i.test(label) && !/\bbid\s+[\d,.]+\s*USD\b/i.test(label)) {
+          score = -100;
+        } else if (/\blive-bid-button\b/i.test(className)) {
+          score = 120;
+        } else if (/\blot-bid-button\b/i.test(className)) {
+          score = 100;
+        } else if (/\bbid\s+[\d,.]+\s*USD\b/i.test(label)) {
+          score = 90;
+        } else if (/\bplace\s+bid\b|\bsubmit\s+bid\b|\bnext\s+bid\b/i.test(label) && amount) {
+          score = 75;
+        } else if (/\bbid\b/i.test(label) && amount) {
+          score = 60;
+        }
+
+        return { button, label, amount, score };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    debug('findLiveBidButton candidates', candidates.map(item => ({
+      label: item.label,
+      amount: item.amount,
+      score: item.score
+    })).slice(0, 8));
+
+    return candidates[0]?.button || null;
+  }
+
+  function findLiveLoadMoreButton(root = document) {
+    const candidates = Array.from(root.querySelectorAll?.('button, [role="button"], a[href], input[type="button"], input[type="submit"]') || [])
+      .filter(button => !button.disabled && !button.getAttribute?.('aria-disabled'))
+      .filter(isVisible)
+      .map(button => {
+        const label = controlLabel(button);
+        let score = 0;
+
+        if (/\bbid\b|history|watch|unwatch|notes?|close|confirm|snipe|catalog|search/i.test(label)) {
+          score = -100;
+        } else if (/\bopen\s+more\b/i.test(label)) {
+          score = 100;
+        } else if (/\b(?:load|show|view)\s+more\b/i.test(label)) {
+          score = 90;
+        } else if (/\bmore\s+lots?\b/i.test(label)) {
+          score = 80;
+        }
+
+        return { button, label, score };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    debug('findLiveLoadMoreButton candidates', candidates.map(item => ({
+      label: item.label,
+      score: item.score
+    })).slice(0, 8));
+
+    return candidates[0]?.button || null;
+  }
+
+  function getHibidLotTileIdentity(tile) {
+    if (!tile) return '';
+    const href = tile.querySelector?.('a[href*="/lot/"]')?.getAttribute?.('href') || '';
+    const lotLabel = textOf(tile.querySelector?.('.lot-number-lead, [class*="lot-number"]'))
+      || textOf(tile).match(/\bLot\s+#?\s*\d+[A-Za-z-]*/i)?.[0]
+      || '';
+    return href || lotLabel || tile.id || '';
+  }
+
+  function getCanonicalHibidLotTiles(root = document) {
+    const selectors = [
+      'app-lot-tile',
+      'app-lot-card',
+      'lot-card',
+      '.lot-card',
+      '[class*="lot-card"]',
+      '[class*="lotTile"]',
+      '[class*="lot-tile"]'
+    ].join(',');
+    const roots = getLotSearchRoots(root);
+    const candidates = roots.flatMap(searchRoot => Array.from(searchRoot.querySelectorAll?.(selectors) || []))
+      .filter(isVisible)
+      .filter(tile => {
+        const identity = getHibidLotTileIdentity(tile);
+        return Boolean(identity) && (Boolean(tile.querySelector?.('a[href*="/lot/"], img, .lot-title, h2, [class*="lot-title"]')) || /^Lot\s+#?\s*\d+/i.test(textOf(tile)));
+      });
+
+    const unique = new Map();
+    candidates.forEach(tile => {
+      const identity = getHibidLotTileIdentity(tile);
+      if (identity && !unique.has(identity)) unique.set(identity, tile);
+    });
+
+    debug('canonical HiBid lot tiles', {
+      candidateCount: candidates.length,
+      uniqueCount: unique.size
+    });
+    return Array.from(unique.values());
+  }
+
+  function getLotTiles(root = document) {
+    const canonicalTiles = getCanonicalHibidLotTiles(root);
+    if (canonicalTiles.length) return canonicalTiles;
+
+    const roots = getLotSearchRoots(root);
+    const accountRoute = typeof location !== 'undefined'
+      && isHibidAccountExportRoute(resolveHiBidPage(location));
+    const accountCandidates = accountRoute
+      ? roots.flatMap(searchRoot => Array.from(searchRoot.querySelectorAll([
+        '.bid-status-border',
+        '[class*="current-bids-card"]',
+        '[class*="watchlist-card"]',
+        '[data-testid*="watchlist"]',
+        '[data-testid*="current-bid"]',
+        'app-watchlist-item',
+        'app-current-bid'
+      ].join(','))))
+      : [];
+    const candidates = accountCandidates.concat(roots.flatMap(searchRoot => Array.from(searchRoot.querySelectorAll([
+        'app-lot-tile[id^="lot-"]',
+        '.bid-status-border',
+        '.lot-tile',
+        '[class*="lot-tile"]',
+        '.lot-number-lead',
+        'a[href*="/lot/"]',
+        '[class*="lot-number"]'
+      ].join(',')))));
+
+    const fromText = roots.flatMap(searchRoot => Array.from(searchRoot.querySelectorAll('a, span, div, h2'))
+      .filter(el => /^Lot\s+\d+[A-Za-z-]*/i.test(textOf(el))));
+
+    const tiles = candidates.concat(fromText)
+      .map(candidate => findLotTileFromSeed(candidate))
+      .filter(Boolean)
+      .filter(tile => Boolean(tile.querySelector?.('.lot-number-lead, a[href*="/lot/"], [class*="lot-number"]')) || /^Lot\s+\d+/i.test(textOf(tile)));
+
+    return Array.from(new Set(tiles));
+  }
+
+  function getLotSearchRoots(root = document) {
+    const roots = [root];
+    const seen = new Set(roots);
+
+    for (let i = 0; i < roots.length; i += 1) {
+      const current = roots[i];
+      Array.from(current.querySelectorAll?.('*') || []).forEach(el => {
+        if (el.shadowRoot && !seen.has(el.shadowRoot)) {
+          seen.add(el.shadowRoot);
+          roots.push(el.shadowRoot);
+        }
+      });
+    }
+
+    if (typeof document !== 'undefined' && root === document) {
+      Array.from(document.querySelectorAll('iframe')).forEach(frame => {
+        try {
+          const frameDoc = frame.contentDocument;
+          if (frameDoc && !seen.has(frameDoc)) {
+            seen.add(frameDoc);
+            roots.push(frameDoc);
+          }
+        } catch {
+          // Cross-origin frames cannot be inspected.
+        }
+      });
+    }
+
+    return roots;
+  }
+
+  function findLotTileFromSeed(seed) {
+    if (!seed) return null;
+    if (seed.matches?.('app-lot-tile[id^="lot-"], .bid-status-border, .lot-tile, [class*="lot-tile"]')) {
+      if (seed.querySelector?.('.lot-number-lead, a[href*="/lot/"], [class*="lot-number"]')) return seed;
+    }
+
+    let el = seed;
+    for (let depth = 0; el && depth < 10; depth += 1, el = el.parentElement) {
+      const hasLotIdentity = Boolean(el.querySelector?.('.lot-number-lead, a[href*="/lot/"], [class*="lot-number"]')) || /^Lot\s+\d+/i.test(textOf(el));
+      const hasBidSurface = Boolean(el.querySelector?.('.lot-bid-button, .TileDisplayMinBid, .lot-high-bid, .lot-tile-bid-status, .bid-status, [class*="high-bid"], [class*="bid-status"]'));
+      // Closed, newly hydrated, and shipping-only cards can lack the bid/status
+      // subtree even though they are real lot records. Keep the lot identity
+      // plus a card anchor as a sufficient DOM proof; the export guard still
+      // rejects unrelated page text and stale data sources.
+      const hasCardAnchor = Boolean(el.querySelector?.('a[href*="/lot/"], img, .lot-title, h2, [class*="lot-title"]'));
+      if (hasLotIdentity && (hasBidSurface || hasCardAnchor)) return el;
+    }
+
+    return null;
+  }
+
+  function extractLot(tile) {
+    const rawText = rawTextOf(tile);
+    const tileText = textOf(tile);
+    const titleLink = tile.querySelector('a.lot-number-lead[href], a.lot-preview-link[href], a[href*="/lot/"]');
+    const titleEl = tile.querySelector('.lot-title, h2, [class*="lot-title"], [data-testid*="lot-title"]');
+    const lotLabel = textOf(tile.querySelector('.lot-number-lead .text-primary, .lot-number-lead span, [class*="lot-number"]'))
+      || tileText.match(/\bLot\s*#?\s*\d+[A-Za-z-]*/i)?.[0]
+      || '';
+    const lotNumber = lotLabel.match(/\d+[A-Za-z-]*/)?.[0] || '';
+    const highBidText = textOf(tile.querySelector('.lot-high-bid, .lot-bid-container'));
+    const bidCountText = textOf(tile.querySelector('.lot-bid-history'));
+    const timeLeftText = textOf(tile.querySelector('.lot-time-left, .lot-time-label, .lot-time-left-container'));
+    const nextBidText = textOf(tile.querySelector('.TileDisplayMinBid'));
+    const bidButton = findBidButton(tile);
+    const nextBidFromLabel = moneyFromText(nextBidText);
+    const nextBidFromButton = moneyFromText(textOf(bidButton));
+    const nextBidAmount = Math.max(nextBidFromLabel || 0, nextBidFromButton || 0) || null;
+    const bidStatusRoot = tile.querySelector('.lot-tile-bid-status .bid-status');
+    const statusClass = [
+      tile.querySelector('[class*="bid-status-border"]')?.getAttribute('class') || '',
+      tile.querySelector('[class*="live-catalog-high-bid-status"]')?.getAttribute('class') || '',
+      tile.querySelector('[class*="lot-status-"]')?.getAttribute('class') || '',
+      bidStatusRoot?.getAttribute('class') || '',
+      tile.querySelector('.bid-status.winning, .bid-status.outbid, .bid-status.losing')?.getAttribute('class') || ''
+    ].join(' ');
+    const statusText = textOf(tile.querySelector('.bid-status.winning, .bid-status.outbid, .bid-status.losing, .lot-tile-bid-status'));
+    const allStatus = `${statusText} ${statusClass} ${textOf(tile)}`;
+    const userBidStatus = extractUserBidStatus(allStatus);
+    const href = titleLink?.getAttribute('href') || '';
+    const base = typeof location !== 'undefined' ? location.href : 'https://hibid.com/';
+    const image = pickFirstImage(tile, base);
+    const description = pickFirstDescription(tile);
+    const rawTitle = tileText.match(/\bLot\s*#?\s*\d+[A-Za-z-]*\s*(?:\||[-:])\s*([\s\S]*?)(?=\s+(?:Watch|Unwatch|Notes|READ DESCRIPTION|High Bid|Current Bid|Price Realized|Bidding Closed|Sold For|Starting Bid|Opening Bid|\d+\s+Bids?\b|Bid\s+[\d,.]+\s*USD\b)|$)/i)?.[1] || '';
+    const title = (textOf(titleEl) || titleLink?.getAttribute('aria-label') || rawTitle || (lotNumber ? `Lot ${lotNumber}` : ''))
+      .replace(/^Lot\s*#?\s*\d+[A-Za-z-]*\s*(?:\||[-:])\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return {
+      tile,
+      bidButton,
+      id: (tile.id || '').replace(/^lot-/, ''),
+      eventItemId: (tile.id || '').replace(/^lot-/, ''),
+      lot: lotNumber,
+      title,
+      url: href ? absoluteUrl(href, base) : '',
+      image,
+      pictureCount: tile.querySelectorAll?.('img')?.length || 0,
+      description,
+      rawText,
+      highBid: highBidText,
+      highBidAmount: moneyFromText(highBidText),
+      bidCount: bidCountText,
+      bidCountNumber: numberFromText(bidCountText),
+      timeLeft: timeLeftText,
+      nextBid: nextBidText,
+      nextBidAmount,
+      userBidStatus,
+      isWinning: userBidStatus === 'Winning',
+      isOutbid: userBidStatus === 'Outbid',
+      statusClass: statusClass.trim()
+    };
+  }
+
+  function extractCurrentBidsStatus(value) {
+    const text = String(value || '');
+    if (/\bWon\b/i.test(text)) return 'Won';
+    return extractUserBidStatus(text);
+  }
+
+  function extractCurrentBidsLot(tile) {
+    const base = extractLot(tile);
+    const structuredText = rawTextOf(tile);
+    const raw = textOf(tile);
+    const firstLine = structuredText.match(/(?:^|\n)\s*Lot\s*#?\s*:?\s*(\d+[A-Za-z-]*)\s*(?:\||[-:])?\s*([\s\S]*?)(?=\n\s*(?:Unwatch|Watch|Notes|READ DESCRIPTION|Current Bid|High Bid|Price Realized|Bidding Closed|Sold For|Lot Won|Starting Bid|Opening Bid|\d+\s+Bids?\b|Bid\s+[\d,.]+\s*USD)|$)/i);
+    const lot = firstLine?.[1] || base.lot || '';
+    // Account cards may expose their text as one flattened line when the
+    // framework has not preserved element newlines. Prefer the dedicated
+    // title node in that case so status controls cannot become part of the
+    // exported title.
+    const title = (base.title && !/^Lot\s+#?\s*\d+[A-Za-z-]*$/i.test(base.title)
+      ? base.title
+      : (firstLine?.[2] || base.title || ''))
+      .replace(/\s+/g, ' ')
+      .trim();
+    const priceText = raw.match(/(?:High Bid|Current Bid|Price Realized|Lot Won|Sold For):?\s*\$?\s*([\d,.]+\s*(?:USD)?(?:\s*\/\s*(?:Lot|ea))?)/i)?.[1] || '';
+    const bidCount = raw.match(/\b\d+\s+Bids?\b/i)?.[0] || base.bidCount || '';
+    const status = extractCurrentBidsStatus(raw);
+    const img = tile.querySelector?.('img[src], img[data-src]') || null;
+    const image = img?.getAttribute?.('src') || img?.getAttribute?.('data-src') || img?.src || '';
+
+    return {
+      ...base,
+      id: base.id || lot,
+      eventItemId: base.eventItemId || base.id || '',
+      lot,
+      title,
+      image: image ? absoluteUrl(image) : base.image || '',
+      description: pickFirstDescription(tile) || base.description || '',
+      highBid: priceText ? `High Bid: ${priceText}` : base.highBid,
+      highBidAmount: moneyFromText(priceText) || base.highBidAmount,
+      bidCount,
+      bidCountNumber: numberFromText(bidCount) || base.bidCountNumber,
+      userBidStatus: status,
+      isWinning: status === 'Winning',
+      isOutbid: status === 'Outbid',
+      statusClass: `${base.statusClass || ''} current-bids-card`.trim(),
+      rawText: raw
+    };
+  }
+
+  function hibidAccountAuctionPageKind(routeOrKind = {}) {
+    const kind = typeof routeOrKind === 'string' ? routeOrKind : routeOrKind?.kind;
+    return kind === 'pastbids' || kind === 'pastwatchlist' ? kind : '';
+  }
+
+  function hibidEscapeRegex(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function hibidAccountLotCandidateSelector() {
+    return [
+      '.bid-status-border',
+      '[class*="current-bids-card"]',
+      '[class*="watchlist-card"]',
+      'app-lot-tile',
+      'app-lot-card',
+      '.lot-tile',
+      '[class*="lot-tile"]',
+      '.lot-number-lead',
+      'a[href*="/lot/"]'
+    ].join(',');
+  }
+
+  function hibidAccountAuctionContainer(block) {
+    let current = block?.parentElement || null;
+    for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
+      const headings = Array.from(current.querySelectorAll?.('.listing-box-title') || []);
+      const candidates = Array.from(current.querySelectorAll?.(hibidAccountLotCandidateSelector()) || []);
+      // The live account page renders every saved auction as header + tiles
+      // inside one shared `.lot-tiles` container. The clicked header identifies
+      // the group; rejecting multi-header containers makes every real export
+      // look like an ambiguous scope.
+      if (candidates.length && (headings.length <= 1 || current.matches?.('.lot-tiles, [id^="lot-tiles-"]'))) return current;
+    }
+    return null;
+  }
+
+  function hibidAccountAuctionGroupHeader(block) {
+    let current = block || null;
+    for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
+      if (current.matches?.('app-watched-auction-header')) return current;
+    }
+    return null;
+  }
+
+  function hibidAccountAuctionGroupTiles(container, groupHeader) {
+    if (!container?.children || !groupHeader) return null;
+    const children = Array.from(container.children);
+    const start = children.indexOf(groupHeader);
+    if (start < 0) return null;
+    const end = children.findIndex((child, index) => index > start && child.matches?.('app-watched-auction-header'));
+    const tileSelector = 'app-lot-tile, app-lot-card, .lot-tile, [class*="lot-tile"]';
+    return children.slice(start + 1, end < 0 ? children.length : end)
+      .filter(child => child.matches?.(tileSelector));
+  }
+
+  function hibidAccountAuctionLotTiles(container, groupHeader = null) {
+    if (!container?.querySelectorAll) return [];
+    const scopedTiles = hibidAccountAuctionGroupTiles(container, groupHeader);
+    if (scopedTiles) return scopedTiles;
+    const tiles = new Set();
+    const cardSeeds = Array.from(container.querySelectorAll([
+      '.bid-status-border',
+      '[class*="current-bids-card"]',
+      '[class*="watchlist-card"]',
+      'app-lot-tile',
+      'app-lot-card',
+      '.lot-tile',
+      '[class*="lot-tile"]'
+    ].join(',')));
+    const candidates = cardSeeds.length
+      ? cardSeeds
+      : Array.from(container.querySelectorAll(hibidAccountLotCandidateSelector()));
+    candidates.forEach(candidate => {
+      let tile = findLotTileFromSeed(candidate);
+      if (tile?.matches?.('.lot-number-lead, [class*="lot-number"]')) {
+        let parent = tile.parentElement;
+        while (parent && parent !== container) {
+          if (parent.matches?.('.bid-status-border, [class*="current-bids-card"], [class*="watchlist-card"], app-lot-tile, app-lot-card, .lot-tile, [class*="lot-tile"]')) {
+            tile = parent;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+      }
+      if (!tile) return;
+      if (typeof container.contains === 'function' && !container.contains(tile)) return;
+      tiles.add(tile);
+    });
+    return Array.from(tiles);
+  }
+
+  function hibidFieldValueFromText(raw, labels = []) {
+    const text = String(raw || '').replace(/\r/g, '').trim();
+    if (!text) return '';
+    const labelList = labels.map(label => String(label || '').trim()).filter(Boolean);
+    const escapedLabels = labelList.map(hibidEscapeRegex);
+    const lines = text.split(/\n+/).map(line => line.trim()).filter(Boolean);
+    for (const label of labelList) {
+      const escaped = hibidEscapeRegex(label);
+      const inline = new RegExp(`^${escaped}\\s*:?\\s*(.+)$`, 'i');
+      const lineIndex = lines.findIndex(line => new RegExp(`^${escaped}\\s*:?\\s*$`, 'i').test(line));
+      if (lineIndex >= 0 && lines[lineIndex + 1]) return lines[lineIndex + 1].trim();
+      const matched = lines.find(line => inline.test(line));
+      if (matched) {
+        const value = matched.match(inline)?.[1]?.trim() || '';
+        if (value) return value;
+      }
+    }
+    if (!escapedLabels.length) return '';
+    const boundary = labelList
+      .map(label => hibidEscapeRegex(label))
+      .join('|');
+    const flattened = new RegExp(`(?:^|\\s)(?:${escapedLabels.join('|')})\\s*:?\\s+([\\s\\S]*?)(?=\\s+(?:${boundary})\\s*:?|$)`, 'i');
+    return flattened.exec(text)?.[1]?.trim() || '';
+  }
+
+  function hibidDescriptionFieldsFromText(raw) {
+    const definitions = [
+      ['shelfLocation', ['Shelf Location']],
+      ['condition', ['Condition']],
+      ['inPackaging', ['In Packaging?']],
+      ['assemblyRequired', ['Assembly Required?']],
+      ['damaged', ['Damaged?']],
+      ['functional', ['Functional?']],
+      ['missingParts', ['Missing Parts?']],
+      ['groupCategory', ['Group - Category', 'Group Category']],
+      ['lead', ['Lead']]
+    ];
+    const fields = {};
+    definitions.forEach(([key, labels]) => {
+      const value = hibidFieldValueFromText(raw, labels);
+      if (value) fields[key] = value;
+    });
+    return fields;
+  }
+
+  function hibidDescriptionSectionFromText(raw) {
+    const text = String(raw || '').replace(/\r/g, '').trim();
+    if (!text) return '';
+    const match = text.match(/(?:^|\n)\s*Description\s*:?\s*\n?([\s\S]*)$/i);
+    return match?.[1]?.trim() || '';
+  }
+
+  function hibidDescriptionFieldsFromRoot(root) {
+    const fields = {};
+    const add = (label, value) => {
+      const cleanLabel = String(label || '').replace(/\s+/g, ' ').trim();
+      const cleanValue = String(value || '').replace(/\s+/g, ' ').trim();
+      if (!cleanLabel || !cleanValue) return;
+      const normalized = cleanLabel.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const key = normalized === 'shelf location' ? 'shelfLocation'
+        : normalized === 'condition' ? 'condition'
+          : normalized === 'in packaging' ? 'inPackaging'
+            : normalized === 'assembly required' ? 'assemblyRequired'
+              : normalized === 'damaged' ? 'damaged'
+                : normalized === 'functional' ? 'functional'
+                  : normalized === 'missing parts' ? 'missingParts'
+                    : normalized === 'group category' ? 'groupCategory'
+                      : normalized === 'lead' ? 'lead'
+                        : '';
+      if (key && !fields[key]) fields[key] = cleanValue;
+    };
+
+    Array.from(root?.querySelectorAll?.('tr') || []).forEach(row => {
+      const cells = Array.from(row.querySelectorAll?.('th,td') || []).map(textOf).filter(Boolean);
+      if (cells.length >= 2) add(cells[0], cells.slice(1).join(' '));
+    });
+    Array.from(root?.querySelectorAll?.('dt') || []).forEach(dt => {
+      const dd = dt.nextElementSibling;
+      if (dd) add(textOf(dt), textOf(dd));
+    });
+    Array.from(root?.querySelectorAll?.('[data-label]') || []).forEach(node => {
+      add(node.getAttribute('data-label'), textOf(node));
+    });
+    return fields;
+  }
+
+  function hibidImageUrls(root, base = (typeof location !== 'undefined' ? location.href : 'https://hibid.com/')) {
+    const urls = [];
+    Array.from(root?.querySelectorAll?.('img, source') || []).forEach(image => {
+      const values = [
+        image.getAttribute?.('data-src'),
+        image.getAttribute?.('data-original'),
+        image.getAttribute?.('src'),
+        image.getAttribute?.('srcset')
+      ].filter(Boolean);
+      values.forEach(value => {
+        String(value).split(',').forEach(part => {
+          const candidate = part.trim().split(/\s+/)[0];
+          if (!candidate || /spacer|blank|pixel/i.test(candidate)) return;
+          const absolute = absoluteUrl(candidate, base);
+          if (absolute && !urls.includes(absolute)) urls.push(absolute);
+        });
+      });
+    });
+    return urls;
+  }
+
+  function extractHibidPastAuctionRows(root = document, loc = (typeof location !== 'undefined' ? location : null), pageKind = '') {
+    const effectiveLoc = loc || (typeof location !== 'undefined' ? location : {});
+    const resolvedPageKind = hibidAccountAuctionPageKind(pageKind || resolveHiBidPage(effectiveLoc));
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://hibid.com/');
+    const blocks = Array.from(root?.querySelectorAll?.('.listing-box-title') || []);
+    return blocks.map((block, index) => {
+      const catalogLink = block.querySelector?.('a[href*="/catalog/"]');
+      const mapLink = block.querySelector?.('a.alert-link[href], a[href*="maps.google"]');
+      const catalogUrl = absoluteUrl(controlHref(catalogLink), base);
+      if (!catalogUrl) return null;
+      const title = textOf(block.querySelector?.('strong')) || textOf(catalogLink);
+      const locationText = textOf(mapLink);
+      const rawText = rawTextOf(block);
+      const dateText = rawText
+        .replace(title, '')
+        .replace(locationText, '')
+        .replace(/^\s*\|\s*/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const auctionId = catalogUrl.match(/\/catalog\/(\d+)/i)?.[1] || '';
+      const container = hibidAccountAuctionContainer(block);
+      const groupHeader = hibidAccountAuctionGroupHeader(block);
+      return {
+        source: 'HiBid',
+        pageKind: resolvedPageKind,
+        accountPageUrl: base,
+        auctionId,
+        auctionTitle: title,
+        catalogUrl,
+        location: locationText,
+        locationUrl: absoluteUrl(controlHref(mapLink), base),
+        dateText,
+        rawText,
+        scopeKey: `${resolvedPageKind}:${auctionId || catalogUrl}:${index}`,
+        selectedGroupFound: Boolean(container),
+        __element: block,
+        __container: container,
+        __groupHeader: groupHeader
+      };
+    }).filter(Boolean);
+  }
+
+  function extractHibidAccountAuctionLot(tile, auctionContext, loc, pageKind) {
+    const base = extractCurrentBidsLot(tile);
+    const rawText = rawTextOf(tile);
+    const fields = {
+      ...hibidDescriptionFieldsFromText(rawText),
+      ...hibidDescriptionFieldsFromRoot(tile)
+    };
+    const itemBase = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://hibid.com/');
+    const images = hibidImageUrls(tile, itemBase);
+    const description = pickFirstDescription(tile)
+      || hibidDescriptionSectionFromText(rawText)
+      || hibidFieldValueFromText(rawText, ['Features and Notes', "Auctioneer's Note"])
+      || '';
+    const priceText = rawText.match(/(?:Price Realized|Current Bid|High Bid|Lot Won|Sold For):?\s*\$?\s*([\d,.]+\s*(?:USD)?(?:\s*\/\s*(?:Lot|ea))?)/i)?.[1] || '';
+    const status = extractCurrentBidsStatus(rawText);
+    const explicitLead = textOf(tile.querySelector?.('.lead, [data-lead], .lot-title'));
+    const parsedLead = fields.lead && !/(Group\s*-\s*Category|Description|Current\s+Bid|High\s+Bid)/i.test(fields.lead)
+      ? fields.lead
+      : '';
+    const lead = explicitLead || parsedLead || base.title || '';
+    const groupCategory = fields.groupCategory || '';
+    return {
+      source: 'HiBid',
+      pageKind: pageKind || auctionContext.pageKind || '',
+      accountPageUrl: auctionContext.accountPageUrl || '',
+      auctionId: auctionContext.auctionId || '',
+      auctionTitle: auctionContext.auctionTitle || '',
+      catalogUrl: auctionContext.catalogUrl || '',
+      location: auctionContext.location || '',
+      dateText: auctionContext.dateText || '',
+      id: base.id || base.lot || base.url,
+      lot: base.lot || '',
+      title: base.title || lead,
+      lead,
+      groupCategory,
+      description,
+      descriptionFields: fields,
+      url: base.url || '',
+      detailUrl: base.url || '',
+      image: images[0] || base.image || '',
+      images: images.length ? images : (base.image ? [base.image] : []),
+      highBid: base.highBid || (priceText ? `High Bid: ${priceText}` : ''),
+      highBidAmount: base.highBidAmount ?? moneyFromText(priceText),
+      currentBid: base.highBidAmount ?? moneyFromText(priceText),
+      priceRealized: /(?:Price Realized|Sold For|Lot Won)/i.test(rawText) ? moneyFromText(priceText) : null,
+      bidCount: base.bidCount || '',
+      bidCountNumber: base.bidCountNumber ?? null,
+      timeLeft: base.timeLeft || '',
+      status,
+      accountStatus: status,
+      rawText,
+      sourceUrls: [base.url || auctionContext.catalogUrl || auctionContext.accountPageUrl].filter(Boolean),
+      detailFetched: false,
+      detailError: ''
+    };
+  }
+
+  function extractHibidAccountAuctionLots(root = document, auctionContext = {}, loc = (typeof location !== 'undefined' ? location : null), pageKind = '') {
+    const context = auctionContext || {};
+    const effectiveLoc = loc || (typeof location !== 'undefined' ? location : null);
+    const container = context.__container;
+    if (!container) return [];
+    return hibidAccountAuctionLotTiles(container, context.__groupHeader)
+      .map(tile => extractHibidAccountAuctionLot(tile, context, effectiveLoc, pageKind || context.pageKind))
+      .filter(item => item.lot || item.url);
+  }
+
+  function extractHibidLotDetail(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://hibid.com/');
+    const rawText = rawTextOf(root?.body || root?.documentElement || root);
+    const rootFields = hibidDescriptionFieldsFromRoot(root);
+    const textFields = hibidDescriptionFieldsFromText(rawText);
+    const fields = { ...textFields, ...rootFields };
+    const lot = hibidFieldValueFromText(rawText, ['Lot #', 'Lot'])
+      || rawText.match(/\bLot\s*#?\s*:?\s*(\d+[A-Za-z-]*)/i)?.[1]
+      || '';
+    const lead = fields.lead
+      || textOf(root?.querySelector?.('.lot-title, .lot-detail-title, h1, h2, [class*="title"]'))
+      || '';
+    const description = hibidDescriptionSectionFromText(rawText)
+      || hibidFieldValueFromText(rawText, ['Features and Notes', "Auctioneer's Note"])
+      || pickFirstDescription(root)
+      || '';
+    const images = hibidImageUrls(root, base);
+    const priceText = rawText.match(/(?:Price Realized|Current Bid|High Bid|Lot Won|Sold For):?\s*\$?\s*([\d,.]+\s*(?:USD)?(?:\s*\/\s*(?:Lot|ea))?)/i)?.[1] || '';
+    return {
+      source: 'HiBid',
+      pageKind: 'hibid-lot-detail',
+      lot,
+      title: lead,
+      lead,
+      groupCategory: fields.groupCategory || '',
+      description,
+      descriptionFields: fields,
+      url: base,
+      detailUrl: base,
+      image: images[0] || '',
+      images,
+      currentBid: moneyFromText(priceText),
+      highBid: priceText ? `High Bid: ${priceText}` : '',
+      highBidAmount: moneyFromText(priceText),
+      bidCount: rawText.match(/\b\d+\s+Bids?\b/i)?.[0] || '',
+      status: extractCurrentBidsStatus(rawText),
+      rawText
+    };
+  }
+
+  function normalizeHibidAccountAuctionItem(item = {}) {
+    return {
+      source: item.source || 'HiBid',
+      pageKind: item.pageKind || '',
+      auctionId: item.auctionId || '',
+      auctionTitle: item.auctionTitle || '',
+      lot: item.lot || '',
+      id: item.id || '',
+      title: item.title || '',
+      lead: item.lead || '',
+      groupCategory: item.groupCategory || '',
+      description: item.description || '',
+      descriptionFields: item.descriptionFields || {},
+      url: item.url || '',
+      detailUrl: item.detailUrl || item.url || '',
+      image: item.image || '',
+      images: Array.isArray(item.images) ? item.images : (item.image ? [item.image] : []),
+      highBid: item.highBid || '',
+      highBidAmount: item.highBidAmount ?? null,
+      currentBid: item.currentBid ?? item.highBidAmount ?? null,
+      priceRealized: item.priceRealized ?? null,
+      bidCount: item.bidCount || '',
+      bidCountNumber: item.bidCountNumber ?? null,
+      timeLeft: item.timeLeft || '',
+      status: item.status || item.accountStatus || '',
+      accountStatus: item.accountStatus || item.status || '',
+      rawText: item.rawText || '',
+      sourceUrls: Array.isArray(item.sourceUrls) ? item.sourceUrls : [],
+      detailFetched: Boolean(item.detailFetched),
+      detailError: item.detailError || ''
+    };
+  }
+
+  function normalizeHibidAccountAuctionContext(context = {}) {
+    return {
+      source: context.source || 'HiBid',
+      pageKind: context.pageKind || '',
+      scope: context.scope || 'selected-account-auction-group',
+      accountPageUrl: context.accountPageUrl || '',
+      auctionId: context.auctionId || '',
+      auctionTitle: context.auctionTitle || '',
+      catalogUrl: context.catalogUrl || '',
+      location: context.location || '',
+      locationUrl: context.locationUrl || '',
+      dateText: context.dateText || ''
+    };
+  }
+
+  function mergeHibidAccountAuctionDetail(item, detail) {
+    if (!detail) return item;
+    const merged = { ...item };
+    ['title', 'lead', 'groupCategory', 'description', 'detailUrl', 'highBid', 'status'].forEach(key => {
+      if (detail[key]) merged[key] = detail[key];
+    });
+    if (detail.descriptionFields && Object.keys(detail.descriptionFields).length) {
+      merged.descriptionFields = { ...item.descriptionFields, ...detail.descriptionFields };
+    }
+    if (detail.images?.length) {
+      merged.images = Array.from(new Set([...(item.images || []), ...detail.images]));
+      merged.image = merged.images[0] || item.image || '';
+    }
+    if (detail.currentBid !== null && detail.currentBid !== undefined) merged.currentBid = detail.currentBid;
+    if (detail.highBidAmount !== null && detail.highBidAmount !== undefined) merged.highBidAmount = detail.highBidAmount;
+    if (detail.bidCount) merged.bidCount = detail.bidCount;
+    if (detail.rawText) merged.rawText = `${item.rawText || ''}\n[DETAIL PAGE]\n${detail.rawText}`.trim();
+    merged.sourceUrls = Array.from(new Set([...(item.sourceUrls || []), detail.url].filter(Boolean)));
+    merged.detailFetched = true;
+    return merged;
+  }
+
+  async function scrapeHibidAccountAuction(auctionContext = {}, onProgress = () => {}, shouldStop = () => false, root = document, options = {}) {
+    const pageKind = hibidAccountAuctionPageKind(auctionContext.pageKind) || 'pastwatchlist';
+    const items = extractHibidAccountAuctionLots(root, auctionContext, typeof location !== 'undefined' ? location : null, pageKind);
+    const audit = {
+      selectedGroupFound: Boolean(auctionContext.__container),
+      lotsCollected: items.length,
+      detailsRequested: 0,
+      detailsSucceeded: 0,
+      detailsFailed: 0,
+      failures: [],
+      stopReason: ''
+    };
+    if (!audit.selectedGroupFound) {
+      audit.stopReason = 'selected-group-not-found';
+      return { context: { ...auctionContext, __element: undefined, __container: undefined }, items: [], audit, stopped: false };
+    }
+    const queue = items.map((item, index) => ({ item, index }));
+    const controller = options.signal ? null : (typeof AbortController === 'function' ? new AbortController() : null);
+    const signal = options.signal || controller?.signal;
+    const worker = async () => {
+      while (queue.length) {
+        if (shouldStop() || signal?.aborted) return;
+        const next = queue.shift();
+        if (!next) return;
+        const item = next.item;
+        if (!item.url || typeof fetch !== 'function' || typeof DOMParser !== 'function') {
+          audit.detailsFailed += 1;
+          const reason = !item.url ? 'missing-detail-url' : 'browser-fetch-unavailable';
+          audit.failures.push({ lot: item.lot || '', url: item.url || '', reason });
+          items[next.index] = { ...item, detailError: reason, detailFetched: false };
+          continue;
+        }
+        audit.detailsRequested += 1;
+        onProgress(`Reading lot ${item.lot || next.index + 1} detail...`);
+        try {
+          const response = await fetch(item.url, {
+            credentials: 'same-origin',
+            cache: 'no-cache',
+            ...(signal ? { signal } : {})
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const html = await response.text();
+          const detailDoc = new DOMParser().parseFromString(html, 'text/html');
+          items[next.index] = mergeHibidAccountAuctionDetail(item, extractHibidLotDetail(detailDoc, new URL(item.url)));
+          audit.detailsSucceeded += 1;
+        } catch (error) {
+          audit.detailsFailed += 1;
+          audit.failures.push({ lot: item.lot || '', url: item.url, reason: String(error?.message || error) });
+          items[next.index] = { ...item, detailError: String(error?.message || error), detailFetched: false };
+          debug('HiBid account lot detail enrichment failed', { lot: item.lot, url: debugHref(item.url), error: error?.message || String(error) });
+        }
+      }
+    };
+    const workerCount = Math.min(4, Math.max(1, queue.length));
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    audit.stopReason = shouldStop() || signal?.aborted
+      ? 'user-stop'
+      : (audit.detailsFailed ? 'partial-detail-failures' : 'complete');
+    return {
+      context: {
+        source: 'HiBid',
+        pageKind,
+        scope: 'selected-account-auction-group',
+        accountPageUrl: auctionContext.accountPageUrl || '',
+        auctionId: auctionContext.auctionId || '',
+        auctionTitle: auctionContext.auctionTitle || '',
+        catalogUrl: auctionContext.catalogUrl || '',
+        location: auctionContext.location || '',
+        locationUrl: auctionContext.locationUrl || '',
+        dateText: auctionContext.dateText || ''
+      },
+      items: items.map(normalizeHibidAccountAuctionItem),
+      audit,
+      stopped: audit.stopReason === 'user-stop'
+    };
+  }
+
+  function buildHibidAccountAuctionJsonPayload(exportData = {}) {
+    return JSON.stringify({
+      context: normalizeHibidAccountAuctionContext(exportData.context || {}),
+      items: Array.isArray(exportData.items) ? exportData.items.map(normalizeHibidAccountAuctionItem) : [],
+      audit: exportData.audit || {}
+    }, null, 2);
+  }
+
+  function buildHibidAccountAuctionLlmBrief(exportData = {}, context = {}) {
+    const payload = {
+      context: normalizeHibidAccountAuctionContext({ ...(exportData.context || {}), ...context }),
+      items: Array.isArray(exportData.items) ? exportData.items.map(normalizeHibidAccountAuctionItem) : [],
+      audit: exportData.audit || {}
+    };
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      'HiBid past-account auction research:',
+      'Review only the selected account auction group in this export. Do not bid, watch, unwatch, checkout, or change account state from this brief.',
+      'Use every supplied lead, Group - Category value, description field, raw description, and image URL. Missing evidence is not proof that a lot has no resale value.',
+      'The account page indicates saved bid/watch context; preserve that status separately from resale conclusions.',
+      '',
+      'Selected auction export:',
+      JSON.stringify(payload, null, 2)
+    ].join('\n');
+  }
+
+  function uniqueLots(lots) {
+    const unique = new Map();
+    lots.forEach(lot => {
+      const key = scraperStableIdentity(lot, 'hibid')
+        || [lot?.auctionId, lot?.lot].filter(Boolean).join(':')
+        || String(lot?.lot || '');
+      if (key && !unique.has(String(key))) unique.set(String(key), lot);
+    });
+    return Array.from(unique.values());
+  }
+
+  function evaluateLot(lot, planEntry, options = {}) {
+    if (!planEntry) return { status: 'not planned', eligible: false };
+    if (!titleMatches(lot.title, planEntry.title)) return { status: 'title mismatch', eligible: false };
+    if (!Number.isFinite(planEntry.max) || planEntry.max <= 0) return { status: 'add max', eligible: false };
+    if (options.requireOutbid && !lot.isOutbid) return { status: 'not outbid', eligible: false };
+    if (lot.isWinning) return { status: 'already winning', eligible: false };
+    if (!Number.isFinite(lot.nextBidAmount)) return { status: 'no bid button', eligible: false };
+    if (lot.nextBidAmount > planEntry.max) return { status: 'over max', eligible: false };
+    return { status: 'eligible', eligible: true };
+  }
+
+  function evaluateLiveLot(liveState, planEntry) {
+    if (!planEntry) return { status: 'not planned', eligible: false };
+    if (!Number.isFinite(planEntry.max) || planEntry.max <= 0) return { status: 'add max', eligible: false };
+    if (!liveState?.lot) return { status: 'no live lot', eligible: false };
+    if (!titleMatches(liveState.title, planEntry.title)) return { status: 'title mismatch', eligible: false };
+    if (!liveState.bidButton || !isVisible(liveState.bidButton)) return { status: 'no live bid button', eligible: false };
+    if (!Number.isFinite(liveState.nextBidAmount)) return { status: 'no live ask', eligible: false };
+    if (liveState.nextBidAmount > planEntry.max) return { status: 'over max', eligible: false };
+    return { status: 'eligible', eligible: true };
+  }
+
+  function decodeHtml(value) {
+    return String(value || '')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&#x([0-9a-f]+);/gi, (entity, digits) => {
+        const codePoint = Number.parseInt(digits, 16);
+        return Number.isInteger(codePoint) && codePoint <= 0x10FFFF
+          ? String.fromCodePoint(codePoint)
+          : entity;
+      })
+      .replace(/&#(\d+);/g, (entity, digits) => {
+        const codePoint = Number.parseInt(digits, 10);
+        return Number.isInteger(codePoint) && codePoint <= 0x10FFFF
+          ? String.fromCodePoint(codePoint)
+          : entity;
+      })
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&nbsp;/g, ' ');
+  }
+
+  function stripHtml(value) {
+    return decodeHtml(String(value || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+  }
+
+  function firstMatch(value, patterns) {
+    for (const pattern of patterns) {
+      const match = String(value || '').match(pattern);
+      if (match?.[1]) return decodeHtml(match[1]).trim();
+    }
+    return '';
+  }
+
+  function parseDollarAmount(value) {
+    const match = String(value || '').match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
+    return match ? Number(match[1].replace(/,/g, '')) : null;
+  }
+
+  function parsePlainInteger(value) {
+    const match = String(value || '').match(/\b([\d,]+)\b/);
+    return match ? Number(match[1].replace(/,/g, '')) : null;
+  }
+
+  function cleanListingTitle(value) {
+    return decodeHtml(String(value || ''))
+      .replace(/\s+/g, ' ')
+      .replace(/^Mark as sold\s+/i, '')
+      .trim();
+  }
+
+  function cleanEbaySellerHubTitle(value) {
+    let title = cleanListingTitle(value).replace(/\s+\|\s+eBay$/i, '').trim();
+    const prefixes = [
+      /^[^|]{1,40}\|\s*/i,
+      /^eBay\s*\|\s*/i,
+      /^Item photo\.\s*/i,
+      /^Show Listing Details(?:\s+new)?\.\s*/i,
+      /^(?:\d+\s+)?Link\.\s*/i,
+      /^Bids:\s*\d+\.?\s*/i,
+      /^Show Bid History\.?\s*/i,
+      /^Listing\.?\s*/i,
+    ];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      prefixes.forEach(pattern => {
+        const next = title.replace(pattern, '').trim();
+        if (next !== title) {
+          title = next;
+          changed = true;
+        }
+      });
+    }
+    title = title
+      .replace(/^.{0,120}\bListing\.?\s+/i, '')
+      .replace(/\s+\|\s+eBay$/i, '')
+      .trim();
+    return title;
+  }
+
+  function normalizeListingUrl(value) {
+    const url = decodeHtml(value || '').trim();
+    if (!url) return '';
+    if (/^https?:\/\//i.test(url)) return url;
+    if (url.startsWith('/')) {
+      if (/\/marketplace\//i.test(url)) return `https://www.facebook.com${url}`;
+      return `https://www.ebay.com${url}`;
+    }
+    return url;
+  }
+
+  function dedupeListings(listings) {
+    const seen = new Map();
+    const result = [];
+    listings.forEach(listing => {
+      const source = listing.source || '';
+      const itemId = listing.itemId || '';
+      const key = itemId
+        ? `${source}|id:${itemId}`
+        : [
+            source,
+            listing.url || '',
+            String(listing.title || '').toLowerCase(),
+            listing.price ?? ''
+          ].join('|');
+      if (seen.has(key)) {
+        const index = seen.get(key);
+        const existing = result[index];
+        const listingScore = listingQuality(listing);
+        const existingScore = listingQuality(existing);
+        if (listingScore > existingScore || (
+          listingScore === existingScore &&
+          Number.isFinite(listing.price) &&
+          Number.isFinite(existing.price) &&
+          listing.price < existing.price
+        )) {
+          result[index] = listing;
+        }
+        return;
+      }
+      seen.set(key, result.length);
+      result.push(listing);
+    });
+    return result;
+  }
+
+  function listingQuality(listing) {
+    let score = 0;
+    const title = String(listing?.title || '');
+    if (title && !/^eBay\s*\|/i.test(title)) score += 20;
+    if (!/Item photo|Show Listing Details|Show Bid History|^Edit$/i.test(title)) score += 20;
+    if (/\/itm\/\d+/i.test(listing?.url || '')) score += 10;
+    if (Number.isFinite(listing?.views)) score += 3;
+    if (Number.isFinite(listing?.watchers)) score += 3;
+    if (listing?.shippingText) score += 1;
+    if (listing?.customLabel) score += 2;
+    if (Number.isFinite(listing?.quantityAvailable)) score += 2;
+    if (Number.isFinite(listing?.quantityTotal)) score += 1;
+    return score;
+  }
+
+  function amountFromState(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'string') {
+      const parsed = moneyFromText(value) ?? Number(value.replace?.(/,/g, ''));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    if (value && typeof value === 'object') {
+      return amountFromState(value.amount ?? value.value ?? value.current ?? value.bid);
+    }
+    return null;
+  }
+
+  function stateText(value, depth = 0) {
+    if (depth > 4 || value === undefined || value === null) return '';
+    if (typeof value === 'string' || typeof value === 'number') return stripHtml(String(value)).trim();
+    if (Array.isArray(value)) return value.map(item => stateText(item, depth + 1)).filter(Boolean).join(' ').trim();
+    if (typeof value !== 'object') return '';
+    const nested = firstDefined(
+      value.text,
+      value.value,
+      value.title,
+      value.name,
+      value.lead,
+      value.label,
+      value.description,
+      value.displayValue,
+      value.message
+    );
+    return stateText(nested, depth + 1);
+  }
+
+  function formatUsd(amount) {
+    return Number.isFinite(amount) ? `${amount.toFixed(2)} USD` : '';
+  }
+
+  function refId(value) {
+    if (typeof value === 'string') return value;
+    return value?.__ref || '';
+  }
+
+  function deref(state, value) {
+    const key = refId(value);
+    return key && state?.[key] ? state[key] : value;
+  }
+
+  function firstDefined(...values) {
+    return values.find(value => value !== undefined && value !== null && value !== '');
+  }
+
+  const HIBID_LOT_SEARCH_QUERY = `
+    query FlipperAddonLotSearch(
+      $auctionId: Int = null,
+      $pageNumber: Int!,
+      $pageLength: Int!,
+      $category: CategoryId = null,
+      $searchText: String = null,
+      $zip: String = null,
+      $miles: Int = null,
+      $shippingOffered: Boolean = false,
+      $countryName: String = null,
+      $state: String = null,
+      $status: AuctionLotStatus = null,
+      $sortOrder: EventItemSortOrder = null,
+      $filter: AuctionLotFilter = null,
+      $isArchive: Boolean = false,
+      $countAsView: Boolean = false,
+      $hideGoogle: Boolean = false,
+      $eventItemIds: [Int!] = null
+    ) {
+      lotSearch(
+        input: {
+          auctionId: $auctionId,
+          category: $category,
+          searchText: $searchText,
+          zip: $zip,
+          miles: $miles,
+          shippingOffered: $shippingOffered,
+          countryName: $countryName,
+          state: $state,
+          status: $status,
+          sortOrder: $sortOrder,
+          filter: $filter,
+          isArchive: $isArchive,
+          countAsView: $countAsView,
+          hideGoogle: $hideGoogle,
+          eventItemIds: $eventItemIds
+        },
+        pageNumber: $pageNumber,
+        pageLength: $pageLength,
+        sortDirection: DESC
+      ) {
+        pagedResults {
+          pageLength
+          pageNumber
+          totalCount
+          filteredCount
+          results {
+            id
+            itemId
+            lotNumber
+            lead
+            description
+            estimate
+            quantity
+            saleOrder
+            ringNumber
+            shippingOffered
+            pictureCount
+            distanceMiles
+            featuredPicture {
+              description
+              fullSizeLocation
+              hdThumbnailLocation
+              thumbnailLocation
+              width
+              height
+            }
+            pictures {
+              description
+              fullSizeLocation
+              hdThumbnailLocation
+              thumbnailLocation
+              width
+              height
+            }
+            category {
+              id
+              categoryName
+              fullCategory
+              description
+              uRLPath
+            }
+            lotState {
+              bidCount
+              highBid
+              minBid
+              buyerBidStatus
+              buyerHighBid
+              isArchived
+              isClosed
+              isLive
+              isNotYetLive
+              isOnLiveCatalog
+              isWatching
+              priceRealized
+              priceRealizedMessage
+              productStatus
+              productUrl
+              status
+              timeLeft
+              timeLeftSeconds
+              timeLeftTitle
+              watchNotes
+            }
+            auction {
+              id
+              eventName
+              description
+              buyerPremium
+              buyerPremiumRate
+              eventAddress
+              eventCity
+              eventState
+              eventZip
+              eventDateBegin
+              eventDateEnd
+              eventDateInfo
+              checkoutDateInfo
+              previewDateInfo
+              currencyAbbreviation
+              lotCount
+              auctioneer {
+                id
+                name
+                address
+                city
+                state
+                postalCode
+                country
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  function hibidRoutePathInfo(route = {}, loc = (typeof location !== 'undefined' ? location : null)) {
+    const url = urlFromLocationLike(loc);
+    const parts = url.pathname.split('/').filter(Boolean);
+    const lower = parts.map(part => part.toLowerCase());
+    const catalogIndex = lower.findIndex(part => part === 'catalog' || part === 'livecatalog');
+    const lotsIndex = lower.findIndex(part => part === 'lots');
+    const auctionId = catalogIndex >= 0 && /^\d+$/.test(parts[catalogIndex + 1] || '')
+      ? Number(parts[catalogIndex + 1])
+      : null;
+    const categoryId = lotsIndex >= 0 && /^\d+$/.test(parts[lotsIndex + 1] || '')
+      ? Number(parts[lotsIndex + 1])
+      : null;
+    return {
+      url,
+      route,
+      isAuctionCatalog: catalogIndex >= 0 && Number.isFinite(auctionId),
+      auctionId,
+      categoryId,
+      statePrefix: route?.statePrefix || (lotsIndex === 1 ? parts[0] : '') || ''
+    };
+  }
+
+  function hibidBooleanParam(url, key, fallback = false) {
+    const value = String(url.searchParams.get(key) || '').trim().toLowerCase();
+    if (!value) return fallback;
+    return value === 'true' || value === '1' || value === 'yes';
+  }
+
+  function hibidIntegerParam(url, key, fallback = null) {
+    const raw = url.searchParams.get(key);
+    if (raw === null || String(raw).trim() === '') return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) ? Math.trunc(value) : fallback;
+  }
+
+  function hibidOptionalNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function hibidCountryCode(value) {
+    const text = String(value || '').trim();
+    if (!text) return null;
+    if (/^(?:united states(?: of america)?|usa|us)$/i.test(text)) return 'USA';
+    if (/^(?:canada|can)$/i.test(text)) return 'CAN';
+    return text;
+  }
+
+  function hibidStatusFilters(url, isAuctionCatalog = false) {
+    const statuses = url.searchParams.getAll('status')
+      .flatMap(value => String(value || '').split(','))
+      .map(value => value.trim().toUpperCase())
+      .filter(Boolean);
+    return Array.from(new Set(statuses.length ? statuses : (isAuctionCatalog ? ['ALL'] : ['OPEN', 'UPCOMING'])));
+  }
+
+  function hibidPortalAuctioneerIds(value) {
+    const values = Array.isArray(value) ? value : String(value || '').split(',');
+    return Array.from(new Set(values
+      .map(item => String(item || '').trim())
+      .filter(item => /^\d+$/.test(item))));
+  }
+
+  function extractHibidPortalSearchContext(root, route = {}) {
+    if (!route?.statePrefix) return { portalAuctioneerIds: [], siteType: 0 };
+    let state = null;
+    try { state = extractHibidStateFromDocument(root); } catch { state = null; }
+    if (!state || typeof state !== 'object') return { portalAuctioneerIds: [], siteType: 2 };
+    const queue = [{ value: state, depth: 0 }];
+    const visited = new Set();
+    let inspected = 0;
+    while (queue.length && inspected < 10000) {
+      const { value, depth } = queue.shift();
+      if (!value || typeof value !== 'object' || visited.has(value)) continue;
+      visited.add(value);
+      inspected += 1;
+      for (const [key, child] of Object.entries(value)) {
+        if (/^portalChildren$/i.test(key)) {
+          const portalAuctioneerIds = hibidPortalAuctioneerIds(child);
+          if (portalAuctioneerIds.length) return { portalAuctioneerIds, siteType: 2 };
+        }
+        if (depth < 6 && child && typeof child === 'object') queue.push({ value: child, depth: depth + 1 });
+      }
+    }
+    return { portalAuctioneerIds: [], siteType: 2 };
+  }
+
+  function buildHibidSearchRequest(route = {}, loc = (typeof location !== 'undefined' ? location : null), page = 1, size = HIBID_API_PAGE_SIZE) {
+    const info = hibidRoutePathInfo(route, loc);
+    const { url } = info;
+    const zip = String(url.searchParams.get('zip') || '').trim();
+    const miles = hibidIntegerParam(url, 'miles', zip ? 50 : null);
+    const searchText = String(url.searchParams.get('q') || '').trim();
+    const statuses = route?.kind === 'live' && !url.searchParams.getAll('status').length
+      ? ['OPEN']
+      : hibidStatusFilters(url, info.isAuctionCatalog);
+    const sortOrder = String(url.searchParams.get('s') || (info.isAuctionCatalog ? 'LOT_NUMBER' : 'NO_ORDER'))
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9_]/g, '_');
+    return {
+      query: searchText || null,
+      options: {
+        auctionId: info.auctionId,
+        auctioneerId: Array.isArray(route?.portalAuctioneerIds) && route.portalAuctioneerIds.length
+          ? route.portalAuctioneerIds
+          : null,
+        categoryId: info.categoryId,
+        country: hibidCountryCode(url.searchParams.get('countryname')),
+        location: zip ? { zipcode: zip, radius: Number.isFinite(miles) ? miles : 50 } : null,
+        portalLocation: null,
+        lotType: [0],
+        maxBid: null,
+        minBid: null,
+        page: Math.max(1, Number(page) || 1),
+        shipping: hibidBooleanParam(url, 'shippingoffered', false),
+        size: Math.max(1, Math.min(100, Number(size) || HIBID_API_PAGE_SIZE)),
+        sortOrder: sortOrder || 'TIME_LEFT',
+        state: null,
+        status: statuses,
+        siteType: Number.isFinite(Number(route?.siteType)) ? Number(route.siteType) : 0
+      }
+    };
+  }
+
+  function buildHibidGraphqlVariables(route = {}, loc = (typeof location !== 'undefined' ? location : null), page = 1, options = {}) {
+    const info = hibidRoutePathInfo(route, loc);
+    const { url } = info;
+    const eventItemIds = Array.isArray(options.eventItemIds)
+      ? options.eventItemIds.map(value => Number(value)).filter(Number.isFinite)
+      : null;
+    const statuses = route?.kind === 'live' && !url.searchParams.getAll('status').length
+      ? ['OPEN']
+      : hibidStatusFilters(url, info.isAuctionCatalog);
+    const zip = String(url.searchParams.get('zip') || '').trim() || null;
+    const countryName = String(url.searchParams.get('countryname') || '').trim() || null;
+    const filterValue = String(url.searchParams.get('filter') || '').trim().toUpperCase();
+    const sortOrder = String(url.searchParams.get('s') || (info.isAuctionCatalog ? 'LOT_NUMBER' : 'NO_ORDER'))
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9_]/g, '_');
+    const hydrateByIds = Boolean(eventItemIds?.length);
+    return {
+      auctionId: hydrateByIds ? null : info.auctionId,
+      pageNumber: Math.max(1, Number(page) || 1),
+      pageLength: Math.max(1, Math.min(HIBID_API_PAGE_SIZE, Number(options.pageLength) || HIBID_API_PAGE_SIZE)),
+      category: hydrateByIds ? null : info.categoryId,
+      searchText: hydrateByIds ? null : (String(url.searchParams.get('q') || '').trim() || null),
+      zip: hydrateByIds ? null : zip,
+      miles: hydrateByIds ? null : hibidIntegerParam(url, 'miles', null),
+      shippingOffered: hydrateByIds ? false : hibidBooleanParam(url, 'shippingoffered', false),
+      countryName: hydrateByIds ? null : countryName,
+      state: null,
+      status: hydrateByIds ? 'ALL' : (statuses.length === 1 ? statuses[0] : 'ALL'),
+      sortOrder: sortOrder || 'LOT_NUMBER',
+      filter: hydrateByIds ? null : (filterValue && filterValue !== 'ALL' ? filterValue : null),
+      isArchive: false,
+      countAsView: false,
+      hideGoogle: false,
+      eventItemIds: hydrateByIds ? eventItemIds : null
+    };
+  }
+
+  function getHibidRouteFingerprint(route = {}, loc = (typeof location !== 'undefined' ? location : null)) {
+    const info = hibidRoutePathInfo(route, loc);
+    const ignored = new Set(['apage']);
+    const params = Array.from(info.url.searchParams.entries())
+      .filter(([key]) => !ignored.has(key.toLowerCase()))
+      .map(([key, value]) => [key.toLowerCase(), String(value)])
+      .sort(([aKey, aValue], [bKey, bValue]) => aKey.localeCompare(bKey) || aValue.localeCompare(bValue));
+    return JSON.stringify({
+      host: info.url.hostname.toLowerCase(),
+      path: info.url.pathname.replace(/\/+$/, '') || '/',
+      kind: route?.kind || '',
+      auctionId: info.auctionId,
+      categoryId: info.categoryId,
+      filters: params
+    });
+  }
+
+  function hibidDescriptionText(value) {
+    return decodeHtml(String(value || '')
+      .replace(/<\s*br\s*\/?>/gi, '\n')
+      .replace(/<\/(?:p|div|li|tr|h\d)>/gi, '\n')
+      .replace(/<li\b[^>]*>/gi, '- ')
+      .replace(/<[^>]+>/g, ' '))
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n[ \t]+/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
+  }
+
+  function hibidPictureUrl(picture) {
+    return String(firstDefined(
+      picture?.fullSizeLocation,
+      picture?.hdThumbnailLocation,
+      picture?.thumbnailLocation,
+      picture?.url,
+      picture?.src,
+      ''
+    ) || '').trim();
+  }
+
+  function normalizeHibidGraphqlLot(lot, context = {}) {
+    if (!lot || typeof lot !== 'object') return null;
+    const id = String(firstDefined(lot.id, lot.eventItemId, lot.itemId, '') || '').trim();
+    if (!id) return null;
+    const lotState = lot.lotState || {};
+    const auction = lot.auction || {};
+    const auctioneer = auction.auctioneer || {};
+    const descriptionHtml = String(lot.description || '').trim();
+    const description = hibidDescriptionText(descriptionHtml);
+    const pictureRecords = [lot.featuredPicture, ...(Array.isArray(lot.pictures) ? lot.pictures : [])].filter(Boolean);
+    const images = Array.from(new Set(pictureRecords.map(hibidPictureUrl).filter(Boolean)));
+    const categoryRecords = (Array.isArray(lot.category) ? lot.category : [lot.category]).filter(Boolean);
+    const categoryLabels = Array.from(new Set(categoryRecords
+      .map(category => stateText(firstDefined(category?.fullCategory, category?.categoryName, category?.name, '')))
+      .filter(Boolean)));
+    const highBidAmount = amountFromState(firstDefined(lotState.highBid, lotState.priceRealized, lot.bidAmount));
+    const nextBidAmount = amountFromState(lotState.minBid);
+    const bidCountNumber = Number(lotState.bidCount);
+    const status = stateText(firstDefined(lotState.status, lotState.productStatus, lotState.priceRealizedMessage, ''));
+    const lotNumber = String(firstDefined(lot.lotNumber, lot.saleOrder, id) || '').trim();
+    const title = stateText(firstDefined(lot.lead, lot.title, lot.name, lotNumber ? `Lot ${lotNumber}` : ''));
+    const productUrl = String(lotState.productUrl || '').trim();
+    const url = productUrl
+      ? absoluteUrl(productUrl, context.url)
+      : normalizeLotUrl({ id, itemId: lot.itemId, lotNumber }, context);
+    const locationText = [auction.eventAddress, auction.eventCity, auction.eventState, auction.eventZip]
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .join(', ')
+      .replace(/, ([A-Z]{2}), /, ', $1 ');
+    return {
+      source: 'hibid-api',
+      pageKind: context.pageKind || context.route?.kind || 'catalog',
+      id,
+      itemId: String(lot.itemId || ''),
+      lot: lotNumber,
+      lotNumber,
+      title,
+      lead: title,
+      url,
+      image: images[0] || '',
+      images,
+      pictureCount: Number(lot.pictureCount) || images.length,
+      description,
+      descriptionHtml,
+      category: categoryLabels[0] || '',
+      categories: categoryLabels,
+      categoryId: String(categoryRecords[0]?.id || ''),
+      estimate: stateText(lot.estimate),
+      highBid: Number.isFinite(highBidAmount) ? `High Bid: ${formatUsd(highBidAmount)}` : '',
+      highBidAmount,
+      currentPrice: highBidAmount,
+      currentBid: highBidAmount,
+      nextBid: Number.isFinite(nextBidAmount) ? `Bid ${formatUsd(nextBidAmount)}` : '',
+      nextBidAmount,
+      bidCount: Number.isFinite(bidCountNumber) ? `${bidCountNumber} ${bidCountNumber === 1 ? 'Bid' : 'Bids'}` : '',
+      bidCountNumber: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      status,
+      userBidStatus: extractUserBidStatus(`${status} ${lotState.buyerBidStatus || ''}`),
+      timeLeft: stateText(firstDefined(lotState.timeLeft, lotState.timeLeftTitle, '')),
+      timeLeftSeconds: Number.isFinite(Number(lotState.timeLeftSeconds)) ? Number(lotState.timeLeftSeconds) : null,
+      watched: Boolean(lotState.isWatching),
+      watchNotes: stateText(lotState.watchNotes),
+      quantity: Number.isFinite(Number(lot.quantity)) ? Number(lot.quantity) : null,
+      shippingOffered: Boolean(lot.shippingOffered),
+      distanceMiles: Number.isFinite(Number(lot.distanceMiles)) ? Number(lot.distanceMiles) : null,
+      auctionId: String(auction.id || context.auctionId || ''),
+      auctionTitle: stateText(firstDefined(auction.eventName, context.auctionTitle, '')),
+      auctionDescription: hibidDescriptionText(auction.description || ''),
+      auctioneer: stateText(auctioneer.name),
+      buyerPremium: stateText(auction.buyerPremium),
+      buyerPremiumRate: Number.isFinite(Number(auction.buyerPremiumRate)) ? Number(auction.buyerPremiumRate) : null,
+      location: locationText,
+      eventDateInfo: stateText(firstDefined(auction.eventDateInfo, auction.eventDateEnd, '')),
+      rawText: [lotNumber ? `Lot ${lotNumber}` : '', title, description, status].filter(Boolean).join(' | ').slice(0, 6000)
+    };
+  }
+
+  function hibidApiErrorText(error) {
+    return String(error?.message || error || 'Unknown HiBid API error').replace(/\s+/g, ' ').trim().slice(0, 500);
+  }
+
+  function hibidGmJsonRequest(url, body, timeoutMs = HIBID_API_TIMEOUT_MS) {
+    if (typeof GM_xmlhttpRequest !== 'function') return Promise.reject(new Error('GM_xmlhttpRequest unavailable'));
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url,
+        headers: { 'Content-Type': 'application/json' },
+        data: JSON.stringify(body),
+        timeout: timeoutMs,
+        anonymous: false,
+        onload(response) {
+          if (response.status < 200 || response.status >= 300) {
+            reject(Object.assign(new Error(`HTTP ${response.status}`), { status: response.status }));
+            return;
+          }
+          try {
+            resolve(JSON.parse(response.responseText || '{}'));
+          } catch (error) {
+            reject(new Error(`Invalid JSON: ${error.message}`));
+          }
+        },
+        ontimeout() { reject(new Error(`Request timed out after ${timeoutMs}ms`)); },
+        onerror(error) { reject(new Error(error?.error || error?.message || 'GM request failed')); }
+      });
+    });
+  }
+
+  async function requestHibidJson(url, body, options = {}) {
+    const fetchImpl = options.fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
+    const retries = Math.max(1, Number(options.retries) || HIBID_API_RETRIES);
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || HIBID_API_TIMEOUT_MS);
+    const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? 300));
+    const shouldStop = options.shouldStop || (() => false);
+    const errors = [];
+    const requestStartedAt = Date.now();
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      if (shouldStop()) throw new Error('HiBid API request stopped');
+      const attemptStartedAt = Date.now();
+      let timeoutId = null;
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      try {
+        debugEvent('hibid.api.request.start', {
+          endpoint: debugHref(url),
+          operation: body?.operationName || (url.includes('/search/lot') ? 'LotIndex' : 'Unknown'),
+          attempt
+        });
+        let json;
+        if (fetchImpl) {
+          try {
+            if (controller) timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            const response = await fetchImpl(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: url.startsWith('https://hibid-api.io/') ? 'omit' : 'include',
+              cache: 'no-store',
+              body: JSON.stringify(body),
+              ...(controller ? { signal: controller.signal } : {})
+            });
+            if (!response?.ok) throw Object.assign(new Error(`HTTP ${response?.status || 0}`), { status: Number(response?.status) || 0 });
+            json = await response.json();
+          } catch (fetchError) {
+            if (!url.startsWith('https://hibid-api.io/') || typeof GM_xmlhttpRequest !== 'function') throw fetchError;
+            debugEvent('hibid.api.request.transport-fallback', {
+              endpoint: debugHref(url),
+              attempt,
+              from: 'fetch',
+              to: 'GM_xmlhttpRequest',
+              error: hibidApiErrorText(fetchError)
+            });
+            json = await hibidGmJsonRequest(url, body, timeoutMs);
+          }
+        } else {
+          json = await hibidGmJsonRequest(url, body, timeoutMs);
+        }
+        if (Array.isArray(json?.errors) && json.errors.length) {
+          throw Object.assign(new Error(json.errors.map(error => error?.message || String(error)).join('; ')), { permanent: true });
+        }
+        debugEvent('hibid.api.request.success', {
+          endpoint: debugHref(url),
+          operation: body?.operationName || (url.includes('/search/lot') ? 'LotIndex' : 'Unknown'),
+          attempt
+        });
+        return { json, attempts: attempt, errors, durationMs: Date.now() - requestStartedAt };
+      } catch (error) {
+        const message = hibidApiErrorText(error);
+        errors.push({ attempt, message, durationMs: Date.now() - attemptStartedAt });
+        debugEvent('hibid.api.request.failure', {
+          endpoint: debugHref(url),
+          operation: body?.operationName || (url.includes('/search/lot') ? 'LotIndex' : 'Unknown'),
+          attempt,
+          error: message
+        });
+        const status = Number(error?.status);
+        const permanentClientError = Number.isFinite(status) && status >= 400 && status < 500 && ![408, 429].includes(status);
+        if (attempt >= retries || error?.permanent || permanentClientError) {
+          throw Object.assign(new Error(message), { attempts: attempt, errors, status: status || undefined });
+        }
+        if (retryDelayMs) await wait(retryDelayMs * attempt * attempt);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    }
+    throw new Error('HiBid API request failed');
+  }
+
+  async function mapHibidConcurrent(values, limit, worker, shouldStop = () => false) {
+    const items = Array.from(values || []);
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    const count = Math.max(1, Math.min(Number(limit) || 1, items.length || 1));
+    async function run() {
+      while (nextIndex < items.length) {
+        if (shouldStop()) return;
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await worker(items[index], index);
+      }
+    }
+    await Promise.all(Array.from({ length: count }, () => run()));
+    return results;
+  }
+
+  async function retryHibidShortPage(initialResult, expectedCount, fetchAgain, options = {}) {
+    const attempts = Math.max(1, Number(options.coverageAttempts) || HIBID_API_RETRIES);
+    const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? 300));
+    const shouldStop = options.shouldStop || (() => false);
+    const countOf = options.countOf || (result => result?.results?.length || 0);
+    const label = options.label || 'page';
+    let result = initialResult;
+    let coverageAttempts = 1;
+    const observedTotals = [Number(firstDefined(result?.filteredCount, result?.totalCount))].filter(Number.isFinite);
+    while (!shouldStop() && countOf(result) !== expectedCount && coverageAttempts < attempts) {
+      coverageAttempts += 1;
+      debugEvent('hibid.api.retry', {
+        reason: 'short-page',
+        label,
+        expected: expectedCount,
+        returned: countOf(result),
+        attempt: coverageAttempts
+      });
+      if (retryDelayMs) await wait(retryDelayMs * coverageAttempts);
+      result = await fetchAgain();
+      const observedTotal = Number(firstDefined(result?.filteredCount, result?.totalCount));
+      if (Number.isFinite(observedTotal)) observedTotals.push(observedTotal);
+    }
+    return {
+      result,
+      coverageAttempts,
+      observedTotals,
+      complete: countOf(result) === expectedCount
+    };
+  }
+
+  async function fetchHibidGraphqlPage(route, loc, page, options = {}) {
+    const url = urlFromLocationLike(loc);
+    const variables = buildHibidGraphqlVariables(route, url, page, options);
+    const endpoint = new URL('/graphql', url.origin).href;
+    const response = await requestHibidJson(endpoint, {
+      operationName: 'FlipperAddonLotSearch',
+      variables,
+      query: HIBID_LOT_SEARCH_QUERY
+    }, options);
+    const paged = response.json?.data?.lotSearch?.pagedResults;
+    if (!paged || !Array.isArray(paged.results)) throw new Error('HiBid GraphQL response did not contain lotSearch results');
+    return {
+      page: Number(paged.pageNumber) || Number(page) || 1,
+      pageLength: Number(paged.pageLength) || variables.pageLength,
+      totalCount: hibidOptionalNumber(paged.totalCount),
+      filteredCount: hibidOptionalNumber(paged.filteredCount),
+      results: paged.results,
+      attempts: response.attempts,
+      durationMs: response.durationMs,
+      variables
+    };
+  }
+
+  async function fetchHibidSearchPage(route, loc, page, options = {}) {
+    const body = buildHibidSearchRequest(route, loc, page, options.pageSize || HIBID_API_PAGE_SIZE);
+    const response = await requestHibidJson(HIBID_SEARCH_ENDPOINT, body, options);
+    const data = response.json?.data;
+    if (!data || !Array.isArray(data.lots)) throw new Error('HiBid search response did not contain lot IDs');
+    const noExactMatches = Boolean(data.noExactMatches) && Boolean(body.query);
+    return {
+      page: Number(data.pageNumber) || Number(page) || 1,
+      pageSize: Number(data.pageSize) || body.options.size,
+      totalCount: hibidOptionalNumber(data.totalCount),
+      filteredCount: hibidOptionalNumber(data.filteredCount),
+      totalPages: hibidOptionalNumber(data.totalPages),
+      ids: noExactMatches ? [] : data.lots.map(lot => String(lot?.id || '')).filter(Boolean),
+      noExactMatches,
+      attempts: response.attempts,
+      durationMs: response.durationMs,
+      request: body
+    };
+  }
+
+  async function enumerateHibidLotIds(route = {}, loc = (typeof location !== 'undefined' ? location : null), options = {}) {
+    const info = hibidRoutePathInfo(route, loc);
+    const onProgress = options.onProgress || (() => {});
+    const shouldStop = options.shouldStop || (() => false);
+    const failures = [];
+    const pageStats = [];
+    const directGraphql = info.isAuctionCatalog && hibidStatusFilters(info.url, true).length <= 1;
+    debugEvent('hibid.api.enumerate.start', {
+      strategy: directGraphql ? 'graphql-auction' : 'search-index',
+      auctionId: info.auctionId,
+      categoryId: info.categoryId,
+      fingerprint: getHibidRouteFingerprint(route, info.url)
+    });
+
+    try {
+      if (directGraphql) {
+        let first = await fetchHibidGraphqlPage(route, info.url, 1, options);
+        const expectedTotal = Number.isFinite(first.filteredCount) ? first.filteredCount : first.totalCount;
+        const totalPages = expectedTotal > 0 ? Math.ceil(expectedTotal / HIBID_API_PAGE_SIZE) : 1;
+        const firstExpected = Math.min(HIBID_API_PAGE_SIZE, Math.max(0, expectedTotal));
+        const firstCoverage = await retryHibidShortPage(first, firstExpected, () => fetchHibidGraphqlPage(route, info.url, 1, options), {
+          ...options,
+          label: 'GraphQL page 1'
+        });
+        first = firstCoverage.result;
+        first.coverageAttempts = firstCoverage.coverageAttempts;
+        first.observedTotals = firstCoverage.observedTotals;
+        if (!firstCoverage.complete) {
+          failures.push({ page: 1, error: `Short GraphQL page after retries (${first.results.length}/${firstExpected})` });
+        }
+        const remaining = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2);
+        onProgress(`Reading HiBid API... ${first.results.length}/${expectedTotal || 0}`);
+        const rest = await mapHibidConcurrent(remaining, options.concurrency || HIBID_API_CONCURRENCY, async page => {
+          try {
+            const expectedOnPage = Math.max(0, Math.min(HIBID_API_PAGE_SIZE, expectedTotal - ((page - 1) * HIBID_API_PAGE_SIZE)));
+            const initial = await fetchHibidGraphqlPage(route, info.url, page, options);
+            const covered = await retryHibidShortPage(initial, expectedOnPage, () => fetchHibidGraphqlPage(route, info.url, page, options), {
+              ...options,
+              label: `GraphQL page ${page}`
+            });
+            const result = covered.result;
+            result.coverageAttempts = covered.coverageAttempts;
+            result.observedTotals = covered.observedTotals;
+            if (!covered.complete) {
+              failures.push({ page, error: `Short GraphQL page after retries (${result.results.length}/${expectedOnPage})` });
+            }
+            onProgress(`Reading HiBid API page ${page}/${totalPages}...`);
+            return result;
+          } catch (error) {
+            failures.push({ page, error: hibidApiErrorText(error) });
+            return null;
+          }
+        }, shouldStop);
+        const pages = [first, ...rest.filter(Boolean)].sort((a, b) => a.page - b.page);
+        const rawLots = pages.flatMap(page => page.results);
+        pages.forEach(page => pageStats.push({
+          page: page.page,
+          returned: page.results.length,
+          reportedTotal: page.filteredCount,
+          attempts: page.attempts,
+          durationMs: page.durationMs,
+          coverageAttempts: page.coverageAttempts || 1,
+          observedTotals: page.observedTotals || []
+        }));
+        const totalDrift = pageStats.filter(stat => (
+          (Number.isFinite(stat.reportedTotal) && stat.reportedTotal !== expectedTotal)
+          || stat.observedTotals.some(total => total !== expectedTotal)
+        ));
+        const ids = rawLots.map(lot => String(lot?.id || '')).filter(Boolean);
+        debugEvent('hibid.api.enumerate.finish', {
+          strategy: 'graphql-auction', expectedTotal, ids: ids.length, uniqueIds: new Set(ids).size, failures
+        });
+        return {
+          source: 'hibid-graphql-api',
+          strategy: 'graphql-auction',
+          request: { endpoint: '/graphql', operationName: 'FlipperAddonLotSearch', variables: first.variables },
+          expectedTotal,
+          ids,
+          rawLots,
+          pageStats,
+          totalDrift,
+          failedPages: failures,
+          apiAvailable: true,
+          stopped: shouldStop()
+        };
+      }
+
+      let first = await fetchHibidSearchPage(route, info.url, 1, options);
+      const expectedTotal = first.noExactMatches
+        ? 0
+        : (Number.isFinite(first.filteredCount) ? first.filteredCount : first.totalCount);
+      const totalPages = Number.isFinite(first.totalPages)
+        ? first.totalPages
+        : (expectedTotal > 0 ? Math.ceil(expectedTotal / first.pageSize) : 1);
+      const firstExpected = Math.min(first.pageSize, Math.max(0, expectedTotal));
+      const firstCoverage = await retryHibidShortPage(first, firstExpected, () => fetchHibidSearchPage(route, info.url, 1, options), {
+        ...options,
+        countOf: result => result?.ids?.length || 0,
+        label: 'search page 1'
+      });
+      first = firstCoverage.result;
+      first.coverageAttempts = firstCoverage.coverageAttempts;
+      first.observedTotals = firstCoverage.observedTotals;
+      if (!firstCoverage.complete) {
+        failures.push({ page: 1, error: `Short search page after retries (${first.ids.length}/${firstExpected})` });
+      }
+      const remaining = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2);
+      onProgress(`Enumerating HiBid lots... ${first.ids.length}/${expectedTotal || 0}`);
+      const rest = await mapHibidConcurrent(remaining, options.concurrency || HIBID_API_CONCURRENCY, async page => {
+        try {
+          const expectedOnPage = Math.max(0, Math.min(first.pageSize, expectedTotal - ((page - 1) * first.pageSize)));
+          const initial = await fetchHibidSearchPage(route, info.url, page, options);
+          const covered = await retryHibidShortPage(initial, expectedOnPage, () => fetchHibidSearchPage(route, info.url, page, options), {
+            ...options,
+            countOf: result => result?.ids?.length || 0,
+            label: `search page ${page}`
+          });
+          const result = covered.result;
+          result.coverageAttempts = covered.coverageAttempts;
+          result.observedTotals = covered.observedTotals;
+          if (!covered.complete) {
+            failures.push({ page, error: `Short search page after retries (${result.ids.length}/${expectedOnPage})` });
+          }
+          onProgress(`Enumerating HiBid page ${page}/${totalPages}...`);
+          return result;
+        } catch (error) {
+          failures.push({ page, error: hibidApiErrorText(error) });
+          return null;
+        }
+      }, shouldStop);
+      const pages = [first, ...rest.filter(Boolean)].sort((a, b) => a.page - b.page);
+      const ids = pages.flatMap(page => page.ids);
+      pages.forEach(page => pageStats.push({
+        page: page.page,
+        returned: page.ids.length,
+        reportedTotal: page.filteredCount,
+        attempts: page.attempts,
+        durationMs: page.durationMs,
+        coverageAttempts: page.coverageAttempts || 1,
+        observedTotals: page.observedTotals || []
+      }));
+      const totalDrift = pageStats.filter(stat => (
+        (Number.isFinite(stat.reportedTotal) && stat.reportedTotal !== expectedTotal)
+        || stat.observedTotals.some(total => total !== expectedTotal)
+      ));
+      debugEvent('hibid.api.enumerate.finish', {
+        strategy: 'search-index', expectedTotal, ids: ids.length, uniqueIds: new Set(ids).size, failures
+      });
+      return {
+        source: 'hibid-search-api',
+        strategy: 'search-index',
+        expectedTotal,
+        ids,
+        rawLots: [],
+        pageStats,
+        totalDrift,
+        failedPages: failures,
+        request: first.request,
+        noExactMatches: first.noExactMatches,
+        apiAvailable: true,
+        stopped: shouldStop()
+      };
+    } catch (error) {
+      debugEvent('hibid.api.enumerate.error', {
+        strategy: directGraphql ? 'graphql-auction' : 'search-index',
+        error: hibidApiErrorText(error)
+      });
+      return {
+        source: directGraphql ? 'hibid-graphql-api' : 'hibid-search-api',
+        strategy: directGraphql ? 'graphql-auction' : 'search-index',
+        expectedTotal: hibidOptionalNumber(options.visibleExpectedTotal),
+        ids: [],
+        rawLots: [],
+        pageStats,
+        totalDrift: [],
+        failedPages: [{ page: 1, error: hibidApiErrorText(error) }],
+        apiAvailable: false,
+        stopped: shouldStop()
+      };
+    }
+  }
+
+  async function hydrateHibidLots(ids = [], route = {}, loc = (typeof location !== 'undefined' ? location : null), options = {}) {
+    const orderedIds = ids.map(value => String(value || '')).filter(Boolean);
+    const shouldStop = options.shouldStop || (() => false);
+    const onProgress = options.onProgress || (() => {});
+    const byId = new Map();
+    (options.rawLots || []).forEach(lot => {
+      const normalized = normalizeHibidGraphqlLot(lot, {
+        url: urlFromLocationLike(loc).href,
+        route,
+        pageKind: route?.kind || 'catalog',
+        auctionId: hibidRoutePathInfo(route, loc).auctionId
+      });
+      if (normalized?.id) byId.set(normalized.id, normalized);
+    });
+    const missing = orderedIds.filter(id => !byId.has(id));
+    const chunks = [];
+    for (let index = 0; index < missing.length; index += HIBID_API_PAGE_SIZE) {
+      chunks.push(missing.slice(index, index + HIBID_API_PAGE_SIZE));
+    }
+    const failedBatches = [];
+    const batchStats = [];
+    let completed = 0;
+    await mapHibidConcurrent(chunks, options.concurrency || HIBID_API_CONCURRENCY, async (chunk, index) => {
+      if (shouldStop()) return null;
+      let pendingIds = chunk.slice();
+      let rounds = 0;
+      let transportAttempts = 0;
+      let durationMs = 0;
+      try {
+        const coverageAttempts = Math.max(1, Number(options.coverageAttempts) || HIBID_API_RETRIES);
+        while (pendingIds.length && rounds < coverageAttempts && !shouldStop()) {
+          rounds += 1;
+          const requestedIds = pendingIds.slice();
+          const page = await fetchHibidGraphqlPage(route, loc, 1, {
+            ...options,
+            eventItemIds: requestedIds,
+            pageLength: requestedIds.length
+          });
+          transportAttempts += Number(page.attempts) || 1;
+          durationMs += Number(page.durationMs) || 0;
+          page.results.forEach(rawLot => {
+            const normalized = normalizeHibidGraphqlLot(rawLot, {
+              url: urlFromLocationLike(loc).href,
+              route,
+              pageKind: route?.kind || 'catalog'
+            });
+            if (normalized?.id) byId.set(normalized.id, normalized);
+          });
+          pendingIds = chunk.filter(id => !byId.has(id));
+          if (pendingIds.length && rounds < coverageAttempts) {
+            debugEvent('hibid.api.retry', {
+              reason: 'missing-hydration-ids',
+              batch: index + 1,
+              missing: pendingIds.length,
+              attempt: rounds + 1
+            });
+            const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? 300));
+            if (retryDelayMs) await wait(retryDelayMs * (rounds + 1));
+          }
+        }
+        const hydratedInBatch = chunk.length - pendingIds.length;
+        completed += hydratedInBatch;
+        batchStats.push({
+          batch: index + 1,
+          requested: chunk.length,
+          returned: hydratedInBatch,
+          coverageAttempts: rounds,
+          transportAttempts,
+          durationMs
+        });
+        onProgress(`Loading HiBid details... ${Math.min(orderedIds.length, byId.size)}/${orderedIds.length}`);
+        debugEvent('hibid.api.hydrate.batch', {
+          batch: index + 1,
+          requested: chunk.length,
+          returned: hydratedInBatch,
+          missing: pendingIds.length,
+          coverageAttempts: rounds,
+          completed
+        });
+        if (pendingIds.length) {
+          failedBatches.push({
+            batch: index + 1,
+            ids: pendingIds,
+            error: `Missing ${pendingIds.length} hydration record(s) after ${rounds} attempt(s)`
+          });
+        }
+        return { batch: index + 1, missingIds: pendingIds };
+      } catch (error) {
+        failedBatches.push({ batch: index + 1, ids: pendingIds, error: hibidApiErrorText(error) });
+        debugEvent('hibid.api.hydrate.failure', {
+          batch: index + 1,
+          requested: pendingIds.length,
+          error: hibidApiErrorText(error)
+        });
+        return null;
+      }
+    }, shouldStop);
+    return {
+      items: orderedIds.map(id => byId.get(id)).filter(Boolean),
+      hydratedIds: Array.from(byId.keys()),
+      failedBatches,
+      batchStats: batchStats.sort((a, b) => a.batch - b.batch),
+      stopped: shouldStop()
+    };
+  }
+
+  function validateHibidApiCoverage(input = {}) {
+    const enumerated = (input.enumeratedIds || []).map(value => String(value || '')).filter(Boolean);
+    const hydrated = (input.hydratedItems || []).map(item => String(item?.id || '')).filter(Boolean);
+    const enumeratedSet = new Set(enumerated);
+    const hydratedSet = new Set(hydrated);
+    const duplicateIds = Array.from(new Set(enumerated.filter((id, index) => enumerated.indexOf(id) !== index)));
+    const missingIds = Array.from(enumeratedSet).filter(id => !hydratedSet.has(id));
+    const unexpectedIds = Array.from(hydratedSet).filter(id => !enumeratedSet.has(id));
+    const expectedRaw = input.expectedTotal;
+    const expectedTotal = Number(expectedRaw);
+    const hasExpected = expectedRaw !== null && expectedRaw !== undefined && expectedRaw !== ''
+      && Number.isFinite(expectedTotal) && expectedTotal >= 0;
+    const visibleExpectedRaw = input.visibleExpectedTotal;
+    const visibleExpectedTotal = Number(visibleExpectedRaw);
+    const hasVisibleExpected = visibleExpectedRaw !== null && visibleExpectedRaw !== undefined && visibleExpectedRaw !== ''
+      && Number.isFinite(visibleExpectedTotal) && visibleExpectedTotal >= 0;
+    const visibleTotalMatches = !input.requireVisibleTotalMatch || !hasVisibleExpected || visibleExpectedTotal === expectedTotal;
+    const routeMatches = !input.startFingerprint || !input.endFingerprint || input.startFingerprint === input.endFingerprint;
+    const failedPages = Array.isArray(input.failedPages) ? input.failedPages : [];
+    const failedBatches = Array.isArray(input.failedBatches) ? input.failedBatches : [];
+    const totalDrift = Array.isArray(input.totalDrift) ? input.totalDrift : [];
+    const complete = hasExpected
+      && enumeratedSet.size === expectedTotal
+      && hydratedSet.size === expectedTotal
+      && duplicateIds.length === 0
+      && missingIds.length === 0
+      && unexpectedIds.length === 0
+      && failedPages.length === 0
+      && failedBatches.length === 0
+      && totalDrift.length === 0
+      && visibleTotalMatches
+      && routeMatches
+      && !input.stopped;
+    let reason = 'complete';
+    if (!routeMatches) reason = 'route-fingerprint-changed';
+    else if (input.stopped) reason = 'user-stop';
+    else if (failedPages.length) reason = 'api-page-failure';
+    else if (failedBatches.length) reason = 'api-hydration-failure';
+    else if (totalDrift.length) reason = 'api-total-drift';
+    else if (!visibleTotalMatches) reason = 'api-visible-total-mismatch';
+    else if (!hasExpected) reason = 'api-total-missing';
+    else if (duplicateIds.length) reason = 'api-duplicate-ids';
+    else if (enumeratedSet.size !== expectedTotal) reason = 'api-enumeration-count-mismatch';
+    else if (missingIds.length) reason = 'api-missing-hydration';
+    else if (unexpectedIds.length) reason = 'api-unexpected-hydration';
+    else if (hydratedSet.size !== expectedTotal) reason = 'api-hydration-count-mismatch';
+    return {
+      complete,
+      reason,
+      expectedCount: hasExpected ? expectedTotal : null,
+      enumeratedCount: enumerated.length,
+      uniqueEnumeratedCount: enumeratedSet.size,
+      hydratedCount: hydrated.length,
+      uniqueHydratedCount: hydratedSet.size,
+      duplicateIds,
+      missingIds,
+      unexpectedIds,
+      failedPages,
+      failedBatches,
+      totalDrift,
+      visibleExpectedCount: hasVisibleExpected ? visibleExpectedTotal : null,
+      visibleTotalMatches,
+      routeMatches,
+      startFingerprint: input.startFingerprint || '',
+      endFingerprint: input.endFingerprint || ''
+    };
+  }
+
+  function sanitizeHibidDiagnosticValue(value, depth = 0) {
+    if (depth > 8) return '[depth-limit]';
+    if (Array.isArray(value)) return value.map(item => sanitizeHibidDiagnosticValue(item, depth + 1));
+    if (!value || typeof value !== 'object') return value;
+    const blockedKey = /(?:authorization|cookie|token|secret|password|accountinfo|account_info|session|credential)/i;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !blockedKey.test(key))
+      .map(([key, child]) => [key, sanitizeHibidDiagnosticValue(child, depth + 1)]));
+  }
+
+  function buildHibidDiagnosticBundle(result = {}) {
+    const coverage = result.coverage || {};
+    return {
+      generatedAt: new Date().toISOString(),
+      version: SCRIPT_VERSION,
+      sourceUrl: result.sourceUrl || '',
+      source: result.source || '',
+      strategy: result.strategy || '',
+      routeFingerprint: result.routeFingerprint || '',
+      filters: result.visibleState?.filters || {},
+      request: result.request ? sanitizeHibidDiagnosticValue(result.request) : null,
+      expectedTotal: result.expectedTotal ?? null,
+      copiedCount: (result.items || result.lots || []).length,
+      durationMs: result.durationMs ?? null,
+      enumeratedIds: result.enumeratedIds || [],
+      hydratedIds: result.hydratedIds || [],
+      pageStats: result.pageStats || [],
+      hydrationStats: result.hydrationStats || [],
+      coverage: {
+        complete: Boolean(coverage.complete),
+        reason: coverage.reason || '',
+        expectedCount: coverage.expectedCount ?? null,
+        enumeratedCount: coverage.enumeratedCount ?? null,
+        uniqueEnumeratedCount: coverage.uniqueEnumeratedCount ?? null,
+        hydratedCount: coverage.hydratedCount ?? null,
+        uniqueHydratedCount: coverage.uniqueHydratedCount ?? null,
+        duplicateIds: coverage.duplicateIds || [],
+        missingIds: coverage.missingIds || [],
+        unexpectedIds: coverage.unexpectedIds || [],
+        failedPages: coverage.failedPages || [],
+        failedBatches: (coverage.failedBatches || []).map(batch => ({
+          batch: batch.batch,
+          ids: batch.ids || [],
+          error: batch.error || ''
+        })),
+        totalDrift: coverage.totalDrift || [],
+        visibleExpectedCount: coverage.visibleExpectedCount ?? null,
+        visibleTotalMatches: coverage.visibleTotalMatches !== false,
+        routeMatches: coverage.routeMatches !== false
+      }
+    };
+  }
+
+  function buildHibidPartialExportPayload(result = {}, mode = 'json', context = {}) {
+    const items = result.items || result.lots || [];
+    const audit = {
+      ...buildHibidDiagnosticBundle(result),
+      complete: false,
+      partial: true
+    };
+    if (mode === 'llm') {
+      return [
+        'PARTIAL HIBID EXPORT - DO NOT TREAT THIS AS COMPLETE CATALOG COVERAGE.',
+        `Verified records: ${items.length}/${result.expectedTotal ?? '?'}.`,
+        `Coverage reason: ${result.coverage?.reason || result.stopReason || 'unknown'}.`,
+        '',
+        buildLlmAuctionBrief(items, context),
+        '',
+        'PARTIAL EXPORT AUDIT',
+        JSON.stringify(audit, null, 2)
+      ].join('\n');
+    }
+    return JSON.stringify({ context, items, audit }, null, 2);
+  }
+
+  async function scrapeHibidApiCatalog(onProgress = () => {}, shouldStop = () => false, root = document, options = {}) {
+    const scrapeStartedAt = Date.now();
+    const loc = options.location || root?.location || (typeof location !== 'undefined' ? location : null);
+    const route = options.route || resolveHiBidPage(loc);
+    if (!loc || !isHiBidHost(urlFromLocationLike(loc).hostname) || !['catalog', 'live'].includes(route?.kind) || isHibidAccountExportRoute(route)) {
+      return null;
+    }
+    const sourceUrl = urlFromLocationLike(loc).href;
+    const getCurrentUrl = options.getCurrentUrl || (() => (typeof location !== 'undefined' ? location.href : sourceUrl));
+    const startFingerprint = getHibidRouteFingerprint(route, sourceUrl);
+    let visibleState = options.visibleState || null;
+    if (!visibleState) {
+      try {
+        visibleState = extractHibidVisiblePageState(root, urlFromLocationLike(loc));
+      } catch {
+        visibleState = { filters: extractHibidUrlFilters(loc).filters, expectedTotal: null, noMatches: false };
+      }
+    }
+    const portalContext = extractHibidPortalSearchContext(root, route);
+    const requestRoute = portalContext.portalAuctioneerIds.length || portalContext.siteType
+      ? { ...route, ...portalContext }
+      : route;
+    const requestOptions = {
+      ...options,
+      onProgress,
+      shouldStop,
+      visibleExpectedTotal: visibleState?.expectedTotal
+    };
+    const enumeration = await enumerateHibidLotIds(requestRoute, sourceUrl, requestOptions);
+    debugEvent('hibid.api.query', {
+      strategy: enumeration.strategy,
+      request: enumeration.request || null,
+      expectedTotal: enumeration.expectedTotal ?? null,
+      pageStats: enumeration.pageStats || []
+    });
+    const hydration = await hydrateHibidLots(enumeration.ids, route, sourceUrl, {
+      ...requestOptions,
+      rawLots: enumeration.rawLots
+    });
+    let endUrl = sourceUrl;
+    try { endUrl = getCurrentUrl() || sourceUrl; } catch { endUrl = sourceUrl; }
+    const endRoute = resolveHiBidPage(urlFromLocationLike(endUrl));
+    const endFingerprint = getHibidRouteFingerprint(endRoute, endUrl);
+    const coverage = validateHibidApiCoverage({
+      expectedTotal: enumeration.expectedTotal,
+      enumeratedIds: enumeration.ids,
+      hydratedItems: hydration.items,
+      failedPages: enumeration.failedPages,
+      failedBatches: hydration.failedBatches,
+      totalDrift: enumeration.totalDrift,
+      visibleExpectedTotal: visibleState?.expectedTotal,
+      requireVisibleTotalMatch: enumeration.strategy === 'search-index',
+      startFingerprint,
+      endFingerprint,
+      stopped: shouldStop() || enumeration.stopped || hydration.stopped
+    });
+    debugEvent('hibid.api.coverage', coverage);
+    const result = {
+      source: enumeration.source,
+      strategy: enumeration.strategy,
+      request: enumeration.request || null,
+      sourceUrl,
+      routeFingerprint: startFingerprint,
+      items: hydration.items,
+      lots: hydration.items,
+      enumeratedIds: enumeration.ids,
+      hydratedIds: hydration.hydratedIds,
+      expectedTotal: enumeration.expectedTotal,
+      pageLength: HIBID_API_PAGE_SIZE,
+      pageStats: enumeration.pageStats,
+      hydrationStats: hydration.batchStats,
+      pagesRead: enumeration.pageStats.length,
+      durationMs: Date.now() - scrapeStartedAt,
+      stopped: shouldStop() || enumeration.stopped || hydration.stopped,
+      incomplete: !coverage.complete,
+      stopReason: coverage.reason,
+      visibleState,
+      coverage
+    };
+    result.diagnostic = buildHibidDiagnosticBundle(result);
+    return result;
+  }
+
+  function apolloLotConnections(state) {
+    return Object.entries(state?.ROOT_QUERY || {}).map(([key, value]) => {
+      const paged = value?.pagedResults || value?.lots?.pagedResults || value?.search?.pagedResults || value;
+      const results = paged?.results || value?.results || [];
+      const refs = [];
+      const seen = new Set();
+
+      function addRef(value) {
+        const key = refId(value);
+        if (!/^Lot:/i.test(key) || seen.has(key)) return;
+        seen.add(key);
+        refs.push(key);
+      }
+
+      if (Array.isArray(results)) results.forEach(addRef);
+      if (!refs.length) return null;
+      return {
+        key,
+        refs,
+        totalCount: Number(firstDefined(paged?.totalCount, paged?.filteredCount, paged?.total, value?.totalCount)),
+        pageLength: Number(firstDefined(paged?.pageLength, paged?.pageSize, paged?.take, refs.length)),
+        pageNumber: Number(firstDefined(paged?.pageNumber, paged?.page, 1))
+      };
+    }).filter(Boolean);
+  }
+
+  function urlFromLocationLike(loc = (typeof location !== 'undefined' ? location : null)) {
+    try {
+      if (loc instanceof URL) return loc;
+      const href = loc?.href || String(loc || '');
+      return new URL(href || 'https://hibid.com/');
+    } catch {
+      return new URL('https://hibid.com/');
+    }
+  }
+
+  function extractHibidUrlFilters(loc = (typeof location !== 'undefined' ? location : null)) {
+    const url = urlFromLocationLike(loc);
+    const filters = {};
+    ['g', 'q', 'category', 'subCategory', 'apage', 'zip', 'miles', 'countryname', 'shippingoffered', 'status', 's'].forEach(key => {
+      const values = url.searchParams.getAll(key).filter(value => value !== '');
+      if (!values.length) return;
+      filters[key] = values.length === 1 ? values[0] : values;
+    });
+
+    const activeFilterKeys = Object.entries(filters).filter(([key, value]) => {
+      if (key === 'apage' || key === 's' || key === 'countryname') return false;
+      const values = Array.isArray(value) ? value : [value];
+      const normalizedValues = values.map(item => String(item || '').trim().toLowerCase()).filter(Boolean);
+      if (!normalizedValues.length) return false;
+      if (key === 'apage') return false;
+      if (key === 'g') return normalizedValues.some(item => item !== '-1');
+      if (key === 'category') return normalizedValues.some(item => item !== 'all');
+      if (key === 'subCategory') return normalizedValues.some(item => item !== 'active');
+      return normalizedValues.some(Boolean);
+    }).map(([key]) => key);
+
+    return {
+      sourceUrl: url.href,
+      filters,
+      activeFilterKeys,
+      hasActiveFilters: activeFilterKeys.length > 0
+    };
+  }
+
+  function extractHibidVisiblePageState(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const filterState = extractHibidUrlFilters(loc);
+    const resolvedRoute = isHiBidHost(urlFromLocationLike(loc).hostname)
+      ? resolveHiBidPage(urlFromLocationLike(loc))
+      : null;
+    const isAccountExportRoute = isHibidAccountExportRoute(resolvedRoute);
+    const text = getRootText(root);
+    const noMatchPhrase = /\bNo matches found\b/i.test(text) || /\bTry adjusting your filters\b/i.test(text);
+    const parsedExpectedTotal = getExpectedLotTotal(root);
+    let visibleLotCount = null;
+    try {
+      visibleLotCount = getVisibleHibidLotCount(root);
+    } catch {
+      visibleLotCount = null;
+    }
+
+    // HiBid briefly renders an empty filter state while the Angular lot grid hydrates.
+    // A filtered no-match phrase is authoritative after the hydration window when the
+    // grid is actually empty, even if a stale broad catalog total remains in the shell.
+    // Conversely, if the live filtered grid contains more cards than that stale total,
+    // use the deduped visible-card count as the page-bound total so a correct export is
+    // not rejected merely because the header updated before the cards did.
+    const noMatches = !isAccountExportRoute
+      && noMatchPhrase
+      && !hasLikelyHibidLotTiles(root)
+      && (filterState.hasActiveFilters
+        || !Number.isFinite(Number(parsedExpectedTotal))
+        || Number(parsedExpectedTotal) === 0);
+    const visibleCountExceedsHeader = filterState.hasActiveFilters
+      && Number.isFinite(Number(visibleLotCount))
+      && Number(visibleLotCount) > 0
+      && (!Number.isFinite(Number(parsedExpectedTotal)) || Number(visibleLotCount) > Number(parsedExpectedTotal));
+    const expectedTotal = isAccountExportRoute
+      ? parsedExpectedTotal
+      : (noMatches
+        ? 0
+        : (visibleCountExceedsHeader ? Number(visibleLotCount) : parsedExpectedTotal));
+
+    return {
+      ...filterState,
+      routeKind: resolvedRoute?.kind || '',
+      isAccountExportRoute,
+      noMatches,
+      expectedTotal,
+      visibleLotCount: noMatches ? 0 : visibleLotCount
+    };
+  }
+
+  async function waitForHibidVisiblePageState(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    let state = extractHibidVisiblePageState(root, loc);
+    const startedAt = Date.now();
+    let signature = `${state.noMatches}|${state.expectedTotal}|${state.visibleLotCount}`;
+    let stableSince = Date.now();
+    while (Date.now() - startedAt < HIBID_STATE_HYDRATION_WAIT_MS) {
+      await wait(HIBID_STATE_HYDRATION_POLL_MS);
+      const next = extractHibidVisiblePageState(root, loc);
+      const nextSignature = `${next.noMatches}|${next.expectedTotal}|${next.visibleLotCount}`;
+      if (nextSignature !== signature) {
+        signature = nextSignature;
+        stableSince = Date.now();
+      }
+      state = next;
+      const positiveStateSettled = !next.noMatches
+        && next.hasActiveFilters
+        && (Number.isFinite(Number(next.expectedTotal)) || Number(next.visibleLotCount) > 0)
+        && Date.now() - stableSince >= 500;
+      if (positiveStateSettled) {
+        debug('hibid no-match state cleared during hydration', {
+          waitedMs: Date.now() - startedAt,
+          visibleLotCount: next.visibleLotCount,
+          expectedTotal: next.expectedTotal
+        });
+        return next;
+      }
+      if (!next.noMatches && !next.hasActiveFilters) return next;
+    }
+
+    debug('hibid visible page state settled after hydration wait', {
+      waitedMs: Date.now() - startedAt,
+      visibleLotCount: state.visibleLotCount,
+      expectedTotal: state.expectedTotal,
+      noMatches: state.noMatches,
+      hasActiveFilters: state.hasActiveFilters
+    });
+    return state;
+  }
+
+  function normalizedFilterText(value) {
+    return decodeURIComponent(String(value || ''))
+      .replace(/\+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function apolloKeyMatchesActiveFilters(key, visibleState) {
+    if (!visibleState?.hasActiveFilters) return true;
+    const normalizedKey = normalizedFilterText(key);
+    return visibleState.activeFilterKeys.every(filterKey => {
+      const rawValue = visibleState.filters?.[filterKey];
+      const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+      const normalizedValues = values.map(value => normalizedFilterText(value)).filter(Boolean);
+      if (!normalizedValues.length) return true;
+      return normalizedValues.some(value => normalizedKey.includes(value));
+    });
+  }
+
+  function shouldGuardApolloForVisibleState(visibleState) {
+    return Boolean(visibleState?.noMatches || visibleState?.hasActiveFilters);
+  }
+
+  function shouldRejectAmbiguousUnfilteredApollo(visibleState) {
+    const expectedTotal = Number(visibleState?.expectedTotal);
+    return Boolean(visibleState
+      && !visibleState.noMatches
+      && !visibleState.hasActiveFilters
+      && Number.isFinite(expectedTotal)
+      && expectedTotal > 0);
+  }
+
+  function apolloConnectionMatchesVisibleState(connection, options = {}) {
+    const visibleState = options.visibleState;
+    if (!visibleState) return { ok: true };
+    if (visibleState.noMatches) return { ok: false, reason: 'visible-no-matches' };
+    if (!visibleState.hasActiveFilters) return { ok: true };
+
+    const requiresKeyMatch = visibleState.activeFilterKeys.includes('q');
+    if (apolloKeyMatchesActiveFilters(connection.key, visibleState)) return { ok: true };
+    const visibleExpected = Number(visibleState.expectedTotal);
+    const hasVisibleExpected = visibleState.expectedTotal !== null
+      && visibleState.expectedTotal !== undefined
+      && Number.isFinite(visibleExpected);
+    const refsMatchVisibleCount = hasVisibleExpected
+      && Array.isArray(connection.refs)
+      && connection.refs.length === visibleExpected
+      && (!Number.isFinite(connection.totalCount) || connection.totalCount === visibleExpected)
+      && (!Number.isFinite(connection.pageLength) || connection.pageLength === visibleExpected);
+    if (refsMatchVisibleCount) {
+      return { ok: true, reason: 'visible-count-confirmed' };
+    }
+    if (requiresKeyMatch) return { ok: false, reason: 'active-search-filter-mismatch' };
+
+    const hasExpectedTotal = options.expectedTotal !== null
+      && options.expectedTotal !== undefined
+      && Number.isFinite(Number(options.expectedTotal));
+    const expectedTotal = Number(options.expectedTotal);
+    if (hasExpectedTotal && connection.totalCount === expectedTotal) return { ok: true };
+    if (hasVisibleExpected && connection.totalCount === visibleExpected) {
+      return { ok: true };
+    }
+    return { ok: false, reason: 'active-filter-mismatch' };
+  }
+
+  function chooseApolloLotConnection(state, options = {}) {
+    const connections = apolloLotConnections(state);
+    if (!connections.length) return null;
+    const hasExpectedTotal = options.expectedTotal !== null
+      && options.expectedTotal !== undefined
+      && Number.isFinite(Number(options.expectedTotal));
+    const expectedTotal = Number(options.expectedTotal);
+    const visibleExpectedTotal = Number(options.visibleState?.expectedTotal);
+    const hasVisibleExpectedTotal = !options.visibleState?.hasActiveFilters
+      && Number.isFinite(visibleExpectedTotal)
+      && visibleExpectedTotal > 0;
+    const pageBoundConnections = connections.filter(connection => /eventItemIds/i.test(connection.key));
+    const hasExactVisibleConnection = hasVisibleExpectedTotal
+      && connections.some(connection => connection.totalCount === visibleExpectedTotal);
+
+    // HiBid's catalog page can expose several Apollo lot connections at once.
+    // A broad/featured connection is not safe just because it contains Lot refs.
+    // When the page tells us its unfiltered total, prefer the page-bound
+    // eventItemIds connection; if neither a page-bound nor exact-total
+    // connection exists, fail closed and let the DOM path decide.
+    if (hasVisibleExpectedTotal && !hasExactVisibleConnection && !pageBoundConnections.length) {
+      debug('apollo lot connections ambiguous for unfiltered catalog', {
+        visibleExpectedTotal,
+        connections: connections.map(connection => ({
+          key: connection.key.slice(0, 220),
+          refs: connection.refs.length,
+          totalCount: connection.totalCount,
+          pageLength: connection.pageLength
+        })).slice(0, 10)
+      });
+      return null;
+    }
+    const rejected = [];
+    const allowed = connections.filter(connection => {
+      const match = apolloConnectionMatchesVisibleState(connection, options);
+      if (!match.ok) {
+        rejected.push({
+          key: connection.key,
+          refs: connection.refs.length,
+          totalCount: connection.totalCount,
+          reason: match.reason
+        });
+        return false;
+      }
+      return true;
+    });
+    if (!allowed.length) {
+      debug('apollo lot connections rejected for visible filters', {
+        filters: options.visibleState?.filters || {},
+        noMatches: Boolean(options.visibleState?.noMatches),
+        rejected: rejected.slice(0, 10)
+      });
+      return null;
+    }
+    const scored = allowed.map(connection => {
+      let score = 0;
+      if (hasExpectedTotal && connection.totalCount === expectedTotal) score += 1000;
+      if (hasVisibleExpectedTotal && /eventItemIds/i.test(connection.key)) score += 600;
+      if (apolloKeyMatchesActiveFilters(connection.key, options.visibleState)) score += 750;
+      if (/lotSearch/i.test(connection.key)) score += 250;
+      if (!/featured|hot|recommend|similar|related/i.test(connection.key)) score += 100;
+      if (Number.isFinite(connection.totalCount)) score += Math.min(connection.totalCount, 500) / 10;
+      score += Math.min(connection.refs.length, 100);
+      return { connection, score };
+    }).sort((a, b) => b.score - a.score);
+    debug('apollo lot connections', scored.map(item => ({
+      key: item.connection.key.slice(0, 220),
+      refs: item.connection.refs.length,
+      totalCount: item.connection.totalCount,
+      pageLength: item.connection.pageLength,
+      pageNumber: item.connection.pageNumber,
+      score: item.score
+    })).slice(0, 10));
+    if (rejected.length) debug('apollo lot connections skipped', rejected.slice(0, 10));
+    return scored[0].connection;
+  }
+
+  function collectLotRefsFromApolloState(state, options = {}) {
+    const chosen = chooseApolloLotConnection(state, options);
+    if (chosen) return chosen.refs;
+    if (shouldGuardApolloForVisibleState(options.visibleState)
+      || shouldRejectAmbiguousUnfilteredApollo(options.visibleState)) return [];
+
+    const refs = [];
+    const seen = new Set();
+
+    function addRef(value) {
+      const key = refId(value);
+      if (!/^Lot:/i.test(key) || seen.has(key)) return;
+      seen.add(key);
+      refs.push(key);
+    }
+
+    if (!refs.length) {
+      Object.keys(state || {}).filter(key => /^Lot:/i.test(key)).forEach(addRef);
+    }
+
+    return refs;
+  }
+
+  function expectedTotalFromApolloState(state, options = {}) {
+    const chosen = chooseApolloLotConnection(state, options);
+    if (!chosen && options.visibleState?.noMatches) return 0;
+    if (!chosen && shouldGuardApolloForVisibleState(options.visibleState)) return null;
+    return Number.isFinite(chosen?.totalCount) ? chosen.totalCount : null;
+  }
+
+  function pageLengthFromApolloState(state, options = {}) {
+    const chosen = chooseApolloLotConnection(state, options);
+    if (!chosen && shouldGuardApolloForVisibleState(options.visibleState)) return null;
+    return Number.isFinite(chosen?.pageLength) ? chosen.pageLength : null;
+  }
+
+  function normalizeLotUrl(lot, context = {}) {
+    const href = lot.url || lot.lotUrl || lot.itemUrl || lot.href || '';
+    if (href) return absoluteUrl(href, context.url || location.href);
+    const id = firstDefined(lot.id, lot.eventItemId, lot.eventitemId, lot.itemId);
+    const lotNumber = firstDefined(lot.lotNumber, lot.lotNumberExtension, lot.number, id);
+    if (!id && !lotNumber) return '';
+    const slug = encodeURIComponent(String(lotNumber || id).replace(/\s+/g, '-'));
+    return absoluteUrl(`/lot/${encodeURIComponent(String(id || lotNumber))}/${slug}`, context.url || 'https://hibid.com/');
+  }
+
+  function normalizeApolloLot(state, lotRef, context = {}) {
+    const lot = deref(state, lotRef);
+    if (!lot || typeof lot !== 'object') return null;
+    const lotState = lot.lotState || lot.state || {};
+    const auction = deref(state, lot.auction || lot.auctionInfo || lot.event) || {};
+    const id = String(firstDefined(lot.id, lot.eventItemId, lot.eventitemId, lot.itemId, refId(lotRef).replace(/^Lot:/i, '')) || '');
+    const lotNumber = String(firstDefined(lot.lotNumber, lot.lotNumberExtension, lot.number, lot.lot, id) || '');
+    const title = stateText(firstDefined(lot.lead, lot.title, lot.name, lot.descriptionShort))
+      || (lotNumber ? `Lot ${lotNumber}` : '');
+    if (!lotNumber && !title) return null;
+
+    const highBidAmount = amountFromState(firstDefined(lotState.highBid, lot.highBid, lotState.currentBid, lotState.currentPrice, lot.currentBid));
+    const nextBidAmount = amountFromState(firstDefined(lotState.minBid, lotState.nextBid, lot.minBid, lot.nextBid));
+    const bidCountNumber = Number(firstDefined(lotState.bidCount, lot.bidCount, lotState.bids, lot.bids));
+    const statusText = stateText(firstDefined(lotState.status, lot.status, lotState.priceRealizedMessage, ''));
+    const userBidStatus = extractUserBidStatus(`${statusText} ${lotState.userBidStatus || ''}`);
+    const picture = deref(state, lot.featuredPicture || lot.picture || lot.primaryPicture) || {};
+    const description = stateText(firstDefined(lot.description, lot.fullDescription, lot.notes, lot.longDescription));
+
+    return {
+      id,
+      lot: lotNumber,
+      title,
+      url: normalizeLotUrl({ ...lot, id, lotNumber }, context),
+      image: firstDefined(picture.thumbnailLocation, picture.fullSizeLocation, picture.url, picture.src, lot.imageUrl, lot.thumbnailUrl) || '',
+      highBid: Number.isFinite(highBidAmount) ? `High Bid: ${formatUsd(highBidAmount)}` : '',
+      highBidAmount,
+      currentPrice: highBidAmount,
+      currentBid: highBidAmount,
+      nextBid: Number.isFinite(nextBidAmount) ? `Bid ${formatUsd(nextBidAmount)}` : '',
+      nextBidAmount,
+      bidCount: Number.isFinite(bidCountNumber) ? `${bidCountNumber} ${bidCountNumber === 1 ? 'Bid' : 'Bids'}` : '',
+      bidCountNumber: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      timeLeft: stateText(firstDefined(lotState.timeLeft, lot.timeLeft, lotState.closingTimeText, '')),
+      status: statusText,
+      userBidStatus,
+      isWinning: userBidStatus === 'Winning',
+      isOutbid: userBidStatus === 'Outbid',
+      watched: Boolean(firstDefined(lotState.isWatching, lot.isWatching, lot.watchListed, false)),
+      pictureCount: Number(firstDefined(lot.pictureCount, lotState.pictureCount, 0)) || 0,
+      description,
+      auctionTitle: stateText(firstDefined(auction.title, auction.name, lot.auctionTitle, '')),
+      buyerPremium: stateText(firstDefined(auction.buyerPremium, auction.buyersPremium, lot.buyerPremium, ''))
+    };
+  }
+
+  function extractHibidApolloLots(apolloState, context = {}) {
+    const state = apolloState?.['apollo.state'] || apolloState?.apollo?.state || apolloState || {};
+    const selectionOptions = { expectedTotal: context.expectedTotal, visibleState: context.visibleState };
+    const chosenConnection = chooseApolloLotConnection(state, selectionOptions);
+    const refs = chosenConnection?.refs || collectLotRefsFromApolloState(state, selectionOptions);
+    const unique = new Map();
+    refs.forEach(ref => {
+      const lot = normalizeApolloLot(state, ref, context);
+      const key = lot?.id || lot?.lot || lot?.url;
+      if (key && lot?.title) unique.set(String(key), lot);
+    });
+    const rejectedSource = !refs.length && shouldGuardApolloForVisibleState(context.visibleState)
+      ? 'filter-mismatch'
+      : (!refs.length && shouldRejectAmbiguousUnfilteredApollo(context.visibleState)
+        ? 'ambiguous-unfiltered-state'
+        : '');
+    const visibleExpectedTotal = Number(context.visibleState?.expectedTotal);
+    const exceedsVisibleTotal = Number.isFinite(visibleExpectedTotal)
+      && visibleExpectedTotal > 0
+      && (unique.size > visibleExpectedTotal
+        || (Number.isFinite(chosenConnection?.totalCount) && chosenConnection.totalCount > visibleExpectedTotal));
+    const hasExpectedFromContext = context.expectedTotal !== null
+      && context.expectedTotal !== undefined
+      && Number.isFinite(Number(context.expectedTotal));
+    const expectedFromContext = Number(context.expectedTotal);
+    return {
+      source: 'hibid-state',
+      items: exceedsVisibleTotal ? [] : Array.from(unique.values()),
+      expectedTotal: hasExpectedFromContext
+        ? expectedFromContext
+        : (exceedsVisibleTotal ? visibleExpectedTotal : expectedTotalFromApolloState(state, selectionOptions)),
+      pageLength: pageLengthFromApolloState(state, selectionOptions),
+      rejectedSource: exceedsVisibleTotal ? 'visible-total-mismatch' : rejectedSource,
+      stopReason: exceedsVisibleTotal
+        ? 'visible-total-mismatch'
+        : (rejectedSource ? (context.visibleState?.noMatches ? 'visible-no-matches' : 'filter-mismatch') : '')
+    };
+  }
+
+  function parseHibidStateText(text) {
+    if (!text) return null;
+    try {
+      const parsed = JSON.parse(String(text));
+      return parsed?.['apollo.state'] || parsed?.apollo?.state || parsed;
+    } catch (err) {
+      debug('hibid-state parse failed', { error: err.message });
+      return null;
+    }
+  }
+
+  function extractHibidStateFromDocument(root = document) {
+    const script = root.querySelector?.('script#hibid-state[type="application/json"], script#hibid-state');
+    return parseHibidStateText(script?.textContent || '');
+  }
+
+  function getHibidScrapeLimits(expectedTotal = null, options = {}) {
+    const total = Number(expectedTotal);
+    const hasExpectedTotal = Number.isFinite(total) && total > 0;
+    const maxDurationMs = Number.isFinite(Number(options.maxDurationMs))
+      ? Number(options.maxDurationMs)
+      : (hasExpectedTotal && total <= 50 ? 25000 : HIBID_DOM_SCRAPE_MAX_MS);
+    const maxSteps = Number.isFinite(Number(options.maxSteps))
+      ? Number(options.maxSteps)
+      : HIBID_DOM_SCRAPE_MAX_STEPS;
+    return {
+      expectedTotal: hasExpectedTotal ? total : null,
+      maxDurationMs: Math.max(1000, maxDurationMs),
+      maxSteps: Math.max(1, Math.floor(maxSteps))
+    };
+  }
+
+  function getHibidStateScrapeMaxMs() {
+    return HIBID_STATE_SCRAPE_MAX_MS;
+  }
+
+  function mergeCatalogLots(target, lots) {
+    lots.forEach(lot => {
+      const key = lot?.id || lot?.url || lot?.lot;
+      if (key && lot?.title) target.set(String(key), lot);
+    });
+    return target;
+  }
+
+  function catalogPageUrl(pageNumber, baseHref = (typeof location !== 'undefined' ? location.href : '')) {
+    const url = new URL(baseHref || 'https://hibid.com/');
+    url.searchParams.set('apage', String(pageNumber));
+    return url.href;
+  }
+
+  async function fetchHibidApolloStatePage(pageNumber, baseHref = location.href) {
+    if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') return null;
+    const href = catalogPageUrl(pageNumber, baseHref);
+    debug('hibid-state fetch page start', { pageNumber, href });
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller
+      ? setTimeout(() => controller.abort(), HIBID_STATE_FETCH_TIMEOUT_MS)
+      : null;
+    try {
+      const response = await fetch(href, {
+        credentials: 'same-origin',
+        cache: 'no-cache',
+        ...(controller ? { signal: controller.signal } : {})
+      });
+      if (!response.ok) {
+        debug('hibid-state fetch page failed', { pageNumber, href, status: response.status });
+        return null;
+      }
+      const html = await response.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const state = extractHibidStateFromDocument(doc);
+      debug('hibid-state fetch page parsed', { pageNumber, href, hasState: Boolean(state) });
+      return state;
+    } catch (error) {
+      debug('hibid-state fetch page timed out or failed', {
+        pageNumber,
+        href,
+        error: String(error?.name || error?.message || error)
+      });
+      return null;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  async function waitForHibidState(root = document, timeoutMs = HIBID_STATE_HYDRATION_WAIT_MS) {
+    const startedAt = Date.now();
+    let state = extractHibidStateFromDocument(root);
+    while (!state && Date.now() - startedAt < timeoutMs) {
+      await wait(HIBID_STATE_HYDRATION_POLL_MS);
+      state = extractHibidStateFromDocument(root);
+    }
+    debug(state ? 'hibid-state became available after hydration wait' : 'hibid-state unavailable after hydration wait', {
+      waitedMs: Date.now() - startedAt
+    });
+    return state;
+  }
+
+  async function scrapeHibidStatePages(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const sourceUrl = String(root?.location?.href || (typeof location !== 'undefined' ? location.href : ''));
+    const visibleState = await waitForHibidVisiblePageState(root, typeof location !== 'undefined' ? location : null);
+    debug('hibid visible page state', visibleState);
+    if (visibleState.noMatches) {
+      return {
+        source: 'visible-page-state',
+        items: [],
+        lots: [],
+        expectedTotal: 0,
+        stopped: false,
+        incomplete: false,
+        pageLength: 0,
+        pagesAttempted: 0,
+        pagesRead: 0,
+        failedPage: null,
+        stopReason: 'visible-no-matches',
+        visibleState
+      };
+    }
+
+    const firstState = await waitForHibidState(root);
+    if (!firstState) {
+      debug('hibid-state unavailable on current document');
+      return null;
+    }
+
+    const lotsByKey = new Map();
+    const visibleTotal = visibleState.expectedTotal;
+    const first = extractHibidApolloLots(firstState, { url: sourceUrl, expectedTotal: visibleTotal, visibleState });
+    const hasVisibleExpectedTotal = Number.isFinite(Number(visibleTotal))
+      && Number(visibleTotal) > 0;
+    if (hasVisibleExpectedTotal && first.items.length > Number(visibleTotal)) {
+      debug('hibid-state result exceeded visible page total; refusing broad state source', {
+        extracted: first.items.length,
+        visibleTotal,
+        activeFilters: visibleState.activeFilterKeys,
+        visibleState,
+        rejectedSource: 'visible-total-mismatch'
+      });
+      return null;
+    }
+    if (first.rejectedSource && visibleState.hasActiveFilters) {
+      debug('hibid-state first page rejected for active filters', {
+        rejectedSource: first.rejectedSource,
+        stopReason: first.stopReason,
+        visibleState
+      });
+      return null;
+    }
+    const hasFilteredVisibleTotal = visibleState.hasActiveFilters
+      && Number.isFinite(Number(visibleTotal))
+      && Number(visibleTotal) >= 0;
+    if (hasFilteredVisibleTotal && first.items.length > Number(visibleTotal)) {
+      debug('hibid-state result exceeded filtered visible total; falling back to visible DOM', {
+        extracted: first.items.length,
+        visibleTotal,
+        visibleState
+      });
+      return {
+        ...first,
+        expectedTotal: Number(visibleTotal),
+        incomplete: true,
+        stopReason: 'exceeds-filtered-visible-total',
+        visibleState,
+        sourceUrl
+      };
+    }
+    mergeCatalogLots(lotsByKey, first.items);
+    const expectedTotal = first.expectedTotal || visibleTotal || first.items.length;
+    const pageLength = first.pageLength || first.items.length || 100;
+    const totalPages = expectedTotal && pageLength ? Math.max(1, Math.ceil(expectedTotal / pageLength)) : 1;
+    let pagesRead = first.items.length ? 1 : 0;
+    let failedPage = null;
+    let stopReason = '';
+    const startedAt = Date.now();
+    debug('hibid-state first page extracted', {
+      count: lotsByKey.size,
+      expectedTotal,
+      pageLength,
+      totalPages
+    });
+    onProgress(`Reading HiBid page data... ${lotsByKey.size}${expectedTotal ? `/${expectedTotal}` : ''}`);
+
+    for (let page = 2; page <= totalPages && page <= HIBID_STATE_MAX_PAGES; page += 1) {
+      if (shouldStop()) {
+        stopReason = 'user-stop';
+        break;
+      }
+      if (Date.now() - startedAt >= HIBID_STATE_SCRAPE_MAX_MS) {
+        stopReason = 'state-scrape-timeout';
+        debug('hibid-state scrape timed out before page fetch', {
+          page,
+          totalPages,
+          elapsedMs: Date.now() - startedAt
+        });
+        break;
+      }
+      const state = await fetchHibidApolloStatePage(page, sourceUrl).catch(err => {
+        debug('hibid-state page fetch threw', { page, error: err.message });
+        failedPage = page;
+        return null;
+      });
+      if (!state) {
+        failedPage ||= page;
+        stopReason = 'missing-page-state';
+        break;
+      }
+      const pageLots = extractHibidApolloLots(state, { url: catalogPageUrl(page, sourceUrl), expectedTotal, visibleState });
+      if (!pageLots.items.length) {
+        failedPage = page;
+        stopReason = 'empty-page-state';
+        debug('hibid-state page had no lots', { page, expectedTotal });
+        break;
+      }
+      mergeCatalogLots(lotsByKey, pageLots.items);
+      if (hasVisibleExpectedTotal && lotsByKey.size > Number(visibleTotal)) {
+        debug('hibid-state pagination exceeded visible page total; refusing broad state source', {
+          page,
+          extracted: lotsByKey.size,
+          visibleTotal,
+          activeFilters: visibleState.activeFilterKeys,
+          visibleState,
+          rejectedSource: 'visible-total-mismatch'
+        });
+        return null;
+      }
+      if (hasFilteredVisibleTotal && lotsByKey.size > Number(visibleTotal)) {
+        stopReason = 'exceeds-filtered-visible-total';
+        debug('hibid-state pagination exceeded filtered visible total; falling back to visible DOM', {
+          page,
+          extracted: lotsByKey.size,
+          visibleTotal,
+          visibleState
+        });
+        break;
+      }
+      pagesRead += 1;
+      debug('hibid-state page merged', {
+        page,
+        pageLots: pageLots.items.length,
+        count: lotsByKey.size,
+        expectedTotal
+      });
+      onProgress(`Reading HiBid page data... ${lotsByKey.size}${expectedTotal ? `/${expectedTotal}` : ''}`);
+      if (expectedTotal && lotsByKey.size >= expectedTotal) break;
+    }
+
+    if (!stopReason && totalPages > HIBID_STATE_MAX_PAGES) {
+      stopReason = 'state-page-limit';
+      debug('hibid-state page limit reached', { totalPages, maxPages: HIBID_STATE_MAX_PAGES });
+    }
+
+    const items = Array.from(lotsByKey.values());
+    if (!items.length) return null;
+    const stopped = !!shouldStop() || stopReason === 'user-stop';
+    const incomplete = Boolean(expectedTotal && items.length < expectedTotal && !stopped);
+    return {
+      source: 'hibid-state',
+      items,
+      lots: items,
+      expectedTotal,
+      stopped,
+      incomplete,
+      pageLength,
+      pagesAttempted: totalPages,
+      pagesRead,
+      failedPage,
+      stopReason: stopReason || (incomplete ? 'below-expected-total' : 'complete'),
+      visibleState,
+      sourceUrl
+    };
+  }
+
+  function hibidCatalogPageSize(root = document) {
+    const text = getRootText(root);
+    const showing = text.match(/\bShowing\s+([\d,]+)\s*(?:to|-)\s*([\d,]+)\s+of\s+[\d,]+\s+lots\b/i);
+    if (showing) {
+      const first = Number(showing[1].replace(/,/g, ''));
+      const last = Number(showing[2].replace(/,/g, ''));
+      if (Number.isFinite(first) && Number.isFinite(last) && last >= first) return last - first + 1;
+    }
+    const tileCount = getLotTiles(root).length;
+    return tileCount > 0 ? Math.min(Math.max(tileCount, 1), 100) : 100;
+  }
+
+  async function fetchHibidCatalogDomPage(pageNumber, baseHref = (typeof location !== 'undefined' ? location.href : '')) {
+    if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') return null;
+    const href = catalogPageUrl(pageNumber, baseHref);
+    debug('hibid DOM page fetch start', { pageNumber, href });
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller
+      ? setTimeout(() => controller.abort(), HIBID_STATE_FETCH_TIMEOUT_MS)
+      : null;
+    try {
+      const response = await fetch(href, {
+        credentials: 'same-origin',
+        cache: 'no-cache',
+        ...(controller ? { signal: controller.signal } : {})
+      });
+      if (!response?.ok) {
+        debug('hibid DOM page fetch failed', { pageNumber, href, status: response?.status || 0 });
+        return null;
+      }
+      const html = await response.text();
+      const parsed = new DOMParser().parseFromString(html, 'text/html');
+      const pageUrl = new URL(href);
+      const visibleState = extractHibidVisiblePageState(parsed, pageUrl);
+      const items = uniqueLots(getLotTiles(parsed).map(extractLot));
+      const expectedTotal = Number.isFinite(Number(visibleState.expectedTotal))
+        ? Number(visibleState.expectedTotal)
+        : getExpectedLotTotal(parsed);
+      debug('hibid DOM page fetched', {
+        pageNumber,
+        href,
+        count: items.length,
+        expectedTotal,
+        noMatches: visibleState.noMatches,
+        hasActiveFilters: visibleState.hasActiveFilters
+      });
+      return {
+        source: 'hibid-dom-page-fetch',
+        items,
+        lots: items,
+        pageNumber,
+        expectedTotal,
+        pageLength: hibidCatalogPageSize(parsed),
+        visibleState,
+        sourceUrl: href
+      };
+    } catch (error) {
+      debug('hibid DOM page fetch timed out or failed', {
+        pageNumber,
+        href,
+        error: String(error?.name || error?.message || error)
+      });
+      return null;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  async function scrapeHibidDomPages(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const sourceUrl = String(root?.location?.href || (typeof location !== 'undefined' ? location.href : ''));
+    const visibleState = await waitForHibidVisiblePageState(root, typeof location !== 'undefined' ? location : null);
+    if (visibleState.noMatches) {
+      return {
+        source: 'visible-page-state',
+        items: [],
+        lots: [],
+        expectedTotal: 0,
+        stopped: false,
+        incomplete: false,
+        pagesAttempted: 0,
+        pagesRead: 0,
+        stopReason: 'visible-no-matches',
+        visibleState,
+        sourceUrl
+      };
+    }
+
+    const expectedFromPage = Number(visibleState.expectedTotal);
+    const expectedTotal = Number.isFinite(expectedFromPage) && expectedFromPage > 0
+      ? expectedFromPage
+      : null;
+    const firstPage = await fetchHibidCatalogDomPage(1, sourceUrl);
+    if (!firstPage) return null;
+    const pageSize = Math.max(1, Number(firstPage.pageLength) || 100);
+    const expected = expectedTotal || Number(firstPage.expectedTotal) || null;
+    const totalPages = expected ? Math.min(HIBID_STATE_MAX_PAGES, Math.max(1, Math.ceil(expected / pageSize))) : 1;
+    const itemsByKey = new Map();
+    mergeCatalogLots(itemsByKey, firstPage.items);
+    let pagesRead = 1;
+    let stopReason = '';
+    const startedAt = Date.now();
+    onProgress(`Reading HiBid DOM pages... ${itemsByKey.size}${expected ? `/${expected}` : ''}`);
+
+    for (let page = 2; page <= totalPages; page += 1) {
+      if (shouldStop()) {
+        stopReason = 'user-stop';
+        break;
+      }
+      if (Date.now() - startedAt >= HIBID_STATE_SCRAPE_MAX_MS) {
+        stopReason = 'dom-page-fetch-timeout';
+        break;
+      }
+      const pageResult = await fetchHibidCatalogDomPage(page, sourceUrl);
+      if (!pageResult || !pageResult.items.length) {
+        stopReason = pageResult ? 'empty-dom-page' : 'missing-dom-page';
+        break;
+      }
+      mergeCatalogLots(itemsByKey, pageResult.items);
+      pagesRead += 1;
+      onProgress(`Reading HiBid DOM pages... ${itemsByKey.size}${expected ? `/${expected}` : ''}`);
+      debug('hibid DOM page merged', {
+        page,
+        pageLots: pageResult.items.length,
+        count: itemsByKey.size,
+        expectedTotal: expected
+      });
+      if (expected && itemsByKey.size >= expected) {
+        stopReason = 'expected-total';
+        break;
+      }
+    }
+
+    const items = Array.from(itemsByKey.values());
+    const stopped = shouldStop() || stopReason === 'user-stop';
+    const incomplete = Boolean(expected && items.length < expected && !stopped);
+    const result = {
+      source: 'hibid-dom-pages',
+      items,
+      lots: items,
+      expectedTotal: expected,
+      stopped,
+      incomplete,
+      pageLength: pageSize,
+      pagesAttempted: totalPages,
+      pagesRead,
+      stopReason: stopReason || (incomplete ? 'below-expected-total' : 'complete'),
+      visibleState,
+      sourceUrl
+    };
+    debug('hibid DOM page scrape finished', {
+      count: items.length,
+      expectedTotal: expected,
+      pagesAttempted: totalPages,
+      pagesRead,
+      stopped,
+      incomplete,
+      stopReason: result.stopReason
+    });
+    return result;
+  }
+
+  function isCatalogScrapeComplete(result) {
+    if (!result?.items?.length) return false;
+    if (result.stopped) return true;
+    if (result.stopReason === 'exceeds-filtered-visible-total') return false;
+    if (result.incomplete) return false;
+    if (!Number.isFinite(result.expectedTotal) || result.expectedTotal <= 0) return true;
+    return result.items.length >= result.expectedTotal;
+  }
+
+  function catalogItemsMatchVisibleSearch(items, visibleState) {
+    const query = normalizedFilterText(visibleState?.filters?.q || '');
+    if (!query) return true;
+    const terms = query.split(/\s+/).filter(Boolean);
+    if (!terms.length || !items?.length) return true;
+    return items.every(item => {
+      const text = normalizedFilterText([
+        item?.title,
+        item?.description,
+        item?.rawText,
+        item?.lot
+      ].filter(Boolean).join(' '));
+      return terms.every(term => text.includes(term));
+    });
+  }
+
+  function validateCatalogExportAgainstVisibleState(result, visibleState, route = {}) {
+    const items = result?.items || result?.lots || [];
+    if (!visibleState) return { ok: true };
+    if (isHibidAccountExportRoute(route)) return { ok: true };
+    const trustedApiCoverage = /^(?:hibid-(?:graphql|search)-api|ajwillner-api)$/i.test(String(result?.source || ''))
+      && result?.coverage?.complete === true
+      && result?.coverage?.routeMatches !== false;
+    if (trustedApiCoverage) return { ok: true };
+    if (visibleState.noMatches && items.length) {
+      return { ok: false, reason: 'visible-no-matches-with-exported-lots' };
+    }
+    const hasVisibleExpected = visibleState.expectedTotal !== null
+      && visibleState.expectedTotal !== undefined
+      && Number.isFinite(Number(visibleState.expectedTotal));
+    const hasResultExpected = result?.expectedTotal !== null
+      && result?.expectedTotal !== undefined
+      && Number.isFinite(Number(result?.expectedTotal));
+    const visibleExpected = Number(visibleState.expectedTotal);
+    const resultExpected = Number(result?.expectedTotal);
+    if (visibleState.hasActiveFilters
+      && Number.isFinite(visibleExpected)
+      && visibleExpected >= 0
+      && items.length > visibleExpected) {
+      return { ok: false, reason: 'filtered-result-exceeds-visible-total' };
+    }
+    if (visibleState.hasActiveFilters && hasVisibleExpected && hasResultExpected
+      && visibleExpected !== resultExpected && String(result?.source || '').includes('hibid')) {
+      return { ok: false, reason: 'filtered-count-mismatch' };
+    }
+    if (visibleState.activeFilterKeys?.includes('q')
+      && String(result?.source || '') !== 'hibid-state'
+      && items.length
+      && !catalogItemsMatchVisibleSearch(items, visibleState)) {
+      return { ok: false, reason: 'filtered-search-results-do-not-match-query' };
+    }
+    if (visibleState.hasActiveFilters && result?.rejectedSource === 'filter-mismatch') {
+      return { ok: false, reason: 'filtered-source-mismatch' };
+    }
+    return { ok: true };
+  }
+
+  function isHibidCurrentBidsRoute(route = {}) {
+    const kind = String(route?.kind || '').trim();
+    return kind === 'currentbids-winning' || kind === 'currentbids-outbid';
+  }
+
+  function isHibidPastAuctionRoute(route = {}) {
+    const kind = String(route?.kind || '').trim();
+    return kind === 'pastbids' || kind === 'pastwatchlist';
+  }
+
+  function isHibidAccountExportRoute(route = {}) {
+    const kind = String(route?.kind || '').trim();
+    return isHibidCurrentBidsRoute(route)
+      || kind === 'watchlist'
+      || kind === 'watchlist-outbid'
+      || isHibidPastAuctionRoute(route);
+  }
+
+  function scraperResultRows(result) {
+    const rows = [
+      ...(Array.isArray(result?.items) ? result.items : []),
+      ...(Array.isArray(result?.lots) ? result.lots : []),
+      ...(Array.isArray(result?.sales) ? result.sales : []),
+      ...(Array.isArray(result?.listings) ? result.listings : []),
+    ].filter(Boolean);
+    const seen = new Set();
+    return rows.filter(row => {
+      const key = typeof row === 'object' && row !== null
+        ? row
+        : String(row);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function uniqueNonEmpty(values) {
+    return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)));
+  }
+
+  function scraperResultPageKinds(result) {
+    return uniqueNonEmpty([
+      result?.context?.pageKind,
+      ...scraperResultRows(result).map(row => row?.pageKind),
+    ]);
+  }
+
+  function expectedTotalFromScraperResult(result) {
+    const candidates = [
+      result?.expectedTotal,
+      result?.context?.expectedTotal,
+      result?.context?.advertisedTotal,
+      result?.context?.totalSales,
+      result?.context?.totalItems,
+      result?.context?.totalLots,
+      result?.context?.total,
+      result?.context?.visibleCount,
+      result?.completeness?.expected_count,
+    ];
+    for (const value of candidates) {
+      if (value === null || value === undefined || value === '') continue;
+      const total = Number(value);
+      if (Number.isFinite(total) && total >= 0) return total;
+    }
+    return null;
+  }
+
+  function validateScraperResultCount(result, reason) {
+    const expectedTotal = expectedTotalFromScraperResult(result);
+    if (expectedTotal === null) return { ok: true };
+    const rows = scraperResultRows(result);
+    if (rows.length > expectedTotal) return { ok: false, reason };
+    return { ok: true };
+  }
+
+  function primaryScraperRows(result = {}) {
+    const candidates = [result.items, result.lots, result.sales, result.listings, result.records];
+    const rows = candidates.find(value => Array.isArray(value));
+    return Array.isArray(rows) ? rows.filter(Boolean) : [];
+  }
+
+  function scraperStableIdentity(row = {}, site = '') {
+    const normalizedSite = String(site || row.source || row.pageKind || '').toLowerCase();
+    const fromUrl = (patterns) => firstMatch(String(row.url || row.itemUrl || row.saleUrl || ''), patterns);
+    if (/hibid/.test(normalizedSite)) {
+      return String(row.eventItemId || row.event_item_id || row.id || fromUrl([/\/lot\/(\d+)/i]) || '').trim();
+    }
+    if (/ajwillner|aj\s+willner/.test(normalizedSite)) {
+      return String(row.id || row.itemId || fromUrl([/\/items?\/(\d+)/i, /[?&]item(?:_|)id=(\d+)/i]) || '').trim();
+    }
+    if (/auctionninja/.test(normalizedSite)) {
+      if (String(row.pageKind || '').toLowerCase() === 'auction-search') {
+        return String(row.stableId || auctionNinjaSaleStableIdentity(row.url) || '').trim();
+      }
+      return String(row.stableId || row.id || fromUrl([/\/product\/[^/?]*?-(\d+)\.html/i, /\/product\/(\d+)/i]) || row.url || '').trim();
+    }
+    if (/\baar\b|aar auctions/.test(normalizedSite)) {
+      const itemId = row.itemId || fromUrl([/[?&]itemId=(\d+)/i]);
+      return String(itemId || (row.auctionId && row.lot ? `${row.auctionId}:${row.lot}` : '') || row.url || '').trim();
+    }
+    if (/govdeals/.test(normalizedSite)) {
+      const assetId = row.assetId || fromUrl([/\/asset\/(\d+)/i]);
+      const accountId = row.accountId || fromUrl([/\/asset\/\d+\/(\d+)/i]);
+      return String(assetId && accountId ? `${accountId}:${assetId}` : '').trim();
+    }
+    if (/ebay/.test(normalizedSite)) {
+      return String(row.transaction_id
+        || row.order_line_id
+        || ([row.order_id, row.item_id].filter(Boolean).join(':'))
+        || row.item_id
+        || row.itemId
+        || fromUrl([/\/itm\/(\d+)/i, /[?&]itemId=(\d+)/i])
+        || '').trim();
+    }
+    if (/facebook|marketplace/.test(normalizedSite)) {
+      return String(row.listingId || row.itemId || row.id || fromUrl([/\/marketplace\/item\/(\d+)/i]) || '').trim();
+    }
+    return String(row.eventItemId || row.itemId || row.assetId || row.id || row.url || '').trim();
+  }
+
+  function genericRouteFingerprint(route = {}, locationLike = null) {
+    const fallbackUrl = route?.url || route?.href || (typeof location !== 'undefined' ? location.href : 'https://invalid.local/');
+    let url;
+    try {
+      url = urlFromLocationLike(locationLike || fallbackUrl);
+    } catch {
+      url = new URL('https://invalid.local/');
+    }
+    const ignored = new Set(['_', 'cb', 'cacheBust', 'timestamp', 't']);
+    const search = Array.from(url.searchParams.entries())
+      .filter(([key]) => !ignored.has(key))
+      .sort(([aKey, aValue], [bKey, bValue]) => aKey.localeCompare(bKey) || aValue.localeCompare(bValue))
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join('&');
+    return [
+      String(route?.source || ''),
+      String(route?.kind || ''),
+      url.hostname.toLowerCase(),
+      url.pathname.replace(/\/+$/, '') || '/',
+      search,
+      String(route?.auctionId || route?.saleId || route?.assetId || route?.itemId || route?.sellerSlug || '')
+    ].join('|');
+  }
+
+  function buildProofTierCoverage(result = {}, mode = '', route = {}, options = {}) {
+    const rows = primaryScraperRows(result);
+    const site = String(options.site || route?.source || result?.context?.source || result?.source || mode || '').toLowerCase();
+    const identities = rows.map(row => scraperStableIdentity(row, site));
+    const missingIdentityIndexes = identities.map((value, index) => value ? -1 : index).filter(index => index >= 0);
+    const identityCounts = new Map();
+    identities.filter(Boolean).forEach(identity => identityCounts.set(identity, (identityCounts.get(identity) || 0) + 1));
+    const duplicateIds = Array.from(identityCounts.entries()).filter(([, count]) => count > 1).map(([identity]) => identity);
+    const collectedIds = Array.from(identityCounts.keys());
+    const expectedIds = uniqueNonEmpty(options.expectedIds || result?.coverage?.enumeratedIds || result?.enumeratedIds || []);
+    const expectedSet = new Set(expectedIds);
+    const collectedSet = new Set(collectedIds);
+    const missingIds = expectedIds.filter(identity => !collectedSet.has(identity));
+    const unexpectedIds = expectedIds.length ? collectedIds.filter(identity => !expectedSet.has(identity)) : [];
+    const expectedTotal = expectedTotalFromScraperResult(result);
+    const startFingerprint = String(result?.routeFingerprint || result?.coverage?.routeFingerprint || options.startFingerprint || '');
+    const currentFingerprint = String(options.currentFingerprint || genericRouteFingerprint(route, options.locationLike));
+    const routeMatches = result?.coverage?.routeMatches !== false && (!startFingerprint || !currentFingerprint || startFingerprint === currentFingerprint);
+    const requestMatches = result?.coverage?.requestMatches !== false;
+    const accountScopeMatches = result?.coverage?.accountScopeMatches !== false;
+    const failedPages = Array.isArray(result?.coverage?.failedPages) ? result.coverage.failedPages : (Array.isArray(result?.failedPages) ? result.failedPages : []);
+    const failedBatches = Array.isArray(result?.coverage?.failedBatches) ? result.coverage.failedBatches : (Array.isArray(result?.failedBatches) ? result.failedBatches : []);
+    const explicitProof = String(result?.coverage?.proofTier || result?.coverage?.proof || result?.proofTier || '').trim();
+    const source = String(result?.source || '');
+    const detailRoute = /(?:item-detail|asset)$/.test(String(route?.kind || ''));
+    const scopedRoute = isHibidAccountExportRoute(route) || /(?:followed-items|items-won|bid-history|pastbids|pastwatchlist)/.test(String(route?.kind || ''));
+    const settledDom = result?.coverage?.reachedBottom === true
+      || result?.coverage?.settledBottom === true
+      || explicitProof === 'dom-bottom-settled';
+    let proofTier = explicitProof;
+    if (!proofTier && /api/i.test(source)) proofTier = 'api-exact';
+    else if (!proofTier && detailRoute && rows.length <= 1) proofTier = 'single-record';
+    else if (!proofTier && scopedRoute) proofTier = 'scoped-current-page';
+    else if (!proofTier && settledDom) proofTier = 'dom-bottom-settled';
+    else if (!proofTier && expectedTotal !== null) proofTier = 'pagination-exact';
+    else if (!proofTier) proofTier = 'unproven';
+
+    const countMatches = expectedTotal === null ? (proofTier === 'scoped-current-page' || proofTier === 'single-record' || proofTier === 'dom-bottom-settled') : rows.length === expectedTotal;
+    const exactIdentitySet = expectedIds.length ? missingIds.length === 0 && unexpectedIds.length === 0 : true;
+    const complete = routeMatches
+      && requestMatches
+      && accountScopeMatches
+      && !result?.stopped
+      && !result?.incomplete
+      && result?.completeness?.complete !== false
+      && countMatches
+      && duplicateIds.length === 0
+      && missingIdentityIndexes.length === 0
+      && exactIdentitySet
+      && failedPages.length === 0
+      && failedBatches.length === 0
+      && proofTier !== 'unproven';
+    let reason = 'complete';
+    if (!routeMatches) reason = 'route-fingerprint-changed';
+    else if (!requestMatches) reason = 'request-fingerprint-changed';
+    else if (!accountScopeMatches) reason = 'account-scope-mismatch';
+    else if (result?.stopped) reason = 'stopped';
+    else if (result?.incomplete) reason = 'incomplete';
+    else if (result?.completeness?.complete === false) reason = 'incomplete';
+    else if (!countMatches) reason = expectedTotal === null ? 'expected-total-unknown' : 'count-mismatch';
+    else if (duplicateIds.length) reason = 'duplicate-identities';
+    else if (missingIdentityIndexes.length) reason = 'missing-stable-identities';
+    else if (missingIds.length) reason = 'missing-identities';
+    else if (unexpectedIds.length) reason = 'unexpected-identities';
+    else if (failedPages.length) reason = 'failed-pages';
+    else if (failedBatches.length) reason = 'failed-batches';
+    else if (proofTier === 'unproven') reason = 'proof-unavailable';
+
+    return {
+      site,
+      routeKind: String(route?.kind || ''),
+      source,
+      strategy: String(result?.coverage?.strategy || result?.strategy || source || 'unknown'),
+      proofTier,
+      complete,
+      reason,
+      expectedTotal,
+      collectedCount: rows.length,
+      uniqueIdentityCount: collectedIds.length,
+      collectedIds,
+      expectedIds,
+      duplicateIds,
+      missingIdentityIndexes,
+      missingIds,
+      unexpectedIds,
+      failedPages,
+      failedBatches,
+      routeMatches,
+      requestMatches,
+      accountScopeMatches,
+      requestFingerprint: String(result?.coverage?.requestFingerprint || result?.requestFingerprint || ''),
+      currentRequestFingerprint: String(result?.coverage?.currentRequestFingerprint || result?.currentRequestFingerprint || ''),
+      routeFingerprint: startFingerprint || currentFingerprint,
+      currentFingerprint,
+      stopped: Boolean(result?.stopped),
+      durationMs: Number(result?.durationMs || result?.coverage?.durationMs || 0) || 0
+    };
+  }
+
+  function assessExportReadiness(result = {}, mode = '', route = {}, options = {}) {
+    const routeValidation = validateScraperExportAgainstRoute(result, mode, route);
+    const coverage = buildProofTierCoverage(result, mode, route, options);
+    if (!routeValidation.ok) return { ok: false, reason: routeValidation.reason, coverage, routeValidation };
+    if (!coverage.complete) return { ok: false, reason: coverage.reason, coverage, routeValidation };
+    return { ok: true, reason: 'complete', coverage, routeValidation };
+  }
+
+  function buildVerifiedPartialPayload(result = {}, coverage = {}, format = 'json', context = {}) {
+    const items = primaryScraperRows(result);
+    const audit = {
+      ...coverage,
+      complete: false,
+      sourceUrl: String(context.sourceUrl || result?.context?.url || result?.context?.sourceUrl || ''),
+      generatedAt: new Date().toISOString()
+    };
+    const payload = { context: { ...result?.context, ...context }, items, audit };
+    if (String(format).toLowerCase() === 'llm') {
+      return [
+        AUCTION_RESALE_COORDINATOR_PROMPT,
+        '',
+        'VERIFIED PARTIAL EXPORT: This collection is incomplete. Use it only for provisional research and do not infer anything about missing records.',
+        JSON.stringify(payload, null, 2)
+      ].join('\n');
+    }
+    return JSON.stringify(payload, null, 2);
+  }
+
+  function buildSanitizedDiagnosticBundle(result = {}, coverage = {}, context = {}) {
+    return {
+      schemaVersion: 1,
+      generatedAt: new Date().toISOString(),
+      site: coverage.site || '',
+      routeKind: coverage.routeKind || '',
+      source: coverage.source || result?.source || '',
+      strategy: coverage.strategy || '',
+      proofTier: coverage.proofTier || '',
+      complete: coverage.complete === true,
+      reason: coverage.reason || '',
+      expectedTotal: coverage.expectedTotal ?? null,
+      collectedCount: coverage.collectedCount ?? primaryScraperRows(result).length,
+      uniqueIdentityCount: coverage.uniqueIdentityCount ?? null,
+      duplicateIds: coverage.duplicateIds || [],
+      missingIds: coverage.missingIds || [],
+      unexpectedIds: coverage.unexpectedIds || [],
+      failedPages: coverage.failedPages || [],
+      failedBatches: coverage.failedBatches || [],
+      routeFingerprint: coverage.routeFingerprint || '',
+      currentFingerprint: coverage.currentFingerprint || '',
+      routeMatches: coverage.routeMatches !== false,
+      durationMs: coverage.durationMs || 0,
+      sourceUrl: String(context.sourceUrl || result?.context?.url || '').replace(/([?&](?:token|auth|session|csrf|xsrf)[^=]*)=[^&]*/gi, '$1=[redacted]')
+    };
+  }
+
+  function validateScraperCompleteness(result, reason) {
+    if (!result?.incomplete) return { ok: true };
+
+    // HiBid's virtualized grid can report a stale header total after filters,
+    // closed lots, or shipping-only cards have been removed from the DOM. A
+    // DOM fallback that reached the bottom and completed its settle cycles has
+    // a direct coverage proof; an interrupted scrape does not.
+    const settledDomCoverage = result?.source === 'dom-fallback'
+      && result?.coverage?.proof === 'dom-bottom-settled'
+      && result?.coverage?.reachedBottom === true;
+    if (settledDomCoverage) return { ok: true, reason: 'settled-dom-bottom' };
+
+    return { ok: false, reason };
+  }
+
+  function trimRowsToExpectedTotal(rows, expectedTotal) {
+    const total = Number(expectedTotal);
+    if (!Number.isFinite(total) || total <= 0 || !Array.isArray(rows) || rows.length <= total) {
+      return { rows: Array.isArray(rows) ? rows : [], trimmed: false, originalCount: Array.isArray(rows) ? rows.length : 0 };
+    }
+    return { rows: rows.slice(0, total), trimmed: true, originalCount: rows.length };
+  }
+
+  function validateAuctionNinjaExportAgainstRoute(result, route = {}) {
+    const routeKind = String(route?.kind || '').trim();
+    const allowedKinds = routeKind ? [routeKind] : [];
+    if (!allowedKinds.length) return { ok: true };
+    const pageKinds = scraperResultPageKinds(result);
+    if (pageKinds.length && pageKinds.some(kind => !allowedKinds.includes(kind))) {
+      return { ok: false, reason: 'auctionninja-page-kind-mismatch' };
+    }
+    if (routeKind === 'sale-catalog' && route.saleId && result?.context?.saleId
+      && String(result.context.saleId) !== String(route.saleId)) {
+      return { ok: false, reason: 'auctionninja-sale-id-mismatch' };
+    }
+    if (routeKind === 'item-detail' && route.productId && result?.context?.productId
+      && String(result.context.productId) !== String(route.productId)) {
+      return { ok: false, reason: 'auctionninja-product-id-mismatch' };
+    }
+    const completeValidation = validateScraperCompleteness(result, 'auctionninja-incomplete');
+    if (!completeValidation.ok) return completeValidation;
+    const countValidation = validateScraperResultCount(result, 'auctionninja-count-exceeds-expected');
+    if (!countValidation.ok) return countValidation;
+    return { ok: true };
+  }
+
+  function validateAarExportAgainstRoute(result, route = {}) {
+    const routeKind = String(route?.kind || '').trim();
+    if (!routeKind) return { ok: true };
+    const pageKinds = scraperResultPageKinds(result);
+    if (pageKinds.length && pageKinds.some(kind => kind !== routeKind)) {
+      return { ok: false, reason: 'aar-page-kind-mismatch' };
+    }
+    if (routeKind === 'aar-auction-catalog' && route.auctionId) {
+      const routeAuctionId = String(route.auctionId);
+      const contextAuctionId = String(result?.context?.auctionId || '');
+      const rowAuctionIds = uniqueNonEmpty(scraperResultRows(result).map(row => row?.auctionId));
+      if ((contextAuctionId && contextAuctionId !== routeAuctionId)
+        || rowAuctionIds.some(auctionId => auctionId !== routeAuctionId)) {
+        return { ok: false, reason: 'aar-auction-id-mismatch' };
+      }
+    }
+    if (routeKind === 'aar-item-detail' && route.itemId) {
+      const routeItemId = String(route.itemId);
+      const contextItemId = String(result?.context?.itemId || '');
+      const rowItemIds = uniqueNonEmpty(scraperResultRows(result).map(row => row?.itemId || String(row?.url || '').match(/[?&]itemId=([^&]+)/i)?.[1] || ''));
+      if ((contextItemId && contextItemId !== routeItemId)
+        || rowItemIds.some(itemId => itemId !== routeItemId)) {
+        return { ok: false, reason: 'aar-item-id-mismatch' };
+      }
+    }
+    const completeValidation = validateScraperCompleteness(result, 'aar-incomplete');
+    if (!completeValidation.ok) return completeValidation;
+    const countValidation = validateScraperResultCount(result, 'aar-count-exceeds-expected');
+    if (!countValidation.ok) return countValidation;
+    return { ok: true };
+  }
+
+  function validateGovDealsExportAgainstRoute(result, route = {}) {
+    const routeKind = String(route?.kind || '').trim();
+    if (!routeKind) return { ok: true };
+    const pageKinds = scraperResultPageKinds(result);
+    if (pageKinds.length && pageKinds.some(kind => kind !== routeKind)) {
+      return { ok: false, reason: 'govdeals-page-kind-mismatch' };
+    }
+    if (result?.coverage?.routeMatches === false) {
+      return { ok: false, reason: 'govdeals-route-fingerprint-changed' };
+    }
+    if (result?.coverage?.requestMatches === false) {
+      return { ok: false, reason: 'govdeals-request-filter-mismatch' };
+    }
+    if (routeKind === 'govdeals-new-listings') {
+      const expectedZip = String(route.zipcode || '').trim();
+      const expectedMiles = String(route.miles || '').trim();
+      const contextZip = String(result?.context?.zipcode || '').trim();
+      const contextMiles = String(result?.context?.miles || '').trim();
+      if ((expectedZip && contextZip !== expectedZip) || (expectedMiles && contextMiles !== expectedMiles)) {
+        return { ok: false, reason: 'govdeals-filter-mismatch' };
+      }
+    }
+    if (routeKind === 'govdeals-seller') {
+      const expectedAccountIds = uniqueNonEmpty(result?.context?.accountIds || []);
+      const rows = scraperResultRows(result);
+      if (!expectedAccountIds.length
+        || rows.some(row => !row?.accountId || !expectedAccountIds.includes(String(row.accountId)))) {
+        return { ok: false, reason: 'govdeals-seller-scope-mismatch' };
+      }
+    }
+    if (routeKind === 'govdeals-asset') {
+      const expectedAssetId = String(route.assetId || '').trim();
+      const expectedAccountId = String(route.accountId || '').trim();
+      const rows = scraperResultRows(result);
+      const assetIds = uniqueNonEmpty([result?.context?.assetId, ...rows.map(row => row?.assetId)]);
+      const accountIds = uniqueNonEmpty([result?.context?.accountId, ...rows.map(row => row?.accountId)]);
+      if ((expectedAssetId && assetIds.length && assetIds.some(assetId => assetId !== expectedAssetId))
+        || (expectedAccountId && accountIds.length && accountIds.some(accountId => accountId !== expectedAccountId))) {
+        return { ok: false, reason: 'govdeals-asset-id-mismatch' };
+      }
+    }
+    const completeValidation = validateScraperCompleteness(result, 'govdeals-incomplete');
+    if (!completeValidation.ok) return completeValidation;
+    const countValidation = validateScraperResultCount(result, 'govdeals-count-exceeds-expected');
+    if (!countValidation.ok) return countValidation;
+    return { ok: true };
+  }
+
+  function rowSourcesFromResult(result) {
+    return uniqueNonEmpty([
+      result?.source,
+      result?.context?.source,
+      ...scraperResultRows(result).map(row => row?.source),
+    ]);
+  }
+
+  function describeExportGuardFailure(reason, context = {}) {
+    const labels = {
+      'catalog-route-mismatch': 'active page route is not a catalog export route',
+      'catalog-source-mismatch': 'copied data came from a different site source',
+      'catalog-auction-id-mismatch': 'copied lots belong to a different auction',
+      'catalog-incomplete': 'scrape stopped before the page total was collected',
+      'catalog-count-exceeds-expected': 'copied count exceeds the page total',
+      'visible-no-matches-with-exported-lots': 'the page shows no matches but copied lots were found',
+      'filtered-count-mismatch': 'copied count does not match the active filter result',
+      'filtered-search-results-do-not-match-query': 'copied lots do not match the active search',
+      'filtered-source-mismatch': 'filtered data source did not match the active page',
+      'filter-mismatch': 'copied data did not match the active filters',
+      'ambiguous-unfiltered-state': 'embedded page data was ambiguous, so it was rejected',
+      'live-route-mismatch': 'active page is not a live catalog route',
+      'live-page-kind-mismatch': 'copied data is not live-lot data',
+      'live-source-mismatch': 'copied live data came from a different source',
+      'live-incomplete': 'live scrape stopped before all open lots were collected',
+      'live-count-exceeds-expected': 'copied live count exceeds the page total',
+    };
+    const label = labels[String(reason || '')] || String(reason || 'unknown export guard failure');
+    const count = Number(context.count);
+    const expected = Number(context.expectedTotal);
+    const countSuffix = Number.isFinite(count) && Number.isFinite(expected) && expected > 0
+      ? ` (${count}/${expected})`
+      : '';
+    return `${label}${countSuffix}.`;
+  }
+
+  function validateCatalogExportAgainstRoute(result, route = {}) {
+    const routeKind = String(route?.kind || '').trim();
+    if (routeKind && !['catalog', 'watchlist', 'watchlist-outbid', 'currentbids-winning', 'currentbids-outbid', 'lot'].includes(routeKind)) {
+      return { ok: false, reason: 'catalog-route-mismatch' };
+    }
+    const routeSource = String(route?.source || '').trim().toLowerCase();
+    const rowSources = rowSourcesFromResult(result);
+    const sourceText = rowSources.join(' ').toLowerCase();
+    const looksAjWillner = /ajwillner|aj\s+willner/.test(sourceText);
+    const looksOtherAuctionSource = /auctionninja|aar auctions|govdeals|facebook|ebay/.test(sourceText);
+
+    if (routeSource === 'ajwillner') {
+      if (!looksAjWillner) return { ok: false, reason: 'catalog-source-mismatch' };
+      const expectedAuctionId = String(route?.auctionId || '').trim();
+      if (expectedAuctionId) {
+        const rowAuctionIds = uniqueNonEmpty([
+          result?.context?.auctionId,
+          ...scraperResultRows(result).flatMap(row => [
+            row?.auctionId,
+            firstMatch(row?.url || '', [/\/ui\/auctions\/(\d+)/i])
+          ])
+        ]);
+        if (rowAuctionIds.length && rowAuctionIds.some(auctionId => auctionId !== expectedAuctionId)) {
+          return { ok: false, reason: 'catalog-auction-id-mismatch' };
+        }
+      }
+      if (result?.coverage?.complete !== true || result?.coverage?.routeMatches === false) {
+        return { ok: false, reason: 'catalog-incomplete' };
+      }
+    } else if (routeSource === 'hibid' || !routeSource) {
+      if (looksAjWillner || looksOtherAuctionSource) return { ok: false, reason: 'catalog-source-mismatch' };
+    }
+
+    if (isHibidAccountExportRoute(route)) {
+      const completeValidation = validateScraperCompleteness(result, `${routeKind}-incomplete`);
+      if (!completeValidation.ok) return completeValidation;
+      const countValidation = validateScraperResultCount(result, `${routeKind}-count-exceeds-expected`);
+      if (!countValidation.ok) return countValidation;
+      return { ok: true };
+    }
+
+    const completeValidation = validateScraperCompleteness(result, 'catalog-incomplete');
+    if (!completeValidation.ok) return completeValidation;
+    const countValidation = validateScraperResultCount(result, 'catalog-count-exceeds-expected');
+    if (!countValidation.ok) return countValidation;
+    return { ok: true };
+  }
+
+  function validateLiveExportAgainstRoute(result, route = {}) {
+    if (String(route?.kind || '') !== 'live') return { ok: false, reason: 'live-route-mismatch' };
+    const pageKinds = scraperResultPageKinds(result);
+    if (pageKinds.length && pageKinds.some(kind => kind !== 'live')) {
+      return { ok: false, reason: 'live-page-kind-mismatch' };
+    }
+    const sourceText = rowSourcesFromResult(result).join(' ').toLowerCase();
+    if (sourceText && !/hibid|live/.test(sourceText)) {
+      return { ok: false, reason: 'live-source-mismatch' };
+    }
+    const completeValidation = validateScraperCompleteness(result, 'live-incomplete');
+    if (!completeValidation.ok) return completeValidation;
+    const countValidation = validateScraperResultCount(result, 'live-count-exceeds-expected');
+    if (!countValidation.ok) return countValidation;
+    return { ok: true };
+  }
+
+  function normalizeFlipTrackerSource(value) {
+    const text = String(value || '').toLowerCase();
+    if (/facebook|marketplace/.test(text)) return 'facebook';
+    if (/ebay/.test(text)) return 'ebay';
+    return '';
+  }
+
+  function validateFlipTrackerExportAgainstRoute(result, route = {}) {
+    const routeKind = String(route?.kind || '');
+    const bulkSellRoute = routeKind === 'fliptracker-ebay-bulk';
+    const lifecyclePageKind = {
+      'fliptracker-ebay-active': 'active',
+      'fliptracker-ebay-ended': 'ended',
+      'fliptracker-ebay-sold': 'sold',
+      'fliptracker-ebay-transactions': 'transactions',
+    }[routeKind] || '';
+    const rows = scraperResultRows(result);
+    const lifecycleRows = rows.filter(row => row?.record_type);
+    if (/^fliptracker-ebay-/i.test(routeKind) && !lifecyclePageKind && !bulkSellRoute) {
+      return { ok: false, reason: 'fliptracker-route-mismatch' };
+    }
+    if (lifecyclePageKind) {
+      const resultPageKind = String(result?.page_kind || result?.context?.pageKind || '');
+      if (['active', 'ended', 'sold', 'transactions'].includes(resultPageKind) && resultPageKind !== lifecyclePageKind) {
+        return { ok: false, reason: 'fliptracker-page-kind-mismatch' };
+      }
+      const expectedRecordType = lifecyclePageKind === 'active'
+        ? 'active_listing'
+        : (lifecyclePageKind === 'ended'
+          ? 'ended_listing'
+          : (lifecyclePageKind === 'sold' ? 'sold_order_line' : 'transaction'));
+      if (lifecycleRows.some(row => row.record_type !== expectedRecordType)) {
+        return { ok: false, reason: 'fliptracker-page-kind-mismatch' };
+      }
+    }
+    const expectedSource = normalizeFlipTrackerSource(route?.source || route?.kind);
+    if (!expectedSource) return { ok: true };
+    const rowSources = rowSourcesFromResult(result).map(normalizeFlipTrackerSource).filter(Boolean);
+    if (!rowSources.length && rows.length && lifecycleRows.length !== rows.length) {
+      return { ok: false, reason: 'fliptracker-source-mismatch' };
+    }
+    if (rowSources.some(source => source !== expectedSource)) {
+      return { ok: false, reason: 'fliptracker-source-mismatch' };
+    }
+    return { ok: true };
+  }
+
+  function validateScraperExportAgainstRoute(result, mode = '', route = {}) {
+    if (!result) return { ok: true };
+    const normalizedMode = String(mode || '').toLowerCase();
+    if (normalizedMode === 'catalog' || normalizedMode === 'hibid-catalog' || normalizedMode === 'ajwillner') return validateCatalogExportAgainstRoute(result, route);
+    if (normalizedMode === 'live' || normalizedMode === 'hibid-live') return validateLiveExportAgainstRoute(result, route);
+    if (normalizedMode === 'fliptracker') return validateFlipTrackerExportAgainstRoute(result, route);
+    if (normalizedMode === 'auctionninja') return validateAuctionNinjaExportAgainstRoute(result, route);
+    if (normalizedMode === 'aar') return validateAarExportAgainstRoute(result, route);
+    if (normalizedMode === 'govdeals') return validateGovDealsExportAgainstRoute(result, route);
+    return { ok: true };
+  }
+
+  function ebaySellerHubTableRowChunks(html) {
+    const text = String(html || '');
+    return Array.from(text.matchAll(/<tr\b[\s\S]*?<\/tr>/gi)).map(match => match[0])
+      .concat(Array.from(text.matchAll(/<div\b[^>]+role=["']row["'][\s\S]*?(?=<div\b[^>]+role=["']row["']|$)/gi)).map(match => match[0]));
+  }
+
+  function ebaySellerHubRowCells(rowHtml, header = false) {
+    const tag = header ? 'th' : 'td';
+    const tableCells = Array.from(String(rowHtml || '').matchAll(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi')))
+      .map(match => match[0]);
+    if (tableCells.length) return tableCells;
+    const role = header ? 'columnheader' : 'gridcell';
+    return extractBalancedHtmlElements(rowHtml, ['div'])
+      .filter(element => new RegExp(`\\brole=["']${role}["']`, 'i').test(element.openingTag))
+      .map(element => element.html);
+  }
+
+  function normalizeEbaySellerHubColumnName(value) {
+    return stripHtml(value)
+      .replace(/\bSort (?:ascending|descending)\b/gi, ' ')
+      .replace(/\bResize column\b[\s\S]*$/i, ' ')
+      .replace(/\b\d+\s+pixels\b/gi, ' ')
+      .replace(/\bInfo about view counts\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function ebaySellerHubColumnMap(html) {
+    const headerRow = ebaySellerHubTableRowChunks(html).find(row => {
+      const text = stripHtml(row);
+      return /\bItem\b/i.test(text) && /\bCurrent price\b/i.test(text);
+    }) || '';
+    const cells = ebaySellerHubRowCells(headerRow, true);
+    const map = new Map();
+    cells.forEach((cell, index) => {
+      const label = normalizeEbaySellerHubColumnName(cell);
+      if (label) map.set(label, index);
+    });
+    map.cellCount = cells.length;
+    return map;
+  }
+
+  function ebaySellerHubCellByColumn(cells, columnMap, labels) {
+    for (const label of labels) {
+      const normalized = normalizeEbaySellerHubColumnName(label);
+      if (columnMap.has(normalized)) return cells[columnMap.get(normalized)] || '';
+      for (const [columnName, index] of columnMap.entries()) {
+        if (columnName === normalized || columnName.startsWith(`${normalized} `)) return cells[index] || '';
+      }
+    }
+    return '';
+  }
+
+  function cleanEbaySellerHubCell(value) {
+    const text = stripHtml(value).replace(/\bNot Editable\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    return /^[-\u2013\u2014]$/.test(text) ? '' : text;
+  }
+
+  function cleanEbayCustomLabelValue(value) {
+    const text = cleanEbaySellerHubCell(value);
+    if (!text || text.length > 100) return '';
+    if (/[<>="']/.test(text) || /\b(?:editable|inline-editable|shui-|aria-|data-)\b/i.test(text)) return '';
+    return text;
+  }
+
+  function parseEbaySellerHubTableListingsHtml(html, options = {}) {
+    const rowChunks = ebaySellerHubTableRowChunks(html);
+    const columnMap = ebaySellerHubColumnMap(html);
+    const requirePrice = options.requirePrice !== false;
+    const listings = [];
+
+    rowChunks.forEach(chunk => {
+      if (!/(?:\/itm\/\d+|itemId=\d+|itemid=\d+)/i.test(chunk)) return;
+      const cells = ebaySellerHubRowCells(chunk);
+      const alignedColumnMap = cells.length === columnMap.cellCount ? columnMap : new Map();
+      const itemNumberCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Item number']);
+      const itemCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Item']);
+      const priceCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Current price']);
+      const quantityCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Available quantity']);
+      const viewsCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Views (30 days)', 'Views']);
+      const watchersCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Watchers']);
+      const bidsCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Bids']);
+      const endDateCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['End date']);
+      const soldStatusCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Sold status', 'Status']);
+      const formatCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Format']);
+      const durationCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Duration']);
+      const customLabelCell = ebaySellerHubCellByColumn(cells, alignedColumnMap, ['Custom label (SKU)', 'Custom label', 'SKU']);
+      const anchors = Array.from(chunk.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)).map(match => {
+        const attrs = match[1] || '';
+        const href = decodeHtml(firstMatch(attrs, [/href="([^"]+)"/i, /data-href="([^"]+)"/i]));
+        const text = cleanListingTitle(stripHtml(match[2] || '').replace(/\bopens in new window\b.*$/i, ''));
+        return { href, text };
+      });
+      const itemAnchors = itemCell
+        ? Array.from(itemCell.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)).map(match => ({
+          href: decodeHtml(firstMatch(match[1] || '', [/href="([^"]+)"/i, /data-href="([^"]+)"/i])),
+          text: cleanEbaySellerHubTitle(stripHtml(match[2] || '')),
+        }))
+        : [];
+      const itemHref = itemAnchors.find(anchor => /\/itm\/\d+/i.test(anchor.href))?.href
+        || anchors.find(anchor => /\/itm\/\d+/i.test(anchor.href))?.href || '';
+      const idHref = anchors.find(anchor => /(?:\/itm\/\d+|itemId=\d+|itemid=\d+)/i.test(anchor.href))?.href || '';
+      const itemId = firstMatch(`${cleanEbaySellerHubCell(itemNumberCell)} ${itemHref} ${idHref} ${chunk}`, [
+        /\b(\d{9,15})\b/i,
+        /\/itm\/(\d+)/i,
+        /itemId=(\d+)/i,
+        /itemid=(\d+)/i
+      ]);
+      const titleAnchor = itemAnchors
+        .concat(anchors)
+        .filter(anchor => anchor.text && !/^(edit|actions?|sell similar|sell it faster|promote|preview|view|download|upload)$/i.test(anchor.text))
+        .sort((a, b) => b.text.length - a.text.length)[0];
+      const title = cleanEbaySellerHubTitle(
+        itemAnchors.filter(anchor => anchor.text).sort((a, b) => b.text.length - a.text.length)[0]?.text
+        || cleanEbaySellerHubCell(itemCell)
+        || titleAnchor?.text
+        || stripHtml(firstMatch(chunk, [/aria-label="([^"]+)"/i]))
+      );
+      const url = normalizeListingUrl(itemHref || (itemId ? `/itm/${itemId}` : idHref));
+      const rowText = stripHtml(chunk);
+      const activeFacts = parseEbayActiveListingFacts(chunk);
+      const cellPrice = parseSignedDollarAmount(cleanEbaySellerHubCell(priceCell));
+      const price = Number.isFinite(cellPrice) ? cellPrice : activeFacts.price;
+      const cellQuantity = parsePlainInteger(cleanEbaySellerHubCell(quantityCell));
+      const cellViews = parsePlainInteger(cleanEbaySellerHubCell(viewsCell));
+      const cellWatchers = parsePlainInteger(cleanEbaySellerHubCell(watchersCell));
+      const cellBids = parsePlainInteger(cleanEbaySellerHubCell(bidsCell));
+      if (!title || !itemId || (requirePrice && !Number.isFinite(price))) return;
+
+      listings.push({
+        source: 'eBay',
+        itemId,
+        title,
+        price: Number.isFinite(price) ? price : null,
+        url,
+        status: /inactive|ended|sold/i.test(rowText) ? 'Inactive' : 'Active',
+        listedDateText: firstMatch(rowText, [/\b(Listed\s+(?:today|yesterday|on\s+[^|]+?))(?:\s{2,}|$)/i]),
+        shippingText: firstMatch(rowText, [/(\+\s*Shipping|Free shipping|Buyer pays shipping)/i]),
+        views: Number.isFinite(cellViews) ? cellViews : parsePlainInteger(firstMatch(rowText, [/\b([\d,]+)\s+Views?\b/i, /\b([\d,]+)\s+View\b/i])),
+        watchers: Number.isFinite(cellWatchers) ? cellWatchers : parsePlainInteger(firstMatch(rowText, [/\b([\d,]+)\s+Watchers?\b/i])),
+        bids: Number.isFinite(cellBids) ? cellBids : null,
+        clicks: null,
+        customLabel: cleanEbayCustomLabelValue(customLabelCell) || cleanEbayCustomLabelValue(activeFacts.customLabel),
+        quantityTotal: activeFacts.quantityTotal,
+        quantityAvailable: Number.isFinite(cellQuantity) ? cellQuantity : activeFacts.quantityAvailable,
+        offersEnabled: activeFacts.offersEnabled || /\b(?:or best offer|best offer)\b/i.test(cleanEbaySellerHubCell(priceCell)),
+        listingFormat: cleanEbaySellerHubCell(formatCell),
+        listingDuration: cleanEbaySellerHubCell(durationCell),
+        endedAtText: cleanEbaySellerHubCell(endDateCell),
+        soldStatus: cleanEbaySellerHubCell(soldStatusCell),
+      });
+    });
+
+    return dedupeListings(listings);
+  }
+
+  function parseEbayActiveListingsHtml(html) {
+    const text = String(html || '');
+    const chunks = text.split(/(?=<div[^>]+(?:qa-id="active-item-|\bid="active-item-|class="[^"]*active-item))/i);
+    const listings = [];
+
+    chunks.forEach(chunk => {
+      if (!/ebay\.com\/itm\/\d+|active-item-\d+|item__price/i.test(chunk)) return;
+      const url = normalizeListingUrl(firstMatch(chunk, [
+        /href="(https:\/\/www\.ebay\.com\/itm\/\d+[^"]*)"/i,
+        /href="(\/itm\/\d+[^"]*)"/i
+      ]));
+      const itemId = firstMatch(chunk, [
+        /active-item-(\d+)/i,
+        /Item ID:\s*(\d+)/i,
+        /\/itm\/(\d+)/i
+      ]);
+      const title = cleanEbaySellerHubTitle(stripHtml(firstMatch(chunk, [
+        /<h3[^>]*class="[^"]*item-title[^"]*"[\s\S]*?<a[^>]*>[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/i,
+        /<a[^>]+href="(?:https:\/\/www\.ebay\.com)?\/itm\/\d+[^"]*"[^>]*>\s*<span[^>]*>([\s\S]*?)<\/span>/i,
+        /<img[^>]+alt="([^"]+)"/i
+      ])));
+      const activeFacts = parseEbayActiveListingFacts(chunk);
+      const price = activeFacts.price;
+      if (!title || !Number.isFinite(price)) return;
+      const activityText = stripHtml(chunk);
+      const views = parsePlainInteger(firstMatch(activityText, [/\b([\d,]+)\s+Views?\b/i, /\b([\d,]+)\s+View\b/i]));
+      const watchers = parsePlainInteger(firstMatch(activityText, [/\b([\d,]+)\s+Watchers?\b/i]));
+
+      listings.push({
+        source: 'eBay',
+        itemId,
+        title,
+        price,
+        url,
+        status: 'Active',
+        listedDateText: stripHtml(firstMatch(chunk, [/<div[^>]+class="[^"]*item__listing-status[^"]*"[^>]*>([\s\S]*?)<\/div>/i])),
+        shippingText: stripHtml(firstMatch(chunk, [/<div[^>]+class="[^"]*item__shipping-price[^"]*"[^>]*>([\s\S]*?)<\/div>/i])),
+        views,
+        watchers,
+        clicks: null,
+        customLabel: activeFacts.customLabel,
+        quantityTotal: activeFacts.quantityTotal,
+        quantityAvailable: activeFacts.quantityAvailable,
+        offersEnabled: activeFacts.offersEnabled,
+      });
+    });
+
+    return dedupeListings(listings.concat(parseEbaySellerHubTableListingsHtml(text)));
+  }
+
+  function normalizeEbayCrosslistImageUrl(value) {
+    const raw = decodeHtml(String(value || '')).trim();
+    if (!/^https:\/\/(?:i\.ebayimg\.com|thumbs\.ebaystatic\.com)\//i.test(raw)) return '';
+    return raw
+      .replace(/\/s-l\d+(?=\.(?:jpe?g|png|webp)(?:\?|$))/i, '/s-l1600')
+      .replace(/\/s-l\d+(?:\/|$)/i, '/s-l1600/');
+  }
+
+  function ebayStructuredProductImageUrls(value) {
+    if (Array.isArray(value)) return value.flatMap(ebayStructuredProductImageUrls);
+    if (typeof value === 'string') return [value];
+    if (!value || typeof value !== 'object') return [];
+    return [value.url, value.contentUrl, value.src]
+      .flatMap(ebayStructuredProductImageUrls);
+  }
+
+  function ebayListingGalleryEvidence(html, trustedLeadUrls = []) {
+    const source = String(html || '');
+    const trusted = new Set(uniqueNonEmpty(trustedLeadUrls.map(normalizeEbayCrosslistImageUrl)));
+    const groups = new Map();
+    const extractFrom = value => {
+      const decoded = decodeHtml(String(value || ''))
+        .replace(/\\u002[fF]/g, '/')
+        .replace(/\\\//g, '/');
+      const matches = decoded.match(/https:\/\/(?:i\.ebayimg\.com|thumbs\.ebaystatic\.com)\/images\/g\/[^"'<>\s\\]+/gi) || [];
+      return uniqueNonEmpty(matches.map(normalizeEbayCrosslistImageUrl));
+    };
+
+    for (const match of source.matchAll(/<img\b[^>]*>/gi)) {
+      const before = source.slice(Math.max(0, match.index - 900), match.index + match[0].length);
+      const countMatch = before.match(/\b(?:Picture|Image|Photo)\s+\d+\s+(?:of|\/)\s+(\d+)\b/i);
+      const expectedCount = Number(countMatch?.[1] || 0);
+      if (!Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount > 24) continue;
+      const group = groups.get(expectedCount) || [];
+      extractFrom(match[0]).forEach(url => {
+        if (!group.includes(url)) group.push(url);
+      });
+      groups.set(expectedCount, group);
+    }
+
+    const candidates = Array.from(groups.entries())
+      .filter(([, urls]) => urls.some(url => trusted.has(url)))
+      .sort((left, right) => right[1].length - left[1].length || left[0] - right[0]);
+    if (!candidates.length) return { urls: [], expectedCount: 0 };
+    const [expectedCount, urls] = candidates[0];
+    if (urls.length < expectedCount) {
+      for (const match of source.matchAll(/["'](?:originalImg|mainImgUrl|zoomUrl|imageUrl)["']\s*:\s*["']([^"']+)["']/gi)) {
+        extractFrom(match[1]).forEach(url => {
+          if (!urls.includes(url)) urls.push(url);
+        });
+        if (urls.length >= expectedCount) break;
+      }
+    }
+    return { urls: urls.slice(0, expectedCount), expectedCount };
+  }
+
+  function ebayJsonLdObjects(html) {
+    const objects = [];
+    const scripts = String(html || '').matchAll(/<script\b[^>]*type\s*=\s*(?:["']application\/ld\+json["']|application\/ld\+json)(?=[\s>])[^>]*>([\s\S]*?)<\/script>/gi);
+    for (const match of scripts) {
+      const source = String(match[1] || '').trim();
+      if (!source) continue;
+      try {
+        let parsed;
+        try {
+          parsed = JSON.parse(source);
+        } catch (_) {
+          parsed = JSON.parse(decodeHtml(source));
+        }
+        const queue = Array.isArray(parsed) ? parsed.slice() : [parsed];
+        while (queue.length) {
+          const value = queue.shift();
+          if (!value || typeof value !== 'object') continue;
+          objects.push(value);
+          if (Array.isArray(value['@graph'])) queue.push(...value['@graph']);
+        }
+      } catch (_) {
+        // Malformed JSON-LD is ignored; OpenGraph and HTML evidence remain available.
+      }
+    }
+    return objects;
+  }
+
+  function ebayJsonLdType(value, type) {
+    const candidate = value?.['@type'];
+    return (Array.isArray(candidate) ? candidate : [candidate])
+      .some(entry => String(entry || '').toLowerCase() === String(type || '').toLowerCase());
+  }
+
+  function ebayMetaContent(html, selectorName, selectorValue) {
+    const tags = String(html || '').match(/<meta\b[^>]*>/gi) || [];
+    const target = String(selectorValue || '').toLowerCase();
+    for (const tag of tags) {
+      const name = firstMatch(tag, [new RegExp(`${selectorName}=["']([^"']+)["']`, 'i')]).toLowerCase();
+      if (name !== target) continue;
+      return firstMatch(tag, [/content=["']([^"']*)["']/i]);
+    }
+    return '';
+  }
+
+  function cleanEbayCrosslistDescription(value) {
+    const removeExecutableMarkup = source => String(source || '')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<(script|style|noscript|template|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ');
+    const source = removeExecutableMarkup(removeExecutableMarkup(decodeHtml(value)))
+      .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+      .replace(/<\s*li\b[^>]*>/gi, '\n- ')
+      .replace(/<\/(?:p|div|li|section|h[1-6])\s*>/gi, '\n');
+    let text = decodeHtml(source.replace(/<[^>]+>/g, ' '))
+      .replace(/^.*?\$mbp_M_\d+\s*=\s*["']https?:\/\/ir\.ebaystatic\.com\/[^"']*["']\s*/is, '')
+      .replace(/\/\*\s*ssgST:[\s\S]*$/i, '')
+      .replace(/\$M_\d+_C\s*=\s*\(window\.[\s\S]*$/i, '')
+      .replace(/\b(?:Visit (?:my|our) eBay store|See (?:my|our) other items|Thanks for looking)\b[.!]?/gi, ' ')
+      .replace(/[\u200B-\u200D\uFEFF]/g, ' ')
+      .replace(/^\s*eBay\b[\s|:\-]*/i, '')
+      .replace(/\b([A-Za-z][A-Za-z'-]{3,})\s+\1\b/gi, '$1')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/ *\n */g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    const specifications = text.match(/\bSpecifications\s*:\s*/i);
+    if (specifications) {
+      const start = specifications.index || 0;
+      const intro = text.slice(0, start).trim();
+      const facts = text.slice(start + specifications[0].length).trim()
+        .replace(/\s+(?=(?:Model Number|Color Code|Temple Length|Origin|Design|Condition|Brand|Size|Material|Included|Features?)\s*:)/gi, '\n')
+        .split(/\n+/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => line.startsWith('- ') ? line : `- ${line}`);
+      text = [intro, 'Specifications', ...facts].filter(Boolean).join('\n\n')
+        .replace(/\n\n- /g, '\n- ');
+    }
+    return text.slice(0, 5000);
+  }
+
+  function extractEbayItemDetailHtml(html, context = {}) {
+    const source = String(html || '');
+    const objects = ebayJsonLdObjects(source);
+    const product = objects
+      .filter(value => ebayJsonLdType(value, 'Product'))
+      .sort((left, right) => {
+        const score = value => {
+          const offer = Array.isArray(value?.offers) ? value.offers[0] || {} : value?.offers || {};
+          const images = Array.isArray(value?.image) ? value.image.length : (value?.image ? 1 : 0);
+          return (value?.itemCondition ? 40 : 0)
+            + (value?.description ? 20 : 0)
+            + (Number.isFinite(Number(offer?.price)) ? 15 : 0)
+            + Math.min(images, 20)
+            + (Array.isArray(value?.additionalProperty) ? Math.min(value.additionalProperty.length, 10) : 0)
+            + (value?.name ? 5 : 0);
+        };
+        return score(right) - score(left);
+      })[0] || {};
+    const breadcrumbs = objects.find(value => ebayJsonLdType(value, 'BreadcrumbList')) || {};
+    const offers = Array.isArray(product.offers) ? product.offers[0] || {} : (product.offers || {});
+    const activeItemId = String(context.itemId || '').match(/\b\d{9,15}\b/)?.[0] || '';
+    const htmlItemId = firstMatch(source, [
+      /(?:itemId|item_id|legacyItemId)["']?\s*[:=]\s*["']?(\d{9,15})/i,
+      /\/itm\/(?:[^/?#]+\/)?(\d{9,15})/i,
+    ]);
+    const itemId = activeItemId || htmlItemId;
+    const title = cleanEbaySellerHubTitle(
+      product.name
+      || ebayMetaContent(source, 'property', 'og:title')
+      || firstMatch(source, [/<h1\b[^>]*>([\s\S]*?)<\/h1>/i])
+      || context.title
+    );
+    const priceCandidates = [
+      offers.price,
+      ebayMetaContent(source, 'property', 'product:price:amount'),
+      firstMatch(source, [/itemprop=["']price["'][^>]*content=["']([^"']+)/i]),
+      context.price,
+    ];
+    const price = priceCandidates.map(value => Number(String(value ?? '').replace(/[$,]/g, ''))).find(Number.isFinite);
+    const description = cleanEbayCrosslistDescription(
+      product.description
+      || ebayMetaContent(source, 'property', 'og:description')
+      || ebayMetaContent(source, 'name', 'description')
+    );
+    const descriptionUrl = decodeHtml(firstMatch(source, [
+      /<iframe\b[^>]*(?:id=["']desc_ifr["'][^>]*src|src)=["'](https:\/\/(?:vi\.vipr|itm)\.ebaydesc\.com\/[^"']+)/i,
+      /["'](https:\/\/(?:vi\.vipr|itm)\.ebaydesc\.com\/(?:ws\/eBayISAPI\.dll|itmdesc\/)[^"']+)["']/i,
+    ]));
+    const fallbackCondition = firstMatch(source, [
+      /["']conditionDisplayName["']\s*:\s*["']([^"']+)/i,
+      /["']conditionName["']\s*:\s*["']([^"']+)/i,
+      /["']displayLabel["']\s*:\s*["']Condition["'][\s\S]{0,500}?["']displayValue["']\s*:\s*["']([^"']+)/i,
+      /["']displayValue["']\s*:\s*\{[\s\S]{0,1500}?["']textSpans["']\s*:\s*\[\s*\{[\s\S]{0,200}?["']text["']\s*:\s*["']([^"']+)/i,
+      /aria-label=["']([^"']+?)\s*-\s*About this item condition["']/i,
+      /itemprop=["']itemCondition["'][^>]*(?:content|title)=["']([^"']+)/i,
+      /\bCondition\s*:\s*<[^>]*>([^<]+)/i,
+    ]);
+    const conditionSource = String(product.itemCondition || fallbackCondition || context.condition || '')
+      .split(/[\/#]/)
+      .filter(Boolean)
+      .pop() || '';
+    const condition = conditionSource.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/Condition$/i, '').trim();
+    let categoryPath = Array.isArray(breadcrumbs.itemListElement)
+      ? breadcrumbs.itemListElement
+        .map(entry => stripHtml(entry?.item?.name || entry?.name || ''))
+        .filter(Boolean)
+      : [];
+    if (!categoryPath.length) {
+      const breadcrumbHtml = firstMatch(source, [
+        /<nav\b[^>]*(?:aria-label=["'][^"']*breadcrumb[^"']*["']|class=["'][^"']*breadcrumb[^"']*["'])[^>]*>([\s\S]*?)<\/nav>/i,
+        /<ol\b[^>]*class=["'][^"']*breadcrumb[^"']*["'][^>]*>([\s\S]*?)<\/ol>/i,
+      ]);
+      categoryPath = Array.from(String(breadcrumbHtml || '').matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi))
+        .map(match => stripHtml(match[1]))
+        .filter(Boolean);
+      if (!categoryPath.length) {
+        const categoryName = stripHtml(firstMatch(source, [/["']categoryName["']\s*:\s*["']([^"']+)/i]));
+        if (categoryName) categoryPath = [categoryName];
+      }
+    }
+    const itemSpecifics = {};
+    (Array.isArray(product.additionalProperty) ? product.additionalProperty : []).forEach(property => {
+      const key = stripHtml(property?.name || '').slice(0, 120);
+      const value = stripHtml(property?.value || '').slice(0, 300);
+      if (key && value) itemSpecifics[key] = value;
+    });
+    const structuredProductImages = ebayStructuredProductImageUrls(product.image);
+    const openGraphImage = ebayMetaContent(source, 'property', 'og:image');
+    const galleryEvidence = ebayListingGalleryEvidence(source, [...structuredProductImages, openGraphImage]);
+    const imageCandidates = galleryEvidence.expectedCount > structuredProductImages.length
+      ? [...structuredProductImages, ...galleryEvidence.urls]
+      : (structuredProductImages.length ? structuredProductImages : [openGraphImage]);
+    const imageUrls = uniqueNonEmpty(imageCandidates.map(normalizeEbayCrosslistImageUrl)).slice(0, CROSSLIST_SOURCE_PHOTO_LIMIT);
+    return {
+      itemId,
+      itemUrl: itemId ? `https://www.ebay.com/itm/${itemId}` : normalizeListingUrl(context.itemUrl || ''),
+      title,
+      price: Number.isFinite(price) ? price : null,
+      description,
+      descriptionUrl,
+      condition,
+      categoryPath,
+      itemSpecifics,
+      imageUrls,
+      imageEvidence: galleryEvidence.expectedCount > structuredProductImages.length && imageUrls.length > 1
+        ? 'item-gallery'
+        : (structuredProductImages.length ? 'product-json-ld' : (imageUrls.length ? 'open-graph' : '')),
+      ...(galleryEvidence.expectedCount ? { imageExpectedCount: galleryEvidence.expectedCount } : {}),
+    };
+  }
+
+  function buildCrosslistEnvelope(detail, activeListing = {}, options = {}) {
+    const itemId = String(detail?.itemId || activeListing?.itemId || '').match(/\b\d{9,15}\b/)?.[0] || '';
+    const title = cleanEbaySellerHubTitle(detail?.title || activeListing?.title || '');
+    const price = Number.isFinite(Number(activeListing?.price))
+      ? Number(activeListing.price)
+      : (Number.isFinite(Number(detail?.price)) ? Number(detail.price) : null);
+    let description = cleanEbayCrosslistDescription(detail?.description || title);
+    const imageUrls = uniqueNonEmpty((detail?.imageUrls || []).map(normalizeEbayCrosslistImageUrl)).slice(0, CROSSLIST_SOURCE_PHOTO_LIMIT);
+    const warnings = [];
+    const listingVariant = text => {
+      const value = ` ${String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+      const variants = [
+        ['split california king', 'split california king'],
+        ['california king', 'california king'],
+        ['split king', 'split king'],
+        ['twin xl', 'twin xl'],
+        ['full xl', 'full xl'],
+        ['queen', 'queen'],
+        ['king', 'king'],
+        ['twin', 'twin'],
+        ['full', 'full'],
+      ];
+      return variants.find(([needle]) => value.includes(` ${needle} `))?.[1] || '';
+    };
+    const titleVariant = listingVariant(title);
+    const descriptionVariant = listingVariant(description);
+    if (titleVariant && descriptionVariant && titleVariant !== descriptionVariant) {
+      warnings.push(`Seller description says ${descriptionVariant}, but the listing title says ${titleVariant}; description was replaced for review.`);
+      description = `${title}\n\nPlease review the photos for exact condition and included contents.`;
+    }
+    if (!detail?.description) warnings.push('Seller description was not found; verify the generated draft text.');
+    if (!imageUrls.length) warnings.push('No authoritative eBay listing-gallery photos were found.');
+    if (detail?.imageExpectedCount && imageUrls.length < detail.imageExpectedCount) {
+      warnings.push(`eBay shows ${detail.imageExpectedCount} photos, but only ${imageUrls.length} authoritative photo URLs were recovered.`);
+    }
+    if (imageUrls.length && detail?.imageEvidence === 'open-graph') warnings.push('Only the listing primary photo was available from eBay metadata.');
+    if (!detail?.condition) warnings.push('eBay condition evidence was not found.');
+    if (!(detail?.categoryPath || []).length) warnings.push('eBay category evidence was not found.');
+    const imageMode = normalizeCrosslistImageMode(options.imageMode || getCrosslistImageMode());
+    return {
+      schema_version: CROSSLIST_SCHEMA,
+      source: 'ebay',
+      generated_at: options.generatedAt || new Date().toISOString(),
+      image_mode: imageMode,
+      listing: {
+        item_id: itemId,
+        item_url: itemId ? `https://www.ebay.com/itm/${itemId}` : normalizeListingUrl(detail?.itemUrl || activeListing?.url || ''),
+        title,
+        price,
+        description,
+        condition: String(detail?.condition || ''),
+        category_path: Array.isArray(detail?.categoryPath) ? detail.categoryPath : [],
+        item_specifics: detail?.itemSpecifics && typeof detail.itemSpecifics === 'object' ? detail.itemSpecifics : {},
+        quantity_available: activeListing?.quantityAvailable ?? null,
+        custom_label: String(activeListing?.customLabel || ''),
+        image_urls: imageUrls,
+        image_evidence: String(detail?.imageEvidence || ''),
+        image_expected_count: Number(detail?.imageExpectedCount || imageUrls.length || 0),
+        image_mode: imageMode,
+      },
+      facebook_draft: {
+        location: String(options.location || '').trim(),
+        image_mode: imageMode,
+      },
+      warnings,
+    };
+  }
+
+  function crosslistEnvelopeMissingEvidence(envelope) {
+    const listing = envelope?.listing || {};
+    const imageUrls = Array.isArray(listing.image_urls) ? listing.image_urls : [];
+    const expectedPhotos = Math.max(0, Number(listing.image_expected_count || imageUrls.length || 0));
+    const requiredEvidence = {
+      title: listing.title,
+      price: listing.price,
+      description: listing.description,
+      condition: listing.condition,
+      category: listing.category_path?.length,
+      photos: imageUrls.length,
+    };
+    const missing = Object.entries(requiredEvidence)
+      .filter(([, value]) => value === '' || value === null || value === undefined || value === 0)
+      .map(([key]) => key);
+    if (expectedPhotos > imageUrls.length) {
+      missing.push(`photos (${imageUrls.length}/${expectedPhotos})`);
+    }
+    return uniqueNonEmpty(missing);
+  }
+
+  function parseEbayEndedLifecycleHtml(html) {
+    const rowChunks = ebaySellerHubTableRowChunks(html);
+    const rowsByItemId = new Map();
+    rowChunks.forEach(chunk => {
+      const itemId = firstMatch(chunk, [/\/itm\/(\d+)/i, /itemId=(\d+)/i, /itemid=(\d+)/i]);
+      if (itemId && !rowsByItemId.has(itemId)) rowsByItemId.set(itemId, chunk);
+    });
+
+    return parseEbaySellerHubTableListingsHtml(html, { requirePrice: false }).map(listing => {
+      const chunk = rowsByItemId.get(listing.itemId) || '';
+      const rowText = stripHtml(chunk);
+      const explicitStatus = String(listing.soldStatus || '').trim();
+      let status = 'Ended';
+      if (/\b(?:unsold|did not sell|not sold|ended without a buyer)\b/i.test(explicitStatus || rowText)) status = 'Ended - Unsold';
+      else if (/^sold$/i.test(explicitStatus) || /\b(?:sold for|quantity sold)\b/i.test(rowText)) status = 'Sold';
+
+      const quantitySold = integerAfterLabel(rowText, '(?:Quantity sold|Sold quantity)');
+      const endedAtText = String(listing.endedAtText || '').trim();
+      const endedDateText = firstEbayDate(endedAtText)
+        || ebayDateAfterLabel(rowText, '(?:Ended(?: on)?|End date|Listing ended)')
+        || firstEbayDate(rowText);
+      let endReason = firstMatch(rowText, [
+        /(?:End reason|Ended because|Reason)\s*:?\s*([^|\r\n]+?)(?=\s{2,}|$)/i,
+      ]).trim();
+      if (!endReason) {
+        if (status === 'Sold') endReason = 'Sold';
+        else if (/out of stock/i.test(rowText)) endReason = 'Out of stock';
+        else if (/ended by (?:seller|you)|you ended/i.test(rowText)) endReason = 'Ended by seller';
+        else if (status === 'Ended - Unsold') endReason = 'Unsold';
+      }
+
+      return sanitizeEbayLifecycleValue({
+        record_type: 'ended_listing',
+        item_id: listing.itemId || '',
+        custom_label: listing.customLabel || '',
+        title: listing.title || '',
+        item_url: listing.url || '',
+        status,
+        ended_date_text: endedDateText,
+        ended_at_text: endedAtText,
+        end_reason: endReason,
+        price: Number.isFinite(listing.price) ? listing.price : null,
+        quantity_total: Number.isFinite(listing.quantityTotal) ? listing.quantityTotal : null,
+        quantity_available: Number.isFinite(listing.quantityAvailable) ? listing.quantityAvailable : null,
+        quantity_sold: Number.isFinite(quantitySold) ? quantitySold : null,
+        views: Number.isFinite(listing.views) ? listing.views : null,
+        watchers: Number.isFinite(listing.watchers) ? listing.watchers : null,
+        bids: Number.isFinite(listing.bids) ? listing.bids : null,
+        listing_format: listing.listingFormat || '',
+        listing_duration: listing.listingDuration || '',
+        sale_evidence: 'ended_snapshot_only',
+        identity_stable: Boolean(listing.itemId),
+      });
+    });
+  }
+
+  function moneyAfterLabel(value, label) {
+    const text = String(value || '');
+    const amountPattern = '((?:\\()?\\s*[-+\\u2212]?\\s*\\$\\s*[-+\\u2212]?\\s*[\\d,]+(?:\\.\\d{1,2})?\\s*\\)?)';
+    const match = text.match(new RegExp(label + '\\s*:?\\s*' + amountPattern, 'i'));
+    return match ? parseSignedDollarAmount(match[1]) : null;
+  }
+
+  function moneyBeforeLabel(value, label) {
+    const text = String(value || '');
+    const amountPattern = '((?:\\()?\\s*[-+\\u2212]?\\s*\\$\\s*[-+\\u2212]?\\s*[\\d,]+(?:\\.\\d{1,2})?\\s*\\)?)';
+    const match = text.match(new RegExp(amountPattern + '\\s*' + label, 'i'));
+    return match ? parseSignedDollarAmount(match[1]) : null;
+  }
+
+  function parseSignedDollarAmount(value) {
+    const match = String(value || '').match(/(\()?\s*([-+\u2212]?)\s*\$\s*([-+\u2212]?)\s*([\d,]+(?:\.\d{1,2})?)\s*(\))?/);
+    if (!match) return null;
+    const amount = Number(match[4].replace(/,/g, ''));
+    if (!Number.isFinite(amount)) return null;
+    const negative = match[2] === '-' || match[2] === '\u2212' || match[3] === '-' || match[3] === '\u2212'
+      || (Boolean(match[1]) && Boolean(match[5]));
+    return negative ? -amount : amount;
+  }
+
+  function uniqueDollarAmounts(value) {
+    const matches = String(value || '').match(/(?:\()?\s*[-+\u2212]?\s*\$\s*[-+\u2212]?\s*[\d,]+(?:\.\d{1,2})?\s*\)?/g) || [];
+    return Array.from(new Set(matches.map(parseSignedDollarAmount).filter(Number.isFinite)));
+  }
+
+  function integerAfterLabel(value, label) {
+    const match = String(value || '').match(new RegExp(label + '\\s*:?\\s*([\\d,]+)', 'i'));
+    return match ? parsePlainInteger(match[1]) : null;
+  }
+
+  function extractEbayCustomLabel(value) {
+    const label = firstMatch(value, [
+      /(?:data-custom-label|data-sku)=["']([^"']+)["']/i,
+      /(?:Custom label(?: \(SKU\))?|SKU)\s*:?\s*([^<|\r\n]+)/i,
+    ]);
+    return label
+      .replace(/\s+(?:Buy It Now price|Current price|Listing price|Price|Available quantity|Quantity available|Total quantity|Quantity total|Quantity|Views?|Watchers?|Status)\b[\s\S]*$/i, '')
+      .trim()
+      .slice(0, 128);
+  }
+
+  function parseEbayActiveListingFacts(chunk) {
+    const text = stripHtml(chunk);
+    const priceHtml = firstMatch(chunk, [
+      /<(?:div|span|td)[^>]+class=["'][^"']*item__price[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|span|td)>/i,
+      /<(?:div|span|td)[^>]+(?:data-testid|aria-label)=["'][^"']*(?:current|listing|buy it now)[^"']*price[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|span|td)>/i,
+    ]);
+    let price = null;
+    for (const label of ['Buy It Now price', 'Current price', 'Listing price', 'Price']) {
+      price = moneyAfterLabel(text, label);
+      if (Number.isFinite(price)) break;
+    }
+    if (!Number.isFinite(price) && priceHtml) price = parseSignedDollarAmount(stripHtml(priceHtml));
+    if (!Number.isFinite(price)) {
+      const amounts = uniqueDollarAmounts(text);
+      price = amounts.length === 1 ? amounts[0] : null;
+    }
+
+    const availableOfTotal = text.match(/(?:Available quantity|Quantity available|Available)\s*:?\s*([\d,]+)\s*(?:of|\/)\s*([\d,]+)/i);
+    let quantityAvailable = availableOfTotal ? parsePlainInteger(availableOfTotal[1]) : integerAfterLabel(text, '(?:Available quantity|Quantity available|Available)');
+    let quantityTotal = availableOfTotal ? parsePlainInteger(availableOfTotal[2]) : integerAfterLabel(text, '(?:Total quantity|Quantity total)');
+    if (!Number.isFinite(quantityTotal)) {
+      quantityTotal = integerAfterLabel(text, '(?<!Available\\s)(?<!Total\\s)Quantity(?!\\s+(?:available|remaining|total))');
+    }
+    if (!Number.isFinite(quantityAvailable) && Number.isFinite(quantityTotal)) quantityAvailable = quantityTotal;
+
+    return {
+      price,
+      customLabel: extractEbayCustomLabel(chunk),
+      quantityTotal: Number.isFinite(quantityTotal) ? quantityTotal : null,
+      quantityAvailable: Number.isFinite(quantityAvailable) ? quantityAvailable : null,
+      offersEnabled: /\b(?:or best offer|best offer|accepts? offers?|send offers?|allow offers?)\b/i.test(text),
+    };
+  }
+
+  function extractBalancedHtmlElements(html, allowedTags = ['div', 'section', 'article', 'li', 'tr']) {
+    const text = String(html || '');
+    const allowed = new Set(allowedTags.map(tag => String(tag).toLowerCase()));
+    const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+    const stack = [];
+    const elements = [];
+    const tagPattern = /<\/?([a-z][\w:-]*)\b[^>]*>/gi;
+    let match;
+    while ((match = tagPattern.exec(text))) {
+      const tag = String(match[1] || '').toLowerCase();
+      const token = match[0];
+      if (/^<\//.test(token)) {
+        let frameIndex = -1;
+        for (let index = stack.length - 1; index >= 0; index -= 1) {
+          if (stack[index].tag === tag) {
+            frameIndex = index;
+            break;
+          }
+        }
+        if (frameIndex < 0) continue;
+        const frame = stack[frameIndex];
+        stack.splice(frameIndex);
+        if (allowed.has(tag)) {
+          elements.push({
+            tag,
+            start: frame.start,
+            end: tagPattern.lastIndex,
+            openingTag: frame.openingTag,
+            html: text.slice(frame.start, tagPattern.lastIndex),
+          });
+        }
+        continue;
+      }
+      if (voidTags.has(tag) || /\/>$/.test(token)) continue;
+      stack.push({ tag, start: match.index, openingTag: token });
+    }
+    return elements.sort((left, right) => left.start - right.start || left.end - right.end);
+  }
+
+  function extractEbayItemAnchors(html) {
+    const anchors = [];
+    const pattern = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+    let match;
+    while ((match = pattern.exec(String(html || '')))) {
+      const href = decodeHtml(firstMatch(match[1], [/href=["']([^"']+)["']/i]));
+      const itemId = firstMatch(href, [/\/itm\/(\d{9,15})/i]);
+      if (!itemId) continue;
+      anchors.push({
+        itemId,
+        itemUrl: 'https://www.ebay.com/itm/' + itemId,
+        title: cleanEbaySellerHubTitle(stripHtml(match[2])),
+        start: match.index,
+        end: pattern.lastIndex,
+      });
+    }
+    return anchors;
+  }
+
+  function ebayLifecycleChunks(html, marker) {
+    const text = String(html || '');
+    const rows = Array.from(text.matchAll(/<tr\b[\s\S]*?<\/tr>/gi)).map(match => match[0]);
+    const cards = extractBalancedHtmlElements(text)
+      .filter(element => /(?:data-testid|data-order-id|data-transaction-id|class)=["'][^"']*["']/i.test(element.openingTag))
+      .map(element => element.html);
+    return rows.concat(cards).filter(chunk => marker.test(chunk));
+  }
+
+  function htmlElementByClassToken(html, classToken) {
+    const escaped = String(classToken || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return extractBalancedHtmlElements(html)
+      .filter(element => new RegExp('class=["\'][^"\']*\\b' + escaped + '\\b[^"\']*["\']', 'i').test(element.openingTag))
+      .sort((left, right) => (left.end - left.start) - (right.end - right.start))[0]?.html || '';
+  }
+
+  function ebayHrefQueryParam(value, key) {
+    const escaped = String(key || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const encoded = firstMatch(value, [new RegExp('(?:[?&]|&amp;)' + escaped + '=([^&#"\']+)', 'i')]);
+    if (!encoded) return '';
+    try {
+      return decodeURIComponent(decodeHtml(encoded).replace(/\+/g, ' '));
+    } catch (_) {
+      return decodeHtml(encoded);
+    }
+  }
+
+  const EBAY_MONTH_PATTERN = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)';
+  const EBAY_DATE_PATTERN = EBAY_MONTH_PATTERN + '\\s+\\d{1,2}(?:,\\s+\\d{4})?|\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\/\\d{1,2}\\/\\d{4}';
+
+  function normalizeEbayDateText(value, referenceDate = new Date()) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(text) || /,\s*\d{4}$/.test(text)) {
+      return text.replace(/,\s*/, ', ');
+    }
+    const match = text.match(new RegExp('^(' + EBAY_MONTH_PATTERN + ')\\s+(\\d{1,2})$', 'i'));
+    if (!match) return text;
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthIndex = months.findIndex(month => match[1].slice(0, 3).toLowerCase() === month.toLowerCase());
+    if (monthIndex < 0) return text;
+    const day = Number(match[2]);
+    let year = referenceDate.getFullYear();
+    const candidate = new Date(year, monthIndex, day);
+    if (candidate.getTime() > referenceDate.getTime() + 31 * 24 * 60 * 60 * 1000) year -= 1;
+    return months[monthIndex] + ' ' + day + ', ' + year;
+  }
+
+  function ebayDateAfterLabel(value, label) {
+    return normalizeEbayDateText(firstMatch(value, [new RegExp(label + '\\s*:?\\s*(' + EBAY_DATE_PATTERN + ')', 'i')]));
+  }
+
+  function firstEbayDate(value) {
+    return normalizeEbayDateText(firstMatch(value, [new RegExp('\\b(' + EBAY_DATE_PATTERN + ')\\b', 'i')]));
+  }
+
+  function stableLifecycleId(parts) {
+    const text = parts.map(part => String(part ?? '').trim().toLowerCase()).join('|');
+    let hash = 2166136261;
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36).padStart(7, '0');
+  }
+
+  function isEbayLifecyclePiiKey(key) {
+    const normalized = String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return /^(?:buyer|username|userid|email|phone|telephone|shippingaddress|shipto|recipient|contact|message|address)/.test(normalized);
+  }
+
+  function sanitizeEbayLifecycleString(value) {
+    const publicLabel = '(?:Order(?: number| ID)?|Order line(?: ID)?|Item(?: ID)?|Sold|Sale date|Transaction(?: ID)?|Transaction date|Quantity|Qty|Item subtotal|Item total|Subtotal|Shipping charged|Shipping|Sales tax|Tax|Order total|Gross|Amount|Final value fee|Platform fee|eBay fee|Promoted listing fee|Ad fee|Refund amount|Refund|Net amount|Net|Payout(?: ID)?|Payout date|Status|Custom label|SKU|Current price|Price)';
+    return String(value || '')
+      .replace(new RegExp('\\b(Buyer(?: name| username| user ID| ID)?|Username|User ID|E-?mail|Shipping address|Ship to|Recipient|Phone|Telephone|Contact|Message)\\s*[:=]\\s*(?!\\[redacted\\])([\\s\\S]*?)(?=\\s+\\b' + publicLabel + '\\b\\s*[:=]?|[|\\n]|$)', 'gi'), '$1: [redacted]')
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted]')
+      .replace(/\b(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}\b/g, '[redacted]')
+      .replace(/\b\d{1,6}\s+[A-Za-z0-9.' -]{2,40}\s(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way)\b[^|\n]*/gi, '[redacted]')
+      .trim();
+  }
+
+  function sanitizeEbayLifecycleValue(value, key = '') {
+    if (isEbayLifecyclePiiKey(key) && value !== null && value !== undefined && value !== '') {
+      return '[redacted]';
+    }
+    if (Array.isArray(value)) return value.map(item => sanitizeEbayLifecycleValue(item));
+    if (value && typeof value === 'object') {
+      const sanitized = {};
+      Object.entries(value).forEach(([childKey, childValue]) => {
+        sanitized[childKey] = sanitizeEbayLifecycleValue(childValue, childKey);
+      });
+      return sanitized;
+    }
+    if (typeof value === 'string') return sanitizeEbayLifecycleString(value);
+    return value;
+  }
+
+  function assertEbayLifecycleValueSafe(value) {
+    const sanitized = sanitizeEbayLifecycleValue(value);
+    if (JSON.stringify(sanitized) !== JSON.stringify(value)) {
+      throw new Error('Unsafe buyer PII remained in the eBay lifecycle export.');
+    }
+    return value;
+  }
+
+  function prepareEbayLifecycleEnvelopeForExport(envelope) {
+    const sanitized = sanitizeEbayLifecycleValue(envelope);
+    assertEbayLifecycleValueSafe(sanitized);
+    return sanitized;
+  }
+
+  function canonicalEbayLifecyclePageUrl(value) {
+    try {
+      const url = new URL(String(value || ''));
+      if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'www.ebay.com') return '';
+      const canonical = new URL(`https://www.ebay.com${url.pathname}`);
+      if (/^\/sh\/lst\/ended\/?$/i.test(url.pathname)) {
+        ['status', 'timePeriod', 'source', 'action'].forEach(key => {
+          const parameter = url.searchParams.get(key);
+          if (parameter) canonical.searchParams.set(key, parameter);
+        });
+      }
+      return canonical.toString().replace(/\/$/, '');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function parseEbaySoldOrdersHtml(html) {
+    const text = String(html || '');
+    const balancedCards = extractBalancedHtmlElements(text)
+      .filter(element => /\bdata-order-id=["']/i.test(element.openingTag)
+        || /(?:data-testid|class)=["'][^"']*(?:\border[-_\s]?card\b|\bsold-itemcard\b)[^"']*["']/i.test(element.openingTag))
+      .filter(element => extractEbayItemAnchors(element.html).length);
+    const chunks = balancedCards.length
+      ? balancedCards.map(element => element.html)
+      : ebayLifecycleChunks(text, /order(?:\s|_|-)?(?:number|id|card)|sold\s+[A-Z][a-z]{2}|\/itm\/\d+/i);
+    const records = [];
+    const seen = new Set();
+
+    chunks.forEach(chunk => {
+      const orderText = stripHtml(chunk);
+      const statusText = orderText.replace(/\bbuyer\s+paid\b/gi, '');
+      const orderId = firstMatch(chunk, [
+        /data-order-id=["']([^"']+)["']/i,
+        /Order\s*(?:(?:number|ID)\s*)?:\s*([\d-]{8,})/i,
+      ]) || ebayHrefQueryParam(chunk, 'orderid');
+      if (!orderId) return;
+
+      const anchorByItem = new Map();
+      extractEbayItemAnchors(chunk).forEach(anchor => {
+        const existing = anchorByItem.get(anchor.itemId);
+        if (!existing || anchor.title.length > existing.title.length) anchorByItem.set(anchor.itemId, anchor);
+      });
+      const anchors = Array.from(anchorByItem.values()).sort((left, right) => left.start - right.start);
+      const lineElements = extractBalancedHtmlElements(chunk)
+        .filter(element => /\bdata-order-line-id=["']/i.test(element.openingTag)
+          || /(?:data-testid|class)=["'][^"']*(?:order[-_\s]?line|line[-_\s]?item|order[-_\s]?item)[^"']*["']/i.test(element.openingTag));
+
+      anchors.forEach((anchor, anchorIndex) => {
+        const candidates = lineElements
+          .filter(element => anchor.start >= element.start && anchor.start < element.end)
+          .filter(element => new Set(extractEbayItemAnchors(element.html).map(item => item.itemId)).size === 1)
+          .sort((left, right) => (left.end - left.start) - (right.end - right.start));
+        const nextAnchor = anchors[anchorIndex + 1];
+        const lineChunk = candidates[0]?.html
+          || (anchors.length === 1 ? chunk : chunk.slice(anchor.start, nextAnchor?.start || chunk.length));
+        const lineText = stripHtml(lineChunk);
+        const explicitLineId = firstMatch(lineChunk, [
+          /data-order-line-id=["']([^"']+)["']/i,
+          /Order\s*line\s*(?:ID)?\s*:?\s*([\w-]+)/i,
+        ]);
+        const orderLineId = explicitLineId || orderId + ':' + anchor.itemId;
+        if (seen.has(orderLineId)) return;
+
+        const quantity = integerAfterLabel(lineText, '(?:Quantity|Qty)');
+        const title = anchor.title
+          || cleanEbaySellerHubTitle(stripHtml(firstMatch(lineChunk, [/<h[1-4][^>]*>([\s\S]*?)<\/h[1-4]>/i, /aria-label=["']([^"']+)["']/i])));
+        const record = {
+          record_type: 'sold_order_line',
+          order_id: orderId,
+          order_line_id: orderLineId,
+          item_id: anchor.itemId,
+          custom_label: extractEbayCustomLabel(lineChunk),
+          title,
+          item_url: anchor.itemUrl,
+          sale_date: ebayDateAfterLabel(orderText, '(?:Sold(?: on)?|Sale date)'),
+          quantity: Number.isFinite(quantity) ? quantity : 1,
+          item_subtotal: moneyAfterLabel(lineText, '(?:Item subtotal|Item total|Subtotal)')
+            ?? moneyBeforeLabel(lineText, '(?:Item subtotal|Item total|Subtotal)'),
+          shipping_charged: moneyAfterLabel(orderText, '(?:Shipping charged|Shipping)(?:\\s*\\(buyer paid)?'),
+          sales_tax: moneyAfterLabel(orderText, '(?:Sales tax|Tax)'),
+          order_total: moneyAfterLabel(orderText, 'Order total') ?? moneyAfterLabel(orderText, 'Total'),
+          status: firstMatch(statusText, [/\b(Paid|Shipped|Delivered|Canceled|Cancelled|Refunded|Awaiting payment)\b/i]) || 'Sold',
+        };
+        if (!title) {
+          record.identity_stable = true;
+          record.review_required = true;
+          record.incomplete_reason = 'Missing sold item title.';
+        }
+        records.push(sanitizeEbayLifecycleValue(record));
+        seen.add(orderLineId);
+      });
+    });
+
+    return records;
+  }
+
+  function parseEbayTransactionsHtml(html) {
+    const transactionCards = extractBalancedHtmlElements(html)
+      .filter(element => /class=["'][^"']*\btransaction-row-v2\b[^"']*["']/i.test(element.openingTag));
+    const chunks = transactionCards.length
+      ? transactionCards.map(element => element.html)
+      : ebayLifecycleChunks(html, /transaction(?:\s|_|-)?id|(?:gross|net|refund|amount)\s*:?\s*[-+\u2212]?\s*\$|final value fee|payout/i);
+    const records = [];
+    const seen = new Set();
+
+    chunks.forEach(chunk => {
+      const rowText = stripHtml(chunk);
+      const dateText = stripHtml(htmlElementByClassToken(chunk, 'transactions-date'));
+      const descriptionText = stripHtml(htmlElementByClassToken(chunk, 'transaction--desc'));
+      const amountValue = parseSignedDollarAmount(stripHtml(htmlElementByClassToken(chunk, 'transaction--amount')));
+      const displayedFee = parseSignedDollarAmount(stripHtml(htmlElementByClassToken(chunk, 'transaction--fees')));
+      const netValue = parseSignedDollarAmount(stripHtml(htmlElementByClassToken(chunk, 'transaction--net')));
+      const queryType = ebayHrefQueryParam(chunk, 'type').toUpperCase();
+      const queryIdentity = ebayHrefQueryParam(chunk, 'transactionId')
+        || ebayHrefQueryParam(chunk, 'uuid')
+        || ebayHrefQueryParam(chunk, 'chargeId')
+        || ebayHrefQueryParam(chunk, 'cancelId');
+      const explicitTransactionId = firstMatch(chunk, [
+        /data-transaction-id=["']([^"']+)["']/i,
+        /Transaction\s*ID\s*:?\s*([\w-]{4,})/i,
+      ]) || queryIdentity;
+      const orderId = ebayHrefQueryParam(chunk, 'orderid')
+        || firstMatch(rowText, [/Order\s*(?:number|ID)?\s*:?\s*([\d-]{8,})/i]);
+      const itemId = firstMatch(`${chunk} ${rowText}`, [/\/itm\/(\d+)/i, /Item\s*(?:ID)?\s*:?\s*(\d{9,15})/i]);
+      let transactionType = '';
+      if (/refund/i.test(descriptionText) || queryType === 'REFUND') transactionType = 'Refund';
+      else if (queryType === 'ORDER') transactionType = 'Sale';
+      else if (queryType === 'SHIPPING_LABEL') transactionType = 'Shipping label';
+      else if (queryType === 'OTHER_FEE') transactionType = 'Fee';
+      else if (queryType === 'PAYOUT') transactionType = 'Payout';
+      else if (queryType === 'CHARGE') transactionType = 'Adjustment';
+      else transactionType = firstMatch(rowText, [/\b(Sale|Refund|Shipping label|Payout|Adjustment|Fee|Dispute)\b/i]);
+      if (!transactionType && !orderId && !itemId) return;
+      const transactionDate = firstEbayDate(dateText)
+        || ebayDateAfterLabel(rowText, '(?:Transaction date|Date)')
+        || firstEbayDate(rowText);
+      const grossAmount = transactionType === 'Sale' && Number.isFinite(amountValue)
+        ? amountValue
+        : moneyAfterLabel(rowText, '(?:Gross|Amount)');
+      const labeledFee = moneyAfterLabel(rowText, '(?:Final value fee|Platform fee|eBay fee)');
+      const platformFee = Number.isFinite(displayedFee)
+        ? -displayedFee
+        : (Number.isFinite(labeledFee) ? -labeledFee : null);
+      const labeledPromotedFee = moneyAfterLabel(rowText, '(?:Promoted listing fee|Ad fee)');
+      const promotedFee = Number.isFinite(labeledPromotedFee) ? -labeledPromotedFee : null;
+      const refundAmount = /refund/i.test(transactionType) && Number.isFinite(amountValue)
+        ? Math.abs(amountValue)
+        : Math.abs(moneyAfterLabel(rowText, '(?:Refund amount|Refund)') || 0) || null;
+      const shippingLabelAmount = transactionType === 'Shipping label' && Number.isFinite(amountValue)
+        ? Math.abs(amountValue)
+        : null;
+      const netAmount = Number.isFinite(netValue) ? netValue : moneyAfterLabel(rowText, '(?:Net amount|Net)');
+      const payoutId = firstMatch(rowText, [
+        /Payout\s*ID\s*:?\s*([\w-]+)/i,
+        /\bPayout\s+(?!date\b)(?=[\w-]*[\d-])([A-Z0-9][\w-]{3,})/i,
+      ]);
+      const hasStableComposite = Boolean(transactionType && transactionDate && (orderId || itemId || payoutId)
+        && [grossAmount, platformFee, promotedFee, refundAmount, netAmount].some(Number.isFinite));
+      const identityParts = [
+        orderId,
+        itemId,
+        payoutId,
+        transactionType,
+        transactionDate,
+        grossAmount,
+        platformFee,
+        promotedFee,
+        refundAmount,
+        shippingLabelAmount,
+        netAmount,
+      ];
+      const transactionId = explicitTransactionId
+        || (hasStableComposite ? 'derived-' : 'review-') + stableLifecycleId(identityParts);
+      if (seen.has(transactionId)) return;
+
+      const record = {
+        record_type: 'transaction',
+        transaction_id: transactionId,
+        order_id: orderId,
+        item_id: itemId,
+        transaction_type: transactionType || 'Transaction',
+        transaction_date: transactionDate,
+        gross_amount: grossAmount,
+        platform_fee: platformFee,
+        promoted_fee: promotedFee,
+        refund_amount: refundAmount,
+        shipping_label_amount: shippingLabelAmount,
+        net_amount: netAmount,
+        payout_id: payoutId,
+        payout_date: ebayDateAfterLabel(rowText, '(?:Payout date|Paid)'),
+        status: firstMatch(rowText, [/\b(Paid|Pending|Available|On hold|Failed|Reversed)\b/i]),
+      };
+      if (!explicitTransactionId) {
+        record.transaction_id_source = hasStableComposite ? 'derived' : 'review';
+        record.identity_stable = hasStableComposite;
+      } else {
+        record.transaction_id_source = queryIdentity ? 'ebay-query' : 'explicit';
+        record.identity_stable = true;
+      }
+      if (!hasStableComposite && !explicitTransactionId) {
+        record.review_required = true;
+        record.incomplete_reason = 'Missing stable transaction identity fields.';
+      }
+      records.push(sanitizeEbayLifecycleValue(record));
+      seen.add(transactionId);
+    });
+
+    return records;
+  }
+
+  function parseEbayActiveLifecycleHtml(html) {
+    return parseEbayActiveListingsHtml(html).map(listing => ({
+      record_type: 'active_listing',
+      item_id: listing.itemId || '',
+      custom_label: listing.customLabel || '',
+      title: listing.title || '',
+      item_url: listing.url || '',
+      status: listing.status || 'Active',
+      listed_date_text: listing.listedDateText || '',
+      price: Number.isFinite(listing.price) ? listing.price : null,
+      quantity_total: Number.isFinite(listing.quantityTotal) ? listing.quantityTotal : null,
+      quantity_available: Number.isFinite(listing.quantityAvailable) ? listing.quantityAvailable : null,
+      shipping_text: listing.shippingText || '',
+      views: Number.isFinite(listing.views) ? listing.views : null,
+      watchers: Number.isFinite(listing.watchers) ? listing.watchers : null,
+      bids: Number.isFinite(listing.bids) ? listing.bids : null,
+      listing_format: listing.listingFormat || '',
+      listing_duration: listing.listingDuration || '',
+      offers_enabled: Boolean(listing.offersEnabled),
+      offers: listing.offersEnabled ? 'Best Offer' : null,
+      promoted_rate: null,
+    }));
+  }
+
+  function ebayLifecyclePageKind(route = {}) {
+    const kind = String(route?.kind || '');
+    if (kind === 'fliptracker-ebay-ended') return 'ended';
+    if (kind === 'fliptracker-ebay-sold') return 'sold';
+    if (kind === 'fliptracker-ebay-transactions') return 'transactions';
+    if (kind === 'fliptracker-ebay-active') return 'active';
+    return '';
+  }
+
+  function parseEbayLifecycleHtml(html, context = {}) {
+    const pageKind = context.pageKind || ebayLifecyclePageKind(context.route || {}) || 'active';
+    if (pageKind === 'ended') return parseEbayEndedLifecycleHtml(html);
+    if (pageKind === 'sold') return parseEbaySoldOrdersHtml(html);
+    if (pageKind === 'transactions') return parseEbayTransactionsHtml(html);
+    return parseEbayActiveLifecycleHtml(html);
+  }
+
+  function expectedEbayLifecycleCount(html, pageKind = '') {
+    const text = stripHtml(html);
+    const cardPattern = pageKind === 'transactions'
+      ? /class=["'][^"']*\btransaction-row-v2\b[^"']*["']/gi
+      : (pageKind === 'sold'
+        ? /class=["'][^"']*\bsold-itemcard\b[^"']*["']/gi
+        : (pageKind === 'ended' ? /(?:\/itm\/\d+|itemId=\d+)/gi : /\bqa-id=["']active-item-\d+["']/gi));
+    const cardCount = pageKind === 'ended'
+      ? new Set(ebaySellerHubTableRowChunks(html)
+        .map(chunk => firstMatch(chunk, [/\/itm\/(\d+)/i, /itemId=(\d+)/i, /itemid=(\d+)/i]))
+        .filter(Boolean)).size
+      : (String(html || '').match(cardPattern) || []).length;
+    if (pageKind === 'transactions' && cardCount) return cardCount;
+    const rangeTotal = parsePlainInteger(firstMatch(text, [
+      /\bResults\s*:\s*[\d,]+\s*(?:-|to)\s*[\d,]+\s+of\s+([\d,]+)\b/i,
+      /(?:Showing\s+)?[\d,]+\s*(?:-|to)\s*[\d,]+\s+of\s+([\d,]+)\s+(?:results|orders|transactions|listings|items)\b/i,
+      /\b([\d,]+)\s+(?:results|orders|transactions|listings)\b/i,
+    ]));
+    if (Number.isFinite(rangeTotal)) return rangeTotal;
+    const labels = pageKind === 'transactions'
+      ? ['Transactions', 'Results']
+      : (pageKind === 'sold'
+        ? ['Sold', 'Orders', 'Results', 'All']
+        : (pageKind === 'ended' ? ['Ended', 'Results', 'All'] : ['Manage active listings', 'Active', 'Results', 'All']));
+    const labeledCounts = [];
+    for (const label of labels) {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const patterns = [
+        new RegExp(`${escaped}\\s*\\(([\\d,]+)\\)`, 'gi'),
+        new RegExp(`${escaped}\\s*:\\s*([\\d,]+)\\b`, 'gi'),
+      ];
+      patterns.forEach(pattern => {
+        Array.from(text.matchAll(pattern)).forEach(match => {
+          const count = parsePlainInteger(match[1]);
+          if (Number.isFinite(count)) labeledCounts.push(count);
+        });
+      });
+    }
+    if (labeledCounts.length) return Math.max(...labeledCounts);
+
+    if (cardCount) return cardCount;
+
+    const emptyPattern = pageKind === 'transactions'
+      ? /\b(?:no transactions|0 transactions|0 results)\b/i
+      : (pageKind === 'sold'
+        ? /\b(?:no sold items|no orders(?: found)?|0 orders|0 results)\b/i
+        : (pageKind === 'ended'
+          ? /\b(?:no ended listings|no listings(?: found)?|0 ended listings|0 results)\b/i
+          : /\b(?:no active listings|no listings(?: found)?|0 active listings|0 results)\b/i));
+    if (emptyPattern.test(text)) return 0;
+    return null;
+  }
+
+  function ebayLifecycleNextPageUrl(html, pageUrl = 'https://www.ebay.com/') {
+    const tags = Array.from(String(html || '').matchAll(/<(?:button|a)\b[^>]*>/gi)).map(match => match[0]);
+    const nextTag = tags.find(tag => {
+      const isNext = /(?:class=["'][^"']*\bpagination__next\b|aria-label=["'][^"']*\bnext\s+page\b|type=["']next["'])/i.test(tag);
+      const disabled = /\bdisabled(?:\s|=|>)/i.test(tag) || /aria-disabled=["']true["']/i.test(tag);
+      return isNext && !disabled;
+    });
+    if (!nextTag) return '';
+    const href = decodeHtml(firstMatch(nextTag, [/href=["']([^"']+)["']/i]));
+    if (!href) return '';
+    try {
+      const next = new URL(href, pageUrl || 'https://www.ebay.com/');
+      if (next.protocol !== 'https:' || next.hostname.toLowerCase() !== 'www.ebay.com') return '';
+      return next.toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function ebayLifecycleHasDomNextPage(html) {
+    return Array.from(String(html || '').matchAll(/<(?:button|a)\b[^>]*>/gi))
+      .map(match => match[0])
+      .some(tag => {
+        const isNext = /(?:class=["'][^"']*\bpagination__next\b|aria-label=["'][^"']*\bnext\s+page\b|type=["']next["'])/i.test(tag);
+        const hasDomTarget = /\bdata-url=["'][^"']+["']/i.test(tag) || /\bdata-action=["']pagination["']/i.test(tag);
+        const disabled = /\bdisabled(?:\s|=|>)/i.test(tag) || /aria-disabled=["']true["']/i.test(tag);
+        return isNext && hasDomTarget && !disabled;
+      });
+  }
+
+  function ebayLifecycleHasNextPage(html) {
+    return Boolean(ebayLifecycleNextPageUrl(html) || ebayLifecycleHasDomNextPage(html));
+  }
+
+  function buildEbayLifecycleEnvelope(records, meta = {}) {
+    const rows = sanitizeEbayLifecycleValue(Array.isArray(records) ? records : []);
+    const generatedAt = meta.generatedAt || new Date().toISOString();
+    const pageKind = meta.pageKind || 'active';
+    const expectedCount = Number.isFinite(meta.expectedCount) ? meta.expectedCount : null;
+    const parsedCount = rows.length;
+    const reviewRequiredCount = rows.filter(row => row?.review_required || row?.identity_stable === false).length;
+    const countKnown = expectedCount !== null;
+    const countMatches = countKnown && parsedCount === expectedCount;
+    const paginationPending = Boolean(meta.hasNextPage);
+    const complete = countMatches && reviewRequiredCount === 0 && !paginationPending;
+    let reason = '';
+    if (!countKnown) reason = `Expected count/pagination is unknown; parsed ${parsedCount} record(s).`;
+    else if (!countMatches) reason = `Expected ${expectedCount} record(s), parsed ${parsedCount}.`;
+    else if (reviewRequiredCount) reason = `${reviewRequiredCount} record(s) require identity review.`;
+    else if (paginationPending) reason = 'More eBay result pages are available; open the next page and sync it before treating this route as complete.';
+    const envelope = {
+      schema_version: EBAY_LIFECYCLE_SCHEMA,
+      export_id: `ebay-${pageKind}-${safeTimestamp(new Date(generatedAt))}-${parsedCount}`,
+      source: 'ebay',
+      page_kind: pageKind,
+      generated_at: generatedAt,
+      page_url: canonicalEbayLifecyclePageUrl(meta.pageUrl || ''),
+      completeness: {
+        expected_count: expectedCount,
+        count_known: countKnown,
+        parsed_count: parsedCount,
+        review_required_count: reviewRequiredCount,
+        has_next_page: paginationPending,
+        complete,
+        reason,
+      },
+      records: rows,
+    };
+    return prepareEbayLifecycleEnvelopeForExport(envelope);
+  }
+
+  function parseFacebookMarketplaceListingsHtml(html) {
+    const text = String(html || '');
+    const listings = [];
+    const markSoldPattern = /aria-label="Mark as sold\s+([^"]+)"/gi;
+    let match;
+
+    while ((match = markSoldPattern.exec(text))) {
+      const title = cleanListingTitle(decodeHtml(match[1]));
+      const titleIndex = title ? text.lastIndexOf(title, match.index) : -1;
+      const start = titleIndex >= 0 ? titleIndex : Math.max(0, match.index - 3200);
+      const windowHtml = text.slice(start, match.index);
+      const priceMatches = Array.from(windowHtml.matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g));
+      const price = priceMatches.length ? Number(priceMatches[priceMatches.length - 1][1].replace(/,/g, '')) : null;
+      const url = normalizeListingUrl(firstMatch(windowHtml, [
+        /href="(https:\/\/www\.facebook\.com\/marketplace\/item\/\d+\/?[^"]*)"/i,
+        /href="(\/marketplace\/item\/\d+\/?[^"]*)"/i
+      ]));
+      const fullText = stripHtml(windowHtml);
+      const clicks = parsePlainInteger(firstMatch(fullText, [/\b([\d,]+)\s+clicks?\s+on\s+listing\b/i]));
+      const listedDateText = firstMatch(fullText, [/\b(Active\s+·\s+Listed\s+on\s+[^·]+?)(?:\s+Listed|\s+\d+\s+clicks|$)/i]) || 'Active';
+
+      if (!title || !price) continue;
+      listings.push({
+        source: 'Facebook Marketplace',
+        itemId: firstMatch(url, [/\/marketplace\/item\/(\d+)/i]),
+        title,
+        price,
+        url,
+        status: /sold|inactive/i.test(listedDateText) ? 'Inactive' : 'Active',
+        listedDateText,
+        shippingText: '',
+        views: null,
+        watchers: null,
+        clicks,
+      });
+    }
+
+    if (!listings.length) {
+      const cardPattern = /<div[^>]+aria-label="([^"]+)"[^>]+role="button"[\s\S]*?(?=<div[^>]+aria-label=|$)/gi;
+      let card;
+      while ((card = cardPattern.exec(text))) {
+        const title = cleanListingTitle(decodeHtml(card[1]));
+        if (!title || /^Mark as sold\b/i.test(title)) continue;
+        const chunk = card[0];
+        const price = parseDollarAmount(chunk);
+        if (!price) continue;
+        const fullText = stripHtml(chunk);
+        listings.push({
+          source: 'Facebook Marketplace',
+          itemId: firstMatch(chunk, [/\/marketplace\/item\/(\d+)/i]),
+          title,
+          price,
+          url: normalizeListingUrl(firstMatch(chunk, [
+            /href="(https:\/\/www\.facebook\.com\/marketplace\/item\/\d+\/?[^"]*)"/i,
+            /href="(\/marketplace\/item\/\d+\/?[^"]*)"/i
+          ])),
+          status: /sold|inactive/i.test(fullText) ? 'Inactive' : 'Active',
+          listedDateText: firstMatch(fullText, [/\b(Active\s+·\s+Listed\s+on\s+[^·]+?)(?:\s+Listed|\s+\d+\s+clicks|$)/i]) || 'Active',
+          shippingText: '',
+          views: null,
+          watchers: null,
+          clicks: parsePlainInteger(firstMatch(fullText, [/\b([\d,]+)\s+clicks?\s+on\s+listing\b/i])),
+        });
+      }
+    }
+
+    return dedupeListings(listings);
+  }
+
+  function parseFlipTrackerActiveListingsHtml(html, context = {}) {
+    const sourceUrl = String(context.url || '');
+    const text = String(html || '');
+    if (/ebay\.com/i.test(sourceUrl) || /active-item-\d+|item__price|ebay\.com\/itm\/\d+/i.test(text)) {
+      return parseEbayActiveListingsHtml(text);
+    }
+    if (/facebook\.com/i.test(sourceUrl) || /Mark as sold|clicks on listing|marketplace\/item\//i.test(text)) {
+      return parseFacebookMarketplaceListingsHtml(text);
+    }
+    return dedupeListings(parseEbayActiveListingsHtml(text).concat(parseFacebookMarketplaceListingsHtml(text)));
+  }
+
+  function normalizeEbayBulkFieldLabel(value) {
+    return String(value || '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function firstEbayBulkFieldValue(fields, patterns) {
+    const entry = (Array.isArray(fields) ? fields : []).find(field => {
+      const label = String(field?.label || '');
+      return patterns.some(pattern => pattern.test(label));
+    });
+    return entry?.value || '';
+  }
+
+  function normalizeEbayBulkFieldEntries(fields) {
+    const entries = Array.isArray(fields) ? fields : [];
+    const values = {};
+    entries.forEach(field => {
+      const label = normalizeEbayBulkFieldLabel(field?.label);
+      const value = String(field?.value || '').trim();
+      if (label && value) values[label] = value;
+    });
+    return values;
+  }
+
+  function parseEbayBulkAmount(value) {
+    const parsed = moneyFromText(value);
+    if (Number.isFinite(parsed)) return parsed;
+    const match = String(value || '').trim().match(/^\$?\s*([\d,]+(?:\.\d{1,2})?)$/);
+    return match ? Number(match[1].replace(/,/g, '')) : null;
+  }
+
+  function buildEbayBulkListing(data = {}) {
+    const title = cleanListingTitle(data.title || '');
+    const rawText = String(data.rawText || '').replace(/\s+/g, ' ').trim();
+    const priceText = String(data.priceText || '').trim();
+    const quantityText = String(data.quantityText || '').trim();
+    const fields = normalizeEbayBulkFieldEntries(data.fields || []);
+    const price = Number.isFinite(data.price) ? data.price : (parseEbayBulkAmount(priceText) ?? null);
+    const quantity = Number.isFinite(data.quantity) ? data.quantity : (parsePlainInteger(quantityText) ?? null);
+    const url = normalizeListingUrl(data.url || '');
+    const itemId = String(data.itemId || firstMatch(url, [/\/itm\/(\d+)/i]) || '').trim();
+    const draftId = String(data.draftId || '').trim();
+
+    return {
+      source: 'eBay',
+      pageKind: 'ebay-bulk-sell',
+      itemId,
+      draftId,
+      title,
+      url,
+      image: String(data.image || '').trim(),
+      status: String(data.status || '').trim(),
+      price,
+      priceText: priceText || (Number.isFinite(price) ? `$${price.toFixed(2)}` : ''),
+      startPrice: Number.isFinite(data.startPrice) ? data.startPrice : (parseEbayBulkAmount(data.startPriceText || '') ?? null),
+      startPriceText: String(data.startPriceText || '').trim(),
+      quantity,
+      quantityText,
+      customLabel: String(data.customLabel || '').trim(),
+      format: String(data.format || '').trim(),
+      duration: String(data.duration || '').trim(),
+      listedDateText: String(data.listedDateText || '').trim(),
+      shippingText: String(data.shippingText || '').trim(),
+      handlingTime: String(data.handlingTime || '').trim(),
+      category: String(data.category || '').trim(),
+      condition: String(data.condition || '').trim(),
+      promotedText: String(data.promotedText || '').trim(),
+      recommendations: Number.isFinite(data.recommendations) ? data.recommendations : null,
+      description: String(data.description || '').trim(),
+      descriptionAvailable: Boolean(data.descriptionAvailable),
+      fields,
+      controls: Array.isArray(data.controls) ? uniqueNonEmpty(data.controls) : [],
+      rawText
+    };
+  }
+
+  function extractEbayBulkFieldEntriesFromElement(row) {
+    return Array.from(row?.querySelectorAll?.('input, textarea, select') || [])
+      .map(field => {
+        const label = normalizeEbayBulkFieldLabel(
+          field.getAttribute?.('aria-labelledby')
+          || field.getAttribute?.('aria-label')
+          || field.getAttribute?.('name')
+          || ''
+        );
+        let value = field.value || '';
+        if (!value && field.tagName === 'SELECT') value = textOf(field.selectedOptions?.[0] || field);
+        return { label, value: String(value || '').trim() };
+      })
+      .filter(field => field.label && field.value);
+  }
+
+  function extractEbayBulkListingFromElement(row) {
+    const checkbox = row?.querySelector?.('input[aria-label^="Select item to bulk edit"]');
+    const checkboxLabel = checkbox?.getAttribute?.('aria-label') || '';
+    const titleFromCheckbox = checkboxLabel.replace(/^Select item to bulk edit\s*-\s*/i, '').trim();
+    const fields = extractEbayBulkFieldEntriesFromElement(row);
+    const title = firstEbayBulkFieldValue(fields, [/^item\s*title$/i, /^title$/i]) || titleFromCheckbox;
+    const rawText = rawTextOf(row);
+    const controls = Array.from(row?.querySelectorAll?.('button') || []).map(textOf).filter(Boolean);
+    const fieldValue = (patterns) => firstEbayBulkFieldValue(fields, patterns);
+    const priceText = fieldValue([/^price$/i]);
+    const startPriceText = fieldValue([/^start\s*price$/i]);
+    const quantityText = fieldValue([/available\s*quantity/i, /^quantity$/i]);
+    const status = firstMatch(rawText, [
+      /\b(Draft|Active|Ended|Sold|Canceled|Cancelled|Inactive)\b/i
+    ]);
+    const image = Array.from(row?.querySelectorAll?.('img[src], img[srcset]') || [])
+      .map(img => img.currentSrc || img.src || firstMatch(img.getAttribute?.('srcset') || '', [/^(\S+)/]))
+      .find(Boolean) || '';
+    const url = normalizeListingUrl(Array.from(row?.querySelectorAll?.('a[href]') || [])
+      .map(anchor => anchor.href || anchor.getAttribute?.('href') || '')
+      .find(value => /\/itm\/\d+/i.test(value)) || '');
+    const recommendations = parsePlainInteger(firstMatch(rawText, [/\b(\d+)\s+recommendations?\b/i]));
+    const format = controls.find(value => /buy it now|auction|classified/i.test(value)) || firstMatch(rawText, [/(Buy It Now|Auction|Classified)/i]);
+    const duration = controls.find(value => /good ['’]?til canceled|days?|duration/i.test(value)) || firstMatch(rawText, [/(Good ['’]?Til Canceled|\d+\s+days?)/i]);
+    const shippingText = firstMatch(rawText, [/(Buyer pays[^\n]*shipping[^\n]*|Free shipping|calculated fee[^\n]*)/i]);
+    const handlingTime = firstMatch(rawText, [/(\d+\s+business days?)/i]);
+    const condition = firstMatch(rawText, [/\b(New|Used|Pre-owned|Refurbished|For parts or not working)\b/i]);
+    const promotedText = firstMatch(rawText, [/(Promoted:[^\n]+)/i]);
+    const category = firstMatch(rawText, [/(?:^|\s)([^\n]+\s+in\s+[^\n]+>[^\n]+)/i]);
+
+    return buildEbayBulkListing({
+      draftId: firstMatch(checkbox?.id || '', [/draft-checkbox-(\d+)/i]),
+      itemId: firstMatch(url, [/\/itm\/(\d+)/i]),
+      title,
+      url,
+      image,
+      status,
+      price: parseEbayBulkAmount(priceText),
+      priceText,
+      startPrice: parseEbayBulkAmount(startPriceText),
+      startPriceText,
+      quantity: parsePlainInteger(quantityText),
+      quantityText,
+      customLabel: fieldValue([/^custom\s*label$/i]),
+      format,
+      duration,
+      shippingText,
+      handlingTime,
+      category,
+      condition,
+      promotedText,
+      recommendations,
+      descriptionAvailable: /edit\s+description/i.test(rawText),
+      fields,
+      controls,
+      rawText: [rawText, title, Object.values(normalizeEbayBulkFieldEntries(fields)).join(' ')].filter(Boolean).join(' ').replace(/\s+/g, ' ')
+    });
+  }
+
+  function extractEbayBulkSellListings(root = document) {
+    const tables = Array.from(root?.querySelectorAll?.('table') || []);
+    const table = tables.find(candidate => candidate.querySelector?.('input[aria-label^="Select item to bulk edit"]'))
+      || root?.querySelector?.('table.bg-grid');
+    if (!table) return [];
+    const rows = Array.from(table.querySelectorAll('tr')).filter(row => row.querySelector('input[aria-label^="Select item to bulk edit"]'));
+    return dedupeListings(rows.map(extractEbayBulkListingFromElement).filter(row => row.title));
+  }
+
+  function parseEbayBulkFieldEntriesFromHtml(rowHtml) {
+    const entries = [];
+    const fieldPattern = /<(input|textarea|select)\b([^>]*?)(?:>([\s\S]*?)<\/\1\s*>|\s*\/?>)/gi;
+    let match;
+    while ((match = fieldPattern.exec(String(rowHtml || '')))) {
+      const attrs = match[2] || '';
+      const label = normalizeEbayBulkFieldLabel(firstMatch(attrs, [
+        /aria-labelledby\s*=\s*["']([^"']+)/i,
+        /aria-label\s*=\s*["']([^"']+)/i,
+        /name\s*=\s*["']([^"']+)/i
+      ]));
+      const value = firstMatch(attrs, [/value\s*=\s*["']([^"']*)/i]) || stripHtml(match[3] || '');
+      if (label && value) entries.push({ label, value });
+    }
+    return entries;
+  }
+
+  function parseEbayBulkSellListingsHtml(html) {
+    const text = String(html || '');
+    const rows = Array.from(text.matchAll(/<tr\b[\s\S]*?<\/tr\s*>/gi)).map(match => match[0]);
+    return dedupeListings(rows.map(rowHtml => {
+      const checkboxLabel = firstMatch(rowHtml, [/aria-label\s*=\s*["'](Select item to bulk edit[^"']*)/i]);
+      if (!checkboxLabel) return null;
+      const fields = parseEbayBulkFieldEntriesFromHtml(rowHtml);
+      const titleFromCheckbox = checkboxLabel.replace(/^Select item to bulk edit\s*-\s*/i, '').trim();
+      const fieldValue = (patterns) => firstEbayBulkFieldValue(fields, patterns);
+      const rawText = stripHtml(rowHtml);
+      const url = normalizeListingUrl(firstMatch(rowHtml, [
+        /href\s*=\s*["'](https?:\/\/www\.ebay\.com\/itm\/\d+[^"']*)/i,
+        /href\s*=\s*["'](\/itm\/\d+[^"']*)/i
+      ]));
+      const controls = Array.from(rowHtml.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button\s*>/gi)).map(match => stripHtml(match[1])).filter(Boolean);
+      const priceText = fieldValue([/^price$/i]);
+      const startPriceText = fieldValue([/^start\s*price$/i]);
+      const quantityText = fieldValue([/available\s*quantity/i, /^quantity$/i]);
+      return buildEbayBulkListing({
+        draftId: firstMatch(rowHtml, [/id\s*=\s*["']draft-checkbox-(\d+)/i]),
+        itemId: firstMatch(url, [/\/itm\/(\d+)/i]),
+        title: fieldValue([/^item\s*title$/i, /^title$/i]) || titleFromCheckbox,
+        url,
+        image: firstMatch(rowHtml, [/(?:src|data-src)\s*=\s*["']([^"']+)/i]),
+        status: firstMatch(rawText, [/\b(Draft|Active|Ended|Sold|Canceled|Cancelled|Inactive)\b/i]),
+        price: parseEbayBulkAmount(priceText),
+        priceText,
+        startPrice: parseEbayBulkAmount(startPriceText),
+        startPriceText,
+        quantity: parsePlainInteger(quantityText),
+        quantityText,
+        customLabel: fieldValue([/^custom\s*label$/i]),
+        format: controls.find(value => /buy it now|auction|classified/i.test(value)) || firstMatch(rawText, [/(Buy It Now|Auction|Classified)/i]),
+        duration: controls.find(value => /good ['’]?til canceled|days?|duration/i.test(value)) || firstMatch(rawText, [/(Good ['’]?Til Canceled|\d+\s+days?)/i]),
+        shippingText: firstMatch(rawText, [/(Buyer pays[^\n]*shipping[^\n]*|Free shipping|calculated fee[^\n]*)/i]),
+        handlingTime: firstMatch(rawText, [/(\d+\s+business days?)/i]),
+        category: firstMatch(rawText, [/(?:^|\s)([^\n]+\s+in\s+[^\n]+>[^\n]+)/i]),
+        condition: firstMatch(rawText, [/\b(New|Used|Pre-owned|Refurbished|For parts or not working)\b/i]),
+        promotedText: firstMatch(rawText, [/(Promoted:[^\n]+)/i]),
+        recommendations: parsePlainInteger(firstMatch(rawText, [/\b(\d+)\s+recommendations?\b/i])),
+        descriptionAvailable: /edit\s+description/i.test(rawText),
+        fields,
+        controls,
+        rawText: [rawText, titleFromCheckbox, Object.values(normalizeEbayBulkFieldEntries(fields)).join(' ')].filter(Boolean).join(' ').replace(/\s+/g, ' ')
+      });
+    }).filter(Boolean));
+  }
+
+  function extractEbayBulkExpectedTotal(root = document) {
+    const raw = textOf(root?.body || root?.documentElement || root || '');
+    return parsePlainInteger(firstMatch(raw, [/\bof\s+(\d+)\s+item(?:s|\(s\))?\s+selected/i, /\b(\d+)\s+item(?:s|\(s\))?\s+selected/i]));
+  }
+
+  function getEbayBulkSellContext(loc = location, root = document) {
+    let url = '';
+    try { url = new URL(String(loc?.href || loc || ''), 'https://www.ebay.com/').href; } catch { url = String(loc?.href || loc || ''); }
+    let parsed;
+    try { parsed = new URL(url); } catch { parsed = null; }
+    const params = parsed?.searchParams;
+    return {
+      source: 'eBay',
+      pageKind: 'ebay-bulk-sell',
+      title: String(root?.title || 'eBay Bulk Sell').trim(),
+      url,
+      workspaceId: params?.get('workspaceId') || '',
+      returnUrl: params?.get('ru') || '',
+      selectedCount: extractEbayBulkExpectedTotal(root),
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  function buildEbayBulkSellLlmBrief(listings, context = {}) {
+    const rows = sanitizeEbayLifecycleValue(Array.isArray(listings) ? listings : []);
+    const safeContext = sanitizeEbayLifecycleValue(context);
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      'eBay bulk-sell listing review:',
+      'Review the complete listing data for each eBay row. Preserve the exact title, model/brand clues, price, quantity, condition, shipping, category, and raw field values when recommending edits or resale actions.',
+      'Do not submit, revise, delete, publish, or otherwise mutate eBay listings from this brief.',
+      '',
+      'eBay bulk-sell context:',
+      JSON.stringify(safeContext, null, 2),
+      '',
+      `Listings exported: ${rows.length}`,
+      '',
+      'Full eBay bulk listing JSON:',
+      JSON.stringify({ context: safeContext, listings: rows }, null, 2)
+    ].join('\n');
+  }
+
+  function buildFlipTrackerListingsExportHtml(listings, meta = {}) {
+    const rows = Array.isArray(listings) ? listings : [];
+    const generatedAt = meta.generatedAt || new Date().toISOString();
+    const pageUrl = meta.pageUrl || (typeof location !== 'undefined' ? location.href : '');
+    const source = rows[0]?.source || 'Unknown';
+    const cards = rows.map((listing, index) => {
+      if (listing.source === 'eBay') {
+        const itemId = listing.itemId || firstMatch(listing.url, [/\/itm\/(\d+)/i]) || String(index + 1);
+        return `
+          <div qa-id="active-item-${escapeHtml(itemId)}" class="active-item" data-fliptracker-source="ebay">
+            <h3 class="item-title"><a href="${escapeHtml(listing.url || '')}"><span>${escapeHtmlText(listing.title || '')}</span></a></h3>
+            <div class="item__itemid"><span>Item ID: ${escapeHtml(itemId)}</span></div>
+            <div class="item__price"><span>$${Number(listing.price || 0).toFixed(2)}</span><span> Buy It Now</span></div>
+            <div class="item__shipping-price">${escapeHtml(listing.shippingText || '')}</div>
+            <div class="item__listing-status">${escapeHtml(listing.listedDateText || listing.status || 'Active')}</div>
+            <div class="me-item-activity__column"><span>${Number.isFinite(listing.views) ? listing.views : ''}</span><span>View</span></div>
+            <div class="me-item-activity__column"><span>${Number.isFinite(listing.watchers) ? listing.watchers : ''}</span><span>Watchers</span></div>
+          </div>`;
+      }
+      return `
+        <div aria-label="${escapeHtml(listing.title || '')}" role="button" data-fliptracker-source="facebook">
+          <span>${escapeHtmlText(listing.title || '')}</span><span>$${Number(listing.price || 0).toFixed(2)}</span>
+          <span>${escapeHtmlText(listing.listedDateText || listing.status || 'Active')}</span>
+          <span>Listed on Marketplace · ${Number.isFinite(listing.clicks) ? listing.clicks : 0} clicks on listing</span>
+          ${listing.url ? `<a href="${escapeHtml(listing.url)}">Open</a>` : ''}
+        </div>
+        <div aria-label="Mark as sold ${escapeHtml(listing.title || '')}" role="button">Mark as sold</div>`;
+    }).join('\n');
+
+    return `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>FlipTracker Active Listing Export</title></head>
+<body data-fliptracker-export="active-listings">
+<h1>FlipTracker Active Listing Export</h1>
+<script type="application/json" id="fliptracker-export-metadata">${JSON.stringify({ generatedAt, pageUrl, source, count: rows.length }).replace(/</g, '\\u003c')}</script>
+${cards}
+</body>
+</html>`;
+  }
+
+  const Core = {
+    APP_NAME,
+    APP_SHORT_NAME,
+    evaluateLot,
+    moneyFromText,
+    numberFromText,
+    parseBidPlan,
+    titleMatches,
+    DEBUG_PREFIX,
+    MENU_COMMANDS,
+    resolveHiBidPage,
+    resolveAjWillnerPage,
+    resolveFlipTrackerPage,
+    resolveAuctionNinjaPage,
+    resolveAarAuctionsPage,
+    getAarItemId,
+    resolveGovDealsPage,
+    resolveSiteRoute,
+    resolveAssistantMode,
+    getRouteManifest,
+    getNetworkEndpointManifest,
+    getExpectedLotTotal,
+    findCatalogNextPageButton,
+    parseAuctionNinjaCatalogRange,
+    parseAuctionNinjaCategoryResultCount,
+    parseAuctionNinjaAuctionSearchTotal,
+    parseAuctionNinjaAccountTotal,
+    parseAuctionNinjaPagedResponse,
+    extractAuctionNinjaSearchActiveFilters,
+    auctionNinjaSearchRouteFingerprint,
+    auctionNinjaPaginationScope,
+    auctionNinjaCategoryPageMatches,
+    auctionNinjaSearchPageMatches,
+    auctionNinjaSaleStableIdentity,
+    auctionNinjaRouteFingerprint,
+    validateAuctionNinjaPageCoverage,
+    buildAuctionNinjaPageAudit,
+    findAuctionNinjaCatalogPageUrls,
+    findAuctionNinjaAuctionSearchPageUrls,
+    findAuctionNinjaAccountPageUrls,
+    extractAuctionNinjaSaleContext,
+    extractAuctionNinjaCatalogLots,
+    extractAuctionNinjaItemDetail,
+    mergeAuctionNinjaItemDetail,
+    extractAuctionNinjaFollowedItems,
+    extractAuctionNinjaWonItems,
+    extractAuctionNinjaBidHistoryItems,
+    sanitizeAuctionNinjaAccountUrl,
+    sanitizeAuctionNinjaAccountItem,
+    sanitizeAuctionNinjaAccountExport,
+    settleAuctionNinjaAccountDom,
+    extractAuctionNinjaAuctionSearchSales,
+    extractAuctionNinjaCategoryContext,
+    extractAuctionNinjaCategoryItems,
+    hasAuctionNinjaExplicitEmptyState,
+    extractAarCatalogFilters,
+    hasActiveAarCatalogFilters,
+    buildAarCatalogPageUrl,
+    aarCatalogResponseMatchesRequest,
+    aarAuctionCalendarIdentity,
+    extractAarItemImages,
+    extractAarAuctionCards,
+    extractAarCatalogContext,
+    extractAarCatalogLots,
+    extractAarItemDetail,
+    mergeAarItemDetail,
+    extractAarItemContext,
+    extractGovDealsSellerContext,
+    extractGovDealsSearchContext,
+    extractGovDealsAssetDetail,
+    extractGovDealsListings,
+    installGovDealsNetworkObserver,
+    captureGovDealsNetworkExchange,
+    getGovDealsSearchCapture,
+    govDealsSearchRows,
+    sanitizeGovDealsNetworkCapture,
+    govDealsRequestFingerprint,
+    govDealsRouteScopeFingerprint,
+    govDealsRequestMatchesVisibleRoute,
+    buildGovDealsSearchRequest,
+    govDealsCaptureMatchesRoute,
+    requestGovDealsJson,
+    govDealsGmJsonRequest,
+    normalizeGovDealsSearchResult,
+    normalizeGovDealsAssetResponse,
+    enumerateGovDealsApiListings,
+    validateGovDealsApiCoverage,
+    buildGovDealsAssetRequest,
+    enrichGovDealsApiListings,
+    scrapeGovDealsApiAsset,
+    enrichGovDealsListings,
+    findAjWillnerScrollContainer,
+    getAjWillnerScrollStepSize,
+    getAjWillnerExpectedTotal,
+    extractAjWillnerVisibleListings,
+    normalizeAjWillnerAuctionContext,
+    normalizeAjWillnerApiItem,
+    ajWillnerAuctionApiUrl,
+    ajWillnerSearchApiUrl,
+    fetchAjWillnerAuctionContext,
+    scrapeAjWillnerApiListings,
+    scrapeAjWillnerListings,
+    scrapeAuctionNinjaCatalogLots,
+    enrichAuctionNinjaProductItems,
+    scrapeAuctionNinjaItemDetail,
+    scrapeAuctionNinjaAccountItems,
+    scrapeAuctionNinjaAuctionSearchSales,
+    findAuctionNinjaCategoryPageUrls,
+    scrapeAuctionNinjaCategoryItems,
+    scrapeAarAuctionCards,
+    scrapeAarCatalogLots,
+    enrichAarCatalogLots,
+    settleAarAuctionCalendarDom,
+    scrapeAarItemDetail,
+    scrapeGovDealsListings,
+    buildAuctionNinjaLlmBrief,
+    buildAuctionNinjaFollowedItemsLlmBrief,
+    buildAuctionNinjaWonItemsLlmBrief,
+    buildAuctionNinjaBidHistoryLlmBrief,
+    buildAuctionNinjaAuctionSearchLlmBrief,
+    buildAuctionNinjaCategoryLlmBrief,
+    buildAarAuctionListLlmBrief,
+    buildAarCatalogLlmBrief,
+    buildAarItemLlmBrief,
+    buildGovDealsLlmBrief,
+    defaultResearchSettings,
+    getResearchSettings,
+    saveResearchSettings,
+    getAarResearchSettings,
+    saveAarResearchSettings,
+    getSiteShortcuts,
+    getSellingToolShortcuts,
+    fetchHtmlDocumentWithRetries,
+    findAuctionNinjaNextPageControl,
+    buildHibidSearchRequest,
+    buildHibidGraphqlVariables,
+    extractHibidPortalSearchContext,
+    getHibidRouteFingerprint,
+    normalizeHibidGraphqlLot,
+    enumerateHibidLotIds,
+    hydrateHibidLots,
+    scrapeHibidApiCatalog,
+    validateHibidApiCoverage,
+    buildHibidDiagnosticBundle,
+    buildHibidPartialExportPayload,
+    extractHibidVisiblePageState,
+    extractHibidApolloLots,
+    extractHibidStateFromDocument,
+    hibidCatalogPageSize,
+    fetchHibidCatalogDomPage,
+    scrapeHibidDomPages,
+    isHibidCurrentBidsRoute,
+    isHibidAccountExportRoute,
+    validateCatalogExportAgainstVisibleState,
+    describeExportGuardFailure,
+    validateScraperExportAgainstRoute,
+    genericRouteFingerprint,
+    scraperStableIdentity,
+    buildProofTierCoverage,
+    assessExportReadiness,
+    buildVerifiedPartialPayload,
+    buildSanitizedDiagnosticBundle,
+    isCatalogScrapeComplete,
+    getHibidScrapeLimits,
+    getHibidStateScrapeMaxMs,
+    scrapeCatalogLots,
+    isHibidPastAuctionRoute,
+    extractHibidPastAuctionRows,
+    extractHibidAccountAuctionLots,
+    extractHibidLotDetail,
+    scrapeHibidAccountAuction,
+    buildHibidAccountAuctionJsonPayload,
+    buildHibidAccountAuctionLlmBrief,
+    buildHibidPastAuctionDialogHtml,
+    mountHibidAccountAuctionActions,
+    findDialog,
+    findBidButton,
+    findLiveBidButton,
+    findLiveLoadMoreButton,
+    findConfirmButton,
+    findConfirmSurface,
+    getLoadTarget,
+    isLiveCatalogPage,
+    isEbayBulkSellPage,
+    findEbayBulkEditLink,
+    isFlipTrackerListingPage,
+    shouldInitOnLocation,
+    getLotTiles,
+    getCanonicalHibidLotTiles,
+    extractLot,
+    extractCurrentBidsLot,
+    uniqueLots,
+    expectedTotalFromScraperResult,
+    extractTextLots,
+    extractLiveAuctionState,
+    extractLivePageLots,
+    expandLivePageLots,
+    buildLlmAuctionBrief,
+    parseEbayBulkSellListingsHtml,
+    extractEbayBulkSellListings,
+    getEbayBulkSellContext,
+    buildEbayBulkSellLlmBrief,
+    parseEbayActiveListingsHtml,
+    parseEbayActiveLifecycleHtml,
+    extractEbayItemDetailHtml,
+    normalizeEbayCrosslistImageUrl,
+    cleanEbayCrosslistDescription,
+    buildCrosslistEnvelope,
+    crosslistEnvelopeMissingEvidence,
+    enrichEbayListingForCrosslist,
+    refreshCrosslistQueueRecords,
+    crosslistBridgeRequest,
+    getCrosslistLocation,
+    saveCrosslistLocation,
+    normalizeCrosslistImageMode,
+    getCrosslistImageMode,
+    saveCrosslistImageMode,
+    selectCrosslistManifestPhotos,
+    gmCrosslistRequest,
+    facebookNextDraftUrl,
+    facebookAutofillRequested,
+    facebookAutofillItemId,
+    facebookAutoSaveRequested,
+    facebookAutoSaveBatchActive,
+    setFacebookAutoSaveBatchActive,
+    facebookAutoSaveTabId,
+    claimFacebookAutoSaveLease,
+    facebookAutoSaveLeaseOwned,
+    releaseFacebookAutoSaveLease,
+    setFacebookPendingDraft,
+    getFacebookPendingDraft,
+    facebookSavedDraftVisible,
+    resetFacebookAutoSaveBatch,
+    facebookDraftHasContent,
+    findFacebookLabeledControl,
+    setFacebookControlValue,
+    setFacebookTextField,
+    facebookCategoryParent,
+    chooseFacebookDropdownValue,
+    chooseFacebookLocationValue,
+    fillFacebookMarketplaceDraft,
+    saveFacebookMarketplaceDraft,
+    downloadCrosslistImageFiles,
+    uploadFacebookDraftPhotos,
+    parseEbayEndedLifecycleHtml,
+    parseEbaySoldOrdersHtml,
+    parseEbayTransactionsHtml,
+    parseEbayLifecycleHtml,
+    parseSignedDollarAmount,
+    sanitizeEbayLifecycleValue,
+    assertEbayLifecycleValueSafe,
+    prepareEbayLifecycleEnvelopeForExport,
+    ebayLifecyclePageKind,
+    expectedEbayLifecycleCount,
+    ebayLifecycleNextPageUrl,
+    ebayLifecycleHasDomNextPage,
+    ebayLifecycleHasNextPage,
+    buildEbayLifecycleEnvelope,
+    collectPaginatedEbayLifecycleEnvelope,
+    ebayLifecycleDomCardSignature,
+    canExportEbayLifecycleEnvelope,
+    runEbayLifecycleSyncAll,
+    postEbayLifecycleEnvelope,
+    getFlipTrackerSyncToken,
+    saveFlipTrackerSyncToken,
+    parseFacebookMarketplaceListingsHtml,
+    collectFacebookMarketplaceListings,
+    parseFlipTrackerActiveListingsHtml,
+    buildFlipTrackerListingsExportHtml,
+    copyWithExecCommand,
+    writeClipboard,
+    buildPanelHtml,
+    evaluateLiveLot,
+    prepareLiveBid,
+    findLotOnPage,
+    planTextFromLoadedLots,
+    addLotToPlanText,
+    getPlanStorageKey,
+    getStoredPlanText,
+    shouldRebuildPanelForMode,
+    shouldTeardownPanelForRebuild,
+    shouldPreservePanelDuringManagedNavigation,
+    scanPlan,
+    lotSummary,
+    getStoredMinimized,
+    isDebugBootstrapRequested,
+    getStoredDebugEnabled,
+    getDebugMenuLabel,
+    getDebugLogPayload,
+    getDebugControlBindingState,
+    debugControlBindingState,
+    installDebugControlDelegation,
+    debugTargetMetadata,
+    debugPageSnapshot,
+    debugEvent,
+    installDebugInstrumentation,
+    DEBUG_LOG_LIMIT,
+    DEBUG_HEARTBEAT_INTERVAL_MS
+  };
+  globalThis.HiBidBidAssistantCore = Core;
+
+  function exposeAssistantCanary(target) {
+    if (!target) return false;
+    try {
+      target.__HIBID_UNIFIED_ASSISTANT_ACTIVE__ = true;
+      target.__FLIPPERADDON_VERSION__ = SCRIPT_VERSION;
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  exposeAssistantCanary(globalThis);
+  if (typeof unsafeWindow !== 'undefined') {
+    exposeAssistantCanary(unsafeWindow);
+  }
+
+  async function enableSinglePage(status) {
+    const headerText = textOf(document.querySelector('.lot-list-header'));
+    if (/Total Lots:\s*\d/i.test(headerText)) return;
+
+    const button = document.querySelector('.single-page-button');
+    if (!button) return;
+
+    status('Turning on Single Page...');
+    button.click();
+    for (let i = 0; i < 50; i += 1) {
+      await wait(200);
+      if (/Total Lots:\s*\d/i.test(textOf(document.querySelector('.lot-list-header')))) break;
+    }
+  }
+
+  async function loadLots(status, shouldStop, collectLots = () => {}, options = {}) {
+    const limits = getHibidScrapeLimits(options.expectedTotal, options);
+    const startedAt = Date.now();
+    await enableSinglePage(status);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    await wait(500);
+    let lastUniqueCount = collectLots() || 0;
+    let lastScrollY = Math.round(window.scrollY || document.documentElement.scrollTop || 0);
+
+    let stuck = 0;
+    let bottomSettleAttempts = 0;
+    let stopReason = '';
+
+    for (let i = 0; i < limits.maxSteps; i += 1) {
+      if (shouldStop()) {
+        stopReason = 'user-stop';
+        break;
+      }
+      const uniqueCount = collectLots() || 0;
+      status(`Loading lots... ${uniqueCount}${limits.expectedTotal ? `/${limits.expectedTotal}` : ''} unique`);
+      if (limits.expectedTotal && uniqueCount >= limits.expectedTotal) {
+        stopReason = 'expected-total';
+        break;
+      }
+      if (Date.now() - startedAt >= limits.maxDurationMs) {
+        stopReason = 'dom-scrape-timeout';
+        debug('hibid DOM scrape timed out', {
+          uniqueCount,
+          expectedTotal: limits.expectedTotal,
+          maxDurationMs: limits.maxDurationMs,
+          steps: i
+        });
+        break;
+      }
+      const scrollY = Math.round(window.scrollY || document.documentElement.scrollTop || 0);
+      const maxScrollY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      const atBottom = scrollY >= Math.max(0, maxScrollY - 2);
+      const noGrowth = uniqueCount === lastUniqueCount && scrollY === lastScrollY;
+      if (noGrowth) stuck += 1;
+      else {
+        stuck = 0;
+        bottomSettleAttempts = 0;
+      }
+      lastUniqueCount = uniqueCount;
+      lastScrollY = scrollY;
+      if (atBottom && noGrowth) {
+        // HiBid's virtual grid can append the final cards after the viewport
+        // has already reached the bottom. Give the page a few explicit settle
+        // cycles before treating bottom/no-growth as a terminal condition.
+        if (bottomSettleAttempts < HIBID_DOM_BOTTOM_SETTLE_RETRIES) {
+          bottomSettleAttempts += 1;
+          debug('hibid DOM bottom settle wait', {
+            attempt: bottomSettleAttempts,
+            maxAttempts: HIBID_DOM_BOTTOM_SETTLE_RETRIES,
+            uniqueCount,
+            expectedTotal: limits.expectedTotal
+          });
+          try {
+            window.dispatchEvent(new Event('scroll'));
+          } catch {
+            // Event dispatch is best-effort on test/fallback roots.
+          }
+          await wait(HIBID_DOM_BOTTOM_SETTLE_MS);
+          const settledCount = collectLots() || 0;
+          if (settledCount > uniqueCount) {
+            stuck = 0;
+            bottomSettleAttempts = 0;
+            lastUniqueCount = settledCount;
+            continue;
+          }
+        }
+        if (bottomSettleAttempts >= HIBID_DOM_BOTTOM_SETTLE_RETRIES && stuck >= 2) {
+          stopReason = 'dom-bottom-no-growth';
+          break;
+        }
+      } else if (stuck >= 8) {
+        stopReason = 'dom-no-growth';
+        break;
+      }
+
+      window.scrollBy({ top: Math.max(700, Math.floor(window.innerHeight * 0.9)), left: 0, behavior: 'instant' });
+      await wait(180);
+    }
+
+    if (!stopReason) stopReason = 'dom-step-limit';
+    const finalCount = collectLots() || 0;
+    const result = {
+      expectedTotal: limits.expectedTotal,
+      finalCount,
+      stopReason,
+      reachedBottom: stopReason === 'dom-bottom-no-growth' || Math.round(window.scrollY || document.documentElement.scrollTop || 0) >= Math.max(0, document.documentElement.scrollHeight - window.innerHeight - 2),
+      bottomSettleAttempts,
+      steps: Math.ceil((Date.now() - startedAt) / 180)
+    };
+    debug('hibid DOM scrape finished', result);
+    return result;
+  }
+
+  function isAjWillnerHost(hostname = (typeof location !== 'undefined' ? location.hostname : '')) {
+    return String(hostname || '').toLowerCase() === 'bid.ajwillnerauctions.com';
+  }
+
+  function findAjWillnerScrollContainer(root = document) {
+    const known = root.querySelector?.('[data-testid="auction-list-scroll"]');
+    if (known && known.scrollHeight > known.clientHeight) return known;
+
+    const legacyGrid = root.querySelector?.('.ReactVirtualized__Grid');
+    if (legacyGrid && legacyGrid.scrollHeight > legacyGrid.clientHeight) return legacyGrid;
+
+    return Array.from(root.querySelectorAll?.('div') || [])
+      .filter(el => el.scrollHeight > el.clientHeight + 100)
+      .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0] || null;
+  }
+
+  function getAjWillnerScrollStepSize(scrollContainer = {}) {
+    const clientHeight = Number(scrollContainer?.clientHeight) || 700;
+    return Math.max(180, Math.min(360, Math.ceil(clientHeight * 0.42)));
+  }
+
+  function getAjWillnerExpectedTotal(root = document, scrollContainer = null) {
+    const text = `${textOf(scrollContainer)} ${getRootText(root)}`;
+    const foundMatch = text.match(/(\d[\d,]*)\s+items\s+found/i);
+    if (foundMatch) return Number(foundMatch[1].replace(/,/g, ''));
+    const itemMatch = text.match(/\b(\d[\d,]*)\s+items\b/i);
+    return itemMatch ? Number(itemMatch[1].replace(/,/g, '')) : null;
+  }
+
+  function parseAjWillnerTitle(value) {
+    const text = textOf({ textContent: value });
+    const match = text.match(/^#?\s*([A-Za-z0-9.-]+)\s*(?:\u2022|\||-)\s*(.+)$/);
+    if (!match) return { lot: '', title: text.replace(/^#\s*/, '') };
+    return {
+      lot: match[1],
+      title: match[2].replace(/\s+/g, ' ').trim()
+    };
+  }
+
+  function descriptionTextOf(el) {
+    const html = el?.innerHTML || '';
+    if (/<br\s*\/?>/i.test(html)) {
+      return decodeHtml(html)
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]+>/g, ' ')
+        .split(/\n+/)
+        .map(line => line.replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+    }
+    return textOf(el);
+  }
+
+  function pickAjWillnerImage(card, base) {
+    const direct = pickFirstImage(card, base);
+    if (direct) return direct;
+
+    const source = card.querySelector?.('source[srcset], img[srcset]');
+    const srcset = source?.getAttribute?.('srcset') || '';
+    const candidate = srcset
+      .split(',')
+      .map(part => part.trim().split(/\s+/)[0])
+      .filter(Boolean)
+      .pop();
+    return candidate ? absoluteUrl(candidate, base) : '';
+  }
+
+  function extractAjWillnerVisibleListings(root = document, loc = location) {
+    const base = loc?.href || 'https://bid.ajwillnerauctions.com/';
+    const cards = Array.from(root.querySelectorAll?.('[data-testid^="list-item-"]') || [])
+      .filter(card => /^list-item-\d+$/i.test(card.getAttribute?.('data-testid') || ''));
+
+    return cards.map(card => {
+      const testId = card.getAttribute?.('data-testid') || '';
+      const id = testId.replace(/^list-item-/i, '');
+      const linkEl = card.querySelector?.('.titleLink[href], a.titleLink[href], a[href*="/ui/auctions/"]');
+      const titleEl = card.querySelector?.('.titleLink h1, h1');
+      const titleParts = parseAjWillnerTitle(textOf(titleEl) || textOf(linkEl));
+      const href = linkEl?.getAttribute?.('href') || linkEl?.href || '';
+      const bidText = textOf(card.querySelector?.('.bidsLine span, .bidsLine'));
+      const highBid = bidText || (textOf(card).match(/\b(?:High|Current)\s+bid\s+\$?[\d,]+(?:\.\d{2})?/i)?.[0] || '');
+      const status = textOf(card.querySelector?.(`[data-testid="${testId}-status-stripe"]`));
+      const rawText = textOf(card);
+      const statusText = status || (rawText.match(/\bENDS\s+[\w\s]+?(?=\s+#|\s+Lot|\s*$)/i)?.[0] || '');
+      const timeLeft = statusText.replace(/^ENDS\s*/i, '').trim();
+      const watchedEl = card.querySelector?.('[data-testid^="star-item-"] input:checked, input[type="checkbox"]:checked, [aria-label*="Unwatch"], [title*="Unwatch"]');
+      const userBidStatus = extractUserBidStatus(rawText);
+      if (!href || !titleParts.title) return null;
+
+      return {
+        source: 'ajwillner',
+        id,
+        lot: titleParts.lot || id,
+        title: titleParts.title,
+        url: absoluteUrl(href, base),
+        image: pickAjWillnerImage(card, base),
+        description: descriptionTextOf(card.querySelector?.('.description')),
+        highBid,
+        highBidAmount: moneyFromText(highBid),
+        currentPrice: moneyFromText(highBid),
+        currentBid: moneyFromText(highBid),
+        nextBid: '',
+        nextBidAmount: null,
+        bidCount: textOf(card.querySelector?.('[class*="bidCount"], [data-testid*="bid-count"]')),
+        bidCountNumber: numberFromText(textOf(card.querySelector?.('[class*="bidCount"], [data-testid*="bid-count"]'))),
+        timeLeft,
+        status: statusText,
+        userBidStatus,
+        isWinning: userBidStatus === 'Winning',
+        isOutbid: userBidStatus === 'Outbid',
+        watched: Boolean(watchedEl),
+        rawText: rawText.slice(0, 1600)
+      };
+    }).filter(Boolean);
+  }
+
+  function cleanAjWillnerApiDescription(item = {}) {
+    const raw = item.description_without_html || item.simple_description || stripHtml(item.description || '');
+    return cleanGovDealsText(String(raw || '')
+      .replace(/\bTerms of Sale\b[\s\S]*$/i, '')
+      .replace(/\bAll Items Sold AS-IS[\s\S]*$/i, ''));
+  }
+
+  function pickAjWillnerApiImages(item = {}) {
+    return uniqueNonEmpty((Array.isArray(item.images) ? item.images : []).map(image => (
+      image?.xl || image?.lg || image?.original || image?.sm || image?.xs || image?.url || ''
+    )));
+  }
+
+  function pickAjWillnerApiImage(item = {}) {
+    return pickAjWillnerApiImages(item)[0] || '';
+  }
+
+  function formatAjWillnerLocation(value = {}) {
+    if (typeof value === 'string') return cleanGovDealsText(value);
+    return [value?.street, value?.city, value?.state, value?.zip, value?.country]
+      .map(part => String(part || '').trim())
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  function normalizeAjWillnerAuctionContext(auction = {}, loc = location) {
+    const auctionId = String(auction.id || getAjWillnerAuctionId(loc) || '');
+    const description = cleanGovDealsText(stripHtml(
+      auction.simple_description || auction.formatted_simple_description || auction.description || ''
+    ));
+    const terms = cleanGovDealsText(stripHtml(auction.terms || ''));
+    const premiumMatch = `${description} ${terms}`.match(/buyer(?:'s|s)?\s+premium[^\d]{0,30}(\d+(?:\.\d+)?)\s*%/i);
+    const optionalNumber = value => value === null || value === undefined || value === ''
+      ? null
+      : (Number.isFinite(Number(value)) ? Number(value) : null);
+    return {
+      source: 'ajwillner',
+      pageKind: 'catalog',
+      auctionId,
+      auctionTitle: String(auction.name || '').trim(),
+      catalogUrl: loc?.href || '',
+      location: formatAjWillnerLocation(auction.location || auction.contact_location_object || auction.contact_location || ''),
+      description,
+      terms,
+      buyerPremium: premiumMatch ? `${premiumMatch[1]}%` : '',
+      startsAt: auction.starts_at || '',
+      scheduledEndTime: auction.scheduled_end_time || '',
+      status: String(auction.status || '').replace(/_/g, ' '),
+      publishedItemsCount: optionalNumber(auction.published_items_count),
+      itemsCount: optionalNumber(auction.items_count),
+      categoryCounts: Array.isArray(auction.category_counts)
+        ? auction.category_counts.map(entry => ({
+            id: entry?.id ?? entry?.category_id ?? '',
+            name: entry?.name || entry?.category || '',
+            count: Number(entry?.count) || 0
+          }))
+        : []
+    };
+  }
+
+  function ajWillnerMoneyText(label, value, currencySymbol = '$') {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return '';
+    return `${label} ${currencySymbol || '$'}${amount.toLocaleString(undefined, {
+      minimumFractionDigits: amount % 1 ? 2 : 0,
+      maximumFractionDigits: 2
+    })}`;
+  }
+
+  function normalizeAjWillnerApiItem(item = {}, loc = location) {
+    const auctionId = item.auction_id || getAjWillnerAuctionId(loc);
+    const currencySymbol = item.currency_symbol || '$';
+    const highAmount = Number(item.api_bidding_state?.high?.amount ?? item.bidding_state?.high?.amount);
+    const askAmount = Number(item.api_bidding_state?.ask_amount ?? item.api_bidding_state?.minimum_bid_amount ?? item.bidding_state?.askAmount);
+    const bidCount = Number(item.api_bidding_state?.accepted_bid_count ?? item.bidding_state?.acceptedBidCount);
+    const statusText = String(item.status || '').replace(/_/g, ' ');
+    const url = absoluteUrl(`/ui/auctions/${auctionId}/${item.id}`, loc?.href || 'https://bid.ajwillnerauctions.com/');
+    const title = String(item.name || item.displayed_name || item.name_with_prefix || '').trim();
+    const description = cleanAjWillnerApiDescription(item);
+    const descriptionHtml = String(item.description || item.formatted_simple_description || '').trim();
+    const images = pickAjWillnerApiImages(item);
+    const subCategories = (Array.isArray(item.sub_categories) ? item.sub_categories : [])
+      .map(entry => typeof entry === 'string' ? entry : (entry?.name || entry?.label || ''))
+      .map(value => String(value || '').trim())
+      .filter(Boolean);
+    const categoryPath = uniqueNonEmpty([item.main_category, ...subCategories]);
+    const estimateLowRaw = item.bidding_configuration?.low_estimate;
+    const estimateHighRaw = item.bidding_configuration?.high_estimate;
+    const estimateLow = estimateLowRaw === null || estimateLowRaw === undefined || estimateLowRaw === ''
+      ? null
+      : Number(estimateLowRaw);
+    const estimateHigh = estimateHighRaw === null || estimateHighRaw === undefined || estimateHighRaw === ''
+      ? null
+      : Number(estimateHighRaw);
+    const buyerPremiumRaw = item.custom_buyers_premium_amount;
+    if (!item.id || !title) return null;
+    return {
+      source: 'ajwillner',
+      id: String(item.id),
+      auctionId: String(auctionId || ''),
+      lot: String(item.lot_identifier || item.simple_id || item.sequence || item.id || '').replace(/^#\s*/, ''),
+      title,
+      url,
+      image: images[0] || '',
+      images,
+      imageCount: images.length,
+      description,
+      descriptionHtml,
+      highBid: Number.isFinite(highAmount) ? ajWillnerMoneyText('High bid', highAmount, currencySymbol) : '',
+      highBidAmount: Number.isFinite(highAmount) ? highAmount : null,
+      currentPrice: Number.isFinite(highAmount) ? highAmount : null,
+      currentBid: Number.isFinite(highAmount) ? highAmount : null,
+      nextBid: Number.isFinite(askAmount) ? ajWillnerMoneyText('Bid', askAmount, currencySymbol) : '',
+      nextBidAmount: Number.isFinite(askAmount) ? askAmount : null,
+      bidCount: Number.isFinite(bidCount) ? `${bidCount} ${bidCount === 1 ? 'Bid' : 'Bids'}` : '',
+      bidCountNumber: Number.isFinite(bidCount) ? bidCount : null,
+      timeLeft: '',
+      status: statusText,
+      userBidStatus: '',
+      isWinning: false,
+      isOutbid: false,
+      watched: false,
+      quantity: Number(item.quantity) || null,
+      category: item.main_category || '',
+      categoryPath,
+      location: formatAjWillnerLocation(item.location_str || item.location || ''),
+      startAmount: Number(item.start_amount ?? item.bidding_configuration?.start_amount) || null,
+      estimateLow: Number.isFinite(estimateLow) ? estimateLow : null,
+      estimateHigh: Number.isFinite(estimateHigh) ? estimateHigh : null,
+      buyerPremiumAmount: buyerPremiumRaw !== null && buyerPremiumRaw !== undefined && buyerPremiumRaw !== ''
+        && Number.isFinite(Number(buyerPremiumRaw))
+        ? Number(buyerPremiumRaw)
+        : null,
+      auctionTitle: item.auction_name || '',
+      scheduledEndTime: item.scheduled_end_time || item.actual_end_time || '',
+      rawText: cleanGovDealsText([
+        item.name_with_prefix || item.name || '',
+        description,
+        Number.isFinite(highAmount) ? ajWillnerMoneyText('High bid', highAmount, currencySymbol) : '',
+        Number.isFinite(bidCount) ? `${bidCount} ${bidCount === 1 ? 'Bid' : 'Bids'}` : '',
+        statusText
+      ].filter(Boolean).join(' '))
+    };
+  }
+
+  function ajWillnerAuctionApiUrl(loc = location) {
+    const auctionId = getAjWillnerAuctionId(loc);
+    return absoluteUrl(
+      `/api/auctions/${auctionId}?page=active&include_items_data=false&include_documents=true`,
+      loc?.href || 'https://bid.ajwillnerauctions.com/'
+    );
+  }
+
+  async function fetchAjWillnerAuctionContext(loc = location, options = {}) {
+    const href = ajWillnerAuctionApiUrl(loc);
+    const retries = Math.max(1, Math.min(3, Number(options.retries) || 3));
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 20000);
+    const fetchImpl = options.fetchImpl || fetch;
+    const errors = [];
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      if (options.shouldStop?.()) throw new Error('AJ Willner auction context request stopped');
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      let stopPollId = null;
+      const pollForStop = () => {
+        if (!controller || !options.shouldStop) return;
+        if (options.shouldStop()) controller.abort();
+        else stopPollId = setTimeout(pollForStop, 100);
+      };
+      pollForStop();
+      try {
+        debugEvent('ajwillner.api.bootstrap.start', { attempt, endpoint: debugHref(href) });
+        const response = await fetchImpl(href, {
+          credentials: 'include',
+          cache: 'no-store',
+          ...(controller ? { signal: controller.signal } : {})
+        });
+        if (!response?.ok) throw Object.assign(new Error(`HTTP ${response?.status || 0}`), { status: Number(response?.status) || 0 });
+        const data = await response.json();
+        const context = normalizeAjWillnerAuctionContext(data, loc);
+        debugEvent('ajwillner.api.bootstrap.success', {
+          attempt,
+          auctionId: context.auctionId,
+          publishedItemsCount: context.publishedItemsCount
+        });
+        return { href, data, context, attempts: attempt, errors };
+      } catch (error) {
+        const status = Number(error?.status) || 0;
+        errors.push({ attempt, status, message: String(error?.message || error) });
+        debugEvent('ajwillner.api.bootstrap.failure', { attempt, status, error: String(error?.message || error) });
+        if (attempt >= retries || (status >= 400 && status < 500 && ![408, 429].includes(status))) {
+          throw Object.assign(new Error(`AJ Willner auction context failed: ${error?.message || error}`), { errors, status });
+        }
+        await wait(250 * attempt * attempt);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        if (stopPollId) clearTimeout(stopPollId);
+      }
+    }
+    throw new Error('AJ Willner auction context failed');
+  }
+
+  function ajWillnerSearchApiUrl(loc = location, page = 1, perPage = 200) {
+    const auctionId = getAjWillnerAuctionId(loc);
+    const params = new URLSearchParams(loc?.search || '');
+    const apiParams = new URLSearchParams({
+      auction_id: auctionId,
+      page: String(page),
+      per_page: String(perPage),
+      exact_category_match: 'true'
+    });
+    const category = params.get('category') || 'All';
+    const subCategory = params.get('subCategory') || params.get('sub_category') || 'Active';
+    const query = params.get('q') || params.get('query') || params.get('search') || '';
+    if (category) apiParams.set('category', category);
+    if (subCategory && !/^active$/i.test(subCategory)) apiParams.set('sub_category', subCategory);
+    if (query) apiParams.set('query', query);
+    return absoluteUrl(`/api/items/search?${apiParams}`, loc?.href || 'https://bid.ajwillnerauctions.com/');
+  }
+
+  async function fetchAjWillnerSearchPage(loc = location, page = 1, perPage = 200, options = {}) {
+    const href = ajWillnerSearchApiUrl(loc, page, perPage);
+    const retries = Math.max(1, Math.min(3, Number(options.retries) || 3));
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 20000);
+    const fetchImpl = options.fetchImpl || fetch;
+    const errors = [];
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      if (options.shouldStop?.()) throw new Error('AJ Willner API request stopped');
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      let stopPollId = null;
+      const pollForStop = () => {
+        if (!controller || !options.shouldStop) return;
+        if (options.shouldStop()) controller.abort();
+        else stopPollId = setTimeout(pollForStop, 100);
+      };
+      pollForStop();
+      try {
+        debugEvent('ajwillner.api.request.start', { page, attempt, endpoint: debugHref(href) });
+        const response = await fetchImpl(href, {
+          credentials: 'include',
+          cache: 'no-store',
+          ...(controller ? { signal: controller.signal } : {})
+        });
+        if (!response?.ok) throw Object.assign(new Error(`HTTP ${response?.status || 0}`), { status: Number(response?.status) || 0 });
+        const data = await response.json();
+        debugEvent('ajwillner.api.request.success', { page, attempt, count: Array.isArray(data?.items) ? data.items.length : 0, total: Number(data?.total) || 0 });
+        return { href, data, attempts: attempt, errors };
+      } catch (error) {
+        const status = Number(error?.status) || 0;
+        errors.push({ attempt, status, message: String(error?.message || error) });
+        debugEvent('ajwillner.api.request.failure', { page, attempt, status, error: String(error?.message || error) });
+        if (attempt >= retries || (status >= 400 && status < 500 && ![408, 429].includes(status))) {
+          throw Object.assign(new Error(`AJ Willner API page ${page} failed: ${error?.message || error}`), { page, errors, status });
+        }
+        await wait(250 * attempt * attempt);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        if (stopPollId) clearTimeout(stopPollId);
+      }
+    }
+    throw new Error(`AJ Willner API page ${page} failed`);
+  }
+
+  async function scrapeAjWillnerApiListings(status = () => {}, shouldStop = () => false, root = document, loc = location) {
+    const startedAt = Date.now();
+    const perPage = 200;
+    const auctionId = getAjWillnerAuctionId(loc);
+    if (!auctionId || typeof fetch !== 'function') return null;
+    const route = resolveAjWillnerPage(loc);
+    const routeFingerprint = genericRouteFingerprint(route, loc);
+    const pageFailures = [];
+    const params = new URLSearchParams(loc?.search || '');
+    const category = params.get('category') || 'All';
+    const subCategory = params.get('subCategory') || params.get('sub_category') || 'Active';
+    const query = params.get('q') || params.get('query') || params.get('search') || '';
+    const hasNarrowingFilters = !/^all$/i.test(category)
+      || !/^active$/i.test(subCategory)
+      || Boolean(query.trim());
+    const bootstrapPromise = fetchAjWillnerAuctionContext(loc, { shouldStop }).catch(error => ({
+      error: String(error?.message || error),
+      context: null
+    }));
+    const retryShortPage = async (page, pageSize, expectedCount = null) => {
+      let result = await fetchAjWillnerSearchPage(loc, page, pageSize, { shouldStop });
+      let attempts = 1;
+      while (!shouldStop() && Number.isFinite(expectedCount) && expectedCount >= 0
+        && (result.data?.items || []).length < expectedCount && attempts < 3) {
+        attempts += 1;
+        debugEvent('ajwillner.api.short-page.retry', {
+          page,
+          attempt: attempts,
+          expectedCount,
+          receivedCount: (result.data?.items || []).length
+        });
+        await wait(250 * attempts);
+        result = await fetchAjWillnerSearchPage(loc, page, pageSize, { shouldStop });
+      }
+      return result;
+    };
+    status('Reading AJ Willner API page 1...');
+    let first = await fetchAjWillnerSearchPage(loc, 1, perPage, { shouldStop });
+    const rawTotalValue = first.data?.total;
+    const rawTotal = rawTotalValue === null || rawTotalValue === undefined || rawTotalValue === ''
+      ? Number.NaN
+      : Number(rawTotalValue);
+    const hasApiTotal = Number.isFinite(rawTotal) && rawTotal >= 0;
+    const total = hasApiTotal ? rawTotal : 0;
+    const pageSize = Number(first.data?.per_page) || perPage;
+    const totalPages = total ? Math.ceil(total / pageSize) : 1;
+    const firstExpected = total ? Math.min(pageSize, total) : 0;
+    if ((first.data?.items || []).length < firstExpected) first = await retryShortPage(1, pageSize, firstExpected);
+    const pages = [first];
+    const remaining = [];
+    for (let page = 2; page <= totalPages; page += 1) remaining.push(page);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < remaining.length && !shouldStop()) {
+        const page = remaining[cursor];
+        cursor += 1;
+        status(`Reading AJ Willner API page ${page}/${totalPages}...`);
+        const expectedOnPage = total ? Math.min(pageSize, Math.max(0, total - ((page - 1) * pageSize))) : null;
+        try {
+          pages.push(await retryShortPage(page, pageSize, expectedOnPage));
+        } catch (error) {
+          pageFailures.push({ page, error: String(error?.message || error) });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, remaining.length) }, worker));
+    const byId = new Map();
+    const duplicateIds = new Set();
+    const observedTotals = new Set();
+    pages
+      .sort((a, b) => (Number(a.data?.page) || 0) - (Number(b.data?.page) || 0))
+      .forEach(page => {
+        const pageTotalValue = page.data?.total;
+        if (pageTotalValue !== null && pageTotalValue !== undefined && pageTotalValue !== ''
+          && Number.isFinite(Number(pageTotalValue))) observedTotals.add(Number(pageTotalValue));
+        (page.data?.items || []).forEach(item => {
+          const normalized = normalizeAjWillnerApiItem(item, loc);
+          if (!normalized?.id) return;
+          if (byId.has(normalized.id)) duplicateIds.add(String(normalized.id));
+          byId.set(normalized.id, normalized);
+        });
+      });
+    const items = Array.from(byId.values()).sort((a, b) => String(a.lot || '').localeCompare(String(b.lot || ''), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+    const bootstrap = await bootstrapPromise;
+    const auctionContext = bootstrap?.context || null;
+    const bootstrapTotalValue = auctionContext?.publishedItemsCount ?? auctionContext?.itemsCount;
+    const bootstrapTotal = bootstrapTotalValue === null || bootstrapTotalValue === undefined || bootstrapTotalValue === ''
+      ? Number.NaN
+      : Number(bootstrapTotalValue);
+    const hasBootstrapTotal = Number.isFinite(bootstrapTotal) && bootstrapTotal >= 0;
+    const expectedTotal = hasApiTotal
+      ? total
+      : (hasBootstrapTotal && !hasNarrowingFilters
+        ? bootstrapTotal
+        : (items.length || getAjWillnerExpectedTotal(root, findAjWillnerScrollContainer(root))));
+    const stopped = !!shouldStop();
+    const currentLocation = typeof location !== 'undefined' ? location : loc;
+    const currentFingerprint = genericRouteFingerprint(resolveAjWillnerPage(currentLocation), currentLocation);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const totalDrift = observedTotals.size > 1 || (observedTotals.size === 1 && !observedTotals.has(total));
+    const bootstrapTotalMismatch = !hasNarrowingFilters
+      && hasApiTotal
+      && hasBootstrapTotal
+      && bootstrapTotal !== total;
+    const incomplete = stopped
+      || !routeMatches
+      || !hasApiTotal
+      || pageFailures.length > 0
+      || totalDrift
+      || bootstrapTotalMismatch
+      || duplicateIds.size > 0
+      || (Number.isFinite(expectedTotal) && items.length !== expectedTotal);
+    const coverage = {
+      strategy: 'ajwillner-items-search-api',
+      proofTier: 'api-exact',
+      complete: !incomplete,
+      reason: stopped
+        ? 'stopped'
+        : (!routeMatches
+          ? 'route-fingerprint-changed'
+          : (!hasApiTotal
+            ? 'authoritative-total-unavailable'
+            : (pageFailures.length
+            ? 'failed-pages'
+            : (totalDrift
+              ? 'total-drift'
+              : (bootstrapTotalMismatch
+                ? 'bootstrap-total-mismatch'
+                : (duplicateIds.size ? 'duplicate-identities' : (items.length === expectedTotal ? 'api-complete' : 'count-mismatch'))))))),
+      routeFingerprint,
+      routeMatches,
+      expectedTotal,
+      bootstrapExpectedTotal: hasBootstrapTotal ? bootstrapTotal : null,
+      bootstrapError: bootstrap?.error || '',
+      hasNarrowingFilters,
+      enumeratedIds: items.map(item => String(item.id)),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages: pageFailures,
+      observedTotals: Array.from(observedTotals),
+      durationMs: Date.now() - startedAt
+    };
+    debug('AJ Willner API scrape finished', {
+      count: items.length,
+      expectedTotal,
+      totalPages,
+      stopped,
+      coverage
+    });
+    debugEvent('ajwillner.api.coverage', coverage);
+    return {
+      source: 'ajwillner-api',
+      items,
+      lots: items,
+      expectedTotal,
+      stopped,
+      incomplete,
+      stopReason: coverage.reason,
+      routeFingerprint,
+      coverage,
+      failedPages: pageFailures,
+      durationMs: Date.now() - startedAt,
+      context: {
+        ...(auctionContext || {}),
+        source: 'ajwillner',
+        pageKind: 'catalog',
+        auctionId,
+        url: loc?.href || '',
+        activeFilters: { category, subCategory, query },
+        generatedAt: new Date().toISOString()
+      },
+      pageSteps: totalPages
+    };
+  }
+
+  async function scrapeAjWillnerListings(status = () => {}, shouldStop = () => false, root = document, loc = location) {
+    debug('AJ Willner scrape start', routeDebug());
+    const apiResult = await scrapeAjWillnerApiListings(status, shouldStop, root, loc).catch(error => {
+      debug('AJ Willner API scrape failed; falling back to virtual list', { error: String(error?.message || error) });
+      return null;
+    });
+    if (apiResult?.items?.length || apiResult?.expectedTotal === 0) return apiResult;
+
+    const scrollContainer = findAjWillnerScrollContainer(root);
+    const itemsMap = new Map();
+    let expectedTotal = getAjWillnerExpectedTotal(root, scrollContainer);
+    let lastCount = -1;
+    let stuckAtBottomChecks = 0;
+    let scrollSteps = 0;
+
+    const collect = () => {
+      extractAjWillnerVisibleListings(root, loc).forEach(item => {
+        const key = item.url || item.id || item.lot;
+        if (key && item.title) itemsMap.set(String(key), item);
+      });
+      expectedTotal = expectedTotal || getAjWillnerExpectedTotal(root, scrollContainer);
+      return itemsMap.size;
+    };
+
+    collect();
+
+    if (!scrollContainer) {
+      const items = Array.from(itemsMap.values());
+      const route = resolveAjWillnerPage(loc);
+      const routeFingerprint = genericRouteFingerprint(route, loc);
+      const currentLocation = typeof location !== 'undefined' ? location : loc;
+      const routeMatches = routeFingerprint === genericRouteFingerprint(resolveAjWillnerPage(currentLocation), currentLocation);
+      const identities = items.map(item => String(item.id || '')).filter(Boolean);
+      const duplicateIds = identities.filter((id, index) => identities.indexOf(id) !== index);
+      const stopped = !!shouldStop();
+      const hasExpectedTotal = expectedTotal !== null
+        && expectedTotal !== undefined
+        && expectedTotal !== ''
+        && Number.isFinite(Number(expectedTotal));
+      const incomplete = stopped
+        || !routeMatches
+        || !hasExpectedTotal
+        || items.length !== Number(expectedTotal)
+        || identities.length !== items.length
+        || duplicateIds.length > 0;
+      debug('AJ Willner scrape no scroll container', { count: items.length, expectedTotal, incomplete });
+      return {
+        source: 'ajwillner-visible-dom',
+        items,
+        lots: items,
+        expectedTotal,
+        stopped,
+        incomplete,
+        stopReason: incomplete ? 'unproven-visible-dom' : 'complete-visible-dom',
+        routeFingerprint,
+        context: {
+          source: 'ajwillner',
+          pageKind: 'catalog',
+          auctionId: getAjWillnerAuctionId(loc),
+          url: loc?.href || ''
+        },
+        coverage: {
+          strategy: 'ajwillner-visible-dom',
+          proofTier: 'dom-bottom-settled',
+          complete: !incomplete,
+          reason: incomplete ? 'unproven-visible-dom' : 'complete-visible-dom',
+          routeFingerprint,
+          routeMatches,
+          reachedBottom: true,
+          expectedTotal: hasExpectedTotal ? Number(expectedTotal) : null,
+          enumeratedIds: identities,
+          duplicateIds: uniqueNonEmpty(duplicateIds),
+          failedPages: []
+        }
+      };
+    }
+
+    const dispatchScroll = () => {
+      if (!scrollContainer.dispatchEvent || typeof Event !== 'function') return;
+      scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
+    };
+
+    scrollContainer.scrollTop = 0;
+    dispatchScroll();
+    await wait(700);
+
+    for (let step = 0; step < 500; step += 1) {
+      if (shouldStop()) break;
+      const count = collect();
+      status(expectedTotal ? `Loading AJ Willner lots... ${count}/${expectedTotal}` : `Loading AJ Willner lots... ${count}`);
+      debug('AJ Willner scroll step', {
+        step,
+        count,
+        expectedTotal,
+        scrollTop: scrollContainer.scrollTop,
+        scrollHeight: scrollContainer.scrollHeight,
+        clientHeight: scrollContainer.clientHeight
+      });
+
+      if (expectedTotal && count >= expectedTotal) break;
+
+      const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+      const currentTop = scrollContainer.scrollTop || 0;
+      const atBottom = currentTop >= Math.max(0, maxScrollTop - 2);
+      if (atBottom) {
+        if (count === lastCount) stuckAtBottomChecks += 1;
+        lastCount = count;
+        if (stuckAtBottomChecks >= 3) break;
+      } else {
+        stuckAtBottomChecks = 0;
+      }
+
+      const stepSize = getAjWillnerScrollStepSize(scrollContainer);
+      const nextTop = Math.min(maxScrollTop, currentTop + stepSize);
+      if (nextTop === currentTop && stuckAtBottomChecks >= 2) break;
+
+      scrollContainer.scrollTop = nextTop;
+      dispatchScroll();
+      scrollSteps += 1;
+      await wait(190);
+    }
+
+    collect();
+    const items = Array.from(itemsMap.values());
+    const stopped = !!shouldStop();
+    const route = resolveAjWillnerPage(loc);
+    const routeFingerprint = genericRouteFingerprint(route, loc);
+    const currentLocation = typeof location !== 'undefined' ? location : loc;
+    const routeMatches = routeFingerprint === genericRouteFingerprint(resolveAjWillnerPage(currentLocation), currentLocation);
+    const incomplete = stopped || !routeMatches || Boolean(expectedTotal && items.length !== expectedTotal);
+    const stopReason = stopped ? 'stopped by user' : (incomplete ? 'virtual list ended before expected total' : 'complete');
+    debug('AJ Willner scrape finished', { count: items.length, expectedTotal, stopped, incomplete, stopReason, scrollSteps });
+    return {
+      source: 'ajwillner-virtual-list',
+      items,
+      lots: items,
+      expectedTotal,
+      stopped,
+      incomplete,
+      stopReason,
+      scrollSteps,
+      routeFingerprint,
+      context: {
+        source: 'ajwillner',
+        pageKind: 'catalog',
+        auctionId: getAjWillnerAuctionId(loc),
+        url: loc?.href || ''
+      },
+      coverage: {
+        strategy: 'ajwillner-virtual-list',
+        proofTier: 'dom-bottom-settled',
+        complete: !incomplete,
+        reason: stopReason,
+        routeFingerprint,
+        routeMatches,
+        reachedBottom: stuckAtBottomChecks >= 2,
+        expectedTotal,
+        enumeratedIds: items.map(item => String(item.id || '')).filter(Boolean),
+        duplicateIds: [],
+        failedPages: []
+      }
+    };
+  }
+
+  async function scrapeCatalogLots(status = () => {}, shouldStop = () => false) {
+    debug('catalog scrape start', routeDebug());
+
+    if (isAjWillnerHost(typeof location !== 'undefined' ? location.hostname : '')) {
+      return scrapeAjWillnerListings(status, shouldStop);
+    }
+
+    const activeRoute = resolveAssistantMode(typeof location !== 'undefined' ? location : undefined).route || {};
+    const currentBidsRoute = isHibidCurrentBidsRoute(activeRoute);
+    const accountExportRoute = isHibidAccountExportRoute(activeRoute);
+    const visibleState = await waitForHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null);
+    if (visibleState.noMatches) {
+      debug('catalog scrape stopped at visible no-match state', visibleState);
+      return {
+        source: 'visible-page-state',
+        items: [],
+        lots: [],
+        expectedTotal: 0,
+        stopped: false,
+        incomplete: false,
+        stopReason: 'visible-no-matches',
+        visibleState
+      };
+    }
+
+    if (!accountExportRoute && activeRoute?.kind === 'catalog') {
+      const apiResult = await scrapeHibidApiCatalog(status, shouldStop, document, {
+        route: activeRoute,
+        visibleState
+      }).catch(error => {
+        debugEvent('hibid.api.pipeline.error', { error: hibidApiErrorText(error) });
+        return null;
+      });
+      if (apiResult?.coverage?.complete) {
+        debug('catalog scrape finished from HiBid API', {
+          source: apiResult.source,
+          strategy: apiResult.strategy,
+          count: apiResult.items.length,
+          expectedTotal: apiResult.expectedTotal,
+          coverage: apiResult.coverage
+        });
+        return apiResult;
+      }
+      if (apiResult) {
+        debug('catalog API did not reach exact coverage; export remains fail-closed', {
+          source: apiResult.source,
+          strategy: apiResult.strategy,
+          count: apiResult.items?.length || 0,
+          expectedTotal: apiResult.expectedTotal,
+          reason: apiResult.coverage?.reason || apiResult.stopReason
+        });
+        return apiResult;
+      }
+      const fingerprint = getHibidRouteFingerprint(activeRoute, typeof location !== 'undefined' ? location.href : '');
+      const coverage = validateHibidApiCoverage({
+        expectedTotal: visibleState.expectedTotal,
+        enumeratedIds: [],
+        hydratedItems: [],
+        failedPages: [{ page: 1, error: 'HiBid API pipeline did not return a result' }],
+        startFingerprint: fingerprint,
+        endFingerprint: fingerprint,
+        stopped: shouldStop()
+      });
+      const failedResult = {
+        source: 'hibid-api-error',
+        strategy: 'api-first',
+        sourceUrl: typeof location !== 'undefined' ? location.href : '',
+        routeFingerprint: fingerprint,
+        items: [],
+        lots: [],
+        expectedTotal: visibleState.expectedTotal,
+        pageStats: [],
+        stopped: shouldStop(),
+        incomplete: true,
+        stopReason: coverage.reason,
+        visibleState,
+        coverage
+      };
+      failedResult.diagnostic = buildHibidDiagnosticBundle(failedResult);
+      debug('catalog API pipeline unavailable; legacy enumeration blocked', {
+        expectedTotal: visibleState.expectedTotal,
+        reason: coverage.reason
+      });
+      return failedResult;
+    }
+
+    if (!accountExportRoute) {
+      const stateResult = await scrapeHibidStatePages(status, shouldStop).catch(err => {
+        debug('catalog hibid-state scrape failed', { error: err.message });
+        return null;
+      });
+      if (stateResult?.stopReason === 'visible-no-matches') return stateResult;
+      if (stateResult?.items?.length) {
+        // The page can update its result header after Apollo state has hydrated.
+        // Re-read the visible filtered state before accepting or rejecting the
+        // data source so a stale header cannot either widen or poison the export.
+        const settledVisibleState = stateResult.visibleState?.hasActiveFilters
+          ? await waitForHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null)
+          : visibleState;
+        if (settledVisibleState.noMatches) {
+          debug('catalog state contradicted by settled visible no-match state', {
+            sourceCount: stateResult.items.length,
+            visibleState: settledVisibleState
+          });
+          return {
+            source: 'visible-page-state',
+            items: [],
+            lots: [],
+            expectedTotal: 0,
+            stopped: false,
+            incomplete: false,
+            stopReason: 'visible-no-matches',
+            visibleState: settledVisibleState
+          };
+        }
+        const settledExpectedTotal = Number(settledVisibleState.expectedTotal);
+        const canAdoptSettledTotal = settledVisibleState.hasActiveFilters
+          && Number.isFinite(settledExpectedTotal)
+          && settledExpectedTotal > 0
+          && stateResult.items.length <= settledExpectedTotal;
+        const settledStateResult = {
+          ...stateResult,
+          visibleState: settledVisibleState,
+          expectedTotal: canAdoptSettledTotal
+            ? Math.max(Number(stateResult.expectedTotal) || 0, settledExpectedTotal)
+            : stateResult.expectedTotal
+        };
+        debug('catalog scrape finished from hibid-state', {
+          count: settledStateResult.items.length,
+          expectedTotal: settledStateResult.expectedTotal,
+          stopped: settledStateResult.stopped,
+          incomplete: settledStateResult.incomplete,
+          stopReason: settledStateResult.stopReason,
+          visibleState: settledVisibleState
+        });
+        if (isCatalogScrapeComplete(settledStateResult)) return settledStateResult;
+        status(`HiBid page data incomplete (${settledStateResult.items.length}/${settledStateResult.expectedTotal || '?'}); trying visible-page fallback...`);
+        debug('catalog hibid-state incomplete; falling back to DOM', {
+          count: settledStateResult.items.length,
+          expectedTotal: settledStateResult.expectedTotal,
+          failedPage: settledStateResult.failedPage,
+          stopReason: settledStateResult.stopReason
+        });
+      }
+    } else {
+      debug('catalog hibid-state skipped for account export route', activeRoute);
+    }
+
+    if (!accountExportRoute) {
+      const domPageResult = await scrapeHibidDomPages(status, shouldStop).catch(error => {
+        debug('catalog hibid DOM page scrape failed', { error: String(error?.message || error) });
+        return null;
+      });
+      if (domPageResult?.stopReason === 'visible-no-matches') return domPageResult;
+      if (domPageResult?.items?.length) {
+        debug('catalog scrape finished from paginated DOM', {
+          count: domPageResult.items.length,
+          expectedTotal: domPageResult.expectedTotal,
+          pagesRead: domPageResult.pagesRead,
+          pagesAttempted: domPageResult.pagesAttempted,
+          incomplete: domPageResult.incomplete,
+          stopReason: domPageResult.stopReason
+        });
+        if (isCatalogScrapeComplete(domPageResult)) return domPageResult;
+        status(`HiBid paginated DOM data incomplete (${domPageResult.items.length}/${domPageResult.expectedTotal || '?'}); trying live-page fallback...`);
+      }
+    }
+
+    const itemsMap = new Map();
+    const collect = () => {
+      const tileCandidates = getLotTiles().filter(tile => (
+        !visibleState.hasActiveFilters
+        || accountExportRoute
+        || isVisible(tile)
+      ));
+      const visibleLots = accountExportRoute
+        ? uniqueLots(tileCandidates.map(extractCurrentBidsLot))
+        : uniqueLots(tileCandidates.map(extractLot));
+      visibleLots.forEach(lot => {
+        const key = scraperStableIdentity(lot, 'hibid') || lot.url || lot.lot;
+        if (key && lot.title) itemsMap.set(String(key), lot);
+      });
+      // Text fallback can contain hidden, featured, or stale catalog records.
+      // On a filtered page, trust real lot tiles when present and never widen
+      // that result with a broad document-text scrape.
+      if (!accountExportRoute && (!visibleState.hasActiveFilters || !itemsMap.size)) {
+        mergeCatalogLots(itemsMap, extractTextLots());
+      }
+      return itemsMap.size;
+    };
+
+    const expectedTotal = visibleState.expectedTotal ?? getExpectedLotTotal();
+    const loadResult = await loadLots(status, shouldStop, collect, { expectedTotal });
+    collect();
+    const items = Array.from(itemsMap.values());
+    const settledAtDomBottom = Boolean(loadResult?.reachedBottom && loadResult?.stopReason === 'dom-bottom-no-growth');
+    const coverage = {
+      proof: settledAtDomBottom ? 'dom-bottom-settled' : (loadResult?.stopReason || 'unknown'),
+      reachedBottom: Boolean(loadResult?.reachedBottom),
+      bottomSettleAttempts: Number(loadResult?.bottomSettleAttempts || 0),
+      discoverableCount: items.length,
+      expectedTotal: expectedTotal || null,
+    };
+    debug('catalog scrape finished from dom fallback', {
+      count: items.length,
+      expectedTotal,
+      stopped: shouldStop(),
+      currentBidsRoute,
+      accountExportRoute,
+      stopReason: loadResult?.stopReason || '',
+      coverage
+    });
+    return {
+      source: currentBidsRoute ? 'hibid-currentbids-dom' : (accountExportRoute ? 'hibid-watchlist-dom' : 'dom-fallback'),
+      items,
+      lots: items,
+      expectedTotal,
+      stopped: !!shouldStop(),
+      // A settled virtualized bottom is a stronger page-coverage signal than a
+      // stale header total: HiBid can count cards that are not currently
+      // renderable (closed/filtered/shipping-only). Preserve that proof so a
+      // near-complete export is not discarded after the page has exhausted its
+      // discoverable DOM records.
+      incomplete: Boolean(expectedTotal && items.length < expectedTotal && (accountExportRoute || !settledAtDomBottom)),
+      stopReason: loadResult?.stopReason || '',
+      visibleState,
+      coverage
+    };
+  }
+
+  function isHiBidHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    return host === 'hibid.com' || host.endsWith('.hibid.com');
+  }
+
+  function pathSegments(loc = location) {
+    return String(loc.pathname || '')
+      .split('/')
+      .map(segment => segment.trim())
+      .filter(Boolean);
+  }
+
+  function productIdFromAuctionNinjaUrl(url) {
+    const value = String(url || '');
+    const stableId = value.match(/--([A-Za-z0-9-]+)\.html(?:[?#].*)?$/i);
+    if (stableId) return stableId[1];
+    const slugId = value.match(/-([A-Za-z0-9]+)\.html(?:[?#].*)?$/i);
+    return slugId?.[1] || '';
+  }
+
+  function saleIdFromAuctionNinjaUrl(url) {
+    const match = String(url || '').match(/--([A-Za-z0-9-]+)\.html(?:[?#].*)?$/i);
+    return match?.[1] || '';
+  }
+
+  function canonicalAuctionNinjaSaleUrl(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    try {
+      let parsed = new URL(raw, 'https://www.auctionninja.com/');
+      const backUrl = parsed.searchParams.get('backurl');
+      if (/\/an-to-brg\.php$/i.test(parsed.pathname) && backUrl) {
+        parsed = new URL(backUrl, parsed.href);
+      }
+      parsed.search = '';
+      parsed.hash = '';
+      return parsed.href;
+    } catch {
+      return raw.replace(/[?#].*$/, '');
+    }
+  }
+
+  function isAuctionNinjaHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    return host === 'auctionninja.com' || host.endsWith('.auctionninja.com');
+  }
+
+  function resolveAuctionNinjaPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const parts = pathSegments(loc);
+    const path = String(loc.pathname || '').toLowerCase();
+
+    if (!isAuctionNinjaHost(host)) {
+      return { supported: false, kind: 'unsupported', host, reason: 'unsupported host' };
+    }
+
+    if (/\/(?:account|dashboard|billing|payment|payments|payment-methods|cards?|checkout|invoice|invoices|profile|settings|support|logout|login|register)(?:\/|$)/i.test(path)) {
+      return { supported: false, kind: 'blocked-account', host, reason: 'blocked account/payment route' };
+    }
+
+    if (parts[0] === 'followed-items') {
+      return { supported: true, kind: 'followed-items', host, reason: 'followed items route' };
+    }
+
+    if (parts[0] === 'items-won') {
+      return { supported: true, kind: 'items-won', host, reason: 'items won route' };
+    }
+
+    if (parts[0] === 'bid-history') {
+      return { supported: true, kind: 'bid-history', host, reason: 'bid history route' };
+    }
+
+    if (parts[0] === 'auctions') {
+      return { supported: true, kind: 'auction-search', host, reason: 'auction search route' };
+    }
+
+    if (parts[0] === 'category' && parts[1]) {
+      const categorySlug = parts[1].toLowerCase();
+      let categoryName = categorySlug
+        .replace(/[-_]+/g, ' ')
+        .replace(/\b([a-z])/g, letter => letter.toUpperCase());
+      try {
+        categoryName = decodeURIComponent(categoryName);
+      } catch {
+        // Keep the readable slug when a malformed URL segment is present.
+      }
+      return {
+        supported: true,
+        kind: 'category-search',
+        host,
+        categorySlug,
+        categoryName,
+        zip: String(loc.searchParams?.get?.('zip') || ''),
+        miles: String(loc.searchParams?.get?.('miles') || ''),
+        reason: 'category item search route'
+      };
+    }
+
+    if (/^[a-z]{2}$/i.test(parts[0] || '') && parts[1] && /^\d{5}$/.test(parts[2] || '')) {
+      return {
+        supported: true,
+        kind: 'auction-search',
+        host,
+        statePrefix: parts[0] || '',
+        citySlug: parts[1] || '',
+        zip: parts[2] || '',
+        reason: 'location auction search route'
+      };
+    }
+
+    if (parts[1] === 'sales' && parts[2] === 'details') {
+      return {
+        supported: true,
+        kind: 'sale-catalog',
+        host,
+        sellerSlug: parts[0] || '',
+        saleId: saleIdFromAuctionNinjaUrl(parts[3] || ''),
+        reason: 'seller sale catalog route'
+      };
+    }
+
+    if (parts[1] === 'product') {
+      return {
+        supported: true,
+        kind: 'item-detail',
+        host,
+        sellerSlug: parts[0] || '',
+        productId: productIdFromAuctionNinjaUrl(parts[2] || ''),
+        reason: 'seller item detail route'
+      };
+    }
+
+    return { supported: false, kind: 'unsupported', host, reason: 'unsupported AuctionNinja path' };
+  }
+
+  function isAarAuctionsHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    return host === 'aarauctions.com' || host.endsWith('.aarauctions.com');
+  }
+
+  function getAarAuctionId(loc = location) {
+    try {
+      return new URL(loc.href || String(loc), 'https://aarauctions.com/').searchParams.get('auctionId') || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function getAarItemId(loc = location) {
+    try {
+      return new URL(loc.href || String(loc), 'https://aarauctions.com/').searchParams.get('itemId') || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function resolveAarAuctionsPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const path = String(loc.pathname || '');
+    const lowerPath = path.toLowerCase();
+    if (!isAarAuctionsHost(host)) {
+      return { supported: false, kind: 'unsupported', host, reason: 'unsupported host' };
+    }
+
+    if (/(?:login|logout|register|account|profile|payment|invoice|checkout|bid)(?:\.do)?(?:\/|$)/i.test(lowerPath)) {
+      return { supported: false, kind: 'blocked-aar-mutation', host, reason: 'blocked AAR account/payment/bid route' };
+    }
+
+    if (/^\/auctions\/?$/i.test(path)) {
+      return { supported: true, kind: 'aar-auction-list', host, reason: 'AAR auction calendar route' };
+    }
+
+    if (/^\/servlet\/Search\.do$/i.test(path) && getAarAuctionId(loc)) {
+      const auctionId = getAarAuctionId(loc);
+      const itemId = getAarItemId(loc);
+      if (itemId) {
+        return {
+          supported: true,
+          kind: 'aar-item-detail',
+          host,
+          auctionId,
+          itemId,
+          reason: 'AAR single-item detail route'
+        };
+      }
+      return {
+        supported: true,
+        kind: 'aar-auction-catalog',
+        host,
+        auctionId,
+        reason: 'AAR auction catalog route'
+      };
+    }
+
+    return { supported: false, kind: 'unsupported', host, reason: 'unsupported AAR Auctions path' };
+  }
+
+  function isGovDealsHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    return host === 'govdeals.com' || host.endsWith('.govdeals.com');
+  }
+
+  function getGovDealsAssetParts(loc = location) {
+    const parts = pathSegments(loc);
+    const assetIndex = parts.findIndex(part => part.toLowerCase() === 'asset');
+    if (assetIndex < 0) return { assetId: '', accountId: '' };
+    return {
+      assetId: parts[assetIndex + 1] || '',
+      accountId: parts[assetIndex + 2] || ''
+    };
+  }
+
+  function govDealsSearchParams(loc = location) {
+    if (loc?.searchParams?.get) return loc.searchParams;
+    try {
+      return new URL(String(loc?.href || loc || ''), 'https://www.govdeals.com/').searchParams;
+    } catch {
+      return new URLSearchParams('');
+    }
+  }
+
+  function resolveGovDealsPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const parts = pathSegments(loc);
+    const path = String(loc.pathname || '').toLowerCase();
+    if (!isGovDealsHost(host)) {
+      return { supported: false, kind: 'unsupported', host, reason: 'unsupported host' };
+    }
+
+    if (/\/(?:login|logout|register|registration|account|profile|settings|cart|checkout|payment|invoice|bid|offer)(?:\/|$)/i.test(path)) {
+      return { supported: false, kind: 'blocked-govdeals-mutation', host, reason: 'blocked GovDeals account/payment/bid route' };
+    }
+
+    const asset = getGovDealsAssetParts(loc);
+    if (asset.assetId && asset.accountId) {
+      return {
+        supported: true,
+        kind: 'govdeals-asset',
+        host,
+        assetId: asset.assetId,
+        accountId: asset.accountId,
+        reason: 'GovDeals asset route'
+      };
+    }
+
+    if (parts[0] === 'en'
+      && ((parts[1] === 'new-listings' && parts[2] === 'filters')
+        || (parts[1] === 'search' && (parts.length === 2 || parts[2] === 'filters')))) {
+      const params = govDealsSearchParams(loc);
+      return {
+        supported: true,
+        kind: 'govdeals-new-listings',
+        host,
+        zipcode: String(params.get('zipcode') || params.get('zip') || ''),
+        miles: String(params.get('miles') || ''),
+        category: String(params.get('category') || ''),
+        categoryName: String(params.get('categoryName') || ''),
+        reason: parts[1] === 'search' ? 'GovDeals search route' : 'GovDeals new listings route'
+      };
+    }
+
+    if (parts[0] === 'en' && parts[1] && parts.length === 2
+      && !/^(?:asset|new-listings|advanced-search|location-search|search|categories?|about|help|faq|support|contact|privacy|terms|legal|accessibility|cookies?|news|careers?)$/i.test(parts[1])) {
+      return {
+        supported: true,
+        kind: 'govdeals-seller',
+        host,
+        sellerSlug: parts[1],
+        reason: 'GovDeals seller route'
+      };
+    }
+
+    return { supported: false, kind: 'unsupported', host, reason: 'unsupported GovDeals path' };
+  }
+
+  function defaultAarResearchSettings() {
+    const defaults = defaultResearchSettings();
+    return { originLabel: defaults.originLabel, radiusMiles: defaults.radiusMiles };
+  }
+
+  function defaultResearchSettings() {
+    return {
+      originLabel: 'Edison, NJ 08817',
+      radiusMiles: 100,
+      salesTaxRate: '6.625%',
+      vehicleProfile: 'CT200h sedan',
+      researchNotes: ''
+    };
+  }
+
+  function normalizeResearchSettings(settings = {}, defaults = defaultResearchSettings()) {
+    const radius = Number(settings?.radiusMiles);
+    return {
+      originLabel: String(settings?.originLabel ?? defaults.originLabel).trim() || defaults.originLabel,
+      radiusMiles: Number.isFinite(radius) && radius > 0 ? radius : defaults.radiusMiles,
+      salesTaxRate: String(settings?.salesTaxRate ?? defaults.salesTaxRate).trim() || defaults.salesTaxRate,
+      vehicleProfile: String(settings?.vehicleProfile ?? defaults.vehicleProfile).trim() || defaults.vehicleProfile,
+      researchNotes: String(settings?.researchNotes ?? defaults.researchNotes).trim()
+    };
+  }
+
+  function readStoredResearchSettings(key, fallback = null) {
+    try {
+      const stored = GM_getValue(key, fallback);
+      if (typeof stored === 'string') return JSON.parse(stored);
+      return stored;
+    } catch {
+      return null;
+    }
+  }
+
+  function getResearchSettings() {
+    const defaults = defaultResearchSettings();
+    const current = readStoredResearchSettings(RESEARCH_SETTINGS_KEY, null);
+    const legacy = readStoredResearchSettings(AAR_RESEARCH_SETTINGS_KEY, null);
+    return normalizeResearchSettings({
+      ...(legacy && typeof legacy === 'object' ? legacy : {}),
+      ...(current && typeof current === 'object' ? current : {})
+    }, defaults);
+  }
+
+  function saveResearchSettings(settings = {}) {
+    const next = normalizeResearchSettings({ ...getResearchSettings(), ...settings });
+    try {
+      GM_setValue(RESEARCH_SETTINGS_KEY, next);
+      // Keep the legacy key in sync so older FlipperAddon builds do not
+      // silently revert the user's origin/radius when they are opened.
+      GM_setValue(AAR_RESEARCH_SETTINGS_KEY, {
+        originLabel: next.originLabel,
+        radiusMiles: next.radiusMiles
+      });
+    } catch {
+      // Tampermonkey storage may be unavailable in tests.
+    }
+    return next;
+  }
+
+  function getAarResearchSettings() {
+    const settings = getResearchSettings();
+    return {
+      originLabel: settings.originLabel,
+      radiusMiles: settings.radiusMiles
+    };
+  }
+
+  function saveAarResearchSettings(settings = {}) {
+    const next = saveResearchSettings(settings);
+    return {
+      originLabel: next.originLabel,
+      radiusMiles: next.radiusMiles
+    };
+  }
+
+  function normalizeAuctionNinjaTitle(value) {
+    return String(value || '')
+      .replace(/\bBid Now\b/gi, '')
+      .replace(/\bLot\s*#\s*:?\s*[A-Za-z0-9.-]+\b/gi, '')
+      .replace(/\b(?:Current Bid|Starting Bid|High Bid|Price Realized|Your Max Bid)\b\s*:?\s*\$?\d[\d,]*(?:\.\d{2})?/gi, '')
+      .replace(/\b(?:\d+\s+(?:days?|hours?|minutes?|seconds?)\s*){1,4}left\b/gi, '')
+      .replace(/\b(?:HIGH BIDDER|Following|Watched|Watching|Outbid|Winning|Won|Bidding Closed)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function parseAuctionNinjaCatalogRange(value) {
+    const match = String(value || '').match(/(\d+)\s*-\s*(\d+)\s+of\s+(\d+)\s+items?/i);
+    if (!match) return null;
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    const total = Number(match[3]);
+    if (![start, end, total].every(Number.isFinite)) return null;
+    return {
+      start,
+      end,
+      total,
+      pageSize: Math.max(0, end - start + 1),
+      complete: end >= total
+    };
+  }
+
+  function parseAuctionNinjaBidText(value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    const labeled = text.match(/\b(Current Bid|High Bid|Minimum Bid|Starting Bid|Lot Won)\b\s*:?\s*(\$[\d,]+(?:\.\d{2})?)/i);
+    if (labeled) return { label: `${labeled[1]}: ${labeled[2]}`, amount: moneyFromText(labeled[2]) };
+    const money = moneyLabelFromText(text);
+    return money ? { label: `Current Bid: ${money}`, amount: moneyFromText(money) } : { label: '', amount: null };
+  }
+
+  function extractAuctionNinjaSaleContext(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const raw = rawTextOf(root?.body || root?.documentElement || root);
+    const flat = raw.replace(/\s+/g, ' ').trim();
+    const route = loc ? resolveAuctionNinjaPage(loc) : null;
+    const title = pickFirstText(root, ['h1', '.auction-title', '.sale-title'])
+      || String(root?.title || '').replace(/\s*\|\s*AuctionNinja.*$/i, '').trim()
+      || flat.match(/AuctionNinja\s*\/\s*[^/]+\s*\/\s*(.+?)\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),/i)?.[1]?.trim()
+      || '';
+    const canonical = pickFirstHref(root, ['link[rel="canonical"]'], loc?.href);
+    const lines = raw.split(/\n+/).map(line => line.trim()).filter(Boolean);
+    const locationText = lineAfter(raw, 'Auction Location:') || flat.match(/Auction Location:\s*([^|]+?)\s+(?:Clearing|Shipping|Pickup|View Seller)/i)?.[1]?.trim() || '';
+    const locIndex = lines.findIndex(line => /^Auction Location:?$/i.test(line));
+    const sellerIndex = lines.findIndex(line => /^View Seller$/i.test(line));
+    const seller = locIndex >= 0 && lines[locIndex + 2]
+      ? lines[locIndex + 2]
+      : (sellerIndex > 0 ? lines[sellerIndex - 1] : '');
+    const shipping = flat.match(/\b(Shipping Available|Shipping Only|Local Pickup Only|Local Pick Up|Local Pickup \+ Limited Shipping|Local Pickup \+ Shipping Available|Referred Shipping(?: AND Delivery)? Available)\b/i)?.[1] || '';
+    const pickupWindow = lineAfter(raw, 'When to Pickup') || flat.match(/When to Pickup\s+(.+?)(?:About the Sale|Special Instructions|Auction Manager|Buyer'?s Premium|Item Catalog)/i)?.[1]?.trim() || '';
+    const specialInstructions = sectionBetween(raw, 'Special Instructions', "Auction Manager|Buyer'?s Premium|Item Catalog|$");
+    const about = sectionBetween(raw, 'About the Sale', "Special Instructions|Auction Manager|Buyer'?s Premium|Item Catalog|$");
+    const premium = flat.match(/Buyer'?s Premium\s*(?:Bidding increment chart)?\s*(\d+(?:\.\d+)?)\s*%/i)?.[1] || '';
+    const closingTime = flat.match(/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+[A-Za-z]+\s+\d{1,2},\s+\d{4}\s+at\s+.*?(?:EDT|EST|CDT|CST|PDT|PST|MDT|MST)\b/i)?.[0] || '';
+
+    return {
+      source: 'AuctionNinja',
+      pageKind: 'sale-catalog',
+      title,
+      url: canonical || loc?.href || '',
+      route,
+      saleId: route?.saleId || '',
+      sellerSlug: route?.sellerSlug || '',
+      seller,
+      location: locationText,
+      buyerPremium: premium ? `${premium}%` : percentFromText(flat.match(/Buyer'?s Premium[\s\S]{0,80}/i)?.[0] || ''),
+      pickupWindow,
+      shipping,
+      specialInstructions,
+      about,
+      closingTime
+    };
+  }
+
+  function getAuctionNinjaCatalogCards(root = document) {
+    const selectors = [
+      '.search-catalog-item-box',
+      '.search-catalog-item-box-in',
+      '[id^="MainItmID"]',
+      '.hot-items-box',
+      '.item-box'
+    ];
+    const cards = [];
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(card => {
+        if (!cards.includes(card) && /Lot\s*#|Current Bid|Bid Now|LOT WON/i.test(textOf(card))) cards.push(card);
+      });
+    });
+    return cards;
+  }
+
+  function extractAuctionNinjaCatalogLots(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.auctionninja.com/');
+    const lots = [];
+    const seen = new Set();
+
+    getAuctionNinjaCatalogCards(root).forEach(card => {
+      const raw = textOf(card);
+      const lot = raw.match(/Lot\s*#\s*:?\s*([A-Za-z0-9.-]+)/i)?.[1] || '';
+      const link = card.querySelector?.('a[href*="/product/"]') || card.querySelector?.('a[href]');
+      const url = absoluteUrl(controlHref(link), base);
+      const title = normalizeAuctionNinjaTitle(textOf(link) || raw.match(/left\s+(.+?)\s+Lot\s*#/i)?.[1] || raw.match(/\$\d[\d,.]*\s+(.+?)\s+Lot\s*#/i)?.[1] || '');
+      const image = pickFirstImage(card, base);
+      const bid = parseAuctionNinjaBidText(raw);
+      const timeLeft = raw.match(/((?:\d+\s+)?(?:days?|hours?|minutes?|seconds?)(?:\s+\d+\s+(?:days?|hours?|minutes?|seconds?))*\s+left)/i)?.[1] || '';
+      const status = /\bclosed\b/i.test(raw) ? 'CLOSED' : '';
+      const watched = /\bfollowing\b|\bwatched\b|\bunfollow\b/i.test(raw);
+      const description = pickFirstDescription(card)
+        || raw.match(/(?:Description|Features and Notes|Auctioneer'?s Note)\s*:?\s*([\s\S]*?)(?=\s+(?:Current Bid|High Bid|Minimum Bid|Starting Bid|Lot Won|\d+\s+Bids?\b|$))/i)?.[1]?.trim()
+        || '';
+      const id = productIdFromAuctionNinjaUrl(url);
+      const key = url || id || lot || title;
+      if (!key || seen.has(key) || !title) return;
+      seen.add(key);
+
+      const out = {
+        source: 'AuctionNinja',
+        pageKind: 'sale-catalog',
+        id,
+        stableId: id,
+        lot,
+        title,
+        url,
+        image,
+        highBid: bid.label,
+        highBidAmount: bid.amount,
+        currentPrice: bid.amount,
+        currentBid: bid.amount,
+        timeLeft,
+        status,
+        description,
+        watched
+      };
+      const bidCount = raw.match(/(?:^|[^#:])\b(\d+)\s+Bids?\b(?!\s*Now)/i);
+      if (bidCount) {
+        out.bidCount = bidCount[0];
+        out.bidCountNumber = Number(bidCount[1]);
+      }
+      lots.push(out);
+    });
+
+    return lots.sort((a, b) => String(a.lot || a.title).localeCompare(String(b.lot || b.title), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+  }
+
+  function getAuctionNinjaAccountCards(root = document) {
+    const selectors = [
+      'a[href*="/product/"]',
+      '.account-item-card',
+      '.dashboard-item',
+      '.followed-item',
+      '.favorite-item',
+      '.watchlist-item',
+      '.item-won',
+      '.won-item',
+      '.bid-item',
+      '.my-account-item',
+      '[class*="followed"][class*="item"]',
+      '[class*="favorite"][class*="item"]',
+      '[class*="watch"][class*="item"]',
+      '[class*="won"][class*="item"]',
+      '[class*="account"][class*="item"]',
+      '[class*="product"][class*="box"]',
+      '[class*="item"][class*="box"]',
+      'article',
+      'li',
+      'tr'
+    ];
+    const cards = [];
+    const seen = new Set();
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(seed => {
+        const card = findAuctionNinjaAccountCardFromSeed(seed);
+        if (!card || seen.has(card)) return;
+        const raw = textOf(card);
+        const hasProductLink = Boolean(card.querySelector?.('a[href*="/product/"]'));
+        const looksLikeAccountItem = hasProductLink && /Lot\s*#|Current Bid|Starting Bid|Price Realized|Won|Following|Watched|Outbid|Bidding Closed|Your Max Bid/i.test(raw);
+        const looksLikeShellOnly = /Dashboard|Invoices|Payment|Settings|Logout/i.test(raw) && !/Lot\s*#|Current Bid|Starting Bid|Price Realized/i.test(raw);
+        if (!raw || !looksLikeAccountItem || looksLikeShellOnly) return;
+        seen.add(card);
+        cards.push(card);
+      });
+    });
+    return cards;
+  }
+
+  function findAuctionNinjaAccountCardFromSeed(seed) {
+    if (!seed) return null;
+    let best = null;
+    let bestScore = -Infinity;
+    let el = seed;
+    for (let depth = 0; el && depth < 9; depth += 1, el = el.parentElement) {
+      const raw = textOf(el);
+      const productLinks = Array.from(el.querySelectorAll?.('a[href*="/product/"]') || []);
+      if (!productLinks.length) continue;
+      let score = 0;
+      if (productLinks.length === 1) score += 30;
+      else score -= productLinks.length * 15;
+      if (/\bLot\s*#/i.test(raw)) score += 45;
+      if (/\b(?:Current Bid|Starting Bid|High Bid|Price Realized|Your Max Bid)\b/i.test(raw)) score += 45;
+      if (/\b(?:Won|Following|Watched|Outbid|High Bidder|Bidding Closed)\b/i.test(raw)) score += 20;
+      if (parseAuctionNinjaAccountTimeText(raw)) score += 10;
+      if (/\b(?:Dashboard|Invoices|Account|Support|Logout|Saved Searches)\b/i.test(raw)) score -= 60;
+      if (raw.length > 2500) score -= 80;
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    }
+    return bestScore > 35 ? best : null;
+  }
+
+  function formatAuctionNinjaAccountMoneyLabel(label, value) {
+    const cleanLabel = String(label || '').replace(/\s+/g, ' ').trim();
+    const raw = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!cleanLabel || !raw) return '';
+    const amount = raw.startsWith('$') || /\bUSD\b/i.test(raw) ? raw : `$${raw}`;
+    return `${cleanLabel}: ${amount}`;
+  }
+
+  function parseAuctionNinjaAccountPriceText(raw, kind) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    const labels = kind === 'items-won'
+      ? ['Price Realized', 'Lot Won', 'Won For', 'Sold For', 'Current Bid', 'High Bid']
+      : ['Current Bid', 'High Bid', 'Price Realized', 'Sold For', 'Starting Bid'];
+    for (const label of labels) {
+      const pattern = new RegExp(`\\b${label}\\b\\s*:?\\s*(\\$?\\d[\\d,]*(?:\\.\\d{2})?(?:\\s*USD)?)`, 'i');
+      const match = text.match(pattern);
+      if (match) return formatAuctionNinjaAccountMoneyLabel(label, match[1]);
+    }
+    const money = moneyLabelFromText(text);
+    if (!money) return '';
+    return formatAuctionNinjaAccountMoneyLabel(kind === 'items-won' ? 'Price Realized' : 'Current Bid', money);
+  }
+
+  function parseAuctionNinjaYourBidText(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    const match = text.match(/\b(Your\s+(?:Max\s+)?Bid|My\s+Bid|Bid\s+Amount)\b\s*:?\s*(\$?\d[\d,]*(?:\.\d{2})?(?:\s*USD)?)/i);
+    return match ? formatAuctionNinjaAccountMoneyLabel(match[1], match[2]) : '';
+  }
+
+  function parseAuctionNinjaAccountStatus(raw, kind) {
+    const text = String(raw || '');
+    if (kind === 'items-won') {
+      if (/\bWon\b/i.test(text)) return 'Won';
+      if (/Price\s+Realized|Sold/i.test(text)) return 'Sold';
+    }
+    if (/\bFollowing\b/i.test(text)) return 'Following';
+    if (/\bWatched\b|\bWatching\b/i.test(text)) return 'Watching';
+    if (/\bOutbid\b/i.test(text)) return 'Outbid';
+    if (/\bWinning\b/i.test(text)) return 'Winning';
+    if (/Bidding\s+Closed/i.test(text)) return 'Bidding Closed';
+    return '';
+  }
+
+  function parseAuctionNinjaAccountTimeText(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    return text.match(/\b(?:\d+\s+(?:days?|hours?|minutes?|seconds?)\s*){1,4}left\b/i)?.[0]
+      || text.match(/\b\d+\s+days?\s+\d+\s+hours?\s+left\b/i)?.[0]
+      || text.match(/\b\d+\s+(?:days?|hours?|minutes?|seconds?)\s+left\b/i)?.[0]
+      || text.match(/(?:^|\s)(\d{1,3}\s*(?:d|h|m|s))\b/i)?.[1]
+      || text.match(/\bBidding\s+Closed\b/i)?.[0]
+      || '';
+  }
+
+  function parseAuctionNinjaLocationText(raw) {
+    const text = String(raw || '')
+      .replace(/\b(?:Shipping Available|Shipping Not Available|Shipping Only|Local Pickup Only|Local Pick Up|Pickup Only|Referred Shipping(?: AND Delivery)? Available)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text.match(/\b[A-Z][A-Za-z .'-]+,\s+[A-Z]{2}\b/)?.[0] || '';
+  }
+
+  function parseAuctionNinjaShippingText(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    return text.match(/\b(?:Shipping Available|Shipping Not Available|Shipping Only|Local Pickup Only|Local Pick Up|Pickup Only|Referred Shipping(?: AND Delivery)? Available)\b/i)?.[0] || '';
+  }
+
+  function parseAuctionNinjaPickupText(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    return text.match(/\bPickup\s*:\s*.+?(?=\s+(?:Shipping|Location|Seller|Sale|Won|Following|Watched|Outbid|Current Bid|Price Realized)\b|$)/i)?.[0]?.trim() || '';
+  }
+
+  function titleFromAuctionNinjaProductUrl(url) {
+    const filename = String(url || '').split('/').pop() || '';
+    const slug = filename
+      .replace(/\.html(?:[?#].*)?$/i, '')
+      .replace(/--[A-Za-z0-9-]+$/i, '')
+      .replace(/-\d+$/i, '')
+      .replace(/-/g, ' ')
+      .trim();
+    if (!slug) return '';
+    return normalizeAuctionNinjaTitle(slug.replace(/\b([a-z])/g, letter => letter.toUpperCase()));
+  }
+
+  function cleanupAuctionNinjaAccountLeadText(value) {
+    return String(value || '')
+      .replace(/if\s*\([^{}]*\)\s*\{[^{}]*\}/gi, ' ')
+      .replace(/\b(?:Current Bid|Starting Bid|High Bid|Price Realized)\b\s*:?\s*\$?\d[\d,]*(?:\.\d{2})?/gi, ' ')
+      .replace(/\bYour Max Bid\b\s*:?\s*\$?\d[\d,]*(?:\.\d{2})?/gi, ' ')
+      .replace(/\b(?:\d+\s+(?:days?|hours?|minutes?|seconds?)\s*){1,4}left\b/gi, ' ')
+      .replace(/(?:^|\s)\d{1,3}\s*(?:d|h|m|s)\b/gi, ' ')
+      .replace(/\b(?:HIGH BIDDER|Following|Watched|Watching|Outbid|Winning|Won|Bidding Closed)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function inferAuctionNinjaAccountTitle(raw, linkText = '', saleTitle = '', url = '') {
+    const linked = normalizeAuctionNinjaTitle(linkText);
+    if (linked) return linked;
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    const beforeLot = cleanupAuctionNinjaAccountLeadText(text.split(/\bLot\s*#/i)[0] || '');
+    const normalizedSaleTitle = normalizeAuctionNinjaTitle(saleTitle);
+    let fromCard = beforeLot;
+    if (normalizedSaleTitle) {
+      const saleIndex = fromCard.toLowerCase().indexOf(normalizedSaleTitle.toLowerCase());
+      if (saleIndex >= 0) fromCard = fromCard.slice(0, saleIndex).trim();
+    }
+    const inferred = normalizeAuctionNinjaTitle(
+      fromCard
+      || text.match(/Lot\s*#\s*:?\s*[A-Za-z0-9.-]+\s+(.+?)\s+(?:Current Bid|High Bid|Price Realized|Won|Following|Watched|Outbid|Shipping|Pickup|$)/i)?.[1]
+      || text.match(/(?:Current Bid|Price Realized)\s*\$?\d[\d,.]*\s+(.+?)\s+Lot\s*#/i)?.[1]
+      || ''
+    );
+    return inferred || titleFromAuctionNinjaProductUrl(url);
+  }
+
+  function sanitizeAuctionNinjaAccountRawText(value) {
+    return String(value || '')
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted-email]')
+      .replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g, '[redacted-phone]')
+      .replace(/\b\d{1,6}\s+[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,5}\s+(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Boulevard|Blvd|Court|Ct|Place|Pl)\b[^,;|]*/gi, '[redacted-street-address]')
+      .replace(/\b(?:Bidder(?:\s+(?:Name|Alias))?|Username|Account(?:\s+Name)?|Customer(?:\s+Name)?)\s*[:#-]\s*[A-Za-z0-9_. -]{2,80}(?=\s+(?:Lot|Current Bid|High Bid|Price|Status|Pickup|Shipping)\b|$)/gi, '[redacted-account-identity]')
+      .replace(/\b(?:Invoice|Payment|Billing|Card)\s*(?:Number|#|Status)?\s*[:#-]?\s*[A-Za-z0-9*-]{2,64}/gi, '[redacted-payment-data]')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function sanitizeAuctionNinjaAccountUrl(value) {
+    try {
+      const url = new URL(String(value || ''), 'https://www.auctionninja.com/');
+      const page = url.searchParams.get('Page') || url.searchParams.get('page') || url.searchParams.get('pagenum') || '';
+      url.search = '';
+      url.hash = '';
+      if (page && /^\d+$/.test(page) && Number(page) > 1) url.searchParams.set('Page', page);
+      return url.href;
+    } catch {
+      return '';
+    }
+  }
+
+  function canonicalAuctionNinjaProductUrl(value) {
+    try {
+      const url = new URL(String(value || ''), 'https://www.auctionninja.com/');
+      if (!isAuctionNinjaHost(url.hostname) || resolveAuctionNinjaPage(url).kind !== 'item-detail') return '';
+      url.search = '';
+      url.hash = '';
+      return url.href;
+    } catch {
+      return '';
+    }
+  }
+
+  function sanitizeAuctionNinjaAccountItem(item = {}) {
+    const sanitized = { ...item };
+    ['description', 'cardDescription', 'location', 'pickupText', 'shippingText', 'rawText'].forEach(key => {
+      if (key in sanitized) sanitized[key] = sanitizeAuctionNinjaAccountRawText(sanitized[key]);
+    });
+    sanitized.url = canonicalAuctionNinjaProductUrl(sanitized.url);
+    sanitized.saleUrl = canonicalAuctionNinjaSaleUrl(sanitized.saleUrl);
+    sanitized.images = uniqueNonEmpty((sanitized.images || []).map(value => {
+      try {
+        const url = new URL(String(value || ''), 'https://www.auctionninja.com/');
+        if (!/^https?:$/i.test(url.protocol)) return '';
+        url.hash = '';
+        return url.href;
+      } catch {
+        return '';
+      }
+    }));
+    if (sanitized.image) {
+      try {
+        const imageUrl = new URL(String(sanitized.image), 'https://www.auctionninja.com/');
+        imageUrl.hash = '';
+        sanitized.image = /^https?:$/i.test(imageUrl.protocol) ? imageUrl.href : '';
+      } catch {
+        sanitized.image = '';
+      }
+    }
+    return sanitized;
+  }
+
+  function sanitizeAuctionNinjaAccountExport(context = {}, items = []) {
+    const safeContext = { ...context, url: sanitizeAuctionNinjaAccountUrl(context.url) };
+    ['title', 'location', 'pickupText', 'shippingText', 'rawText'].forEach(key => {
+      if (key in safeContext) safeContext[key] = sanitizeAuctionNinjaAccountRawText(safeContext[key]);
+    });
+    return {
+      context: safeContext,
+      items: (Array.isArray(items) ? items : []).map(sanitizeAuctionNinjaAccountItem)
+    };
+  }
+
+  function extractAuctionNinjaAccountItems(root = document, loc = (typeof location !== 'undefined' ? location : null), kind = 'followed-items') {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.auctionninja.com/');
+    const items = [];
+    const seen = new Set();
+
+    getAuctionNinjaAccountCards(root).forEach(card => {
+      const rawText = textOf(card);
+      const itemLink = card.querySelector?.('a[href*="/product/"]');
+      const saleLink = card.querySelector?.('a[href*="/sales/details/"]');
+      const url = absoluteUrl(controlHref(itemLink), base);
+      const saleUrl = absoluteUrl(controlHref(saleLink), base);
+      const saleTitle = normalizeAuctionNinjaTitle(textOf(saleLink));
+      const title = inferAuctionNinjaAccountTitle(rawText, textOf(itemLink), saleTitle, url);
+      const lot = rawText.match(/\bLot\s*#\s*:?\s*([A-Za-z0-9.-]+)/i)?.[1] || '';
+      const id = productIdFromAuctionNinjaUrl(url);
+      const key = url || id || `${lot}:${title}`;
+      if (!key || seen.has(key) || (!title && !url)) return;
+      seen.add(key);
+
+      const priceText = parseAuctionNinjaAccountPriceText(rawText, kind);
+      const bidCountMatch = rawText.match(/(?:^|[^#:])\b(\d+)\s+Bids?\b(?!\s*Now)/i);
+      const item = {
+        source: 'AuctionNinja',
+        pageKind: kind,
+        id,
+        stableId: id,
+        lot,
+        title,
+        url,
+        image: pickFirstImage(card, base),
+        saleTitle,
+        saleUrl: canonicalAuctionNinjaSaleUrl(saleUrl),
+        seller: '',
+        status: parseAuctionNinjaAccountStatus(rawText, kind),
+        priceText,
+        price: moneyFromText(priceText),
+        bidCount: bidCountMatch ? Number(bidCountMatch[1].replace(/,/g, '')) : null,
+        timeText: parseAuctionNinjaAccountTimeText(rawText),
+        location: sanitizeAuctionNinjaAccountRawText(parseAuctionNinjaLocationText(rawText)),
+        shippingText: sanitizeAuctionNinjaAccountRawText(parseAuctionNinjaShippingText(rawText)),
+        pickupText: sanitizeAuctionNinjaAccountRawText(parseAuctionNinjaPickupText(rawText)),
+        rawText: sanitizeAuctionNinjaAccountRawText(rawText)
+      };
+      if (kind === 'bid-history') {
+        item.yourBidText = parseAuctionNinjaYourBidText(rawText);
+        item.yourBid = moneyFromText(item.yourBidText);
+      }
+      items.push(item);
+    });
+
+    return items;
+  }
+
+  function extractAuctionNinjaFollowedItems(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    return extractAuctionNinjaAccountItems(root, loc, 'followed-items');
+  }
+
+  function extractAuctionNinjaWonItems(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    return extractAuctionNinjaAccountItems(root, loc, 'items-won');
+  }
+
+  function extractAuctionNinjaBidHistoryItems(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    return extractAuctionNinjaAccountItems(root, loc, 'bid-history');
+  }
+
+  function saleIdFromAuctionNinjaSaleUrl(url) {
+    const value = String(url || '');
+    const stableId = value.match(/--([A-Za-z0-9-]+)\.html(?:[?#].*)?$/i);
+    if (stableId) return stableId[1];
+    const slugId = value.match(/-([A-Za-z0-9]+)\.html(?:[?#].*)?$/i);
+    return slugId?.[1] || '';
+  }
+
+  function normalizeAuctionNinjaSearchLocation(raw) {
+    const text = String(raw || '')
+      .replace(/\b(?:Shipping Available|Shipping Not Available|Shipping Only|Local Pickup Only|Local Pick Up|Pickup Only|Local Pickup \+ Limited Shipping|Local Pickup \+ Shipping Available|Referred Shipping(?: AND Delivery)? Available)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text.match(/\b[A-Z][A-Za-z .'-]+,\s+[A-Z]{2}\b/)?.[0] || '';
+  }
+
+  function parseAuctionNinjaAuctionClosingText(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    return text.match(/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+[A-Za-z]+\s+\d{1,2}\s+\d{4}\s+@\s+\d{1,2}:\d{2}\s+[AP]M\s+(?:EDT|EST|CDT|CST|PDT|PST|MDT|MST)\b/i)?.[0]
+      || text.match(/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+[A-Za-z]+\s+\d{1,2},\s+\d{4}\s+(?:at|@)\s+.*?(?:EDT|EST|CDT|CST|PDT|PST|MDT|MST)\b/i)?.[0]
+      || lineAfter(raw, 'Begins to close')
+      || '';
+  }
+
+  function parseAuctionNinjaAuctionSearchTotal(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    const match = text.match(/(?<!\d)(\d{1,5})\s+sales?\b/i)
+      || text.match(/(?<!\d)(\d{1,5})\s+auctions?\b(?!\s+per\s+page)/i)
+      || text.match(/\b(?:Total|Found)\s*:?\s*(\d{1,5})\b/i);
+    return match ? Number(match[1].replace(/,/g, '')) : null;
+  }
+
+  function isAuctionNinjaSearchNonTitleLabel(value) {
+    const label = normalizeAuctionNinjaTitle(value);
+    if (!label) return true;
+    return /^\(?\s*\d{1,6}\s*\)?$/.test(label)
+      || /^\d{1,6}\s+Lots?$/i.test(label)
+      || /^(?:View|View Auction|Details|Bid Now|AuctionNinja)$/i.test(label);
+  }
+
+  function cleanAuctionNinjaSearchTitleCandidate(value) {
+    return normalizeAuctionNinjaTitle(value)
+      .replace(/\s+\(\s*\d{1,6}\s*\)\s*$/g, '')
+      .replace(/\s+\d{1,6}\s+Lots?\s*$/gi, '')
+      .trim();
+  }
+
+  function isAuctionNinjaSearchMetadataLine(value) {
+    const line = normalizeAuctionNinjaTitle(value);
+    if (isAuctionNinjaSearchNonTitleLabel(line)) return true;
+    if (/^(?:Begins to close|Ends|Local Pickup|Local Pick Up|Pickup Only|Shipping|Preview|Sale closed|Closed)\b/i.test(line)) return true;
+    if (/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+/i.test(line)) return true;
+    if (normalizeAuctionNinjaSearchLocation(line)) return true;
+    if (parseAuctionNinjaShippingText(line)) return true;
+    return false;
+  }
+
+  function extractAuctionNinjaAuctionSearchTitle(card, saleLink, url) {
+    const linkTitle = cleanAuctionNinjaSearchTitleCandidate(textOf(saleLink));
+    if (!isAuctionNinjaSearchNonTitleLabel(linkTitle)) return linkTitle;
+
+    const lines = rawTextOf(card)
+      .split(/\n+/)
+      .map(cleanAuctionNinjaSearchTitleCandidate)
+      .filter(Boolean);
+    const lineTitle = lines.find(line => !isAuctionNinjaSearchMetadataLine(line));
+    if (lineTitle) return lineTitle;
+
+    const flatLead = cleanAuctionNinjaSearchTitleCandidate(
+      textOf(card).split(/\b(?:Begins to close|Local Pickup|Local Pick Up|Shipping|Pickup Only)\b/i)[0]
+    );
+    if (!isAuctionNinjaSearchNonTitleLabel(flatLead)) return flatLead;
+    return titleFromAuctionNinjaProductUrl(url);
+  }
+
+  function findAuctionNinjaAuctionSearchCardFromSeed(seed) {
+    if (!seed) return null;
+    let best = null;
+    let bestScore = -Infinity;
+    let el = seed;
+    for (let depth = 0; el && depth < 9; depth += 1, el = el.parentElement) {
+      const raw = textOf(el);
+      const saleLinks = Array.from(el.querySelectorAll?.('a[href*="/sales/details/"]') || []);
+      const uniqueSaleHrefs = new Set(saleLinks.map(link => controlHref(link)).filter(Boolean));
+      if (!uniqueSaleHrefs.size) continue;
+      let score = 0;
+      if (uniqueSaleHrefs.size === 1) score += 35;
+      else score -= uniqueSaleHrefs.size * 14;
+      if (/Begins\s+to\s+close/i.test(raw)) score += 40;
+      if (normalizeAuctionNinjaSearchLocation(raw)) score += 20;
+      if (parseAuctionNinjaShippingText(raw)) score += 15;
+      if (/\b\d+\s+Lots?\b/i.test(raw) || /\(\s*\d+\s*\)/.test(raw)) score += 8;
+      if (/Find a Seller|Top Auction Locations|Bidder Login|Seller Login/i.test(raw)) score -= 90;
+      if (raw.length > 2200) score -= 70;
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    }
+    return bestScore > 30 ? best : null;
+  }
+
+  function findBestAuctionNinjaSaleLink(card) {
+    const links = Array.from(card?.querySelectorAll?.('a[href*="/sales/details/"]') || []);
+    const candidates = links.map(link => {
+      const label = normalizeAuctionNinjaTitle(textOf(link));
+      let score = 0;
+      if (label) score += 20;
+      if (label.length >= 18) score += 30;
+      if (/\b(?:sale|auction|estate|collection|jewelry|vintage|antiques?|decor|furniture|collectibles?)\b/i.test(label)) score += 18;
+      if (isAuctionNinjaSearchNonTitleLabel(label)) score -= 80;
+      if (/bid now|view|details/i.test(label)) score -= 25;
+      return { link, label, score };
+    }).sort((a, b) => b.score - a.score);
+    return candidates[0]?.score > -20 ? candidates[0].link : (links[0] || null);
+  }
+
+  function getAuctionNinjaAuctionSearchCards(root = document) {
+    const scopedRoot = root?.querySelector?.('.location-search-result-all, .location-search-result-all_') || root;
+    const selectors = [
+      '.location-result-box',
+      '.auction-item',
+      '.auction-box',
+      '.auction-list-item',
+      '.sale-item',
+      '.sales-item',
+      '[class*="auction"][class*="item"]',
+      '[class*="sale"][class*="item"]',
+      'article',
+      'li',
+      'a[href*="/sales/details/"]'
+    ];
+    const cards = [];
+    const seen = new Set();
+    selectors.forEach(selector => {
+      Array.from(scopedRoot?.querySelectorAll?.(selector) || []).forEach(seed => {
+        const card = findAuctionNinjaAuctionSearchCardFromSeed(seed);
+        if (!card || seen.has(card)) return;
+        if (card.closest?.('.featured-auctions-deta, .featured-auctions-box-main:not(.location-search-result-all):not(.location-search-result-all_)')) return;
+        const raw = textOf(card);
+        const hasSaleLink = Boolean(card.querySelector?.('a[href*="/sales/details/"]')) || /\/sales\/details\//i.test(controlHref(card));
+        if (!raw || !hasSaleLink || /Find a Seller|Top Auction Locations|Bidder Login|Seller Login/i.test(raw)) return;
+        seen.add(card);
+        cards.push(card);
+      });
+    });
+    return cards;
+  }
+
+  function extractAuctionNinjaAuctionSearchContext(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const raw = textOf(root?.body || root?.documentElement || root);
+    const route = loc ? resolveAuctionNinjaPage(loc) : {};
+    const city = route?.citySlug ? route.citySlug.replace(/-/g, ' ').replace(/\b([a-z])/g, letter => letter.toUpperCase()) : '';
+    const zip = route?.zip || '';
+    const searchLocation = [city, route?.statePrefix ? String(route.statePrefix).toUpperCase() : '', zip].filter(Boolean).join(' ').trim();
+    return {
+      source: 'AuctionNinja',
+      pageKind: 'auction-search',
+      title: String(root?.title || '').replace(/\s*\|\s*AuctionNinja.*$/i, '').trim() || (searchLocation ? `Auction search near ${searchLocation}` : 'AuctionNinja Auction Search'),
+      url: loc?.href || (typeof location !== 'undefined' ? location.href : ''),
+      searchLocation,
+      miles: loc?.searchParams?.get?.('miles') || '',
+      filters: extractAuctionNinjaSearchActiveFilters(root, loc),
+      totalSales: parseAuctionNinjaAuctionSearchTotal(
+        textOf(root?.querySelector?.('.location-search-result-head-left span'))
+        || textOf(root?.querySelector?.('.location-search-result-head-left'))
+        || raw
+      ),
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  function extractAuctionNinjaAuctionSearchSales(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.auctionninja.com/');
+    const sales = [];
+    const seen = new Set();
+
+    getAuctionNinjaAuctionSearchCards(root).forEach(card => {
+      const rawText = textOf(card);
+      const saleLink = findBestAuctionNinjaSaleLink(card) || card.querySelector?.('a[href*="/sales/details/"]') || (/\/sales\/details\//i.test(controlHref(card)) ? card : null);
+      const url = canonicalAuctionNinjaSaleUrl(absoluteUrl(controlHref(saleLink), base));
+      const title = extractAuctionNinjaAuctionSearchTitle(card, saleLink, url);
+      const sellerLink = card.querySelector?.('a[href]:not([href*="/sales/details/"])');
+      const sellerUrl = absoluteUrl(controlHref(sellerLink), base);
+      const seller = normalizeAuctionNinjaTitle(textOf(sellerLink));
+      const key = canonicalAuctionNinjaSaleUrl(url) || `${title}:${rawText.slice(0, 80)}`;
+      if (!key || seen.has(key) || !title) return;
+      seen.add(key);
+      const itemCountMatch = rawText.match(/\b(\d{1,6})\s+Lots?\b/i);
+      sales.push({
+        source: 'AuctionNinja',
+        pageKind: 'auction-search',
+        id: saleIdFromAuctionNinjaSaleUrl(url),
+        stableId: auctionNinjaSaleStableIdentity(url),
+        title,
+        url,
+        image: pickFirstImage(card, base),
+        seller,
+        sellerUrl,
+        location: normalizeAuctionNinjaSearchLocation(rawText.replace(title, ' ')),
+        shippingText: parseAuctionNinjaShippingText(rawText),
+        closingText: parseAuctionNinjaAuctionClosingText(rawText),
+        itemCount: itemCountMatch ? Number(itemCountMatch[1].replace(/,/g, '')) : null,
+        rawText
+      });
+    });
+
+    return sales;
+  }
+
+  function parseAuctionNinjaCategoryResultCount(value) {
+    const match = String(value || '').match(/\b([\d,]+)\s+results?\b/i);
+    if (!match) return null;
+    const total = Number(match[1].replace(/,/g, ''));
+    return Number.isFinite(total) ? total : null;
+  }
+
+  function getAuctionNinjaCategoryCards(root = document) {
+    const selectors = [
+      '.hot-items-box',
+      '[id^="MainItmID_"]',
+      '.hot-items-box-in'
+    ];
+    const cards = [];
+    const seen = new Set();
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(seed => {
+        const card = seed.matches?.('.hot-items-box, [id^="MainItmID_"]')
+          ? seed
+          : (seed.closest?.('.hot-items-box, [id^="MainItmID_"]') || seed);
+        const productLink = card.querySelector?.('a[href*="/product/"]');
+        const raw = textOf(card);
+        if (!productLink || !raw || seen.has(card)) return;
+        seen.add(card);
+        cards.push(card);
+      });
+    });
+    return cards;
+  }
+
+  function findAuctionNinjaCategoryPageUrls(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = getAuctionNinjaBaseUrl(root, loc);
+    const route = loc ? resolveAuctionNinjaPage(loc) : {};
+    let sourceUrl;
+    try {
+      sourceUrl = new URL(base, 'https://www.auctionninja.com/');
+    } catch {
+      sourceUrl = null;
+    }
+    const pages = new Map();
+    Array.from(root?.querySelectorAll?.('a[href]') || []).forEach(anchor => {
+      const href = controlHref(anchor);
+      const label = controlLabel(anchor);
+      if (!href || !/view\s+all\s+items|show\s*=\s*all|\bpage\b/i.test(`${label} ${href}`)) return;
+      if (/bid|checkout|invoice|payment|account|login|logout|watch|follow|sort|search/i.test(`${href} ${label}`)) return;
+      let url;
+      try {
+        url = new URL(href, base);
+      } catch {
+        return;
+      }
+      const targetRoute = resolveAuctionNinjaPage(url);
+      if (!targetRoute.supported || targetRoute.kind !== 'category-search') return;
+      if (route.categorySlug && targetRoute.categorySlug !== route.categorySlug) return;
+      if (sourceUrl && !auctionNinjaCategoryFiltersMatch(sourceUrl, url)) return;
+      if (url.href === base) return;
+      pages.set(url.href, url.href);
+    });
+    const out = Array.from(pages.values());
+    debug('auctionninja category page urls', { urls: out.slice(0, 8) });
+    return out;
+  }
+
+  function auctionNinjaCategoryFiltersMatch(sourceUrl, targetUrl) {
+    return auctionNinjaCategoryPageMatches(sourceUrl, targetUrl);
+  }
+
+  function extractAuctionNinjaCategoryContext(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const raw = textOf(root?.body || root?.documentElement || root);
+    const route = loc ? resolveAuctionNinjaPage(loc) : {};
+    const range = parseAuctionNinjaCatalogRange(raw);
+    const heading = root?.querySelector?.('.category-search-item-title.desktop-show, .category-search-item-title.mobile-show, h1');
+    const resultCount = parseAuctionNinjaCategoryResultCount(textOf(heading) || raw);
+    const title = String(root?.title || '')
+      .replace(/\s*\|\s*AuctionNinja.*$/i, '')
+      .replace(/\s+Online Auctions?\s*[-|].*$/i, '')
+      .trim();
+    return {
+      source: 'AuctionNinja',
+      pageKind: 'category-search',
+      title: title || route.categoryName || 'AuctionNinja Category Search',
+      category: route.categoryName || '',
+      categorySlug: route.categorySlug || '',
+      url: loc?.href || (typeof location !== 'undefined' ? location.href : ''),
+      zip: String(route.zip || loc?.searchParams?.get?.('zip') || ''),
+      miles: String(route.miles || loc?.searchParams?.get?.('miles') || ''),
+      totalItems: range?.total ?? resultCount ?? null,
+      visibleItems: getAuctionNinjaCategoryCards(root).length,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  function extractAuctionNinjaCategoryItems(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.auctionninja.com/');
+    const categoryContext = extractAuctionNinjaCategoryContext(root, loc);
+    const items = [];
+    const seen = new Set();
+
+    getAuctionNinjaCategoryCards(root).forEach(card => {
+      const rawText = textOf(card);
+      const itemLink = card.querySelector?.('a[href*="/product/"]');
+      const imageNode = card.querySelector?.('img[alt], img[title], img[src], img[data-src]');
+      const url = absoluteUrl(controlHref(itemLink), base);
+      const imageTitle = imageNode?.getAttribute?.('alt') || imageNode?.getAttribute?.('title') || '';
+      const titleLink = card.querySelector?.('.hot-items-title a[href], .hot-items-title a');
+      const title = normalizeAuctionNinjaTitle(imageTitle || textOf(titleLink) || textOf(itemLink));
+      const id = productIdFromAuctionNinjaUrl(url);
+      const lot = rawText.match(/\bLot\s*#\s*:?[\s-]*([A-Za-z0-9.-]+)/i)?.[1] || '';
+      const key = url || id || `${lot}:${title}`;
+      if (!key || seen.has(key) || !title) return;
+      seen.add(key);
+
+      const bidNode = card.querySelector?.('.hot-items-bottoms p, .hot-items-bottoms');
+      const bid = parseAuctionNinjaBidText(textOf(bidNode) || rawText);
+      const timeNode = card.querySelector?.('.day-left, .day-leftinr');
+      const timeText = textOf(timeNode)
+        || rawText.match(/((?:\d+\s+)?(?:days?|hours?|minutes?|seconds?)(?:\s+\d+\s+(?:days?|hours?|minutes?|seconds?))*\s+left)/i)?.[1]
+        || '';
+      const sellerLink = card.querySelector?.('.hi-auction-company-title a[href], a[href]:not([href*="/product/"])');
+      const seller = normalizeAuctionNinjaTitle(textOf(sellerLink));
+      const sellerUrl = absoluteUrl(controlHref(sellerLink), base);
+      const location = textOf(card.querySelector?.('.hi-auction-company p')) || normalizeAuctionNinjaSearchLocation(rawText);
+      const shippingText = parseAuctionNinjaShippingText(rawText);
+      const watched = Boolean(card.querySelector?.('.clock-btn.active, [id^="SMSUnFlw"]:not(.disnone)'))
+        || /\bfollowing\b|\bwatched\b|\bunfollow\b/i.test(rawText);
+
+      items.push({
+        source: 'AuctionNinja',
+        pageKind: 'category-search',
+        id,
+        stableId: id,
+        lot,
+        title,
+        url,
+        image: pickFirstImage(card, base),
+        seller,
+        sellerUrl,
+        category: categoryContext.category,
+        currentBid: bid.amount,
+        currentPrice: bid.amount,
+        highBid: bid.label,
+        highBidAmount: bid.amount,
+        bidCount: null,
+        bidCountNumber: null,
+        timeLeft: timeText,
+        timeText,
+        location,
+        shippingText,
+        status: /\bclosed\b/i.test(rawText) ? 'CLOSED' : (/coming\s+soon/i.test(rawText) ? 'COMING SOON' : 'OPEN'),
+        watched,
+        rawText
+      });
+    });
+
+    return items.sort((a, b) => String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' }));
+  }
+
+  function mergeAuctionNinjaCategoryItems(target, items, duplicateIds = null) {
+    items.forEach(item => {
+      const key = item.url || item.id || item.lot || item.title;
+      if (!key || !item.title) return;
+      if (target.has(String(key))) duplicateIds?.add?.(String(key));
+      target.set(String(key), item);
+    });
+    return target;
+  }
+
+  async function scrapeAuctionNinjaCategoryItems(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const itemsByKey = new Map();
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAuctionNinjaPage(loc) : { kind: 'category-search', source: 'auctionninja' };
+    const startedAt = Date.now();
+    const routeFingerprint = auctionNinjaRouteFingerprint(route, loc);
+    let steps = 0;
+    let stopReason = '';
+    const failedPages = [];
+    const duplicateIds = new Set();
+    const pageAudits = [];
+    const context = extractAuctionNinjaCategoryContext(root, loc);
+    const initialItems = extractAuctionNinjaCategoryItems(root, loc);
+    mergeAuctionNinjaCategoryItems(itemsByKey, initialItems, duplicateIds);
+    pageAudits.push(buildAuctionNinjaPageAudit(initialItems, loc?.href || context.url, context.totalItems));
+    debug('auctionninja category scrape start', { count: itemsByKey.size, context });
+
+    const queuedPageUrls = findAuctionNinjaCategoryPageUrls(root, loc);
+    const seenPageUrls = new Set(queuedPageUrls);
+    const maxSteps = Math.max(20, Math.ceil(Number(context.totalItems || 0) / 20) + 2);
+    while (queuedPageUrls.length && !shouldStop() && steps < maxSteps && typeof fetch === 'function' && typeof DOMParser !== 'undefined') {
+      const url = queuedPageUrls.shift();
+      if (!url || seenPageUrls.has(`${url}:fetched`)) continue;
+      seenPageUrls.add(`${url}:fetched`);
+      const before = itemsByKey.size;
+      steps += 1;
+      onProgress(`Fetching AuctionNinja category page ${steps}... ${before} item(s)`);
+      debug('auctionninja category page fetch start', { step: steps, url, before });
+      const fetched = await fetchHtmlDocumentWithRetries(url, 'auctionninja.category.pagination', shouldStop);
+      if (!fetched.document) {
+        failedPages.push({ url: new URL(url).pathname, error: fetched.error });
+        continue;
+      }
+      const pageDoc = fetched.document;
+      const pageUrl = new URL(fetched.responseUrl || url);
+      if (!auctionNinjaCategoryPageMatches(loc?.href || context.url, pageUrl)) {
+        failedPages.push({ page: getAuctionNinjaPageNumber(pageUrl), error: 'category-filter-drift' });
+        continue;
+      }
+      const pageItems = extractAuctionNinjaCategoryItems(pageDoc, pageUrl);
+      const pageContext = extractAuctionNinjaCategoryContext(pageDoc, pageUrl);
+      mergeAuctionNinjaCategoryItems(itemsByKey, pageItems, duplicateIds);
+      pageAudits.push(buildAuctionNinjaPageAudit(pageItems, pageUrl, pageContext.totalItems));
+      if (context.totalItems && itemsByKey.size === context.totalItems) {
+        stopReason = 'expected-total-reached';
+        debug('auctionninja category expected total reached', { step: steps, expectedTotal: context.totalItems, count: itemsByKey.size });
+        break;
+      }
+      findAuctionNinjaCategoryPageUrls(pageDoc, pageUrl).forEach(nextUrl => {
+        if (!seenPageUrls.has(nextUrl) && !seenPageUrls.has(`${nextUrl}:fetched`)) {
+          seenPageUrls.add(nextUrl);
+          queuedPageUrls.push(nextUrl);
+        }
+      });
+      debug('auctionninja category page fetch finished', { step: steps, url, before, after: itemsByKey.size, queued: queuedPageUrls.length });
+    }
+
+    let stopped = shouldStop();
+    let items = Array.from(itemsByKey.values()).sort((a, b) => String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' }));
+    const expectedTotal = context.totalItems !== null && context.totalItems !== undefined && Number.isFinite(Number(context.totalItems))
+      ? Number(context.totalItems)
+      : null;
+    const pageCoverage = validateAuctionNinjaPageCoverage(pageAudits, expectedTotal);
+    const currentRoute = typeof location !== 'undefined' ? resolveAuctionNinjaPage(location) : route;
+    const currentFingerprint = auctionNinjaRouteFingerprint(currentRoute, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    let enrichmentAudit = { requested: 0, succeeded: 0, failed: [], stopped: false };
+    if (!stopped && routeMatches && pageCoverage.complete && failedPages.length === 0 && duplicateIds.size === 0) {
+      const enriched = await enrichAuctionNinjaProductItems(items, onProgress, shouldStop);
+      enrichmentAudit = enriched.audit || enrichmentAudit;
+      items = Array.from(enriched);
+      stopped = shouldStop();
+    }
+    const incomplete = stopped
+      || !routeMatches
+      || !pageCoverage.complete
+      || failedPages.length > 0
+      || duplicateIds.size > 0
+      || enrichmentAudit.failed.length > 0
+      || enrichmentAudit.stopped;
+    stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedPages.length
+          ? 'failed-pages'
+          : (duplicateIds.size
+            ? 'duplicate-identities'
+            : (!pageCoverage.complete
+              ? pageCoverage.reason
+              : (enrichmentAudit.failed.length ? 'detail-enrichment-failed' : 'verified-total-reached')))));
+    const coverage = {
+      proofTier: expectedTotal === null ? 'unproven' : 'pagination-exact',
+      strategy: 'auctionninja-category-pagination-plus-detail',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      enumeratedIds: items.map(item => scraperStableIdentity(item, 'auctionninja')).filter(Boolean),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages,
+      failedBatches: enrichmentAudit.failed,
+      pageCoverage,
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('auctionninja.category.coverage', { items: items.length, expectedTotal, steps, stopReason, coverage });
+    return {
+      source: 'auctionninja-category-dom',
+      context: { ...context, visibleItems: items.length },
+      items,
+      expectedTotal,
+      stopped,
+      stopReason,
+      incomplete,
+      pageSteps: steps,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      failedPages,
+      audit: { pages: pageAudits, enrichment: enrichmentAudit }
+    };
+  }
+
+  function extractAuctionNinjaItemDetail(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const requestedUrl = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.auctionninja.com/');
+    const canonicalNode = root?.querySelector?.('link[rel="canonical"], meta[property="og:url"], meta[name="twitter:url"]');
+    const canonicalValue = canonicalNode?.getAttribute?.('href') || canonicalNode?.getAttribute?.('content') || '';
+    const canonicalUrl = canonicalValue ? absoluteUrl(canonicalValue, requestedUrl) : '';
+    const base = canonicalUrl || requestedUrl;
+    const route = resolveAuctionNinjaPage(new URL(base, 'https://www.auctionninja.com/'));
+    const detailRoot = root?.querySelector?.('.item-detail-main, .item-detail-box-main');
+    if (!detailRoot || route.kind !== 'item-detail') return null;
+    const raw = rawTextOf(detailRoot);
+    const title = normalizeAuctionNinjaTitle(pickFirstText(root, [
+      'h1.item-detail-box-title', 'h1', '.product-title', '.item-title', '[class*="product"][class*="title"]'
+    ]) || String(root?.title || '').replace(/\s*\|\s*AuctionNinja.*$/i, ''));
+    if (!title) return null;
+    const bid = parseAuctionNinjaBidText(raw);
+    const images = uniqueNonEmpty(Array.from(detailRoot?.querySelectorAll?.('img[src], img[data-src], source[srcset], a[href*="/Pictures/"]') || [])
+      .flatMap(node => [node.currentSrc, node.src, node.getAttribute?.('data-src'), String(node.getAttribute?.('srcset') || '').split(/[\s,]+/)[0]])
+      .concat(Array.from(detailRoot?.querySelectorAll?.('a[href*="/Pictures/"]') || []).map(node => node.getAttribute?.('href')))
+      .filter(value => value && !/logo|icon|avatar|spinner|pixel|clock|map_pins/i.test(value))
+      .map(value => absoluteUrl(value, base)));
+    const description = pickFirstText(root, ['.item-description-deta', '.product-description', '.item-description', '#description'])
+      || pickFirstDescription(detailRoot)
+      || '';
+    const id = String(route.productId || productIdFromAuctionNinjaUrl(base) || '').trim();
+    const lot = raw.match(/Lot\s*#\s*:?\s*([A-Za-z0-9.-]+)/i)?.[1] || '';
+    const bidCount = raw.match(/(?:^|[^#:])\b(\d+)\s+Bids?\b(?!\s*Now)/i);
+    const saleLink = root?.querySelector?.('a[href*="/sales/details/"]');
+    const saleUrl = canonicalAuctionNinjaSaleUrl(absoluteUrl(controlHref(saleLink), base));
+    const breadcrumb = textOf(root?.querySelector?.('.breadcrumb, .breadcrumbs, [class*="breadcrumb"]'));
+    const category = breadcrumb.split(/\s*[›>\/]\s*/).map(value => value.trim()).filter(Boolean).slice(-2, -1)[0] || '';
+    const location = lineAfter(raw, 'Auction Location:') || parseAuctionNinjaLocationText(raw);
+    const pickupText = lineAfter(raw, 'When to Pickup') || parseAuctionNinjaPickupText(raw);
+    const shippingText = parseAuctionNinjaShippingText(raw);
+    const buyerPremium = percentFromText(raw.match(/Buyer'?s Premium[\s\S]{0,80}/i)?.[0] || '');
+    return {
+      source: 'AuctionNinja',
+      pageKind: 'item-detail',
+      id,
+      stableId: id,
+      lot,
+      title,
+      url: canonicalUrl || requestedUrl,
+      image: images[0] || '',
+      images,
+      description,
+      category,
+      saleTitle: normalizeAuctionNinjaTitle(textOf(saleLink)),
+      saleUrl,
+      highBid: bid.label,
+      highBidAmount: bid.amount,
+      currentBid: bid.amount,
+      bidCount: bidCount?.[0] || '',
+      bidCountNumber: bidCount ? Number(bidCount[1]) : null,
+      timeText: raw.match(/((?:\d+\s+)?(?:days?|hours?|minutes?|seconds?)(?:\s+\d+\s+(?:days?|hours?|minutes?|seconds?))*\s+left)/i)?.[1] || '',
+      status: /\b(?:closed|lot won|bidding closed)\b/i.test(raw) ? 'CLOSED' : 'OPEN',
+      location,
+      pickupText,
+      shippingText,
+      buyerPremium,
+      detailEnriched: true,
+      rawText: cleanGovDealsText(raw)
+    };
+  }
+
+  function mergeAuctionNinjaItemDetail(item, detail) {
+    if (!detail) return item;
+    const merged = { ...item };
+    const fillKeys = [
+      'lot', 'title', 'image', 'description', 'category', 'saleTitle', 'saleUrl',
+      'highBid', 'highBidAmount', 'currentBid', 'currentPrice', 'bidCount',
+      'bidCountNumber', 'timeText', 'timeLeft', 'status', 'location', 'pickupText',
+      'shippingText', 'buyerPremium'
+    ];
+    fillKeys.forEach(key => {
+      if ((merged[key] === '' || merged[key] === null || merged[key] === undefined) && detail[key] !== '' && detail[key] !== null && detail[key] !== undefined) {
+        merged[key] = detail[key];
+      }
+    });
+    if (detail.description) {
+      if (item.description && item.description !== detail.description) merged.cardDescription = item.description;
+      merged.description = detail.description;
+    }
+    merged.images = uniqueNonEmpty([...(item.images || []), ...(detail.images || []), item.image, detail.image]);
+    if (!merged.image) merged.image = merged.images[0] || '';
+    merged.detailEnriched = true;
+    merged.detailSource = 'same-origin-product-document';
+    return merged;
+  }
+
+  async function enrichAuctionNinjaProductItems(items, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const out = Array.isArray(items) ? items.slice() : [];
+    const candidates = out.map((item, index) => ({ item, index })).filter(({ item }) => {
+      if (!item?.url || item.detailEnriched) return false;
+      try {
+        const url = new URL(item.url, 'https://www.auctionninja.com/');
+        return isAuctionNinjaHost(url.hostname) && resolveAuctionNinjaPage(url).kind === 'item-detail';
+      } catch {
+        return false;
+      }
+    });
+    const limit = Math.min(candidates.length, Math.max(0, Number(options.limit ?? candidates.length)));
+    const queue = candidates.slice(0, limit);
+    const concurrency = Math.max(1, Math.min(4, Number(options.concurrency || 4)));
+    const audit = { requested: queue.length, succeeded: 0, failed: [], stopped: false };
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queue.length && !shouldStop()) {
+        const entry = queue[cursor++];
+        const identity = scraperStableIdentity(entry.item, 'auctionninja');
+        const fetched = await fetchHtmlDocumentWithRetries(
+          entry.item.url,
+          'auctionninja.detail',
+          shouldStop,
+          { maxAttempts: 3, timeoutMs: options.timeoutMs || 20000 }
+        );
+        if (!fetched.document) {
+          audit.failed.push({ id: identity, reason: fetched.error || 'detail-fetch-failed' });
+          continue;
+        }
+        let detail = null;
+        try {
+          detail = extractAuctionNinjaItemDetail(fetched.document, new URL(fetched.responseUrl || entry.item.url));
+        } catch (error) {
+          audit.failed.push({ id: identity, reason: `detail-parse:${String(error?.message || error)}` });
+          continue;
+        }
+        const detailIdentity = scraperStableIdentity(detail || {}, 'auctionninja');
+        if (!detail || !detailIdentity || (identity && detailIdentity !== identity)) {
+          audit.failed.push({ id: identity, reason: 'detail-identity-mismatch' });
+          continue;
+        }
+        out[entry.index] = mergeAuctionNinjaItemDetail(entry.item, detail);
+        audit.succeeded += 1;
+        onProgress(`Enriched ${audit.succeeded}/${audit.requested} AuctionNinja item(s).`);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, () => worker()));
+    audit.stopped = shouldStop();
+    out.audit = audit;
+    return out;
+  }
+
+  async function scrapeAuctionNinjaItemDetail(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAuctionNinjaPage(loc) : { kind: 'item-detail', source: 'auctionninja' };
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'auctionninja' }, loc);
+    const parsedItem = shouldStop() ? null : extractAuctionNinjaItemDetail(root, loc);
+    const parsedIdentity = scraperStableIdentity(parsedItem || {}, 'auctionninja');
+    const identityMatches = Boolean(parsedItem)
+      && Boolean(parsedIdentity)
+      && (!route.productId || String(parsedIdentity) === String(route.productId));
+    const item = identityMatches ? parsedItem : null;
+    const items = item ? [item] : [];
+    onProgress(`Read ${items.length} AuctionNinja item detail record(s).`);
+    return {
+      source: 'auctionninja-item-dom',
+      context: { source: 'AuctionNinja', pageKind: 'item-detail', productId: route.productId || '', url: loc?.href || '' },
+      items,
+      expectedTotal: 1,
+      stopped: shouldStop(),
+      incomplete: shouldStop() || !identityMatches,
+      stopReason: shouldStop()
+        ? 'stopped-by-user'
+        : (identityMatches ? 'single-item-detail' : (parsedItem ? 'direct-item-identity-mismatch' : 'item-not-found')),
+      routeFingerprint,
+      coverage: {
+        proofTier: 'single-record',
+        strategy: 'server-rendered-item-dom',
+        routeFingerprint,
+        routeMatches: identityMatches,
+        enumeratedIds: item ? [scraperStableIdentity(item, 'auctionninja')].filter(Boolean) : [],
+        unexpectedIds: parsedItem && !identityMatches ? [parsedIdentity].filter(Boolean) : [],
+        failedPages: []
+      }
+    };
+  }
+
+  function extractAarAuctionIdFromUrl(url) {
+    try {
+      return new URL(url, 'https://aarauctions.com/').searchParams.get('auctionId') || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function extractAarCatalogFilters(loc = (typeof location !== 'undefined' ? location : null), root = null) {
+    let url;
+    try {
+      url = urlFromLocationLike(loc || 'https://aarauctions.com/servlet/Search.do');
+    } catch {
+      url = new URL('https://aarauctions.com/servlet/Search.do');
+    }
+    const allowed = ['categoryName', 'keyword', 'lotId', 'orderBy'];
+    const filters = {};
+    allowed.forEach(key => {
+      const fromUrl = url.searchParams.get(key);
+      const control = root?.querySelector?.(`[name="${key}"]`);
+      const value = fromUrl !== null ? fromUrl : (control?.value ?? control?.getAttribute?.('value') ?? '');
+      filters[key] = String(value || '').trim();
+    });
+    return filters;
+  }
+
+  function hasActiveAarCatalogFilters(filters = {}) {
+    return ['categoryName', 'keyword', 'lotId', 'orderBy'].some(key => String(filters?.[key] || '').trim() !== '');
+  }
+
+  function buildAarCatalogPageUrl(loc, page = 1, perPage = 100, filters = null) {
+    const source = urlFromLocationLike(loc || 'https://aarauctions.com/servlet/Search.do');
+    const auctionId = source.searchParams.get('auctionId') || '';
+    const next = new URL('/servlet/Search.do', source.origin);
+    next.searchParams.set('auctionId', auctionId);
+    const activeFilters = filters || extractAarCatalogFilters(source);
+    ['categoryName', 'keyword', 'lotId', 'orderBy'].forEach(key => {
+      const value = String(activeFilters?.[key] || '').trim();
+      if (value) next.searchParams.set(key, value);
+    });
+    next.searchParams.set('page', String(Math.max(1, Number(page) || 1)));
+    next.searchParams.set('perPage', String(Math.max(1, Math.min(100, Number(perPage) || 100))));
+    return next.href;
+  }
+
+  function aarCatalogResponseMatchesRequest(responseUrl, requestUrl, filters = {}) {
+    try {
+      const response = new URL(responseUrl, requestUrl);
+      const request = new URL(requestUrl);
+      if (!isAarAuctionsHost(response.hostname) || !/^\/servlet\/Search\.do$/i.test(response.pathname)) return false;
+      if (response.searchParams.get('auctionId') !== request.searchParams.get('auctionId')) return false;
+      return ['categoryName', 'keyword', 'lotId', 'orderBy'].every(key => {
+        const expected = String(filters?.[key] || '').trim();
+        return String(response.searchParams.get(key) || '').trim() === expected;
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  function normalizeAarItemImageUrl(value, base, auctionId = '') {
+    const absolute = absoluteUrl(value, base);
+    if (!absolute) return '';
+    try {
+      const url = new URL(absolute);
+      if (!isAarAuctionsHost(url.hostname)) return '';
+      if (!/\/live\/images\/auction-\d+\/(?:large|thumb)-/i.test(url.pathname)) return '';
+      if (auctionId && !url.pathname.includes(`/auction-${auctionId}/`)) return '';
+      url.pathname = url.pathname.replace(/\/thumb-/i, '/large-');
+      url.search = '';
+      url.hash = '';
+      return url.href;
+    } catch {
+      return '';
+    }
+  }
+
+  function extractAarItemImages(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
+    const auctionId = loc ? getAarAuctionId(loc) : '';
+    return uniqueNonEmpty(Array.from(root?.querySelectorAll?.('img[src], img[data-src], source[srcset], a[href*="/live/images/"]') || [])
+      .flatMap(node => [
+        node.currentSrc,
+        node.src,
+        node.getAttribute?.('src'),
+        node.getAttribute?.('data-src'),
+        node.getAttribute?.('href'),
+        ...String(node.getAttribute?.('srcset') || '').split(',').map(part => part.trim().split(/\s+/)[0])
+      ])
+      .map(value => normalizeAarItemImageUrl(value, base, auctionId))
+      .filter(Boolean));
+  }
+
+  function buildAarMapSearchUrl(locationText, settings = getAarResearchSettings()) {
+    const locationLabel = String(locationText || '').trim();
+    if (!locationLabel) return '';
+    const origin = String(settings?.originLabel || defaultAarResearchSettings().originLabel).trim();
+    const query = `${locationLabel} to ${origin}`;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+  }
+
+  function parseAarLocationHint(raw) {
+    const text = String(raw || '').replace(/\s+/g, ' ').trim();
+    const address = text.match(/\b\d{1,6}\s+[A-Za-z0-9 .'-]+,\s*[A-Z][A-Za-z .'-]+,\s*[A-Z]{2}\s*\d{5}(?:-\d{4})?\b/)?.[0];
+    if (address) return address.trim();
+    return text.match(/\b[A-Z][A-Za-z .'-]+,\s+[A-Z]{2}(?:\s+\d{5})?\b/)?.[0]?.trim() || '';
+  }
+
+  function getAarLines(node) {
+    return rawTextOf(node)
+      .split(/\n+/)
+      .map(line => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+  }
+
+  function isAarActionLine(line) {
+    return /^(?:Register(?: for Auction)?|More Info \/ Bid Now|Track this Item|Login to Bid)$/i.test(String(line || '').trim());
+  }
+
+  function isAarClosingLine(line) {
+    return /^(?:Closing at|Closes On|Ends|Starts)\b/i.test(String(line || '').trim());
+  }
+
+  function cleanAarTitleLine(line) {
+    return String(line || '')
+      .replace(/\b(?:Catalog|Register for Auction|Bid Online Now)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function getAarAuctionCardSeeds(root = document) {
+    const selectors = [
+      '.et_pb_column',
+      '.et_pb_module',
+      '.auction-item',
+      '.auction-card',
+      '[class*="auction"][class*="item"]',
+      'article',
+      'li',
+      'a[href*="Search.do?auctionId="]'
+    ];
+    const cards = [];
+    const seen = new Set();
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(seed => {
+        let card = seed;
+        if (!card.querySelector?.('a[href*="Search.do?auctionId="]') && /Search\.do\?auctionId=/i.test(controlHref(card))) {
+          card = seed.parentElement || seed;
+        }
+        const raw = textOf(card);
+        const hasCatalogLink = Boolean(card.querySelector?.('a[href*="Search.do?auctionId="]')) || /Search\.do\?auctionId=/i.test(controlHref(card));
+        if (!raw || !hasCatalogLink || seen.has(card)) return;
+        if (/Bidder Login|Seller Login|Payment|Invoice|Checkout/i.test(raw)) return;
+        seen.add(card);
+        cards.push(card);
+      });
+    });
+    return cards;
+  }
+
+  function findBestAarCatalogLink(card) {
+    const links = Array.from(card?.querySelectorAll?.('a[href*="Search.do?auctionId="]') || []);
+    if (/Search\.do\?auctionId=/i.test(controlHref(card))) links.unshift(card);
+    const scored = links.map(link => {
+      const label = cleanAarTitleLine(textOf(link));
+      let score = 0;
+      if (label && !/^(?:Catalog|View Catalog|Bid Online Now)$/i.test(label)) score += 40;
+      if (/auction|sale|ending|estate|equipment|vehicle|tools|real estate/i.test(label)) score += 25;
+      if (/catalog|register|bid online/i.test(label)) score -= 20;
+      return { link, score };
+    }).sort((a, b) => b.score - a.score);
+    return scored[0]?.link || links[0] || null;
+  }
+
+  function extractAarAuctionTitle(card, catalogLink) {
+    const linkLabel = cleanAarTitleLine(textOf(catalogLink));
+    if (linkLabel && !/^(?:Catalog|View Catalog|Bid Online Now)$/i.test(linkLabel)) return linkLabel;
+    const lines = getAarLines(card).map(cleanAarTitleLine).filter(Boolean);
+    return lines.find(line => /(?:auction|sale|ending|estate|real estate)/i.test(line) && !isAarClosingLine(line) && !isAarActionLine(line))
+      || lines.find(line => !isAarClosingLine(line) && !isAarActionLine(line) && !/^(?:Catalog|Bid Online Now)$/i.test(line))
+      || '';
+  }
+
+  function extractAarAuctionCards(root = document, loc = (typeof location !== 'undefined' ? location : null), settings = getAarResearchSettings()) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/auctions/');
+    const cards = [];
+    const seen = new Set();
+
+    getAarAuctionCardSeeds(root).forEach(card => {
+      const rawText = textOf(card);
+      const catalogLink = findBestAarCatalogLink(card);
+      const url = absoluteUrl(controlHref(catalogLink), base);
+      const auctionId = extractAarAuctionIdFromUrl(url);
+      const title = extractAarAuctionTitle(card, catalogLink);
+      const lines = getAarLines(card);
+      const closingText = lines.find(isAarClosingLine) || rawText.match(/\bClosing at\s+.*?(?:\d{4}|\d{1,2}(?:AM|PM)?)(?=\s|$)/i)?.[0] || '';
+      const category = lines.find(line => line !== title && line !== closingText && !isAarActionLine(line) && !/^(?:Catalog|Bid Online Now)$/i.test(line)) || '';
+      const description = lines
+        .filter(line => line !== title && line !== category && line !== closingText && !isAarActionLine(line))
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const locationHint = parseAarLocationHint(`${description} ${rawText}`);
+      const key = url || auctionId || `${title}:${rawText.slice(0, 80)}`;
+      if (!key || seen.has(key) || !title) return;
+      seen.add(key);
+
+      cards.push({
+        source: 'AAR Auctions',
+        pageKind: 'aar-auction-list',
+        auctionId,
+        title,
+        url,
+        image: pickFirstImage(card, base),
+        category,
+        closingText,
+        description,
+        registerUrl: pickFirstHref(card, ['a[href*="Register"]', 'a[href*="register"]'], base),
+        locationHint,
+        mapSearchUrl: buildAarMapSearchUrl(locationHint, settings),
+        rawText
+      });
+    });
+
+    return cards;
+  }
+
+  function extractAarSentence(raw, pattern) {
+    const lines = rawTextOf({ textContent: raw })
+      .split(/\n+/)
+      .map(line => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    return lines.find(line => pattern.test(line)) || '';
+  }
+
+  function extractAarCatalogContext(root = document, loc = (typeof location !== 'undefined' ? location : null), settings = getAarResearchSettings()) {
+    const raw = rawTextOf(root?.body || root?.documentElement || root);
+    const flat = textOf(root?.body || root?.documentElement || root);
+    const filters = extractAarCatalogFilters(loc, root);
+    const filtered = hasActiveAarCatalogFilters(filters);
+    const locationMatch = raw.match(/Items\s+located\s+at\s*:?\s*([^\n.]+)/i);
+    let locationText = locationMatch?.[1]?.trim() || parseAarLocationHint(raw);
+    if (locationText.includes(':')) locationText = locationText.split(':').pop().trim();
+    const expectedMatch = flat.match(/\bAll\s+Items\s*\(\s*([\d,]+)\s*\)/i)
+      || flat.match(/\bShowing\s+[\d,]+\s*(?:-|to)\s*[\d,]+\s+of\s+([\d,]+)\s+(?:lots?|items?)\b/i)
+      || flat.match(/\bof\s+([\d,]+)\s+(?:lots?|items?)\b/i);
+    return {
+      source: 'AAR Auctions',
+      pageKind: 'aar-auction-catalog',
+      auctionId: loc ? getAarAuctionId(loc) : '',
+      title: pickFirstText(root, ['h1', '.auction-title', 'title']) || String(root?.title || '').replace(/\s*\|\s*Absolute Auctions.*$/i, '').trim() || 'AAR Auction Catalog',
+      url: loc?.href || (typeof location !== 'undefined' ? location.href : ''),
+      buyerPremium: percentFromText(flat.match(/\b\d+(?:\.\d+)?\s*%\s+buyers?\s+premium\b/i)?.[0] || flat.match(/\bbuyers?\s+premium\s*:?\s*\d+(?:\.\d+)?\s*%/i)?.[0] || ''),
+      pickupText: extractAarSentence(raw, /\b(?:pickup|picked up)\b/i),
+      paymentText: extractAarSentence(raw, /\bpayment\b/i),
+      location: locationText,
+      directionsUrl: pickFirstHref(root, ['a[href*="maps"]', 'a[href*="google.com/maps"]'], loc?.href || 'https://aarauctions.com/'),
+      mapSearchUrl: buildAarMapSearchUrl(locationText, settings),
+      expectedTotal: !filtered && expectedMatch ? Number(expectedMatch[1].replace(/,/g, '')) : null,
+      advertisedAuctionTotal: expectedMatch ? Number(expectedMatch[1].replace(/,/g, '')) : null,
+      filters,
+      filtered,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  function getAarCatalogLotRows(root = document) {
+    const selectors = [
+      'tr',
+      '.auction-item',
+      '.item',
+      '.lot',
+      '[class*="auction"][class*="item"]',
+      '[class*="lot"]',
+      'li',
+      'article'
+    ];
+    const rows = [];
+    const seen = new Set();
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(row => {
+        const raw = textOf(row);
+        if (!raw || !/#\s*[A-Za-z0-9.-]+\s*[-–]/.test(raw) || !/High Bid|Minimum Next Bid|Closes On|More Info/i.test(raw)) return;
+        if (seen.has(row)) return;
+        seen.add(row);
+        rows.push(row);
+      });
+    });
+    return rows;
+  }
+
+  function parseAarLotScriptArgs(value) {
+    const args = [];
+    let current = '';
+    let quote = '';
+    let escaped = false;
+    String(value || '').split('').forEach(char => {
+      if (escaped) {
+        current += char;
+        escaped = false;
+        return;
+      }
+      if (char === '\\' && quote) {
+        current += char;
+        escaped = true;
+        return;
+      }
+      if ((char === "'" || char === '"') && (!quote || quote === char)) {
+        quote = quote ? '' : char;
+        current += char;
+        return;
+      }
+      if (char === ',' && !quote) {
+        args.push(current.trim());
+        current = '';
+        return;
+      }
+      current += char;
+    });
+    if (current.trim() || value) args.push(current.trim());
+    return args;
+  }
+
+  function decodeAarScriptArg(value) {
+    const token = String(value ?? '').trim();
+    if (/^null$/i.test(token)) return '';
+    if ((token.startsWith("'") && token.endsWith("'")) || (token.startsWith('"') && token.endsWith('"'))) {
+      return token.slice(1, -1)
+        .replace(/\\'/g, "'")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\');
+    }
+    return token;
+  }
+
+  function numberFromAarScriptArg(value) {
+    const decoded = decodeAarScriptArg(value);
+    const number = Number(String(decoded).replace(/,/g, ''));
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function moneyLabelFromAarScriptArgs(labelValue, numericValue) {
+    const label = decodeAarScriptArg(labelValue);
+    if (label) return `$${label}`;
+    const number = numberFromAarScriptArg(numericValue);
+    return Number.isFinite(number) ? `$${number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '';
+  }
+
+  function cleanAarScriptLotTitle(value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    const firstSentence = text.match(/^(.{18,}?\.)\s+/)?.[1] || '';
+    return (firstSentence || text)
+      .replace(/\.$/, '')
+      .trim();
+  }
+
+  function extractAarScriptLots(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
+    const lots = [];
+    Array.from(root?.querySelectorAll?.('script') || []).forEach(script => {
+      const text = script?.textContent || '';
+      const matches = text.matchAll(/new\s+Lot\s*\(([\s\S]*?)\)\s*;/g);
+      Array.from(matches).forEach(match => {
+        const args = parseAarLotScriptArgs(match[1]);
+        if (args.length < 22) return;
+        const auctionId = decodeAarScriptArg(args[0]) || (loc ? getAarAuctionId(loc) : '');
+        const lot = decodeAarScriptArg(args[2]);
+        const itemId = decodeAarScriptArg(args[3]);
+        const description = decodeAarScriptArg(args[5]);
+        const title = cleanAarScriptLotTitle(description);
+        if (!lot || !itemId || !title) return;
+        const highBidAmount = numberFromAarScriptArg(args[19]);
+        const nextBidAmount = numberFromAarScriptArg(args[21]);
+        lots.push({
+          source: 'AAR Auctions',
+          pageKind: 'aar-auction-catalog',
+          auctionId,
+          itemId,
+          lot,
+          title,
+          url: absoluteUrl(`/servlet/Search.do?auctionId=${encodeURIComponent(auctionId)}&itemId=${encodeURIComponent(itemId)}`, base),
+          image: '',
+          images: [],
+          description,
+          highBid: moneyLabelFromAarScriptArgs(args[24], args[19]),
+          highBidAmount,
+          currentBid: highBidAmount,
+          nextBid: moneyLabelFromAarScriptArgs(args[26], args[21]),
+          nextBidAmount,
+          quantity: numberFromAarScriptArg(args[15]),
+          auctionType: decodeAarScriptArg(args[14]),
+          closingText: [decodeAarScriptArg(args[34]), decodeAarScriptArg(args[35])].filter(Boolean).join(' - '),
+          rawText: [
+            `Lot ${lot}`,
+            title,
+            description,
+            moneyLabelFromAarScriptArgs(args[24], args[19]) ? `High Bid: ${moneyLabelFromAarScriptArgs(args[24], args[19])}` : '',
+            moneyLabelFromAarScriptArgs(args[26], args[21]) ? `Minimum Next Bid: ${moneyLabelFromAarScriptArgs(args[26], args[21])}` : '',
+            [decodeAarScriptArg(args[34]), decodeAarScriptArg(args[35])].filter(Boolean).join(' - ')
+          ].filter(Boolean).join(' | ')
+        });
+      });
+    });
+    return lots;
+  }
+
+  function extractAarCatalogLots(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
+    const auctionId = loc ? getAarAuctionId(loc) : '';
+    const lots = [];
+    const seen = new Set();
+
+    const addLot = (lot) => {
+      const itemId = String(lot.itemId || firstMatch(lot.url || '', [/[?&]itemId=([^&]+)/i]) || '').trim();
+      const key = itemId ? `${lot.auctionId || auctionId || ''}:${itemId}` : (lot.lot ? `${lot.auctionId || auctionId || ''}:${lot.lot}` : (lot.url || lot.title));
+      if (!key || seen.has(key) || !lot.lot || !lot.title) return;
+      seen.add(key);
+      lots.push(lot);
+    };
+
+    extractAarScriptLots(root, loc).forEach(addLot);
+
+    getAarCatalogLotRows(root).forEach(row => {
+      const rawText = textOf(row);
+      const lot = rawText.match(/#\s*([A-Za-z0-9.-]+)\s*[-–]/)?.[1] || '';
+      const title = rawText.match(/#\s*[A-Za-z0-9.-]+\s*[-–]\s*([\s\S]*?)(?=\s+(?:More Info|Closes On|High Bid|Auction Type|Quantity|Minimum Next Bid|Login to Bid|$))/i)?.[1]?.trim() || '';
+      const link = row.querySelector?.('a[href*="itemId"], a[href*="ItemId"]');
+      const url = absoluteUrl(controlHref(link), base);
+      const itemId = firstMatch(url, [/[?&]itemId=([^&]+)/i]) || '';
+      if (!itemId) return;
+      const highBid = rawText.match(/\bHigh Bid:\s*(\$[\d,]+(?:\.\d{2})?)/i)?.[1] || '';
+      const nextBid = rawText.match(/\bMinimum Next Bid:\s*(\$[\d,]+(?:\.\d{2})?)/i)?.[1] || '';
+      const quantityText = rawText.match(/\bQuantity:\s*([\d,]+)/i)?.[1] || '';
+      const closingText = rawText.match(/\bCloses On:\s*([\s\S]*?)(?=\s+High Bid:|\s+Auction Type:|\s+Quantity:|\s+Minimum Next Bid:|$)/i)?.[1]?.trim() || '';
+      const description = rawText.match(/\bMore Details\s+([\s\S]+)$/i)?.[1]?.trim() || '';
+      addLot({
+        source: 'AAR Auctions',
+        pageKind: 'aar-auction-catalog',
+        auctionId,
+        itemId,
+        lot,
+        title,
+        url,
+        image: pickFirstImage(row, base),
+        images: uniqueNonEmpty([pickFirstImage(row, base)]),
+        description,
+        highBid,
+        highBidAmount: moneyFromText(highBid),
+        currentBid: moneyFromText(highBid),
+        nextBid,
+        nextBidAmount: moneyFromText(nextBid),
+        quantity: quantityText ? Number(quantityText.replace(/,/g, '')) : null,
+        auctionType: rawText.match(/\bAuction Type:\s*([\s\S]*?)(?=\s+Quantity:|\s+Minimum Next Bid:|$)/i)?.[1]?.trim() || '',
+        closingText,
+        rawText: [
+          lot ? `Lot ${lot}` : '',
+          title,
+          description,
+          highBid ? `High Bid: ${highBid}` : '',
+          nextBid ? `Minimum Next Bid: ${nextBid}` : '',
+          closingText
+        ].filter(Boolean).join(' | ')
+      });
+    });
+
+    return lots.sort((a, b) => String(a.lot).localeCompare(String(b.lot), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+  }
+
+  function extractAarItemDetail(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const itemId = loc ? getAarItemId(loc) : '';
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
+    const lots = extractAarCatalogLots(root, loc);
+    const match = lots.find(lot => {
+      if (!itemId) return false;
+      try {
+        return new URL(lot.url || '', base).searchParams.get('itemId') === itemId;
+      } catch {
+        return String(lot.url || '').includes(`itemId=${itemId}`);
+      }
+    }) || (lots.length === 1 ? lots[0] : null);
+    if (!match) return null;
+    const parsedItemId = String(match.itemId || String(match.url || '').match(/[?&]itemId=([^&]+)/i)?.[1] || '').trim();
+    if (itemId && parsedItemId && parsedItemId !== String(itemId)) return null;
+    const images = extractAarItemImages(root, loc);
+    return {
+      ...match,
+      pageKind: 'aar-item-detail',
+      itemId: itemId || parsedItemId,
+      image: images[0] || match.image || pickFirstImage(root, base),
+      images: uniqueNonEmpty([...images, ...(match.images || []), match.image]),
+      detailEnriched: true,
+      detailSource: 'same-origin-aar-item-document'
+    };
+  }
+
+  function mergeAarItemDetail(item, detail) {
+    if (!detail) return item;
+    const merged = { ...item };
+    const fillKeys = [
+      'lot', 'title', 'description', 'highBid', 'highBidAmount', 'currentBid',
+      'nextBid', 'nextBidAmount', 'quantity', 'auctionType', 'closingText'
+    ];
+    fillKeys.forEach(key => {
+      if ((merged[key] === '' || merged[key] === null || merged[key] === undefined)
+        && detail[key] !== '' && detail[key] !== null && detail[key] !== undefined) {
+        merged[key] = detail[key];
+      }
+    });
+    if (detail.description && detail.description.length >= String(item.description || '').length) {
+      merged.description = detail.description;
+    }
+    merged.itemId = String(item.itemId || detail.itemId || '').trim();
+    merged.images = uniqueNonEmpty([...(item.images || []), ...(detail.images || []), item.image, detail.image]);
+    merged.image = merged.images[0] || item.image || detail.image || '';
+    merged.detailEnriched = true;
+    merged.detailSource = 'same-origin-aar-item-document';
+    return merged;
+  }
+
+  async function enrichAarCatalogLots(items, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const out = Array.isArray(items) ? items.slice() : [];
+    const queue = out.map((item, index) => ({ item, index })).filter(({ item }) => item?.url && item?.itemId);
+    const audit = { requested: queue.length, succeeded: 0, failed: [], stopped: false };
+    const concurrency = Math.max(1, Math.min(4, Number(options.concurrency || 4)));
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queue.length && !shouldStop()) {
+        const entry = queue[cursor++];
+        const identity = String(entry.item.itemId || '').trim();
+        const fetched = await fetchHtmlDocumentWithRetries(
+          entry.item.url,
+          'aar.detail',
+          shouldStop,
+          { maxAttempts: 3, timeoutMs: options.timeoutMs || 20000 }
+        );
+        if (!fetched.document) {
+          audit.failed.push({ id: identity, reason: fetched.error || 'detail-fetch-failed' });
+          continue;
+        }
+        let responseLoc;
+        try {
+          responseLoc = new URL(fetched.responseUrl || entry.item.url);
+        } catch {
+          audit.failed.push({ id: identity, reason: 'detail-response-url-invalid' });
+          continue;
+        }
+        const responseRoute = resolveAarAuctionsPage(responseLoc);
+        if (responseRoute.kind !== 'aar-item-detail'
+          || String(responseRoute.auctionId || '') !== String(entry.item.auctionId || '')
+          || String(responseRoute.itemId || '') !== identity) {
+          audit.failed.push({ id: identity, reason: 'detail-identity-mismatch' });
+          continue;
+        }
+        let detail = null;
+        try {
+          detail = extractAarItemDetail(fetched.document, responseLoc);
+        } catch (error) {
+          audit.failed.push({ id: identity, reason: `detail-parse:${String(error?.message || error)}` });
+          continue;
+        }
+        if (!detail || String(detail.itemId || '') !== identity) {
+          audit.failed.push({ id: identity, reason: 'detail-identity-mismatch' });
+          continue;
+        }
+        out[entry.index] = mergeAarItemDetail(entry.item, detail);
+        audit.succeeded += 1;
+        onProgress(`Enriched ${audit.succeeded}/${audit.requested} AAR lot(s).`);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, () => worker()));
+    audit.stopped = shouldStop();
+    out.audit = audit;
+    return out;
+  }
+
+  function extractAarItemContext(root = document, loc = (typeof location !== 'undefined' ? location : null), settings = getAarResearchSettings()) {
+    const item = extractAarItemDetail(root, loc);
+    const catalogContext = extractAarCatalogContext(root, loc, settings);
+    return {
+      ...catalogContext,
+      pageKind: 'aar-item-detail',
+      itemId: loc ? getAarItemId(loc) : (item?.itemId || ''),
+      expectedTotal: item ? 1 : 0,
+      itemTitle: item?.title || '',
+      researchSettings: settings
+    };
+  }
+
+  function mergeAarLots(target, lots, duplicateIds = null) {
+    lots.forEach(lot => {
+      const itemId = String(lot.itemId || firstMatch(lot.url || '', [/[?&]itemId=([^&]+)/i]) || '').trim();
+      const key = itemId ? `${lot.auctionId || ''}:${itemId}` : (lot.lot ? `${lot.auctionId || ''}:${lot.lot}` : (lot.url || lot.title));
+      if (!key || !lot.title) return;
+      if (target.has(String(key))) duplicateIds?.add?.(String(key));
+      target.set(String(key), { ...lot, itemId: itemId || lot.itemId || '' });
+    });
+    return target;
+  }
+
+  function aarAuctionCalendarIdentity(item) {
+    const auctionId = String(item?.auctionId || extractAarAuctionIdFromUrl(item?.url || '') || '').trim();
+    return auctionId ? `aar-auction:${auctionId}` : '';
+  }
+
+  function findAarCatalogPageUrls(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://aarauctions.com/');
+    const auctionId = loc ? getAarAuctionId(loc) : extractAarAuctionIdFromUrl(base);
+    const pages = new Map();
+    Array.from(root?.querySelectorAll?.('a[href*="Search.do"]') || []).forEach(anchor => {
+      const label = controlLabel(anchor);
+      const href = controlHref(anchor);
+      if (!href || /bid|register|track|login|payment|invoice|checkout/i.test(`${href} ${label}`)) return;
+      let url;
+      try {
+        url = new URL(href, base);
+      } catch {
+        return;
+      }
+      if (!isAarAuctionsHost(url.hostname)) return;
+      if (!/^\/servlet\/Search\.do$/i.test(url.pathname)) return;
+      if (auctionId && url.searchParams.get('auctionId') !== auctionId) return;
+      if (![...url.searchParams.keys()].some(key => /page|start|offset|perpage|perPage|rows/i.test(key))) return;
+      pages.set(url.href, url.href);
+    });
+    return Array.from(pages.values());
+  }
+
+  async function settleAarAuctionCalendarDom(root = document, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const settings = getAarResearchSettings();
+    const itemsById = new Map();
+    const duplicateIds = new Set();
+    const missingIdentityKeys = new Set();
+    const addVisible = () => {
+      const snapshotIds = new Set();
+      extractAarAuctionCards(root, loc, settings).forEach(item => {
+        const id = aarAuctionCalendarIdentity(item);
+        if (!id) {
+          missingIdentityKeys.add(String(item?.url || item?.title || 'unknown-calendar-row'));
+          return;
+        }
+        if (snapshotIds.has(id)) duplicateIds.add(id);
+        snapshotIds.add(id);
+        if (!itemsById.has(id)) itemsById.set(id, item);
+      });
+    };
+    addVisible();
+    const canScroll = root === (typeof document !== 'undefined' ? document : null)
+      && typeof globalThis.scrollTo === 'function'
+      && typeof globalThis.innerHeight === 'number'
+      && root?.documentElement;
+    if (!canScroll) {
+      return {
+        items: Array.from(itemsById.values()),
+        settledBottom: false,
+        reachedBottom: false,
+        stableCycles: 0,
+        attempts: 0,
+        duplicateIds: Array.from(duplicateIds),
+        missingIdentityCount: missingIdentityKeys.size,
+        reason: 'bottom-audit-unavailable'
+      };
+    }
+    const originalY = Number(globalThis.scrollY || 0);
+    const maxAttempts = Math.max(3, Math.min(12, Number(options.maxAttempts || 8)));
+    const waitMs = Math.max(100, Number(options.waitMs || 450));
+    let previousCount = itemsById.size;
+    let stableCycles = 0;
+    let reachedBottom = false;
+    let attempts = 0;
+    try {
+      for (attempts = 1; attempts <= maxAttempts && !shouldStop(); attempts += 1) {
+        globalThis.scrollTo(0, root.documentElement.scrollHeight || root.body?.scrollHeight || 0);
+        await wait(waitMs);
+        addVisible();
+        const count = itemsById.size;
+        stableCycles = count === previousCount ? stableCycles + 1 : 0;
+        previousCount = count;
+        const height = Number(root.documentElement.scrollHeight || root.body?.scrollHeight || 0);
+        reachedBottom = Math.ceil(Number(globalThis.scrollY || 0) + Number(globalThis.innerHeight || 0)) >= height - 2;
+        onProgress(`Checking AAR calendar coverage... ${count} auction(s).`);
+        if (reachedBottom && stableCycles >= 2) break;
+      }
+    } finally {
+      globalThis.scrollTo(0, originalY);
+    }
+    const settledBottom = !shouldStop() && reachedBottom && stableCycles >= 2;
+    return {
+      items: Array.from(itemsById.values()),
+      settledBottom,
+      reachedBottom,
+      stableCycles,
+      attempts,
+      duplicateIds: Array.from(duplicateIds),
+      missingIdentityCount: missingIdentityKeys.size,
+      reason: shouldStop() ? 'stopped-by-user' : (settledBottom ? 'dom-bottom-settled' : 'calendar-not-settled')
+    };
+  }
+
+  async function scrapeAarAuctionCards(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAarAuctionsPage(loc) : { kind: 'aar-auction-list', source: 'aar' };
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'aar' }, loc);
+    const settings = getAarResearchSettings();
+    const startedAt = Date.now();
+    const settled = await settleAarAuctionCalendarDom(root, onProgress, shouldStop);
+    const sales = settled.items;
+    const context = {
+      source: 'AAR Auctions',
+      pageKind: 'aar-auction-list',
+      title: String(root?.title || '').replace(/\s*\|\s*Absolute Auctions.*$/i, '').trim() || 'AAR Auction Calendar',
+      url: loc?.href || '',
+      researchSettings: settings,
+      expectedTotal: settled.settledBottom ? sales.length : null,
+      generatedAt: new Date().toISOString()
+    };
+    onProgress(`Read ${sales.length} AAR auction card(s).`);
+    const stopped = shouldStop();
+    const identities = sales.map(aarAuctionCalendarIdentity);
+    const duplicateIds = Array.from(new Set(settled.duplicateIds || []));
+    const currentRoute = typeof location !== 'undefined' ? resolveAarAuctionsPage(location) : route;
+    const currentFingerprint = genericRouteFingerprint({ ...currentRoute, source: 'aar' }, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const incomplete = stopped
+      || !routeMatches
+      || !settled.settledBottom
+      || identities.some(id => !id)
+      || Number(settled.missingIdentityCount || 0) > 0
+      || duplicateIds.length > 0;
+    const stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (duplicateIds.length
+          ? 'duplicate-identities'
+          : (Number(settled.missingIdentityCount || 0) > 0 ? 'missing-identities' : settled.reason)));
+    debugEvent('aar.calendar.coverage', {
+      count: sales.length,
+      stopReason,
+        routeMatches,
+        settledBottom: settled.settledBottom,
+        stableCycles: settled.stableCycles,
+        attempts: settled.attempts,
+        duplicateIds,
+        missingIdentityCount: Number(settled.missingIdentityCount || 0)
+    });
+    return {
+      source: 'aar-calendar-dom',
+      items: sales,
+      sales,
+      expectedTotal: settled.settledBottom ? sales.length : null,
+      context,
+      stopped,
+      incomplete,
+      stopReason,
+      routeFingerprint,
+      coverage: {
+        proofTier: settled.settledBottom ? 'dom-bottom-settled' : 'unproven',
+        strategy: 'server-rendered-calendar-settled-bottom',
+        routeFingerprint,
+        currentFingerprint,
+        routeMatches,
+        enumeratedIds: identities.filter(Boolean),
+        duplicateIds,
+        missingIdentityCount: Number(settled.missingIdentityCount || 0),
+        reachedBottom: settled.reachedBottom,
+        settledBottom: settled.settledBottom,
+        stableCycles: settled.stableCycles,
+        failedPages: [],
+        durationMs: Date.now() - startedAt
+      }
+    };
+  }
+
+  async function scrapeAarCatalogLots(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAarAuctionsPage(loc) : { kind: 'aar-auction-catalog', source: 'aar' };
+    const startedAt = Date.now();
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'aar' }, loc);
+    const filters = extractAarCatalogFilters(loc, root);
+    const filtered = hasActiveAarCatalogFilters(filters);
+    let context = { ...extractAarCatalogContext(root, loc), filters, filtered };
+    const lotsByKey = new Map();
+    const duplicateIds = new Set();
+    const failedPages = [];
+    const pageAudits = [];
+    const observedTotals = new Set();
+    const hasExpectedTotal = context.expectedTotal !== null
+      && context.expectedTotal !== undefined
+      && context.expectedTotal !== ''
+      && Number.isFinite(Number(context.expectedTotal));
+    let expectedTotal = hasExpectedTotal ? Number(context.expectedTotal) : null;
+    if (expectedTotal !== null) observedTotals.add(expectedTotal);
+    let steps = 0;
+    let page = 1;
+    let enumerationComplete = false;
+    let enumerationReason = '';
+    while (page <= 100 && !shouldStop()) {
+      const currentRouteDuring = typeof location !== 'undefined' ? resolveAarAuctionsPage(location) : route;
+      const fingerprintDuring = genericRouteFingerprint({ ...currentRouteDuring, source: 'aar' }, typeof location !== 'undefined' ? location : loc);
+      if (routeFingerprint !== fingerprintDuring) {
+        enumerationReason = 'route-fingerprint-changed';
+        break;
+      }
+      const requestedUrl = buildAarCatalogPageUrl(loc, page, 100, filters);
+      steps += 1;
+      onProgress(`Fetching AAR catalog page ${page}...`);
+      const fetched = await fetchHtmlDocumentWithRetries(
+        requestedUrl,
+        'aar.pagination',
+        shouldStop,
+        { maxAttempts: 3, timeoutMs: 20000 }
+      );
+      if (!fetched.document) {
+        failedPages.push({ page, url: requestedUrl, error: fetched.error || 'fetch-failed' });
+        enumerationReason = fetched.error || 'fetch-failed';
+        break;
+      }
+      const responseUrl = String(fetched.responseUrl || requestedUrl);
+      if (!aarCatalogResponseMatchesRequest(responseUrl, requestedUrl, filters)) {
+        failedPages.push({ page, url: requestedUrl, responseUrl, error: 'response-route-or-filter-mismatch' });
+        enumerationReason = 'response-route-or-filter-mismatch';
+        break;
+      }
+      const pageLoc = new URL(responseUrl);
+      const pageRoute = resolveAarAuctionsPage(pageLoc);
+      if (pageRoute.kind !== 'aar-auction-catalog' || String(pageRoute.auctionId || '') !== String(route.auctionId || '')) {
+        failedPages.push({ page, url: requestedUrl, responseUrl, error: 'response-auction-mismatch' });
+        enumerationReason = 'response-auction-mismatch';
+        break;
+      }
+      const pageContext = extractAarCatalogContext(fetched.document, pageLoc);
+      const hasAdvertisedTotal = pageContext.advertisedAuctionTotal !== null
+        && pageContext.advertisedAuctionTotal !== undefined
+        && pageContext.advertisedAuctionTotal !== ''
+        && Number.isFinite(Number(pageContext.advertisedAuctionTotal));
+      const advertisedTotal = hasAdvertisedTotal ? Number(pageContext.advertisedAuctionTotal) : null;
+      if (!filtered && advertisedTotal !== null) {
+        observedTotals.add(advertisedTotal);
+        expectedTotal = expectedTotal ?? advertisedTotal;
+      }
+      const pageLots = extractAarCatalogLots(fetched.document, pageLoc);
+      const before = lotsByKey.size;
+      mergeAarLots(lotsByKey, pageLots, duplicateIds);
+      const pageLinks = findAarCatalogPageUrls(fetched.document, pageLoc);
+      const hasHigherPage = pageLinks.some(url => Number(new URL(url).searchParams.get('page') || 1) > page);
+      pageAudits.push({
+        page,
+        requestedUrl,
+        responseUrl,
+        count: pageLots.length,
+        added: lotsByKey.size - before,
+        ids: pageLots.map(item => scraperStableIdentity(item, 'aar')).filter(Boolean),
+        advertisedTotal,
+        hasHigherPage
+      });
+      debugEvent('aar.pagination.page', {
+        page,
+        count: pageLots.length,
+        added: lotsByKey.size - before,
+        uniqueCount: lotsByKey.size,
+        expectedTotal,
+        filtered,
+        hasHigherPage
+      });
+      if (expectedTotal !== null) {
+        if (lotsByKey.size === expectedTotal) {
+          enumerationComplete = true;
+          enumerationReason = 'verified-total-reached';
+          break;
+        }
+        if (lotsByKey.size > expectedTotal) {
+          enumerationReason = 'count-exceeds-total';
+          break;
+        }
+        if (!pageLots.length || !hasHigherPage) {
+          enumerationReason = 'catalog-ended-before-total';
+          break;
+        }
+      } else if (!hasHigherPage) {
+        expectedTotal = lotsByKey.size;
+        enumerationComplete = true;
+        enumerationReason = 'deterministic-pagination-exhausted';
+        break;
+      }
+      page += 1;
+    }
+    if (!enumerationReason && page > 100) enumerationReason = 'max-fetch-steps';
+
+    let lots = Array.from(lotsByKey.values()).sort((a, b) => String(a.lot || '').localeCompare(String(b.lot || ''), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+    let enrichmentAudit = { requested: 0, succeeded: 0, failed: [], stopped: false };
+    if (lots.length && !shouldStop()) {
+      const enriched = await enrichAarCatalogLots(lots, onProgress, shouldStop, { concurrency: 4, timeoutMs: 20000 });
+      enrichmentAudit = enriched.audit || enrichmentAudit;
+      lots = Array.from(enriched);
+    }
+    const stopped = shouldStop();
+    const currentRoute = typeof location !== 'undefined' ? resolveAarAuctionsPage(location) : route;
+    const currentFingerprint = genericRouteFingerprint({ ...currentRoute, source: 'aar' }, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const totalDrift = observedTotals.size > 1;
+    const enrichmentComplete = enrichmentAudit.requested === enrichmentAudit.succeeded && enrichmentAudit.failed.length === 0;
+    const incomplete = stopped
+      || !routeMatches
+      || !enumerationComplete
+      || expectedTotal === null
+      || lots.length !== expectedTotal
+      || duplicateIds.size > 0
+      || failedPages.length > 0
+      || totalDrift
+      || !enrichmentComplete;
+    const stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedPages.length
+          ? 'failed-pages'
+          : (totalDrift
+            ? 'total-drift'
+            : (duplicateIds.size
+              ? 'duplicate-identities'
+              : (!enumerationComplete
+                ? (enumerationReason || 'pagination-incomplete')
+                : (!enrichmentComplete
+                  ? 'detail-enrichment-incomplete'
+                  : (expectedTotal === null ? 'authoritative-total-unavailable' : (lots.length === expectedTotal ? enumerationReason : 'count-mismatch'))))))));
+    context = {
+      ...context,
+      expectedTotal,
+      filters,
+      filtered,
+      visibleLots: lots.length
+    };
+    const coverage = {
+      proofTier: enumerationComplete && expectedTotal !== null ? 'pagination-exact' : 'unproven',
+      strategy: 'aar-servlet-perpage100-plus-item-enrichment',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      enumeratedIds: lots.map(item => scraperStableIdentity(item, 'aar')).filter(Boolean),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages,
+      failedBatches: enrichmentAudit.failed,
+      observedTotals: Array.from(observedTotals),
+      filters,
+      pageAudits,
+      enrichment: enrichmentAudit,
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('aar.coverage', { lots: lots.length, expectedTotal, stopReason, steps, coverage });
+    return {
+      source: 'aar-servlet',
+      items: lots,
+      lots,
+      expectedTotal,
+      context,
+      stopped,
+      stopReason,
+      incomplete,
+      pageSteps: steps,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      failedPages,
+      audit: { pages: pageAudits, enrichment: enrichmentAudit }
+    };
+  }
+
+  async function scrapeAarItemDetail(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAarAuctionsPage(loc) : { kind: 'aar-item-detail', source: 'aar' };
+    const routeFingerprint = genericRouteFingerprint({ ...route, source: 'aar' }, loc);
+    const settings = getAarResearchSettings();
+    const item = extractAarItemDetail(root, loc);
+    const context = extractAarItemContext(root, loc, settings);
+    const items = item && !shouldStop() ? [item] : [];
+    const stopReason = shouldStop() ? 'stopped-by-user' : (item ? 'single-item-detail' : 'item-not-found');
+    onProgress(`Read ${items.length} AAR item detail record(s).`);
+    debug('aar item detail scrape finished', {
+      itemId: context.itemId || '',
+      count: items.length,
+      stopReason,
+      context
+    });
+    return {
+      source: 'aar-item-dom',
+      items,
+      lots: items,
+      expectedTotal: 1,
+      context,
+      stopped: shouldStop(),
+      incomplete: shouldStop() || !item,
+      stopReason,
+      routeFingerprint,
+      coverage: {
+        proofTier: 'single-record',
+        strategy: 'server-rendered-item-dom',
+        routeFingerprint,
+        routeMatches: true,
+        enumeratedIds: item ? [scraperStableIdentity(item, 'aar')].filter(Boolean) : [],
+        failedPages: []
+      }
+    };
+  }
+
+  function parseGovDealsJson(value) {
+    if (value && typeof value === 'object') return value;
+    try {
+      return JSON.parse(String(value || ''));
+    } catch {
+      return null;
+    }
+  }
+
+  function cloneGovDealsValue(value) {
+    if (value === null || value === undefined) return value;
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return null;
+    }
+  }
+
+  function govDealsHeadersToObject(headers) {
+    const out = {};
+    if (!headers) return out;
+    try {
+      if (typeof headers.forEach === 'function') {
+        headers.forEach((value, key) => { out[String(key)] = String(value); });
+        return out;
+      }
+      if (Array.isArray(headers)) {
+        headers.forEach(entry => {
+          if (Array.isArray(entry) && entry.length >= 2) out[String(entry[0])] = String(entry[1]);
+        });
+        return out;
+      }
+      Object.entries(headers).forEach(([key, value]) => { out[String(key)] = String(value); });
+    } catch {
+      // Header capture is best-effort and remains in memory only.
+    }
+    return out;
+  }
+
+  function govDealsEndpointInfo(url) {
+    const href = String(url || '');
+    if (/^https:\/\/maestro\.lqdt1\.com\/search\/list(?:[?#]|$)/i.test(href)) {
+      return { kind: 'search', href: GOVDEALS_SEARCH_ENDPOINT, assetId: '', accountId: '' };
+    }
+    const asset = href.match(GOVDEALS_ASSET_ENDPOINT_RE);
+    if (asset) return { kind: 'asset', href: href.split('#')[0], assetId: asset[1], accountId: asset[2] };
+    return null;
+  }
+
+  function govDealsResponseTotal(headers, fallback = null) {
+    let value = null;
+    try {
+      if (typeof headers?.get === 'function') value = headers.get('x-total-count');
+      else {
+        const pair = Object.entries(headers || {}).find(([key]) => String(key).toLowerCase() === 'x-total-count');
+        value = pair?.[1] ?? null;
+      }
+    } catch {
+      value = null;
+    }
+    if (value !== null && value !== undefined && String(value).trim() !== '') {
+      const numeric = Number(String(value).replace(/,/g, ''));
+      if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+    }
+    const fallbackNumber = Number(fallback);
+    return Number.isFinite(fallbackNumber) && fallbackNumber >= 0 ? fallbackNumber : null;
+  }
+
+  function govDealsSearchRows(json) {
+    const candidates = [
+      json?.assetSearchResults,
+      json?.data?.assetSearchResults,
+      json?.results,
+      json?.data?.results,
+      json?.items,
+      json?.data?.items
+    ];
+    return candidates.find(Array.isArray) || [];
+  }
+
+  function captureGovDealsNetworkExchange(exchange = {}) {
+    const endpoint = govDealsEndpointInfo(exchange.url);
+    if (!endpoint) return false;
+    const body = parseGovDealsJson(exchange.body) || {};
+    const response = parseGovDealsJson(exchange.response);
+    const capture = {
+      kind: endpoint.kind,
+      url: endpoint.href,
+      method: String(exchange.method || 'POST').toUpperCase(),
+      body: cloneGovDealsValue(body) || {},
+      headers: govDealsHeadersToObject(exchange.headers),
+      response: cloneGovDealsValue(response),
+      responseHeaders: govDealsHeadersToObject(exchange.responseHeaders),
+      total: govDealsResponseTotal(exchange.responseHeaders, exchange.total),
+      status: Number(exchange.status || 0) || 0,
+      routeHref: String(exchange.routeHref || ''),
+      routeScopeFingerprint: govDealsRouteScopeFingerprint(null, exchange.routeHref || ''),
+      capturedAt: Date.now(),
+      assetId: endpoint.assetId,
+      accountId: endpoint.accountId
+    };
+    if (endpoint.kind === 'search') {
+      const accepted = capture.status >= 200
+        && capture.status < 300
+        && response
+        && typeof response === 'object'
+        && response.isAPIFailureActive !== true;
+      if (accepted) GOVDEALS_NETWORK_CAPTURE.search = capture;
+      debugEvent('govdeals.network.capture', {
+        endpoint: 'search/list',
+        accepted,
+        page: Number(body.page || 0) || 0,
+        displayRows: Number(body.displayRows || 0) || 0,
+        resultCount: govDealsSearchRows(response).length,
+        total: capture.total,
+        status: capture.status,
+        headerNames: Object.keys(capture.headers).map(key => key.toLowerCase()).sort()
+      });
+      return accepted;
+    } else {
+      const accepted = capture.status >= 200 && capture.status < 300 && response && typeof response === 'object';
+      if (accepted) GOVDEALS_NETWORK_CAPTURE.assets.set(`${endpoint.accountId}:${endpoint.assetId}`, capture);
+      debugEvent('govdeals.network.capture', {
+        endpoint: 'assets/{assetId}/{accountId}/false',
+        accepted,
+        assetId: endpoint.assetId,
+        accountId: endpoint.accountId,
+        status: capture.status,
+        photoCount: Array.isArray(response?.assetPhotos) ? response.assetPhotos.length : 0,
+        headerNames: Object.keys(capture.headers).map(key => key.toLowerCase()).sort()
+      });
+      return accepted;
+    }
+  }
+
+  function installGovDealsNetworkObserver(targetWindow = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : (typeof window !== 'undefined' ? window : null))) {
+    if (!targetWindow || GOVDEALS_NETWORK_CAPTURE.installed) return GOVDEALS_NETWORK_CAPTURE.installed;
+    let xhrInstalled = false;
+    let fetchInstalled = false;
+    try {
+      const Xhr = targetWindow.XMLHttpRequest;
+      const prototype = Xhr?.prototype;
+      if (prototype && !prototype.__flipperaddonGovDealsObserver) {
+        const metadata = new WeakMap();
+        const originalOpen = prototype.open;
+        const originalSetHeader = prototype.setRequestHeader;
+        const originalSend = prototype.send;
+        prototype.open = function (method, url, ...args) {
+          metadata.set(this, { method: String(method || 'GET'), url: String(url || ''), headers: {}, body: null });
+          return originalOpen.call(this, method, url, ...args);
+        };
+        prototype.setRequestHeader = function (name, value) {
+          const meta = metadata.get(this);
+          if (meta && govDealsEndpointInfo(meta.url)) meta.headers[String(name)] = String(value);
+          return originalSetHeader.call(this, name, value);
+        };
+        prototype.send = function (body) {
+          const meta = metadata.get(this);
+          if (meta && govDealsEndpointInfo(meta.url)) {
+            meta.routeHref = String(targetWindow.location?.href || '');
+            const internalReplay = GOVDEALS_INTERNAL_XHRS.has(this);
+            meta.body = body;
+            this.addEventListener('loadend', () => {
+              let responseHeaders = {};
+              let responseText = '';
+              try {
+                String(this.getAllResponseHeaders?.() || '').split(/\r?\n/).forEach(line => {
+                  const index = line.indexOf(':');
+                  if (index > 0) responseHeaders[line.slice(0, index).trim()] = line.slice(index + 1).trim();
+                });
+                responseText = this.responseText || '';
+              } catch {
+                // Restricted response access is recorded only as an empty capture.
+              }
+              if (!internalReplay) {
+                captureGovDealsNetworkExchange({
+                  ...meta,
+                  response: responseText,
+                  responseHeaders,
+                  status: this.status
+                });
+              }
+            }, { once: true });
+          }
+          return originalSend.call(this, body);
+        };
+        Object.defineProperty(prototype, '__flipperaddonGovDealsObserver', { value: true, configurable: false });
+        xhrInstalled = true;
+      }
+    } catch (error) {
+      GOVDEALS_NETWORK_CAPTURE.errors.push(`xhr:${String(error?.message || error).slice(0, 160)}`);
+    }
+    try {
+      const originalFetch = targetWindow.fetch;
+      if (typeof originalFetch === 'function' && !originalFetch.__flipperaddonGovDealsObserver) {
+        const wrappedFetch = function (input, init = {}) {
+          const url = String(input?.url || input || '');
+          const endpoint = govDealsEndpointInfo(url);
+          const method = String(init?.method || input?.method || 'GET');
+          const body = init?.body ?? null;
+          const headers = govDealsHeadersToObject(init?.headers || input?.headers);
+          const routeHref = String(targetWindow.location?.href || '');
+          const promise = originalFetch.apply(this, arguments);
+          if (endpoint) {
+            Promise.resolve(promise).then(response => {
+              const clone = response?.clone?.();
+              return clone?.text?.().then(responseText => captureGovDealsNetworkExchange({
+                url,
+                method,
+                body,
+                headers,
+                response: responseText,
+                responseHeaders: govDealsHeadersToObject(response?.headers),
+                status: response?.status,
+                routeHref
+              }));
+            }).catch(error => {
+              GOVDEALS_NETWORK_CAPTURE.errors.push(`fetch:${String(error?.message || error).slice(0, 160)}`);
+            });
+          }
+          return promise;
+        };
+        Object.defineProperty(wrappedFetch, '__flipperaddonGovDealsObserver', { value: true });
+        targetWindow.fetch = wrappedFetch;
+        fetchInstalled = true;
+      }
+    } catch (error) {
+      GOVDEALS_NETWORK_CAPTURE.errors.push(`fetch-bind:${String(error?.message || error).slice(0, 160)}`);
+    }
+    GOVDEALS_NETWORK_CAPTURE.installed = xhrInstalled || fetchInstalled;
+    GOVDEALS_NETWORK_CAPTURE.binding = [xhrInstalled ? 'xhr' : '', fetchInstalled ? 'fetch' : ''].filter(Boolean).join('+');
+    debugEvent('govdeals.network.binding', {
+      installed: GOVDEALS_NETWORK_CAPTURE.installed,
+      binding: GOVDEALS_NETWORK_CAPTURE.binding,
+      errors: GOVDEALS_NETWORK_CAPTURE.errors.length
+    });
+    return GOVDEALS_NETWORK_CAPTURE.installed;
+  }
+
+  function cleanGovDealsText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function sanitizeGovDealsPublicText(value) {
+    return String(value || '')
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted email]')
+      .replace(/(?:\+?1[\s.-]*)?\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}(?:\s*(?:x|ext\.?|extension)\s*\d+)?/gi, '[redacted phone]');
+  }
+
+  function govDealsLines(node) {
+    return rawTextOf(node).split(/\n+/).map(cleanGovDealsText).filter(Boolean);
+  }
+
+  function extractGovDealsVisibleCount(raw, fallback = 0) {
+    const text = cleanGovDealsText(raw);
+    const showing = text.match(/\bShowing\s+([\d,]+)\s*(?:-|to)\s*([\d,]+)\s+of\s+([\d,]+)/i);
+    if (showing) return Number(showing[3].replace(/,/g, ''));
+    const single = text.match(/\bShowing\s+([\d,]+)\s+of\s+([\d,]+)/i);
+    if (single) return Number(single[2].replace(/,/g, ''));
+    const results = text.match(/\b([\d,]+)\s+Results?\s+for\b/i);
+    if (results) return Number(results[1].replace(/,/g, ''));
+    const searchResults = text.match(/\b([\d,]+)\s+Search\s+Results?\b/i);
+    if (searchResults) return Number(searchResults[1].replace(/,/g, ''));
+    return fallback || null;
+  }
+
+  function govDealsAssetPartsFromUrl(url) {
+    try {
+      return getGovDealsAssetParts(new URL(url, 'https://www.govdeals.com/'));
+    } catch {
+      return { assetId: '', accountId: '' };
+    }
+  }
+
+  function isGovDealsAssetHref(href) {
+    const ids = govDealsAssetPartsFromUrl(href);
+    return Boolean(ids.assetId && ids.accountId);
+  }
+
+  function govDealsAssetKeyFromHref(href) {
+    const ids = govDealsAssetPartsFromUrl(href);
+    return ids.assetId && ids.accountId ? `${ids.accountId}:${ids.assetId}` : absoluteUrl(href, 'https://www.govdeals.com/');
+  }
+
+  function govDealsCompactPlaceMatch(text) {
+    const stateNames = [
+      'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado', 'Connecticut', 'Delaware',
+      'District of Columbia', 'Florida', 'Georgia', 'Hawaii', 'Idaho', 'Illinois', 'Indiana', 'Iowa',
+      'Kansas', 'Kentucky', 'Louisiana', 'Maine', 'Maryland', 'Massachusetts', 'Michigan', 'Minnesota',
+      'Mississippi', 'Missouri', 'Montana', 'Nebraska', 'Nevada', 'New Hampshire', 'New Jersey',
+      'New Mexico', 'New York', 'North Carolina', 'North Dakota', 'Ohio', 'Oklahoma', 'Oregon',
+      'Pennsylvania', 'Rhode Island', 'South Carolina', 'South Dakota', 'Tennessee', 'Texas', 'Utah',
+      'Vermont', 'Virginia', 'Washington', 'West Virginia', 'Wisconsin', 'Wyoming'
+    ].join('|');
+    return cleanGovDealsText(text).match(new RegExp(`([A-Z][A-Za-z.' -]+,\\s*(?:${stateNames}|[A-Z]{2}),\\s*(?:USA|United States)(?:\\s*\\d{5})?)`));
+  }
+
+  function govDealsCompactListingFields(raw) {
+    let body = cleanGovDealsText(raw);
+    ['New Listing', 'Online Auction', 'Sealed Bid', 'Buy Now'].forEach(label => {
+      body = body.replace(new RegExp(`^${label}\\s*`, 'i'), '');
+    });
+    const place = govDealsCompactPlaceMatch(body);
+    const beforePlace = place ? body.slice(0, place.index).trim() : '';
+    const afterPlace = place ? body.slice(place.index + place[0].length).trim() : body;
+    const bid = afterPlace.match(/\bUSD\s*[\d,]+(?:\.\d{2})?|\$[\d,]+(?:\.\d{2})?(?:\s*USD)?/i)?.[0] || '';
+    const afterBid = bid ? afterPlace.slice(afterPlace.indexOf(bid) + bid.length) : afterPlace;
+    const close = afterBid.match(/\b\d+\s*D\s*\d+\s*H(?:\s*\d+\s*M)?\s*\([^)]+\)|\b\d+\s*H\s*\d+\s*M\s*\([^)]+\)|\b\d+\s*D\s*\([^)]+\)/i)?.[0] || '';
+    const lot = body.match(/\bLot\s*(?:Number|#)\s*:?\s*([A-Za-z0-9.-]+)/i)?.[1] || '';
+    return {
+      title: beforePlace,
+      location: place?.[1]?.trim() || '',
+      currentBid: bid ? cleanGovDealsText(bid) : '',
+      closeTime: close ? cleanGovDealsText(close) : '',
+      lotNumber: lot
+    };
+  }
+
+  function govDealsLotNumber(raw) {
+    const text = cleanGovDealsText(raw);
+    return text.match(/\bLot\s*(?:Number|#)\s*:?\s*([A-Za-z0-9.-]+)/i)?.[1] || '';
+  }
+
+  function govDealsCurrentBid(raw) {
+    const text = cleanGovDealsText(raw);
+    const match = text.match(/\b(?:Current Bid|High Bid|Starting Bid)\s*:?\s*(\$[\d,]+(?:\.\d{2})?(?:\s*USD)?|(?:USD\s*)?[\d,]+(?:\.\d{2})?\s*USD?)/i);
+    return match ? cleanGovDealsText(match[1]) : govDealsCompactListingFields(text).currentBid;
+  }
+
+  function govDealsBidCount(raw, detail = false) {
+    const text = cleanGovDealsText(raw);
+    const direct = text.match(/(?:^|[^\d.])(\d+)\s+Bids?\b/i);
+    if (direct) return `${direct[1]} ${Number(direct[1]) === 1 ? 'Bid' : 'Bids'}`;
+    const reversed = text.match(/\bBids?\s*:?\s*(\d+)\b/i);
+    if (reversed) return detail ? reversed[1] : `${reversed[1]} ${Number(reversed[1]) === 1 ? 'Bid' : 'Bids'}`;
+    return '';
+  }
+
+  function govDealsCloseTime(raw) {
+    const text = cleanGovDealsText(raw);
+    const compact = text.match(/\b(?:Closes?|Ends?)\s*:?\s*((?:(?:\d+\s*[DHMS]\s*)+)(?:\([^)]*\))?)/i)?.[1]?.trim();
+    if (compact) return cleanGovDealsText(compact);
+    return text.match(/\b(?:Closes?|Ends?)\s*:?\s*([\s\S]*?)(?=\s+(?:Item Location|Location|Distance|Shipping|Local Pickup|Pickup|Condition|Used\/See|Seller:|Bid Increment|Sales\/Lot Type|$))/i)?.[1]?.trim()
+      || govDealsCompactListingFields(text).closeTime
+      || '';
+  }
+
+  function govDealsLocation(raw) {
+    const text = cleanGovDealsText(raw);
+    const lineLocation = govDealsLines({ textContent: raw })
+      .map(line => govDealsCompactPlaceMatch(line)?.[1]?.trim() || '')
+      .find(Boolean);
+    return text.match(/\bItem Location\s*:?\s*([\s\S]*?)(?=\s+(?:Account Type|Inspection|Payment|Removal|Special Instructions|Seller Information|Shipping|Local Pickup|Pickup|Condition|Used\/See|Distance|Bids?|Current Bid|OFFERED FOR AUCTION|Description|$))/i)?.[1]?.trim()
+      || text.match(/\bLocation\s*:?\s*([\s\S]*?)(?=\s+(?:Subject to|Account Type|Inspection|Payment|Removal|Special Instructions|Distance|Shipping|Local Pickup|Pickup|Condition|Used\/See|Bids?|Current Bid|OFFERED FOR AUCTION|Description|$))/i)?.[1]?.trim()
+      || lineLocation
+      || govDealsCompactListingFields(text).location
+      || '';
+  }
+
+  function govDealsPublicLocation(value) {
+    let text = cleanGovDealsText(value)
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted]')
+      .replace(/(?:\+?1[\s.-]*)?\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}/g, '[redacted]');
+    const parts = text.split(',').map(part => part.trim()).filter(Boolean);
+    if (parts.length >= 3 && /\d/.test(parts[0])) text = parts.slice(-3).join(', ');
+    return cleanGovDealsText(text);
+  }
+
+  function govDealsDistanceText(raw) {
+    return cleanGovDealsText(raw).match(/\bDistance\s*:?\s*([\d,.]+\s*(?:miles|mile|mi|kilometers?|km))/i)?.[1] || '';
+  }
+
+  function govDealsShippingText(raw) {
+    const text = cleanGovDealsText(raw);
+    if (/Shipping\s+Available/i.test(text)) return 'Shipping Available';
+    return text.match(/\bShipping(?:\s+(?:Options?|Method))?\s*:\s*([\s\S]*?)(?=\s+(?:Pickup|Condition|Current Bid|Bids?|Ends?|Location|Payment|$))/i)?.[1]?.trim() || '';
+  }
+
+  function govDealsPickupText(raw) {
+    const text = cleanGovDealsText(raw);
+    if (/\bLocal Pickup Only\b/i.test(text)) return 'Local Pickup Only';
+    const pickupOnly = text.match(/\bPick\s*Up\s+ONLY\b[\s\S]*$/i)
+      || text.match(/\bPickup\s+only\b[\s\S]*$/i);
+    if (pickupOnly) return cleanGovDealsText(pickupOnly[0]);
+    const lines = govDealsLines({ textContent: raw });
+    const local = lines.find(line => /^Local Pickup Only$/i.test(line));
+    if (local) return local;
+    const pickup = lines.find(line => /\b(?:Pickup|Pick\s*Up)\s+(?:Only|Location|Hours?)\b/i.test(line) && !/\b(?:Item Location|Asset ID|Current Bid|Lot Number)\b/i.test(line));
+    return pickup || cleanGovDealsText(raw).match(/\b((?:Pickup|Pick\s*Up)\s+(?:Only|Location|Hours?)\s*[\s\S]*?)(?=\s+(?:Payment|Inspection|Item Location|Current Bid|Bids?|Seller Information)|$)/i)?.[1]?.trim() || '';
+  }
+
+  function govDealsConditionText(raw) {
+    const text = cleanGovDealsText(raw);
+    return text.match(/\bCondition\s*:?\s*(Used\/See Description|New\/See Description|Salvage|Used|New|Unknown)\b/i)?.[1]
+      || text.match(/\b(Used\/See Description|New\/See Description|Salvage|Unknown)\b/i)?.[1]
+      || '';
+  }
+
+  function govDealsSellerText(card, assetLink, loc = null, lines = [], title = '', pageKind = '') {
+    const route = loc ? resolveGovDealsPage(loc) : {};
+    const sellerSelector = route.sellerSlug ? `a[href*="/en/${route.sellerSlug}"]` : 'a[href*="/en/"]';
+    const sellerLink = card?.querySelector?.(sellerSelector);
+    const linked = textOf(sellerLink);
+    if (linked && linked !== textOf(assetLink)) return linked;
+    const labeled = cleanGovDealsText(textOf(card)).match(/\bSeller\s*:?\s*([\s\S]*?)(?=\s+(?:Asset ID|Lot Number|Current Bid|High Bid|Bids?|Ends?|Location|$))/i)?.[1]?.trim();
+    if (labeled) return labeled;
+    if (pageKind === 'govdeals-seller') {
+      return lines.find(line => line !== title && !/\b(?:Asset ID|Lot Number|Current Bid|High Bid|Bids?|Ends?|Location|Distance|Shipping|Pickup|Condition|Used\/See)\b/i.test(line)) || '';
+    }
+    return '';
+  }
+
+  function govDealsSellerUrl(card, base, loc = null, pageKind = '') {
+    const route = loc ? resolveGovDealsPage(loc) : {};
+    if (pageKind === 'govdeals-seller' && loc?.href) return loc.href;
+    const sellerSelector = route.sellerSlug ? `a[href*="/en/${route.sellerSlug}"]` : 'a[href*="/en/"]';
+    const sellerLink = card?.querySelector?.(sellerSelector);
+    const href = controlHref(sellerLink);
+    return href ? absoluteUrl(href, base) : '';
+  }
+
+  function govDealsCategory(lines, title, seller) {
+    return lines.find(line => line !== title && line !== seller && !/\b(?:Asset ID|Lot Number|Current Bid|High Bid|Bids?|Ends?|Location|Distance|Shipping|Pickup|Condition|Used\/See|Seller:)\b/i.test(line)) || '';
+  }
+
+  function findGovDealsAssetLink(card) {
+    const selectors = [
+      'a[name="lnkAssetDetails"][href*="/asset/"]',
+      'a[name="lnkImageAssetDetails"][href*="/asset/"]',
+      'a[href*="/en/asset/"]',
+      'a[href*="/asset/"]'
+    ];
+    for (const selector of selectors) {
+      const links = Array.from(card?.querySelectorAll?.(selector) || []);
+      const found = links.find(link => isGovDealsAssetHref(controlHref(link)));
+      if (found) return found;
+    }
+    return isGovDealsAssetHref(controlHref(card)) ? card : null;
+  }
+
+  function closestGovDealsListingCard(seed) {
+    if (!seed) return null;
+    if (seed.matches?.('.card-search, [id^="asset-"], article, .card')) return seed;
+    return seed.closest?.('.card-search, [id^="asset-"], article, .card, li')
+      || seed.parentElement
+      || seed;
+  }
+
+  function govDealsTitleAttribute(card, assetLink) {
+    const titleNodes = [
+      assetLink,
+      card?.querySelector?.('a[name="lnkAssetDetails"]'),
+      card?.querySelector?.('a[name="lnkImageAssetDetails"]')
+    ];
+    for (const node of titleNodes) {
+      const value = cleanGovDealsText(node?.getAttribute?.('title') || node?.getAttribute?.('alt') || '');
+      if (value && !/view details|image|photo/i.test(value)) return value;
+    }
+    return '';
+  }
+
+  function getGovDealsListingCards(root = document) {
+    const selectors = [
+      '#grid .card-search',
+      '#grid [id^="asset-"]',
+      '.card-search',
+      '[id^="asset-"]',
+      'article',
+      '.card',
+      '[class*="card"]',
+      '[class*="listing"]',
+      '[class*="asset"]',
+      'li',
+      'a[name="lnkAssetDetails"][href*="/asset/"]',
+      'a[name="lnkImageAssetDetails"][href*="/asset/"]',
+      'a[href*="/en/asset/"]',
+      'a[href*="/asset/"]'
+    ];
+    const cards = [];
+    const seen = new Set();
+    const seenAssetKeys = new Set();
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(seed => {
+        const card = closestGovDealsListingCard(seed);
+        const assetLink = findGovDealsAssetLink(card) || (isGovDealsAssetHref(controlHref(seed)) ? seed : null);
+        const href = controlHref(assetLink);
+        if (!card || !assetLink || !href || seen.has(card)) return;
+        const assetKey = govDealsAssetKeyFromHref(href);
+        if (!assetKey || seenAssetKeys.has(assetKey)) return;
+        const raw = textOf(card) || textOf(assetLink) || govDealsTitleAttribute(card, assetLink);
+        if (!raw) return;
+        if (/\b(?:login|register|checkout|payment|invoice|cart|place bid|make offer)\b/i.test(raw)) return;
+        seen.add(card);
+        seenAssetKeys.add(assetKey);
+        cards.push(card);
+      });
+    });
+    debug('govdeals listing card scan', { count: cards.length });
+    return cards;
+  }
+
+  function parseGovDealsListingCard(card, loc = (typeof location !== 'undefined' ? location : null), pageKind = 'govdeals-new-listings') {
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.govdeals.com/');
+    const assetLink = findGovDealsAssetLink(card);
+    const rawText = rawTextOf(card) || textOf(card) || textOf(assetLink) || govDealsTitleAttribute(card, assetLink);
+    const rawLines = govDealsLines(card);
+    const url = absoluteUrl(controlHref(assetLink), base);
+    const ids = govDealsAssetPartsFromUrl(url);
+    const compact = govDealsCompactListingFields(rawText);
+    const titleAttribute = govDealsTitleAttribute(card, assetLink);
+    const linkText = cleanGovDealsText(textOf(assetLink));
+    const linkLooksLikeWholeCard = linkText && (linkText === rawText || /(?:Online Auction|Lot\s*#:|USD\s*[\d,]+|Current Bid|Location)/i.test(linkText));
+    const title = titleAttribute
+      || (linkLooksLikeWholeCard ? '' : linkText)
+      || compact.title
+      || rawLines.find(line => !/\b(?:Asset ID|Lot Number|Current Bid|Bids?|Ends?|Location|Distance|Shipping|Pickup|Condition|Seller:)\b/i.test(line))
+      || '';
+    const seller = govDealsSellerText(card, assetLink, loc, rawLines, title, pageKind);
+    const category = govDealsCategory(rawLines, title, seller);
+    const currentBid = govDealsCurrentBid(rawText);
+    const finalCurrentBid = currentBid || compact.currentBid;
+    const bidCount = govDealsBidCount(rawText);
+    const condition = govDealsConditionText(rawText);
+    return {
+      source: 'GovDeals',
+      pageKind,
+      assetId: ids.assetId,
+      accountId: ids.accountId,
+      lotNumber: govDealsLotNumber(rawText) || compact.lotNumber,
+      title,
+      url,
+      image: pickFirstImage(card, base),
+      seller,
+      sellerUrl: govDealsSellerUrl(card, base, loc, pageKind),
+      category,
+      status: condition,
+      currentBid: finalCurrentBid,
+      currentBidAmount: moneyFromText(finalCurrentBid),
+      bidCount,
+      bidCountNumber: numberFromText(bidCount),
+      closeTime: govDealsCloseTime(rawText) || compact.closeTime,
+      location: govDealsLocation(rawText) || compact.location,
+      distanceText: govDealsDistanceText(rawText),
+      shippingText: govDealsShippingText(rawText),
+      pickupText: govDealsPickupText(rawText),
+      condition,
+      specs: {},
+      description: '',
+      rawText: cleanGovDealsText(rawText)
+    };
+  }
+
+  function extractGovDealsListings(root = document, loc = (typeof location !== 'undefined' ? location : null), pageKind = 'govdeals-new-listings') {
+    const listings = [];
+    const seen = new Set();
+    getGovDealsListingCards(root).forEach(card => {
+      const item = parseGovDealsListingCard(card, loc, pageKind);
+      const key = item.url || `${item.assetId}:${item.accountId}` || item.title;
+      if (!item.title || !key || seen.has(key)) return;
+      seen.add(key);
+      listings.push(item);
+    });
+    return listings;
+  }
+
+  function extractGovDealsSellerContext(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const route = loc ? resolveGovDealsPage(loc) : {};
+    const raw = rawTextOf(root?.body || root?.documentElement || root);
+    const listings = extractGovDealsListings(root, loc, 'govdeals-seller');
+    const title = pickFirstText(root, ['h1', '[data-testid*="seller"]', '.seller-name'])
+      || String(root?.title || '').replace(/\s*\|\s*GovDeals.*$/i, '').trim()
+      || route.sellerSlug
+      || 'GovDeals Seller';
+    const locationHint = govDealsLines({ textContent: raw }).find(line => /\b[A-Z]{2}\b|New Jersey|Pennsylvania|Connecticut|New York/i.test(line) && !/Showing|GovDeals|Current Bid|Asset ID/i.test(line)) || '';
+    const advertisedTotal = extractGovDealsVisibleCount(raw, null);
+    return {
+      source: 'GovDeals',
+      pageKind: 'govdeals-seller',
+      title,
+      sellerName: title,
+      seller: title,
+      sellerSlug: route.sellerSlug || '',
+      url: loc?.href || '',
+      locationHint,
+      visibleCount: advertisedTotal ?? listings.length,
+      renderedCount: listings.length,
+      advertisedTotal
+    };
+  }
+
+  function extractGovDealsSearchContext(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const route = loc ? resolveGovDealsPage(loc) : {};
+    const params = loc ? govDealsSearchParams(loc) : new URLSearchParams('');
+    const raw = rawTextOf(root?.body || root?.documentElement || root);
+    const listings = extractGovDealsListings(root, loc, 'govdeals-new-listings');
+    const advertisedTotal = extractGovDealsVisibleCount(raw, null);
+    return {
+      source: 'GovDeals',
+      pageKind: 'govdeals-new-listings',
+      title: pickFirstText(root, ['h1', '.page-title']) || String(root?.title || '').replace(/\s*\|\s*GovDeals.*$/i, '').trim() || 'GovDeals New Listings',
+      url: loc?.href || '',
+      zipcode: route.zipcode || String(params.get('zipcode') || ''),
+      miles: route.miles || String(params.get('miles') || ''),
+      category: route.category || String(params.get('category') || ''),
+      categoryName: route.categoryName || String(params.get('categoryName') || ''),
+      sortLabel: cleanGovDealsText(raw).match(/\bSort\s*:?\s*([A-Za-z ]+?)(?=\s+(?:Showing|Filters|$))/i)?.[1]?.trim() || '',
+      visibleCount: advertisedTotal ?? listings.length,
+      renderedCount: listings.length,
+      advertisedTotal,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  function extractGovDealsSpecs(raw) {
+    const specs = {};
+    const labels = ['Manufacturer', 'Model', 'Condition', 'Make', 'Year', 'VIN', 'Odometer', 'Serial Number'];
+    labels.forEach(label => {
+      const match = cleanGovDealsText(raw).match(new RegExp(`\\b${label}\\s*:?\\s+([\\s\\S]*?)(?=\\s+(?:${labels.filter(item => item !== label).join('|')}|Current Bid|Bids?|Item Location|Lot Number|Asset ID|OFFERED FOR AUCTION|Pickup|$))`, 'i'));
+      const value = match?.[1]?.trim();
+      if (value) specs[label] = value;
+    });
+    return specs;
+  }
+
+  function govDealsAssetContentRoot(root) {
+    const main = root?.querySelector?.('#main-content') || root;
+    return main?.querySelector?.('.col-md-10.mx-auto')
+      || main?.querySelector?.('.long-description')?.parentElement
+      || main?.querySelector?.('.description-table')?.parentElement
+      || null;
+  }
+
+  function govDealsAssetLabeledValue(root, label) {
+    const wanted = String(label || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!wanted || !root?.querySelectorAll) return '';
+    const rows = Array.from(root.querySelectorAll('#seller_information .row, .description-table tr, .description-body, tr'));
+    for (const row of rows) {
+      const labelNode = row.querySelector?.('h5, .td-att-label, th, dt');
+      const rowLabel = cleanGovDealsText(textOf(labelNode)).replace(/:$/, '').toLowerCase();
+      if (rowLabel !== wanted) continue;
+      const valueNode = row.querySelector?.('.td-att-value, td:nth-child(2), .col-6:last-child, dd, p');
+      const value = cleanGovDealsText(textOf(valueNode));
+      if (value && value.toLowerCase() !== wanted) return value;
+    }
+    return '';
+  }
+
+  function extractGovDealsSpecsFromDom(root) {
+    const specs = {};
+    const allowed = new Set(['Manufacturer', 'Model', 'Condition', 'Make', 'Year', 'VIN', 'Odometer', 'Serial Number']);
+    const rows = Array.from(root?.querySelectorAll?.('#table-id-0 tr, .description-table table tr') || []);
+    for (const row of rows) {
+      const label = cleanGovDealsText(textOf(row.querySelector?.('.td-att-label, th, td:first-child'))).replace(/:$/, '');
+      if (!allowed.has(label)) continue;
+      const value = cleanGovDealsText(textOf(row.querySelector?.('.td-att-value, td:nth-child(2), td:last-child')));
+      if (value) specs[label] = value;
+    }
+    return specs;
+  }
+
+  function govDealsAssetSeller(root, base) {
+    const cleanSeller = value => cleanGovDealsText(value).replace(/\s*\[\s*view seller(?:'s)? other assets\s*\]\s*$/i, '').trim();
+    const labeled = cleanSeller(govDealsAssetLabeledValue(root, 'Seller'));
+    const links = Array.from(root?.querySelectorAll?.('#seller_information a[href]') || []);
+    const seller = labeled || cleanSeller(textOf(links.find(link => cleanSeller(textOf(link)))));
+    const sellerLink = links.find(link => cleanSeller(textOf(link)).toLowerCase() === seller.toLowerCase());
+    return {
+      seller,
+      sellerUrl: sellerLink && labeled && cleanSeller(textOf(sellerLink)).toLowerCase() === labeled.toLowerCase() && controlHref(sellerLink)
+        ? absoluteUrl(controlHref(sellerLink), base)
+        : ''
+    };
+  }
+
+  function govDealsAssetImages(root, base, title = '') {
+    const selectors = [
+      'img.lg-object.lg-image',
+      '.lg-object.lg-image',
+      'img[alt]',
+      'img'
+    ];
+    const candidates = [];
+    const preferred = [];
+    const fallback = [];
+    selectors.forEach(selector => {
+      Array.from(root?.querySelectorAll?.(selector) || []).forEach(image => {
+        if (!candidates.includes(image)) candidates.push(image);
+      });
+    });
+    const wantedTitle = cleanGovDealsText(title).toLowerCase();
+    for (const image of candidates) {
+      const src = image?.getAttribute?.('data-src')
+        || image?.getAttribute?.('data-original')
+        || image?.getAttribute?.('src')
+        || image?.src
+        || '';
+      const alt = cleanGovDealsText(image?.getAttribute?.('alt') || image?.alt || '');
+      const meta = `${src} ${alt} ${image?.getAttribute?.('class') || ''}`;
+      if (!src || /spacer|blank|pixel|logo|brand|favicon|icon|placeholder|allsurplus|govdeals/i.test(meta)) continue;
+      const absolute = absoluteUrl(src, base);
+      if (absolute && !fallback.includes(absolute)) fallback.push(absolute);
+      if (/webassets\.lqdt1\.com\/assets\/photos|\/assets\/photos\//i.test(src)
+        || (wantedTitle && alt.toLowerCase().includes(wantedTitle.slice(0, 24)))) {
+        if (absolute && !preferred.includes(absolute)) preferred.push(absolute);
+      }
+    }
+    return uniqueNonEmpty([...preferred, ...fallback]);
+  }
+
+  function govDealsAssetImage(root, base, title = '') {
+    return govDealsAssetImages(root, base, title)[0] || '';
+  }
+
+  function govDealsAssetScopedRawText(root, contentRoot) {
+    if (!contentRoot || contentRoot === root) return '';
+    const headerSelectors = ['h1.product-title', '#currentBid', '.numberofbids', '.sales-type', '.product-location'];
+    const header = headerSelectors
+      .map(selector => rawTextOf(root?.querySelector?.(selector)))
+      .filter(Boolean)
+      .join(' ');
+    const content = rawTextOf(contentRoot);
+    return cleanGovDealsText(`${header} ${content}`);
+  }
+
+  function govDealsAssetDescription(raw) {
+    const offered = cleanGovDealsText(raw).match(/\b(OFFERED FOR AUCTION:\s*[\s\S]*?)(?=\s+(?:Pickup|Payment|Inspection|Item Location|Current Bid|Bids?|$))/i)?.[1]?.trim();
+    if (offered) return offered;
+    return cleanGovDealsText(raw).match(/\bDescription\s*:?\s*([\s\S]*?)(?=\s+(?:Pickup|Payment|Inspection|Item Location|Current Bid|Bids?|$))/i)?.[1]?.trim() || '';
+  }
+
+  function extractGovDealsAssetDetail(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const contentRoot = govDealsAssetContentRoot(root);
+    const scopedRawText = govDealsAssetScopedRawText(root, contentRoot);
+    const rawText = scopedRawText || textOf(root?.body || root?.documentElement || root);
+    const base = loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.govdeals.com/');
+    const ids = loc ? getGovDealsAssetParts(loc) : govDealsAssetPartsFromUrl(base);
+    const title = pickFirstText(root, ['h1.product-title', 'h1', '[data-testid*="title"]', '.asset-title'])
+      || String(root?.title || '').replace(/\s*\|\s*GovDeals.*$/i, '').trim()
+      || '';
+    const headerText = [
+      rawTextOf(root?.querySelector?.('#currentBid')),
+      rawTextOf(root?.querySelector?.('.numberofbids')),
+      rawTextOf(root?.querySelector?.('.sales-type')),
+      rawTextOf(root?.querySelector?.('.product-location'))
+    ].filter(Boolean).join(' ');
+    const parseText = cleanGovDealsText(`${headerText} ${rawText}`);
+    const currentBid = govDealsCurrentBid(parseText);
+    const bidCount = govDealsBidCount(parseText, true);
+    const condition = govDealsConditionText(rawText);
+    const sellerInfo = govDealsAssetSeller(root, base);
+    const longDescription = root?.querySelector?.('.long-description');
+    const description = sanitizeGovDealsPublicText(longDescription
+      ? cleanGovDealsText(rawTextOf(longDescription))
+      : govDealsAssetDescription(rawText));
+    const itemLocation = govDealsPublicLocation(govDealsAssetLabeledValue(root, 'Item Location')
+      || textOf(root?.querySelector?.('#lnkAssetDetailLocation'))
+      || govDealsLocation(rawText));
+    const pickupSource = longDescription ? description : (rawText || description);
+    const specsFromDom = extractGovDealsSpecsFromDom(root);
+    const specs = Object.keys(specsFromDom).length ? specsFromDom : extractGovDealsSpecs(rawText);
+    const images = govDealsAssetImages(root, base, title);
+    const image = images[0] || '';
+    return {
+      source: 'GovDeals',
+      pageKind: 'govdeals-asset',
+      assetId: ids.assetId,
+      accountId: ids.accountId,
+      lotNumber: govDealsLotNumber(rawText),
+      title,
+      url: base,
+      image,
+      images,
+      seller: sellerInfo.seller,
+      sellerUrl: sellerInfo.sellerUrl,
+      category: '',
+      status: condition,
+      currentBid,
+      currentBidAmount: moneyFromText(currentBid),
+      bidCount,
+      bidCountNumber: numberFromText(bidCount),
+      closeTime: govDealsCloseTime(headerText || rawText),
+      location: itemLocation,
+      distanceText: govDealsDistanceText(rawText),
+      shippingText: sanitizeGovDealsPublicText(govDealsShippingText(pickupSource)),
+      pickupText: sanitizeGovDealsPublicText(govDealsPickupText(pickupSource)),
+      condition,
+      specs,
+      description,
+      rawText: [
+        title,
+        description,
+        condition,
+        currentBid,
+        bidCount,
+        govDealsCloseTime(headerText || rawText),
+        itemLocation,
+        sanitizeGovDealsPublicText(govDealsShippingText(pickupSource)),
+        sanitizeGovDealsPublicText(govDealsPickupText(pickupSource))
+      ].filter(Boolean).join(' | ').slice(0, 12000)
+    };
+  }
+
+  function stableGovDealsValue(value) {
+    if (Array.isArray(value)) return value.map(stableGovDealsValue);
+    if (!value || typeof value !== 'object') return value;
+    return Object.keys(value).sort().reduce((out, key) => {
+      out[key] = stableGovDealsValue(value[key]);
+      return out;
+    }, {});
+  }
+
+  function govDealsRequestFingerprint(body = {}) {
+    const allowed = [
+      'accountIds', 'auctionTypeId', 'businessId', 'categoryIds', 'displayRows', 'facetsFilter',
+      'isQAL', 'locationId', 'makebrand', 'model', 'proximityWithinDistance', 'requestType',
+      'responseStyle', 'searchText', 'sellerTypeId', 'sortField', 'sortOrder', 'timeType', 'zipcode'
+    ];
+    const fingerprint = {};
+    allowed.forEach(key => {
+      if (body?.[key] !== undefined) fingerprint[key] = cloneGovDealsValue(body[key]);
+    });
+    return JSON.stringify(stableGovDealsValue(fingerprint));
+  }
+
+  function govDealsRouteScopeFingerprint(route = null, loc = null) {
+    let url;
+    try {
+      url = urlFromLocationLike(loc || route?.url || route?.href || 'https://invalid.local/');
+    } catch {
+      return '';
+    }
+    const resolved = route?.kind ? route : resolveGovDealsPage(url);
+    const params = new Map();
+    for (const [rawKey, value] of url.searchParams.entries()) {
+      const key = String(rawKey || '').toLowerCase();
+      if (['page', 'pn'].includes(key)) continue;
+      const normalizedKey = key === 'zipcode' ? 'zip' : key;
+      if (!params.has(normalizedKey)) params.set(normalizedKey, []);
+      params.get(normalizedKey).push(String(value || ''));
+    }
+    const query = Array.from(params.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, values]) => `${encodeURIComponent(key)}=${values.slice().sort().map(encodeURIComponent).join(',')}`)
+      .join('&');
+    return [
+      String(resolved?.kind || ''),
+      url.hostname.toLowerCase(),
+      url.pathname.replace(/\/+$/, '').toLowerCase(),
+      query
+    ].join('|');
+  }
+
+  function govDealsRequestMatchesVisibleRoute(body = {}, route = {}, loc = null) {
+    let url;
+    try {
+      url = urlFromLocationLike(loc || route?.url || route?.href || 'https://invalid.local/');
+    } catch {
+      return false;
+    }
+    if (route?.kind === 'govdeals-seller') return Array.isArray(body.accountIds) && body.accountIds.length > 0;
+    if (route?.kind !== 'govdeals-new-listings') return false;
+    const expected = {
+      zipcode: String(route?.zipcode || url.searchParams.get('zipcode') || url.searchParams.get('zip') || '').trim(),
+      miles: String(route?.miles || url.searchParams.get('miles') || '').trim(),
+      searchText: String(url.searchParams.get('q') || url.searchParams.get('searchText') || url.searchParams.get('keyword') || '').trim(),
+      category: String(route?.category || url.searchParams.get('category') || url.searchParams.get('categoryId') || '').trim(),
+      sortField: String(url.searchParams.get('sf') || url.searchParams.get('sortField') || '').trim(),
+      sortOrder: String(url.searchParams.get('so') || url.searchParams.get('sortOrder') || '').trim()
+    };
+    if (expected.zipcode && String(body.zipcode || '').trim() !== expected.zipcode) return false;
+    if (expected.miles && String(body.proximityWithinDistance || '').trim() !== expected.miles) return false;
+    if (expected.searchText && String(body.searchText || '').trim().toLowerCase() !== expected.searchText.toLowerCase()) return false;
+    if (expected.category) {
+      const categories = uniqueNonEmpty(Array.isArray(body.categoryIds) ? body.categoryIds : [body.categoryIds]);
+      if (!categories.includes(expected.category)) return false;
+    }
+    if (expected.sortField && String(body.sortField || '').trim().toLowerCase() !== expected.sortField.toLowerCase()) return false;
+    if (expected.sortOrder && String(body.sortOrder || '').trim().toLowerCase() !== expected.sortOrder.toLowerCase()) return false;
+    return true;
+  }
+
+  function sanitizeGovDealsNetworkCapture(capture = {}) {
+    const body = cloneGovDealsValue(capture.body) || {};
+    const stripSensitive = value => {
+      if (Array.isArray(value)) return value.map(stripSensitive);
+      if (!value || typeof value !== 'object') return value;
+      return Object.entries(value).reduce((out, [key, child]) => {
+        if (/(?:session|token|cookie|authorization|api[-_]?key|subscription[-_]?key|user[-_]?id|email|phone|address|contact)/i.test(key)) return out;
+        out[key] = stripSensitive(child);
+        return out;
+      }, {});
+    };
+    const response = capture.response || {};
+    const endpoint = govDealsEndpointInfo(capture.url);
+    const stableIds = endpoint?.kind === 'search'
+      ? uniqueNonEmpty(govDealsSearchRows(response).map(row => {
+        const assetId = String(firstDefined(row?.assetId, row?.assetID, '') || '').trim();
+        const accountId = String(firstDefined(row?.accountId, row?.accountID, '') || '').trim();
+        return assetId && accountId ? `${accountId}:${assetId}` : '';
+      }))
+      : uniqueNonEmpty([endpoint?.assetId && endpoint?.accountId ? `${endpoint.accountId}:${endpoint.assetId}` : '']);
+    return {
+      kind: endpoint?.kind || capture.kind || '',
+      url: endpoint?.kind === 'asset'
+        ? 'https://maestro.lqdt1.com/assets/{assetId}/{accountId}/false'
+        : (endpoint?.href || ''),
+      method: String(capture.method || 'POST').toUpperCase(),
+      request: stripSensitive(body),
+      requestHeaderNames: Object.keys(capture.headers || {}).map(key => key.toLowerCase()).sort(),
+      responseHeaderNames: Object.keys(capture.responseHeaders || {}).map(key => key.toLowerCase()).sort(),
+      total: govDealsResponseTotal(capture.responseHeaders, firstDefined(capture.total, response?.totalCount, response?.total, null)),
+      resultCount: endpoint?.kind === 'search' ? govDealsSearchRows(response).length : (response ? 1 : 0),
+      stableIds,
+      assetId: endpoint?.assetId || capture.assetId || '',
+      accountId: endpoint?.accountId || capture.accountId || '',
+      status: Number(capture.status || 0) || 0,
+      requestFingerprint: govDealsRequestFingerprint(body)
+    };
+  }
+
+  function buildGovDealsSearchRequest(capture = {}, page = 1) {
+    const body = cloneGovDealsValue(capture.body) || {};
+    body.page = Math.max(1, Number(page) || 1);
+    return {
+      method: 'POST',
+      url: GOVDEALS_SEARCH_ENDPOINT,
+      headers: govDealsHeadersToObject(capture.headers),
+      body,
+      page: body.page,
+      pageSize: Math.max(1, Number(body.displayRows) || 24),
+      requestFingerprint: govDealsRequestFingerprint(body),
+      routeHref: String(capture.routeHref || '')
+    };
+  }
+
+  function govDealsCaptureMatchesRoute(capture = {}, route = {}, loc = null) {
+    if (!capture?.body || capture.kind !== 'search') return false;
+    if (Number(capture.status || 0) && (Number(capture.status) < 200 || Number(capture.status) >= 300)) return false;
+    if (capture.response?.isAPIFailureActive === true) return false;
+    const body = capture.body;
+    const kind = String(route?.kind || '');
+    if (!['govdeals-seller', 'govdeals-new-listings'].includes(kind)) return false;
+    if (!capture.routeHref || !loc) return false;
+    let capturedRoute;
+    try {
+      capturedRoute = resolveGovDealsPage(new URL(capture.routeHref, 'https://www.govdeals.com/'));
+    } catch {
+      return false;
+    }
+    if (capturedRoute.kind !== kind) return false;
+    if (kind === 'govdeals-seller'
+      && String(capturedRoute.sellerSlug || '').toLowerCase() !== String(route.sellerSlug || '').toLowerCase()) return false;
+    const captureScope = String(capture.routeScopeFingerprint || govDealsRouteScopeFingerprint(capturedRoute, capture.routeHref));
+    const currentScope = govDealsRouteScopeFingerprint(route, loc);
+    if (!captureScope || !currentScope || captureScope !== currentScope) return false;
+    return govDealsRequestMatchesVisibleRoute(body, route, loc);
+  }
+
+  function getGovDealsSearchCapture(route = (typeof location !== 'undefined' ? resolveGovDealsPage(location) : {}), loc = (typeof location !== 'undefined' ? location : null)) {
+    const capture = GOVDEALS_NETWORK_CAPTURE.search;
+    return govDealsCaptureMatchesRoute(capture, route, loc) ? capture : null;
+  }
+
+  function govDealsPhotoUrls(value, base = 'https://www.govdeals.com/') {
+    const urls = [];
+    const add = candidate => {
+      const raw = String(candidate || '').trim();
+      if (!raw || !/(?:^https?:\/\/|^\/)/i.test(raw)) return;
+      const url = absoluteUrl(raw, base);
+      if (!url || /(?:placeholder|spacer|blank|pixel|logo|favicon|icon)/i.test(url)) return;
+      if (!urls.includes(url)) urls.push(url);
+    };
+    const visit = (candidate, depth = 0) => {
+      if (depth > 3 || candidate === null || candidate === undefined) return;
+      if (typeof candidate === 'string') {
+        add(candidate);
+        return;
+      }
+      if (Array.isArray(candidate)) {
+        candidate.forEach(child => visit(child, depth + 1));
+        return;
+      }
+      if (typeof candidate === 'object') {
+        const preferred = ['url', 'src', 'photo', 'photoUrl', 'assetPhotoUrl', 'fullUrl', 'fullSize', 'large', 'original', 'thumbnailUrl'];
+        preferred.forEach(key => {
+          if (candidate[key] !== undefined) visit(candidate[key], depth + 1);
+        });
+      }
+    };
+    visit(value);
+    return urls;
+  }
+
+  function govDealsLocationFromApi(row = {}) {
+    const locationData = row.assetLocation || row.location || row.locationData || {};
+    const city = firstDefined(
+      row.city, row.cityName, row.locationCity, row.assetCity,
+      locationData.city, locationData.cityName, locationData.locationCity, ''
+    );
+    const state = firstDefined(
+      row.state, row.stateName, row.stateCode, row.locationState, row.assetState,
+      locationData.state, locationData.stateName, locationData.stateCode, ''
+    );
+    const zip = firstDefined(
+      row.zipcode, row.zipCode, row.postalCode, row.postal, row.locationZip, row.assetZip,
+      locationData.zipcode, locationData.zipCode, locationData.postalCode, locationData.postal, ''
+    );
+    const country = firstDefined(
+      row.countryDescription, row.country, row.countryName, row.countryCode,
+      locationData.countryDescription, locationData.country, locationData.countryName, locationData.countryCode, ''
+    );
+    return [city, state, zip, country].map(cleanGovDealsText).filter(Boolean).join(', ');
+  }
+
+  function govDealsPriceValue(value) {
+    if (value && typeof value === 'object') value = firstDefined(value.amount, value.value, value.currentBid, '');
+    const numeric = Number(String(value ?? '').replace(/[$,\s]/g, ''));
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function govDealsApiText(value) {
+    if (value === null || value === undefined) return '';
+    if (Array.isArray(value)) return value.map(govDealsApiText).filter(Boolean).join(' > ');
+    if (typeof value === 'object') {
+      return cleanGovDealsText(firstDefined(
+        value.name,
+        value.description,
+        value.label,
+        value.displayName,
+        value.value,
+        ''
+      ));
+    }
+    return cleanGovDealsText(value);
+  }
+
+  function normalizeGovDealsSearchResult(row = {}, pageKind = 'govdeals-new-listings') {
+    const assetId = String(firstDefined(row.assetId, row.assetID, row.id, '') || '').trim();
+    const accountId = String(firstDefined(row.accountId, row.accountID, row.sellerAccountId, '') || '').trim();
+    const title = govDealsApiText(firstDefined(
+      row.assetShortDescription, row.assetShortDesc, row.shortDescription, row.assetTitle, row.title, row.name, ''
+    ));
+    const descriptionHtml = sanitizeGovDealsPublicText(String(firstDefined(
+      row.assetLongDescription, row.assetLongDesc, row.longDescription, row.assetDescription,
+      row.fullDescription, row.descriptionHtml, row.description, row.descriptionText, ''
+    ) || ''));
+    const description = stripHtml(descriptionHtml);
+    const images = uniqueNonEmpty([
+      ...govDealsPhotoUrls(row.photo),
+      ...govDealsPhotoUrls(row.assetPhotos),
+      ...govDealsPhotoUrls(row.assetPhoto),
+      ...govDealsPhotoUrls(row.primaryPhoto),
+      ...govDealsPhotoUrls(row.photoUrl),
+      ...govDealsPhotoUrls(row.photoURL),
+      ...govDealsPhotoUrls(row.image),
+      ...govDealsPhotoUrls(row.imageUrl),
+      ...govDealsPhotoUrls(row.thumbnail),
+      ...govDealsPhotoUrls(row.thumbnailUrl),
+      ...govDealsPhotoUrls(row.images),
+      ...govDealsPhotoUrls(row.photoList)
+    ]);
+    const barePhoto = String(row.photo || '').trim();
+    if (!images.length && accountId && /^[A-Za-z0-9_.-]+\.(?:jpe?g|png|webp)(?:[?#].*)?$/i.test(barePhoto)) {
+      images.push(`https://webassets.lqdt1.com/assets/photos/${encodeURIComponent(accountId)}/${encodeURIComponent(barePhoto)}`);
+    }
+    const currentBidAmount = govDealsPriceValue(firstDefined(
+      row.currentBid, row.currentBidPrice, row.currentPrice, row.highBid, row.minimumBid, row.price, null
+    ));
+    const bidCountNumber = Number(firstDefined(row.bidCount, row.numberOfBids, row.totalBids, row.bids, 0));
+    const seller = govDealsApiText(firstDefined(
+      row.companyName, row.accountCompanyName, row.displaySellerName, row.displaySeller,
+      row.sellerCompany, row.sellerName, row.seller, ''
+    ));
+    const category = govDealsApiText(firstDefined(
+      row.assetCategory, row.categoryDescription, row.categoryName, row.categoryDesc,
+      row.category, row.assetCategoryDescription, row.categoryBreadcrumbs, ''
+    ));
+    const url = assetId && accountId
+      ? new URL(`/en/asset/${encodeURIComponent(assetId)}/${encodeURIComponent(accountId)}`, 'https://www.govdeals.com/').href
+      : absoluteUrl(firstDefined(row.clickUrl, row.assetUrl, row.url, ''), 'https://www.govdeals.com/');
+    const location = govDealsLocationFromApi(row);
+    const model = cleanGovDealsText(firstDefined(row.model, ''));
+    const make = cleanGovDealsText(firstDefined(row.makebrand, row.makeBrand, row.manufacturer, row.make, ''));
+    const year = cleanGovDealsText(firstDefined(row.modelYear, row.year, ''));
+    const condition = govDealsApiText(firstDefined(row.condition, row.assetCondition, row.conditionDescription, ''));
+    const status = govDealsApiText(firstDefined(
+      row.status, row.assetStatus, row.assetStatusCd, row.saleStatus, row.auctionStatus, condition, ''
+    ));
+    const closeTime = govDealsApiText(firstDefined(
+      row.auctionEndDate, row.closeTime, row.endDate, row.assetAuctionEndDate, row.endTime, row.closingDate, ''
+    ));
+    const shippingText = sanitizeGovDealsPublicText(govDealsApiText(firstDefined(
+      row.shippingDescription, row.shipping, row.shippingText, row.shippingMethod, ''
+    )));
+    const pickupText = sanitizeGovDealsPublicText(govDealsApiText(firstDefined(
+      row.removalInstructions, row.pickupInstructions, row.pickupText, row.pickupDetails, ''
+    )));
+    return {
+      source: 'GovDeals',
+      pageKind,
+      id: assetId && accountId ? `${accountId}:${assetId}` : '',
+      assetId,
+      accountId,
+      auctionId: String(firstDefined(row.auctionId, '') || ''),
+      inventoryId: String(firstDefined(row.inventoryId, '') || ''),
+      lotNumber: String(firstDefined(row.lotNumber, row.lotNo, '') || ''),
+      title,
+      url,
+      image: images[0] || '',
+      images,
+      seller,
+      sellerUrl: '',
+      category,
+      status,
+      currentBid: currentBidAmount,
+      currentBidText: currentBidAmount === null ? '' : `${currentBidAmount.toFixed(2)} USD`,
+      currentBidAmount,
+      bidCount: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      bidCountNumber: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      closeTime,
+      location,
+      distanceText: (() => {
+        const value = firstDefined(row.proximityDistance, row.distance, row.distanceText, null);
+        return value === null || value === undefined ? '' : cleanGovDealsText(String(value));
+      })(),
+      shippingText,
+      pickupText,
+      condition,
+      specs: Object.fromEntries(Object.entries({ Manufacturer: make, Model: model, Year: year }).filter(([, value]) => value)),
+      description,
+      descriptionHtml,
+      quantity: Number.isFinite(Number(row.quantity)) ? Number(row.quantity) : null,
+      latitude: Number.isFinite(Number(firstDefined(row.latitude, row.lat, null))) ? Number(firstDefined(row.latitude, row.lat, null)) : null,
+      longitude: Number.isFinite(Number(firstDefined(row.longitude, row.lon, row.lng, null))) ? Number(firstDefined(row.longitude, row.lon, row.lng, null)) : null,
+      rawText: [title, category, make, model, year, condition, description, location, shippingText, pickupText].filter(Boolean).join(' | ').slice(0, 12000)
+    };
+  }
+
+  function normalizeGovDealsAssetResponse(json = {}, route = {}) {
+    const row = json?.asset || json?.data?.asset || json?.data || json;
+    const assetId = String(firstDefined(row?.assetId, row?.assetID, '') || '').trim();
+    const accountId = String(firstDefined(row?.accountId, row?.accountID, '') || '').trim();
+    const title = cleanGovDealsText(firstDefined(row?.assetShortDesc, row?.assetShortDescription, row?.title, ''));
+    const descriptionHtml = sanitizeGovDealsPublicText(String(firstDefined(
+      row?.assetLongDesc, row?.assetLongDescription, row?.description, ''
+    ) || ''));
+    const description = stripHtml(descriptionHtml);
+    const images = uniqueNonEmpty([
+      ...govDealsPhotoUrls(row?.assetPhotos),
+      ...govDealsPhotoUrls(row?.photo),
+      ...govDealsPhotoUrls(row?.images)
+    ]);
+    const currentBidAmount = govDealsPriceValue(firstDefined(row?.currentBid, row?.currentBidPrice, row?.highBid, null));
+    const bidCountNumber = Number(firstDefined(row?.bidCount, row?.numberOfBids, row?.totalBids, 0));
+    const make = cleanGovDealsText(firstDefined(row?.makebrand, row?.makeBrand, row?.manufacturer, row?.make, ''));
+    const model = cleanGovDealsText(firstDefined(row?.model, ''));
+    const year = cleanGovDealsText(firstDefined(row?.modelYear, row?.year, ''));
+    const condition = cleanGovDealsText(firstDefined(
+      row?.condition, row?.assetCondition, row?.assetConditionCd, row?.conditionDescription, ''
+    ));
+    const category = cleanGovDealsText(firstDefined(
+      row?.categoryDescription,
+      row?.catDesc,
+      row?.assetCategory,
+      row?.categoryName,
+      Array.isArray(row?.categoryBreadcrumbs) ? row.categoryBreadcrumbs.map(item => cleanGovDealsText(item?.name || item?.description || item)).filter(Boolean).join(' > ') : '',
+      ''
+    ));
+    const location = govDealsLocationFromApi(row || {});
+    const seller = cleanGovDealsText(firstDefined(row?.companyName, row?.accountCompanyName, row?.displaySellerName, row?.sellerCompany, ''));
+    const identityMatches = (!route?.assetId || String(route.assetId) === assetId)
+      && (!route?.accountId || String(route.accountId) === accountId);
+    if (!identityMatches) {
+      throw new Error(`asset-identity-mismatch: expected ${route?.accountId || '*'}:${route?.assetId || '*'}, received ${accountId || '?'}:${assetId || '?'}`);
+    }
+    const specs = Object.fromEntries(Object.entries({
+      Manufacturer: make,
+      Model: model,
+      Year: year,
+      VIN: cleanGovDealsText(firstDefined(row?.vin, row?.VIN, '')),
+      Condition: condition
+    }).filter(([, value]) => value));
+    return {
+      source: 'GovDeals',
+      pageKind: 'govdeals-asset',
+      id: assetId && accountId ? `${accountId}:${assetId}` : '',
+      assetId,
+      accountId,
+      lotNumber: String(firstDefined(row?.lotNumber, row?.lotNo, '') || ''),
+      title,
+      url: assetId && accountId ? `https://www.govdeals.com/en/asset/${assetId}/${accountId}` : '',
+      image: images[0] || '',
+      images,
+      seller,
+      sellerUrl: '',
+      category,
+      status: cleanGovDealsText(firstDefined(row?.status, row?.assetStatus, row?.assetStatusCd, condition, '')),
+      currentBid: currentBidAmount,
+      currentBidText: currentBidAmount === null ? '' : `${currentBidAmount.toFixed(2)} USD`,
+      currentBidAmount,
+      bidCount: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      bidCountNumber: Number.isFinite(bidCountNumber) ? bidCountNumber : null,
+      closeTime: cleanGovDealsText(firstDefined(row?.auctionEndDate, row?.closeTime, row?.endDate, '')),
+      location,
+      distanceText: cleanGovDealsText(firstDefined(row?.distance, row?.distanceText, '')),
+      shippingText: sanitizeGovDealsPublicText(cleanGovDealsText(firstDefined(
+        row?.shippingDescription, row?.shipping, row?.shippingText, ''
+      ))),
+      pickupText: sanitizeGovDealsPublicText(cleanGovDealsText(firstDefined(
+        row?.removalInstructions, row?.pickupInstructions, row?.pickupText, ''
+      ))),
+      condition,
+      specs,
+      description,
+      descriptionHtml,
+      identityMatches,
+      rawText: [title, category, make, model, year, condition, description, location].filter(Boolean).join(' | ').slice(0, 12000)
+    };
+  }
+
+  function govDealsResponseHeaderObject(raw = '') {
+    const headers = {};
+    String(raw || '').split(/\r?\n/).forEach(line => {
+      const index = line.indexOf(':');
+      if (index > 0) headers[line.slice(0, index).trim()] = line.slice(index + 1).trim();
+    });
+    return headers;
+  }
+
+  function govDealsReplayHeaders(headers = {}) {
+    return Object.fromEntries(Object.entries(headers).filter(([name]) => {
+      const key = String(name || '').toLowerCase();
+      return !/^(?:cookie|authorization|host|origin|referer|content-length|connection|sec-)/i.test(key);
+    }));
+  }
+
+  function govDealsGmJsonRequest(request = {}, timeoutMs = GOVDEALS_API_TIMEOUT_MS, signal = null) {
+    if (typeof GM_xmlhttpRequest !== 'function') return Promise.reject(new Error('GovDeals GM request unavailable'));
+    if (signal?.aborted) return Promise.reject(Object.assign(new Error('GovDeals request stopped'), { stopped: true }));
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let handle = null;
+      const finish = callback => value => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener?.('abort', onAbort);
+        callback(value);
+      };
+      const onAbort = () => {
+        try { handle?.abort?.(); } catch { /* best effort */ }
+        finish(reject)(Object.assign(new Error('GovDeals request stopped'), { stopped: true }));
+      };
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+      handle = GM_xmlhttpRequest({
+        method: request.method || 'POST',
+        url: request.url,
+        headers: {
+          'Content-Type': 'application/json',
+          ...govDealsReplayHeaders(request.headers || {})
+        },
+        data: JSON.stringify(request.body || {}),
+        timeout: timeoutMs,
+        anonymous: true,
+        onload: finish(response => {
+          if (response.status < 200 || response.status >= 300) {
+            reject(Object.assign(new Error(`HTTP ${response.status || 0}`), { status: Number(response.status || 0) }));
+            return;
+          }
+          const json = parseGovDealsJson(response.responseText);
+          if (!json || typeof json !== 'object') {
+            reject(new Error('Invalid GovDeals JSON response'));
+            return;
+          }
+          const responseHeaders = govDealsResponseHeaderObject(response.responseHeaders);
+          resolve({
+            json,
+            total: govDealsResponseTotal(responseHeaders, null),
+            status: Number(response.status || 200)
+          });
+        }),
+        ontimeout: finish(() => reject(new Error(`GovDeals GM request timed out after ${timeoutMs}ms`))),
+        onerror: finish(error => reject(new Error(error?.error || error?.message || 'GovDeals GM request failed'))),
+        onabort: finish(() => reject(Object.assign(new Error('GovDeals request stopped'), { stopped: true })))
+      });
+    });
+  }
+
+  function govDealsXhrJsonRequest(request = {}, timeoutMs = GOVDEALS_API_TIMEOUT_MS, targetWindow = null, signal = null) {
+    const pageWindow = targetWindow
+      || (typeof unsafeWindow !== 'undefined' ? unsafeWindow : (typeof window !== 'undefined' ? window : null));
+    const Xhr = pageWindow?.XMLHttpRequest;
+    if (typeof Xhr !== 'function') return Promise.reject(new Error('GovDeals page XHR unavailable'));
+    if (signal?.aborted) return Promise.reject(Object.assign(new Error('GovDeals request stopped'), { stopped: true }));
+    return new Promise((resolve, reject) => {
+      const xhr = new Xhr();
+      GOVDEALS_INTERNAL_XHRS.add(xhr);
+      xhr.open(request.method || 'POST', request.url, true);
+      // GovDeals' cross-origin Maestro request is credentialless; its scoped
+      // session headers are already present in the captured in-memory template.
+      xhr.withCredentials = false;
+      xhr.timeout = timeoutMs;
+      Object.entries(request.headers || {}).forEach(([name, value]) => {
+        try {
+          xhr.setRequestHeader(name, value);
+        } catch {
+          // Browser-managed or forbidden headers are intentionally skipped.
+        }
+      });
+      let settled = false;
+      const finish = callback => value => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener?.('abort', onAbort);
+        callback(value);
+      };
+      const onAbort = () => {
+        try { xhr.abort(); } catch { /* best effort */ }
+        finish(reject)(Object.assign(new Error('GovDeals request stopped'), { stopped: true }));
+      };
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+      xhr.onload = finish(() => {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(Object.assign(new Error(`HTTP ${xhr.status || 0}`), { status: Number(xhr.status || 0) }));
+          return;
+        }
+        const json = parseGovDealsJson(xhr.responseText);
+        if (!json || typeof json !== 'object') {
+          reject(new Error('Invalid GovDeals JSON response'));
+          return;
+        }
+        resolve({
+          json,
+          total: govDealsResponseTotal({ get: name => xhr.getResponseHeader(name) }, null),
+          status: xhr.status
+        });
+      });
+      xhr.onerror = finish(() => reject(new Error('GovDeals XHR network error')));
+      xhr.ontimeout = finish(() => reject(new Error(`GovDeals XHR timed out after ${timeoutMs}ms`)));
+      xhr.onabort = finish(() => reject(Object.assign(new Error('GovDeals XHR aborted'), { stopped: true })));
+      xhr.send(JSON.stringify(request.body || {}));
+    });
+  }
+
+  async function requestGovDealsJson(request = {}, options = {}) {
+    const retries = Math.max(1, Number(options.retries) || GOVDEALS_API_RETRIES);
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || GOVDEALS_API_TIMEOUT_MS);
+    const shouldStop = options.shouldStop || (() => false);
+    const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? 250));
+    const signal = options.signal || null;
+    const validateResponse = typeof options.validateResponse === 'function' ? options.validateResponse : null;
+    const explicitFetch = typeof options.fetchImpl === 'function';
+    const fetchImpl = options.fetchImpl
+      || (typeof unsafeWindow !== 'undefined' && typeof unsafeWindow.fetch === 'function' ? unsafeWindow.fetch.bind(unsafeWindow) : null)
+      || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
+    const xhrAvailable = !explicitFetch && (typeof unsafeWindow !== 'undefined'
+      ? typeof unsafeWindow.XMLHttpRequest === 'function'
+      : (typeof window !== 'undefined' && typeof window.XMLHttpRequest === 'function'));
+    const gmAvailable = !explicitFetch && typeof GM_xmlhttpRequest === 'function';
+    if (!fetchImpl && !xhrAvailable && !gmAvailable) throw new Error('GovDeals browser request transport unavailable');
+    const errors = [];
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      if (shouldStop() || signal?.aborted) throw Object.assign(new Error('GovDeals request stopped'), { stopped: true, errors });
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = controller ? globalThis.setTimeout(() => controller.abort(), timeoutMs) : null;
+      const onExternalAbort = () => controller?.abort?.();
+      signal?.addEventListener?.('abort', onExternalAbort, { once: true });
+      try {
+        debugEvent('govdeals.api.request.start', {
+          endpoint: govDealsEndpointInfo(request.url)?.kind || 'unknown',
+          page: Number(request.body?.page || 0) || 0,
+          attempt,
+          headerNames: Object.keys(request.headers || {}).map(key => key.toLowerCase()).sort()
+        });
+        let json;
+        let total;
+        let responseStatus = 200;
+        if (gmAvailable) {
+          const response = await govDealsGmJsonRequest(request, timeoutMs, signal);
+          json = response.json;
+          total = response.total;
+          responseStatus = response.status;
+        } else if (xhrAvailable) {
+          const response = await govDealsXhrJsonRequest(request, timeoutMs, null, signal);
+          json = response.json;
+          total = response.total;
+          responseStatus = response.status;
+        } else {
+          const response = await fetchImpl(request.url, {
+            method: request.method || 'POST',
+            headers: request.headers || {},
+            credentials: 'omit',
+            cache: 'no-store',
+            body: JSON.stringify(request.body || {}),
+            ...(controller ? { signal: controller.signal } : {})
+          });
+          if (!response?.ok) throw Object.assign(new Error(`HTTP ${response?.status || 0}`), { status: Number(response?.status || 0) });
+          json = typeof response.json === 'function' ? await response.json() : parseGovDealsJson(response.responseText);
+          if (!json || typeof json !== 'object') throw new Error('Invalid GovDeals JSON response');
+          total = govDealsResponseTotal(response.headers, response.total);
+          responseStatus = Number(response.status || 200);
+        }
+        if (json?.isAPIFailureActive === true) {
+          throw new Error(`GovDeals API failure flag active${json?.easMsg ? `: ${cleanGovDealsText(json.easMsg).slice(0, 180)}` : ''}`);
+        }
+        if (validateResponse) validateResponse({ json, total, status: responseStatus, attempt });
+        debugEvent('govdeals.api.request.success', {
+          endpoint: govDealsEndpointInfo(request.url)?.kind || 'unknown',
+          page: Number(request.body?.page || 0) || 0,
+          attempt,
+          total,
+          resultCount: govDealsSearchRows(json).length
+        });
+        return { json, total, attempts: attempt, errors, status: responseStatus };
+      } catch (error) {
+        const message = String(error?.message || error).replace(/\s+/g, ' ').slice(0, 300);
+        const status = Number(error?.status || 0) || 0;
+        errors.push({ attempt, status, message });
+        debugEvent('govdeals.api.request.failure', {
+          endpoint: govDealsEndpointInfo(request.url)?.kind || 'unknown',
+          page: Number(request.body?.page || 0) || 0,
+          attempt,
+          error: message
+        });
+        const stopped = Boolean(error?.stopped || shouldStop() || signal?.aborted);
+        const permanentClientError = status >= 400 && status < 500 && ![408, 429].includes(status);
+        if (attempt >= retries || stopped || permanentClientError) {
+          throw Object.assign(new Error(message), { errors, stopped, status });
+        }
+        await wait(Math.min(1200, retryDelayMs * attempt));
+      } finally {
+        if (timer) globalThis.clearTimeout(timer);
+        signal?.removeEventListener?.('abort', onExternalAbort);
+      }
+    }
+    throw new Error('GovDeals request failed');
+  }
+
+  function govDealsCurrentRouteFingerprint(route = {}, loc = null) {
+    return genericRouteFingerprint({ ...route, source: 'govdeals' }, loc || route?.url || null);
+  }
+
+  async function enumerateGovDealsApiListings(capture = {}, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const startedAt = Date.now();
+    const route = options.route || (typeof location !== 'undefined'
+      ? resolveGovDealsPage(location)
+      : { kind: options.pageKind || 'govdeals-new-listings', source: 'govdeals' });
+    const loc = options.locationLike || (typeof location !== 'undefined'
+      ? location
+      : capture.routeHref || capture.sourceUrl || 'https://www.govdeals.com/en/search');
+    const routeFingerprint = String(options.routeFingerprint || govDealsCurrentRouteFingerprint(route, loc));
+    const requestFingerprint = govDealsRequestFingerprint(capture.body || {});
+    const pageSize = Math.max(1, Number(capture.body?.displayRows) || 24);
+    const records = [];
+    const failedPages = [];
+    const pageAudits = [];
+    const duplicateIds = new Set();
+    const totalDrift = [];
+    const seenIds = new Set();
+    let expectedTotal = null;
+    let stopped = false;
+
+    const readPage = async page => {
+      const request = buildGovDealsSearchRequest(capture, page);
+      const expectedBeforeRequest = expectedTotal;
+      try {
+        const result = await requestGovDealsJson(request, {
+          ...options,
+          shouldStop,
+          validateResponse: ({ total }) => {
+            if (total === null) throw new Error('x-total-count missing');
+            if (expectedBeforeRequest !== null && total !== expectedBeforeRequest) {
+              throw new Error(`x-total-count drifted from ${expectedBeforeRequest} to ${total}`);
+            }
+          }
+        });
+        const rows = govDealsSearchRows(result.json);
+        const total = result.total;
+        if (expectedTotal === null) expectedTotal = total;
+        pageAudits.push({ page, count: rows.length, total, attempts: result.attempts });
+        onProgress(`GovDeals API page ${page}: ${rows.length} row(s), total ${total}.`);
+        return rows.map(row => normalizeGovDealsSearchResult(row, route.kind));
+      } catch (error) {
+        const drift = (error?.errors || []).map(entry => entry?.message || '').find(message => /x-total-count drifted/i.test(message));
+        if (drift) {
+          const received = Number(String(drift).match(/\bto\s+(\d+)\b/i)?.[1]);
+          totalDrift.push({ page, expected: expectedBeforeRequest, received: Number.isFinite(received) ? received : null });
+        }
+        failedPages.push({ page, reason: String(error?.message || error).slice(0, 300), attempts: error?.errors?.length || 0 });
+        return [];
+      }
+    };
+
+    const firstPage = await readPage(1);
+    if (shouldStop()) stopped = true;
+    const totalPages = expectedTotal === null ? 1 : Math.ceil(expectedTotal / pageSize);
+    const pages = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2);
+    let cursor = 0;
+    const pageResults = new Map([[1, firstPage]]);
+    const worker = async () => {
+      while (cursor < pages.length && !shouldStop()) {
+        const page = pages[cursor++];
+        pageResults.set(page, await readPage(page));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(Math.max(1, Number(options.concurrency) || GOVDEALS_API_CONCURRENCY), pages.length || 1) }, () => worker()));
+    if (shouldStop()) stopped = true;
+
+    Array.from(pageResults.keys()).sort((a, b) => a - b).forEach(page => {
+      (pageResults.get(page) || []).forEach(item => {
+        const identity = scraperStableIdentity(item, 'govdeals');
+        if (identity && seenIds.has(identity)) {
+          duplicateIds.add(identity);
+          return;
+        }
+        if (identity) seenIds.add(identity);
+        records.push(item);
+      });
+    });
+
+    const currentRoute = options.currentRoute
+      || (typeof location !== 'undefined' && isGovDealsHost(location.hostname) ? resolveGovDealsPage(location) : route);
+    const currentLoc = options.currentLocationLike || (typeof location !== 'undefined' ? location : loc);
+    const currentFingerprint = String(options.currentFingerprint || govDealsCurrentRouteFingerprint(currentRoute, currentLoc));
+    const activeRequestBody = typeof options.getActiveRequestBody === 'function'
+      ? options.getActiveRequestBody()
+      : (options.activeRequestBody || options.currentCapture?.body || getGovDealsSearchCapture(currentRoute, currentLoc)?.body || capture.body || {});
+    const currentRequestFingerprint = govDealsRequestFingerprint(activeRequestBody);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const requestMatches = requestFingerprint === currentRequestFingerprint;
+    const expectedAccountIds = route.kind === 'govdeals-seller'
+      ? uniqueNonEmpty(capture.body?.accountIds || [])
+      : [];
+    const accountScopeMatches = route.kind !== 'govdeals-seller'
+      || (expectedAccountIds.length > 0
+        && records.every(item => item?.accountId && expectedAccountIds.includes(String(item.accountId))));
+    const missingIdentityIndexes = records.map((item, index) => scraperStableIdentity(item, 'govdeals') ? -1 : index).filter(index => index >= 0);
+    const complete = !stopped
+      && routeMatches
+      && requestMatches
+      && accountScopeMatches
+      && expectedTotal !== null
+      && records.length === expectedTotal
+      && seenIds.size === expectedTotal
+      && duplicateIds.size === 0
+      && missingIdentityIndexes.length === 0
+      && failedPages.length === 0
+      && totalDrift.length === 0;
+    let stopReason = 'verified-api-total';
+    if (stopped) stopReason = 'user-stop';
+    else if (!routeMatches) stopReason = 'route-fingerprint-changed';
+    else if (!requestMatches) stopReason = 'request-fingerprint-changed';
+    else if (!accountScopeMatches) stopReason = 'api-account-scope-mismatch';
+    else if (expectedTotal === null) stopReason = 'authoritative-total-unavailable';
+    else if (totalDrift.length) stopReason = 'api-total-drift';
+    else if (failedPages.length) stopReason = 'failed-pages';
+    else if (duplicateIds.size) stopReason = 'duplicate-identities';
+    else if (missingIdentityIndexes.length) stopReason = 'missing-stable-identities';
+    else if (records.length !== expectedTotal || seenIds.size !== expectedTotal) stopReason = 'api-total-mismatch';
+
+    const context = route.kind === 'govdeals-seller'
+      ? {
+        source: 'GovDeals', pageKind: route.kind, sellerSlug: route.sellerSlug || '', url: String(loc?.href || loc || capture.routeHref || ''),
+        accountIds: cloneGovDealsValue(capture.body?.accountIds) || [], generatedAt: new Date().toISOString()
+      }
+      : {
+        source: 'GovDeals', pageKind: route.kind, url: String(loc?.href || loc || capture.routeHref || ''),
+        zipcode: String(capture.body?.zipcode || route.zipcode || ''),
+        miles: String(capture.body?.proximityWithinDistance || route.miles || ''),
+        categoryIds: cloneGovDealsValue(capture.body?.categoryIds) || [],
+        searchText: String(capture.body?.searchText || ''),
+        sortField: String(capture.body?.sortField || ''),
+        sortOrder: String(capture.body?.sortOrder || ''),
+        activeFilters: cloneGovDealsValue(capture.body?.facetsFilter) || {},
+        generatedAt: new Date().toISOString()
+      };
+    const coverage = {
+      proofTier: 'api-exact',
+      strategy: 'maestro-search-list',
+      complete,
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      requestFingerprint,
+      currentRequestFingerprint,
+      requestMatches,
+      accountScopeMatches,
+      enumeratedIds: Array.from(seenIds),
+      duplicateIds: Array.from(duplicateIds),
+      missingIdentityIndexes,
+      failedPages,
+      totalDrift,
+      pageAudits: pageAudits.sort((a, b) => a.page - b.page),
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('govdeals.api.coverage', {
+      expectedTotal,
+      collected: records.length,
+      unique: seenIds.size,
+      complete,
+      stopReason,
+      failedPageCount: failedPages.length,
+      duplicateCount: duplicateIds.size,
+      routeMatches,
+      requestMatches,
+      accountScopeMatches
+    });
+    return {
+      source: 'govdeals-api',
+      items: records,
+      listings: records,
+      expectedTotal,
+      complete,
+      enumeratedIds: Array.from(seenIds),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages,
+      totalDrift,
+      pageStats: coverage.pageAudits.map(page => ({ page: page.page, returned: page.count, total: page.total, attempts: page.attempts })),
+      requestFingerprint,
+      currentRequestFingerprint,
+      context: { ...context, expectedTotal, requestFingerprint },
+      stopped,
+      incomplete: !complete,
+      stopReason,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      audit: { pages: coverage.pageAudits, capture: sanitizeGovDealsNetworkCapture(capture) }
+    };
+  }
+
+  function validateGovDealsApiCoverage(result = {}, route = {}, options = {}) {
+    const items = primaryScraperRows(result);
+    const identities = items.map(item => scraperStableIdentity(item, 'govdeals'));
+    const identityCounts = new Map();
+    identities.filter(Boolean).forEach(id => identityCounts.set(id, (identityCounts.get(id) || 0) + 1));
+    const duplicateIds = uniqueNonEmpty([
+      ...(result?.duplicateIds || []),
+      ...(result?.coverage?.duplicateIds || []),
+      ...Array.from(identityCounts.entries()).filter(([, count]) => count > 1).map(([id]) => id)
+    ]);
+    const collectedIds = uniqueNonEmpty(identities);
+    const enumeratedIds = uniqueNonEmpty(result?.enumeratedIds || result?.coverage?.enumeratedIds || []);
+    const expectedSet = new Set(enumeratedIds);
+    const collectedSet = new Set(collectedIds);
+    const missingIds = enumeratedIds.filter(id => !collectedSet.has(id));
+    const unexpectedIds = enumeratedIds.length ? collectedIds.filter(id => !expectedSet.has(id)) : [];
+    const missingIdentityIndexes = identities.map((id, index) => id ? -1 : index).filter(index => index >= 0);
+    const expectedCount = expectedTotalFromScraperResult(result);
+    const failedPages = Array.isArray(result?.failedPages) ? result.failedPages : (result?.coverage?.failedPages || []);
+    const totalDrift = Array.isArray(result?.totalDrift) ? result.totalDrift : (result?.coverage?.totalDrift || []);
+    const requestFingerprint = String(result?.requestFingerprint || result?.coverage?.requestFingerprint || '');
+    const activeRequestFingerprint = options.activeRequestBody
+      ? govDealsRequestFingerprint(options.activeRequestBody)
+      : String(result?.currentRequestFingerprint || result?.coverage?.currentRequestFingerprint || requestFingerprint);
+    const requestMatches = result?.coverage?.requestMatches !== false
+      && (!requestFingerprint || !activeRequestFingerprint || requestFingerprint === activeRequestFingerprint);
+    const routeMatches = result?.coverage?.routeMatches !== false;
+    const sellerRoute = String(route?.kind || result?.context?.pageKind || '') === 'govdeals-seller';
+    const expectedAccountIds = uniqueNonEmpty(
+      options.expectedAccountIds
+      || (sellerRoute ? result?.context?.accountIds : [])
+      || []
+    );
+    const accountIds = uniqueNonEmpty(items.map(item => item?.accountId));
+    const accountScopeMatches = sellerRoute
+      ? expectedAccountIds.length > 0
+        && accountIds.length > 0
+        && items.every(item => item?.accountId && expectedAccountIds.includes(String(item.accountId)))
+      : items.every(item => item?.assetId && item?.accountId);
+    const countMatches = expectedCount !== null && items.length === expectedCount && collectedIds.length === expectedCount;
+    const complete = !result?.stopped
+      && !result?.incomplete
+      && routeMatches
+      && requestMatches
+      && accountScopeMatches
+      && expectedCount !== null
+      && countMatches
+      && duplicateIds.length === 0
+      && missingIdentityIndexes.length === 0
+      && missingIds.length === 0
+      && unexpectedIds.length === 0
+      && failedPages.length === 0
+      && totalDrift.length === 0;
+    let reason = 'complete';
+    if (result?.stopped) reason = 'user-stop';
+    else if (!routeMatches) reason = 'route-fingerprint-changed';
+    else if (!requestMatches) reason = 'request-fingerprint-changed';
+    else if (!accountScopeMatches) reason = 'api-account-scope-mismatch';
+    else if (totalDrift.length) reason = 'api-total-drift';
+    else if (failedPages.length) reason = 'api-failed-pages';
+    else if (duplicateIds.length) reason = 'api-duplicate-ids';
+    else if (missingIdentityIndexes.length) reason = 'api-missing-stable-ids';
+    else if (missingIds.length) reason = 'api-missing-ids';
+    else if (unexpectedIds.length) reason = 'api-unexpected-ids';
+    else if (expectedCount === null) reason = 'api-total-unavailable';
+    else if (!countMatches) reason = 'api-count-mismatch';
+    const coverage = {
+      expectedCount,
+      expectedTotal: expectedCount,
+      collectedCount: items.length,
+      uniqueCount: collectedIds.length,
+      uniqueIdentityCount: collectedIds.length,
+      collectedIds,
+      enumeratedIds,
+      duplicateIds,
+      missingIdentityIndexes,
+      missingIds,
+      unexpectedIds,
+      failedPages,
+      totalDrift,
+      routeMatches,
+      requestMatches,
+      accountScopeMatches,
+      requestFingerprint,
+      activeRequestFingerprint
+    };
+    return { ok: complete, complete, reason, coverage, ...coverage };
+  }
+
+  function mergeGovDealsDetail(listing, detail) {
+    if (!detail) return listing;
+    const next = { ...listing };
+    ['image', 'description', 'location', 'shippingText', 'pickupText', 'condition', 'status', 'closeTime', 'lotNumber', 'currentBid', 'bidCount', 'seller', 'sellerUrl', 'category'].forEach(key => {
+      if (!next[key] && detail[key]) next[key] = detail[key];
+    });
+    if (next.currentBid && next.currentBidAmount == null) next.currentBidAmount = moneyFromText(next.currentBid);
+    if (next.bidCount && next.bidCountNumber == null) next.bidCountNumber = numberFromText(next.bidCount);
+    next.specs = Object.keys(next.specs || {}).length ? next.specs : (detail.specs || {});
+    next.images = uniqueNonEmpty([...(next.images || []), ...(detail.images || []), next.image, detail.image]);
+    next.image = next.images[0] || '';
+    if (detail.identityMatches !== undefined) next.identityMatches = detail.identityMatches;
+    return next;
+  }
+
+  function govDealsNeedsEnrichment(item) {
+    return Boolean(item?.url && (!item.description || !item.image || !item.location || !item.status || !Object.keys(item.specs || {}).length));
+  }
+
+  function govDealsApiNeedsEnrichment(item) {
+    return Boolean(item?.assetId && item?.accountId && (!item.description || !(item.images || []).length));
+  }
+
+  function buildGovDealsAssetRequest(capture = {}, assetId = '', accountId = '') {
+    return {
+      method: 'POST',
+      url: `https://maestro.lqdt1.com/assets/${encodeURIComponent(assetId)}/${encodeURIComponent(accountId)}/false`,
+      headers: govDealsHeadersToObject(capture.headers),
+      body: { businessId: 'GD', siteId: 1 },
+      assetId: String(assetId),
+      accountId: String(accountId)
+    };
+  }
+
+  async function enrichGovDealsApiListings(listings, capture = {}, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const out = listings.slice();
+    const eligible = out.map((item, index) => ({ item, index })).filter(({ item }) => govDealsApiNeedsEnrichment(item));
+    const limit = Math.max(0, Number(options.enrichmentLimit ?? GOVDEALS_MAX_ENRICHMENT));
+    const queue = eligible.slice(0, limit);
+    const audit = {
+      eligible: eligible.length,
+      limit,
+      requested: queue.length,
+      notNeeded: out.length - eligible.length,
+      skippedDueLimit: Math.max(0, eligible.length - queue.length),
+      succeeded: 0,
+      failed: [],
+      stopped: false
+    };
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queue.length && !shouldStop()) {
+        const entry = queue[cursor++];
+        const request = buildGovDealsAssetRequest(capture, entry.item.assetId, entry.item.accountId);
+        const identity = `${entry.item.accountId}:${entry.item.assetId}`;
+        try {
+          const response = await requestGovDealsJson(request, { ...options, shouldStop });
+          const detail = normalizeGovDealsAssetResponse(response.json, {
+            kind: 'govdeals-asset',
+            assetId: entry.item.assetId,
+            accountId: entry.item.accountId
+          });
+          if (!detail.identityMatches || !detail.title) throw new Error('asset-response-identity-mismatch');
+          out[entry.index] = mergeGovDealsDetail(entry.item, detail);
+          audit.succeeded += 1;
+        } catch (error) {
+          audit.failed.push({ id: identity, reason: String(error?.message || error).slice(0, 300) });
+        }
+        onProgress(`Enriched ${audit.succeeded}/${audit.requested} GovDeals asset(s).`);
+      }
+    };
+    const concurrency = Math.min(Math.max(1, Number(options.enrichmentConcurrency) || GOVDEALS_ENRICH_CONCURRENCY), queue.length || 1);
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    audit.stopped = shouldStop();
+    out.audit = audit;
+    return out;
+  }
+
+  async function scrapeGovDealsApiAsset(route = {}, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const key = `${route.accountId}:${route.assetId}`;
+    const capture = options.capture || GOVDEALS_NETWORK_CAPTURE.assets.get(key) || null;
+    if (!capture) return null;
+    const routeFingerprint = govDealsCurrentRouteFingerprint(route, options.locationLike || (typeof location !== 'undefined' ? location : capture.routeHref));
+    const captureStatus = Number(capture.status || 0) || 0;
+    const captureUsable = Boolean(
+      capture.response
+      && (!captureStatus || (captureStatus >= 200 && captureStatus < 300))
+      && capture.response?.isAPIFailureActive !== true
+    );
+    const captureRejectedReason = captureUsable
+      ? ''
+      : (captureStatus && (captureStatus < 200 || captureStatus >= 300)
+        ? `captured-asset-http-${captureStatus}`
+        : (capture.response?.isAPIFailureActive === true ? 'captured-asset-api-failure' : 'captured-asset-response-empty'));
+    let json = captureUsable ? capture.response : null;
+    const failedBatches = [];
+    if (!json) {
+      try {
+        const response = await requestGovDealsJson(buildGovDealsAssetRequest(capture, route.assetId, route.accountId), { ...options, shouldStop });
+        json = response.json;
+      } catch (error) {
+        failedBatches.push({ id: key, reason: String(error?.message || error).slice(0, 300) });
+      }
+    }
+    let item = null;
+    if (json) {
+      try {
+        item = normalizeGovDealsAssetResponse(json, route);
+      } catch (error) {
+        failedBatches.push({ id: key, reason: String(error?.message || error).slice(0, 300) });
+      }
+    }
+    const currentRoute = typeof location !== 'undefined' && isGovDealsHost(location.hostname) ? resolveGovDealsPage(location) : route;
+    const currentFingerprint = govDealsCurrentRouteFingerprint(currentRoute, options.currentLocationLike || (typeof location !== 'undefined' ? location : capture.routeHref));
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const complete = Boolean(item?.title && item?.identityMatches && routeMatches && !shouldStop() && failedBatches.length === 0);
+    const stopReason = shouldStop()
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedBatches.length
+          ? 'asset-api-request-failed'
+          : (!item?.identityMatches ? 'asset-response-identity-mismatch' : (!item?.title ? 'asset-response-empty' : 'verified-api-asset'))));
+    const rows = item ? [item] : [];
+    onProgress(complete ? 'Verified GovDeals asset response.' : `GovDeals asset export incomplete: ${stopReason}.`);
+    return {
+      source: 'govdeals-api-asset',
+      items: rows,
+      listings: rows,
+      expectedTotal: 1,
+      context: {
+        source: 'GovDeals',
+        pageKind: 'govdeals-asset',
+        assetId: String(route.assetId || ''),
+        accountId: String(route.accountId || ''),
+        title: item?.title || '',
+        url: item?.url || String(capture.routeHref || ''),
+        generatedAt: new Date().toISOString()
+      },
+      stopped: shouldStop(),
+      incomplete: !complete,
+      stopReason,
+      routeFingerprint,
+      coverage: {
+        proofTier: 'single-record',
+        strategy: 'maestro-asset',
+        complete,
+        routeFingerprint,
+        currentFingerprint,
+        routeMatches,
+        enumeratedIds: item?.identityMatches ? [key] : [],
+        failedBatches
+      },
+      audit: { capture: sanitizeGovDealsNetworkCapture(capture), captureRejectedReason }
+    };
+  }
+
+  async function enrichGovDealsListings(listings, onProgress = () => {}, shouldStop = () => false, options = {}) {
+    const out = listings.slice();
+    if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') {
+      out.audit = { requested: 0, succeeded: 0, failed: [], stopped: shouldStop() };
+      return out;
+    }
+    const candidates = out.map((item, index) => ({ item, index })).filter(({ item }) => govDealsNeedsEnrichment(item));
+    const requestedLimit = options.limit === undefined ? candidates.length : Math.max(0, Number(options.limit));
+    const limit = Math.min(candidates.length, requestedLimit);
+    const queue = candidates.slice(0, limit);
+    const audit = { requested: queue.length, succeeded: 0, failed: [], skippedDueLimit: candidates.length - queue.length, stopped: false };
+    const concurrency = Math.max(1, Math.min(3, Number(options.concurrency || 3)));
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 20000));
+    const externalSignal = options.signal || null;
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queue.length && !shouldStop() && !externalSignal?.aborted) {
+        const entry = queue[cursor++];
+        const identity = scraperStableIdentity(entry.item, 'govdeals');
+        let url;
+        try {
+          url = new URL(entry.item.url, typeof location !== 'undefined' ? location.href : 'https://www.govdeals.com/');
+        } catch {
+          audit.failed.push({ id: identity, reason: 'invalid-url' });
+          continue;
+        }
+        if (!isGovDealsHost(url.hostname)) {
+          audit.failed.push({ id: identity, reason: 'wrong-host' });
+          continue;
+        }
+        let success = false;
+        let lastError = '';
+        for (let attempt = 1; attempt <= 3 && !success && !shouldStop() && !externalSignal?.aborted; attempt += 1) {
+          const controller = typeof AbortController === 'function' ? new AbortController() : null;
+          const timer = controller ? globalThis.setTimeout(() => controller.abort(), timeoutMs) : null;
+          const onExternalAbort = () => controller?.abort?.();
+          externalSignal?.addEventListener?.('abort', onExternalAbort, { once: true });
+          try {
+            debugEvent('govdeals.enrichment.request', { id: identity, attempt });
+            const response = await fetch(url.href, { credentials: 'include', cache: 'no-store', signal: controller?.signal });
+            if (!response?.ok) throw new Error(`HTTP ${response?.status || 'unknown'}`);
+            if (response.url) {
+              const finalIdentity = scraperStableIdentity({ url: response.url }, 'govdeals');
+              if (finalIdentity && finalIdentity !== identity) throw new Error('detail-response-identity-mismatch');
+            }
+            const html = await response.text();
+            const doc = parseAuctionNinjaHtmlDocument(html);
+            const detail = doc ? extractGovDealsAssetDetail(doc, url) : null;
+            if (!detail?.title) throw new Error('detail-parse-empty');
+            out[entry.index] = mergeGovDealsDetail(entry.item, detail);
+            audit.succeeded += 1;
+            success = true;
+          } catch (error) {
+            lastError = String(error?.message || error);
+            debugEvent('govdeals.enrichment.retry', { id: identity, attempt, error: lastError });
+          } finally {
+            if (timer) globalThis.clearTimeout(timer);
+            externalSignal?.removeEventListener?.('abort', onExternalAbort);
+          }
+        }
+        if (!success && !shouldStop() && !externalSignal?.aborted) audit.failed.push({ id: identity, reason: lastError || 'enrichment-failed' });
+        onProgress(`Enriched ${audit.succeeded}/${audit.requested} GovDeals asset(s).`);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, () => worker()));
+    audit.stopped = Boolean(shouldStop() || externalSignal?.aborted);
+    out.audit = audit;
+    return out;
+  }
+
+  async function scrapeGovDealsListings(onProgress = () => {}, shouldStop = () => false, root = document, options = {}) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = options.route || (loc ? resolveGovDealsPage(loc) : { kind: 'govdeals-new-listings' });
+    const startedAt = Date.now();
+    const routeFingerprint = govDealsCurrentRouteFingerprint(route, options.locationLike || loc);
+    const pageKind = route.kind || 'govdeals-new-listings';
+
+    if (pageKind === 'govdeals-asset') {
+      const apiAsset = await scrapeGovDealsApiAsset(route, onProgress, shouldStop, {
+        ...options,
+        locationLike: options.locationLike || loc
+      });
+      if (apiAsset) return apiAsset;
+      const item = extractGovDealsAssetDetail(root, loc);
+      const identity = scraperStableIdentity(item, 'govdeals');
+      const expectedIdentity = `${route.accountId}:${route.assetId}`;
+      const routeMatches = routeFingerprint === govDealsCurrentRouteFingerprint(
+        typeof location !== 'undefined' && isGovDealsHost(location.hostname) ? resolveGovDealsPage(location) : route,
+        typeof location !== 'undefined' ? location : (options.locationLike || loc)
+      );
+      const identityMatches = Boolean(item?.title && identity === expectedIdentity && routeMatches);
+      const complete = false;
+      const stopReason = shouldStop()
+        ? 'stopped-by-user'
+        : (!routeMatches
+          ? 'route-fingerprint-changed'
+          : (identity !== expectedIdentity
+            ? 'asset-dom-identity-mismatch'
+            : (!item?.title ? 'asset-dom-empty' : 'asset-api-capture-unavailable')));
+      return {
+        source: 'govdeals-dom-asset',
+        items: item?.title ? [item] : [],
+        listings: item?.title ? [item] : [],
+        expectedTotal: 1,
+        context: {
+          source: 'GovDeals', pageKind, assetId: route.assetId || '', accountId: route.accountId || '',
+          title: item?.title || '', url: loc?.href || '', generatedAt: new Date().toISOString()
+        },
+        stopped: shouldStop(),
+        incomplete: true,
+        stopReason,
+        routeFingerprint,
+        durationMs: Date.now() - startedAt,
+        coverage: {
+          proofTier: 'unproven',
+          strategy: 'canonical-asset-dom',
+          routeFingerprint,
+          routeMatches,
+          enumeratedIds: identityMatches ? [expectedIdentity] : [],
+          failedBatches: []
+        }
+      };
+    }
+
+    const capture = options.capture || getGovDealsSearchCapture(route, options.locationLike || loc);
+    if (capture) {
+      let apiResult = await enumerateGovDealsApiListings(capture, onProgress, shouldStop, {
+        ...options,
+        route,
+        locationLike: options.locationLike || loc,
+        routeFingerprint
+      });
+      const enriched = await enrichGovDealsApiListings(apiResult.listings || [], capture, onProgress, shouldStop, options);
+      const enrichmentAudit = enriched.audit || { requested: 0, notNeeded: enriched.length, succeeded: 0, failed: [], stopped: shouldStop() };
+      const enrichmentComplete = !enrichmentAudit.stopped
+        && enrichmentAudit.failed.length === 0
+        && enrichmentAudit.requested === enrichmentAudit.succeeded;
+      const domContext = pageKind === 'govdeals-seller'
+        ? extractGovDealsSellerContext(root, loc)
+        : extractGovDealsSearchContext(root, loc);
+      apiResult = {
+        ...apiResult,
+        items: enriched,
+        listings: enriched,
+        context: {
+          ...domContext,
+          ...apiResult.context,
+          expectedTotal: apiResult.expectedTotal,
+          enrichment: {
+            eligible: enrichmentAudit.eligible ?? enrichmentAudit.requested,
+            limit: enrichmentAudit.limit ?? enrichmentAudit.requested,
+            requested: enrichmentAudit.requested,
+            succeeded: enrichmentAudit.succeeded,
+            failed: enrichmentAudit.failed.length,
+            skippedDueLimit: enrichmentAudit.skippedDueLimit || 0
+          }
+        },
+        incomplete: apiResult.incomplete || !enrichmentComplete,
+        stopReason: !enrichmentComplete && apiResult.stopReason === 'verified-api-total'
+          ? (enrichmentAudit.stopped ? 'stopped-during-enrichment' : 'required-enrichment-failed')
+          : apiResult.stopReason,
+        audit: { ...(apiResult.audit || {}), enrichment: enrichmentAudit },
+        coverage: {
+          ...(apiResult.coverage || {}),
+          failedBatches: enrichmentAudit.failed,
+          enrichment: {
+            eligible: enrichmentAudit.eligible ?? enrichmentAudit.requested,
+            limit: enrichmentAudit.limit ?? enrichmentAudit.requested,
+            requested: enrichmentAudit.requested,
+            notNeeded: enrichmentAudit.notNeeded,
+            succeeded: enrichmentAudit.succeeded,
+            failed: enrichmentAudit.failed.length,
+            skippedDueLimit: enrichmentAudit.skippedDueLimit || 0
+          }
+        }
+      };
+      debugEvent('govdeals.scrape.api.complete', {
+        kind: pageKind,
+        expectedTotal: apiResult.expectedTotal,
+        collected: enriched.length,
+        unique: uniqueNonEmpty(enriched.map(item => scraperStableIdentity(item, 'govdeals'))).length,
+        incomplete: apiResult.incomplete,
+        stopReason: apiResult.stopReason,
+        enrichmentRequested: enrichmentAudit.requested,
+        enrichmentFailed: enrichmentAudit.failed.length
+      });
+      return apiResult;
+    }
+
+    let context;
+    let items;
+    if (pageKind === 'govdeals-seller') {
+      context = extractGovDealsSellerContext(root, loc);
+      items = extractGovDealsListings(root, loc, pageKind);
+    } else {
+      context = extractGovDealsSearchContext(root, loc);
+      items = extractGovDealsListings(root, loc, pageKind);
+    }
+    const advertisedTotal = context?.advertisedTotal !== null
+      && context?.advertisedTotal !== undefined
+      && Number.isFinite(Number(context.advertisedTotal))
+      ? Number(context.advertisedTotal)
+      : null;
+    onProgress(`Read ${items.length} GovDeals listing(s).`);
+    const enriched = await enrichGovDealsListings(items, onProgress, shouldStop, options);
+    const enrichmentAudit = enriched.audit || { requested: 0, succeeded: 0, failed: [], stopped: shouldStop() };
+    const currentRoute = typeof location !== 'undefined' ? resolveGovDealsPage(location) : route;
+    const currentFingerprint = govDealsCurrentRouteFingerprint(currentRoute, typeof location !== 'undefined' ? location : (options.locationLike || loc));
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const identities = enriched.map(item => scraperStableIdentity(item, 'govdeals'));
+    const duplicateIds = uniqueNonEmpty(identities.filter((id, index) => id && identities.indexOf(id) !== index));
+    const missingStableIds = identities.filter(id => !id).length;
+    const stopped = shouldStop();
+    const incomplete = true;
+    const stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (duplicateIds.length
+          ? 'duplicate-identities'
+          : (missingStableIds
+            ? 'missing-stable-identities'
+            : (enrichmentAudit.failed.length || enrichmentAudit.skippedDueLimit
+              ? 'enrichment-incomplete'
+              : 'network-capture-unavailable'))));
+    const coverage = {
+      proofTier: 'unproven',
+      strategy: 'canonical-dom-snapshot',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      enumeratedIds: identities.filter(Boolean),
+      duplicateIds,
+      failedBatches: enrichmentAudit.failed,
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('govdeals.coverage', { kind: pageKind, count: enriched.length, advertisedTotal, incomplete, stopReason, coverage });
+    return {
+      source: 'govdeals-dom',
+      items: enriched,
+      listings: enriched,
+      expectedTotal: advertisedTotal,
+      context: {
+        ...context,
+        advertisedTotal,
+        visiblePageCount: enriched.length
+      },
+      stopped,
+      stopReason,
+      incomplete,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      audit: { enrichment: enrichmentAudit }
+    };
+  }
+
+  function mergeAuctionNinjaLots(target, lots, duplicateIds = null) {
+    lots.forEach(lot => {
+      const key = lot.url || lot.id || lot.lot || lot.title;
+      if (!key || !lot.title) return;
+      if (target.has(String(key))) duplicateIds?.add?.(String(key));
+      target.set(String(key), lot);
+    });
+    return target;
+  }
+
+  function getAuctionNinjaBaseUrl(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const rootUrl = typeof root?.URL === 'string' && root.URL && root.URL !== 'about:blank' ? root.URL : '';
+    return rootUrl || loc?.href || (typeof location !== 'undefined' ? location.href : 'https://www.auctionninja.com/');
+  }
+
+  function getAuctionNinjaPageNumber(url) {
+    try {
+      const parsed = typeof url === 'string' ? new URL(url, 'https://www.auctionninja.com/') : url;
+      const value = parsed.searchParams.get('Page')
+        || parsed.searchParams.get('page')
+        || parsed.searchParams.get('p')
+        || parsed.searchParams.get('pagenum');
+      const page = Number(value);
+      return Number.isFinite(page) && page > 0 ? page : 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  function auctionNinjaCatalogPageUrl(base, page) {
+    const url = new URL(base, 'https://www.auctionninja.com/');
+    if (Number(page) <= 1) {
+      url.searchParams.delete('Page');
+      url.searchParams.delete('page');
+      url.searchParams.delete('p');
+      url.searchParams.delete('pagenum');
+    } else {
+      url.searchParams.set('Page', String(page));
+    }
+    url.hash = 'items';
+    return url.href;
+  }
+
+  function getAuctionNinjaCatalogPaginationInfo(range, base) {
+    const requestedPage = getAuctionNinjaPageNumber(base);
+    if (!range) {
+      return { currentPage: requestedPage || 1, pageSize: 40, totalPages: requestedPage || 1 };
+    }
+
+    let pageSize = Math.max(1, range.pageSize || 40);
+    if (requestedPage > 1 && range.start > 1) {
+      const inferred = Math.round((range.start - 1) / (requestedPage - 1));
+      if (Number.isFinite(inferred) && inferred > 0) pageSize = inferred;
+    }
+    const currentPageFromRange = Math.floor(Math.max(0, range.start - 1) / pageSize) + 1;
+    const currentPage = Math.max(1, requestedPage || currentPageFromRange, currentPageFromRange);
+    const totalPages = range.total ? Math.ceil(range.total / pageSize) : currentPage;
+    return { currentPage, pageSize, totalPages };
+  }
+
+  function findAuctionNinjaCatalogPageUrls(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = getAuctionNinjaBaseUrl(root, loc);
+    let sourceRoute = null;
+    try {
+      sourceRoute = resolveAuctionNinjaPage(new URL(base, 'https://www.auctionninja.com/'));
+    } catch {
+      sourceRoute = null;
+    }
+    const range = parseAuctionNinjaCatalogRange(textOf(root?.body || root?.documentElement || root));
+    const { currentPage, totalPages } = getAuctionNinjaCatalogPaginationInfo(range, base);
+    const anchors = Array.from(root?.querySelectorAll?.('.auction-paging a[href], .paging-deta a[href], a[href*="Page="], a[href*="page="]') || []);
+    const pages = new Map();
+
+    anchors.forEach(anchor => {
+      const label = controlLabel(anchor);
+      const href = controlHref(anchor);
+      if (!href || /product|checkout|invoice|payment|account|login|logout|watch|follow|bid now/i.test(`${href} ${label}`)) return;
+      let url;
+      try {
+        url = new URL(href, base);
+      } catch {
+        return;
+      }
+      if (!isAuctionNinjaHost(url.hostname)) return;
+      const route = resolveAuctionNinjaPage(url);
+      if (!route.supported || route.kind !== 'sale-catalog') return;
+      if (sourceRoute?.saleId && route.saleId !== sourceRoute.saleId) return;
+      if (sourceRoute?.sellerSlug && route.sellerSlug !== sourceRoute.sellerSlug) return;
+      const page = getAuctionNinjaPageNumber(url);
+      if (page === currentPage) return;
+      pages.set(page, url.href);
+    });
+
+    if (range?.total) {
+      try {
+        const route = resolveAuctionNinjaPage(new URL(base));
+        if (route.supported && route.kind === 'sale-catalog') {
+          for (let page = 1; page <= totalPages; page += 1) {
+            if (page === currentPage || pages.has(page)) continue;
+            pages.set(page, auctionNinjaCatalogPageUrl(base, page));
+          }
+        }
+      } catch {
+        // URL-less test doubles and unsupported pages simply skip the fallback.
+      }
+    }
+
+    const out = Array.from(pages.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([, href]) => href);
+    debug('auctionninja catalog page urls', { currentPage, range, urls: out.slice(0, 12) });
+    return out;
+  }
+
+  function extractAuctionNinjaSearchActiveFilters(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const controls = Array.from(root?.querySelectorAll?.('input[name], select[name]') || []);
+    const values = new Map();
+    controls.forEach(control => {
+      const name = String(control?.name || control?.getAttribute?.('name') || '').trim().toLowerCase();
+      if (!name) return;
+      const type = String(control?.type || control?.getAttribute?.('type') || '').toLowerCase();
+      if ((type === 'checkbox' || type === 'radio') && !control.checked) return;
+      const value = String(control?.value ?? control?.getAttribute?.('value') ?? '').trim();
+      if (!value || values.has(name)) return;
+      values.set(name, value);
+    });
+    const firstValue = (...names) => names.map(name => values.get(String(name).toLowerCase()) || '').find(Boolean) || '';
+    const route = loc ? resolveAuctionNinjaPage(loc) : {};
+    const params = loc?.searchParams;
+    const filters = {
+      miles: String(route.miles || params?.get?.('miles') || firstValue('miles', 'milessrch', 'milessrchmob') || ''),
+      zip: String(route.zip || params?.get?.('zip') || firstValue('zip', 'zipsrch', 'zipsrchmob') || ''),
+      shipping: String(params?.get?.('shipping') || firstValue('shipping', 'shipopt_1') || ''),
+      pickup: String(params?.get?.('pickup') || firstValue('pickup', 'shipopt_2') || ''),
+      srt: String(params?.get?.('srt') || params?.get?.('sort') || firstValue('srt', 'srt1', 'srt2', 'sort') || ''),
+      category: String(params?.get?.('category') || params?.get?.('cat') || firstValue('category', 'cat', 'cat_id', 'category_id') || ''),
+      seller: String(params?.get?.('seller') || firstValue('seller') || ''),
+      state: String(params?.get?.('state') || firstValue('state', 'statesrch') || ''),
+      auc_date: String(params?.get?.('auc_date') || firstValue('auc_date') || ''),
+      ninjaship: String(params?.get?.('ninjaship') || firstValue('ninjaship') || '')
+    };
+    return Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== ''));
+  }
+
+  function auctionNinjaSearchRouteFingerprint(route, loc, activeFilters = {}) {
+    const filterText = Object.entries(activeFilters || {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+      .join('&');
+    return `${auctionNinjaRouteFingerprint(route, loc)}|active:${filterText}`;
+  }
+
+  function findAuctionNinjaAuctionSearchPageUrls(root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const base = getAuctionNinjaBaseUrl(root, loc);
+    const activeFilters = extractAuctionNinjaSearchActiveFilters(root, loc);
+    const pagingRoots = Array.from(root?.querySelectorAll?.('.paging-deta, [class*="pagination"]') || []);
+    const anchors = Array.from(new Set((pagingRoots.length ? pagingRoots : [root])
+      .flatMap(scope => Array.from(scope?.querySelectorAll?.('a[href], a[onclick], button[onclick]') || []))));
+    const candidates = [];
+    anchors.forEach(anchor => {
+      const label = controlLabel(anchor);
+      const href = controlHref(anchor);
+      const onclick = anchor?.getAttribute?.('onclick') || anchor?.getAttribute?.('onClick') || '';
+      const joined = `${href} ${label} ${onclick}`;
+      if (/bid|checkout|invoice|payment|account|login|logout|watch|follow|seller login|bidder login/i.test(joined)) return;
+      let target = '';
+      const paginationTarget = String(onclick || '').match(/pagination\s*\(\s*['"]([^'"]+)['"]/i)?.[1];
+      if (paginationTarget) target = paginationTarget;
+      else if (href && !/^javascript:/i.test(href)) target = href;
+      if (!target || !/(?:marketplace_ajax|Page=|page=|pagenum=|\/auctions|\b\/[a-z]{2}\/)/i.test(target)) return;
+      let url;
+      try {
+        url = new URL(target, base);
+      } catch {
+        return;
+      }
+      if (!isAuctionNinjaHost(url.hostname)) return;
+      const isAjax = /\/marketplace_ajax\.php$/i.test(url.pathname);
+      if (!auctionNinjaSearchPageMatches(base, url, '', activeFilters)) return;
+      const page = getAuctionNinjaPageNumber(url);
+      if (page <= 1 && !/Page=1|page=1|pagenum=1/i.test(url.search)) return;
+      candidates.push({ page, url, isAjax, scope: isAjax ? auctionNinjaPaginationScope(url) : '' });
+    });
+    const ajaxScopes = uniqueNonEmpty(candidates.filter(candidate => candidate.isAjax).map(candidate => candidate.scope));
+    if (ajaxScopes.length > 1) {
+      debugEvent('auctionninja.search.pagination.reject', {
+        reason: 'ambiguous-pagination-scope',
+        scopes: ajaxScopes
+      });
+      return [];
+    }
+    const ajaxScope = ajaxScopes[0] || '';
+    const pages = new Map();
+    candidates.forEach(candidate => {
+      if (!auctionNinjaSearchPageMatches(base, candidate.url, candidate.isAjax ? ajaxScope : '', activeFilters)) return;
+      pages.set(candidate.page, candidate.url.href);
+    });
+    const out = Array.from(pages.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([, href]) => href);
+    debug('auctionninja auction-search page urls', { urls: out.slice(0, 12) });
+    return out;
+  }
+
+  function parseAuctionNinjaHtmlDocument(html) {
+    if (typeof DOMParser === 'undefined') return null;
+    try {
+      return new DOMParser().parseFromString(String(html || ''), 'text/html');
+    } catch (error) {
+      debug('auctionninja html parse failed', { error: String(error) });
+      return null;
+    }
+  }
+
+  function findAuctionNinjaNextPageControl(root = document) {
+    const range = parseAuctionNinjaCatalogRange(textOf(root?.body || root?.documentElement || root));
+    if (range?.complete) return null;
+    const currentPage = range ? Math.ceil(range.end / Math.max(1, range.pageSize)) : 1;
+    const targetPage = currentPage + 1;
+    const controls = Array.from(root?.querySelectorAll?.('a, button, [role="button"], li') || []);
+    const scored = controls.map(control => {
+      const label = controlLabel(control);
+      const href = controlHref(control);
+      const className = control?.getAttribute?.('class') || '';
+      let score = 0;
+      if (new RegExp(`^${targetPage}$`).test(label)) score += 100;
+      if (/next|›|»|→|/.test(label)) score += 80;
+      if (href && /(?:page|pagenum|p)=\d+/i.test(href)) score += 20;
+      if (/disabled|active/i.test(className) || control?.disabled) score -= 100;
+      if (/bid|checkout|invoice|payment|account|login|logout|watch|follow|search|sort|per page/i.test(label)) score -= 80;
+      return { control, label, href, score };
+    }).filter(item => item.score > 0 && isVisible(item.control))
+      .sort((a, b) => b.score - a.score);
+    debug('auctionninja next page candidates', scored.map(item => ({ score: item.score, label: item.label, href: item.href })).slice(0, 8));
+    return scored[0]?.control || null;
+  }
+
+  async function scrapeAuctionNinjaCatalogLots(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const lotsByKey = new Map();
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAuctionNinjaPage(loc) : { kind: 'sale-catalog', source: 'auctionninja' };
+    const startedAt = Date.now();
+    const routeFingerprint = auctionNinjaRouteFingerprint(route, loc);
+    const duplicateIds = new Set();
+    const failedPages = [];
+    const pageAudits = [];
+    const recordPageAudit = (audit) => {
+      const index = pageAudits.findIndex(page => Number(page.page) === Number(audit.page));
+      if (index >= 0) pageAudits[index] = audit;
+      else pageAudits.push(audit);
+    };
+    let steps = 0;
+    let stopReason = '';
+    let lastRange = parseAuctionNinjaCatalogRange(textOf(root?.body || root?.documentElement || root));
+    const context = extractAuctionNinjaSaleContext(root, loc);
+
+    const initialLots = extractAuctionNinjaCatalogLots(root, loc);
+    mergeAuctionNinjaLots(lotsByKey, initialLots, duplicateIds);
+    recordPageAudit(buildAuctionNinjaPageAudit(initialLots, loc?.href || context.url, lastRange?.total, lastRange));
+    debug('auctionninja catalog scrape start', { count: lotsByKey.size, range: lastRange, context });
+
+    const queuedPageUrls = [];
+    const seenPageUrls = new Set();
+    const enqueuePageUrls = (urls) => {
+      urls.forEach(url => {
+        if (!url || seenPageUrls.has(url)) return;
+        seenPageUrls.add(url);
+        queuedPageUrls.push(url);
+      });
+    };
+    enqueuePageUrls(findAuctionNinjaCatalogPageUrls(root, loc));
+
+    if (queuedPageUrls.length && typeof fetch === 'function' && typeof DOMParser !== 'undefined') {
+      while (queuedPageUrls.length && !shouldStop()) {
+        const expectedTotal = lastRange?.total || 0;
+        if (expectedTotal && lotsByKey.size === expectedTotal) {
+          stopReason = 'expected-total-reached';
+          break;
+        }
+        if (steps >= 100) {
+          stopReason = 'max-fetch-steps';
+          break;
+        }
+
+        const url = queuedPageUrls.shift();
+        const before = lotsByKey.size;
+        steps += 1;
+        onProgress(`Fetching AuctionNinja catalog page ${steps}... ${before}/${expectedTotal || '?'} lot(s)`);
+        debug('auctionninja catalog page fetch start', { step: steps, url, before, expectedTotal });
+
+        const fetched = await fetchHtmlDocumentWithRetries(url, 'auctionninja.catalog.pagination', shouldStop);
+        if (!fetched.document) {
+          failedPages.push({ url: new URL(url).pathname, error: fetched.error });
+          continue;
+        }
+        const pageDoc = fetched.document;
+        const pageUrl = new URL(fetched.responseUrl || url);
+        const pageRoute = resolveAuctionNinjaPage(pageUrl);
+        if (pageRoute.kind !== 'sale-catalog'
+          || (route.saleId && pageRoute.saleId !== route.saleId)
+          || (route.sellerSlug && pageRoute.sellerSlug !== route.sellerSlug)) {
+          failedPages.push({ page: getAuctionNinjaPageNumber(pageUrl), error: 'cross-sale-page-rejected' });
+          continue;
+        }
+        const pageLots = extractAuctionNinjaCatalogLots(pageDoc, pageUrl);
+        const pageRange = parseAuctionNinjaCatalogRange(textOf(pageDoc.body || pageDoc.documentElement || pageDoc));
+        mergeAuctionNinjaLots(lotsByKey, pageLots, duplicateIds);
+        lastRange = pageRange || lastRange;
+        recordPageAudit(buildAuctionNinjaPageAudit(pageLots, pageUrl, pageRange?.total, pageRange));
+        enqueuePageUrls(findAuctionNinjaCatalogPageUrls(pageDoc, pageUrl));
+        debug('auctionninja catalog page fetch finished', { step: steps, url, before, after: lotsByKey.size, range: lastRange, queued: queuedPageUrls.length });
+      }
+
+      const expectedTotal = lastRange?.total || 0;
+      if (!stopReason) {
+        stopReason = shouldStop()
+          ? 'stopped-by-user'
+          : (expectedTotal && lotsByKey.size === expectedTotal ? 'expected-total-reached' : 'catalog-page-fetch-exhausted');
+      }
+    }
+
+    while (!shouldStop()) {
+      if (stopReason) break;
+      const expectedTotal = lastRange?.total || 0;
+      if (!expectedTotal || lotsByKey.size === expectedTotal || lastRange?.complete) {
+        stopReason = expectedTotal ? 'expected-total-reached' : 'no-expected-total';
+        break;
+      }
+      if (steps >= 12) {
+        stopReason = 'max-steps';
+        break;
+      }
+
+      const next = findAuctionNinjaNextPageControl(root);
+      if (!next) {
+        stopReason = 'no-next-page-control';
+        break;
+      }
+
+      const before = lotsByKey.size;
+      const beforeRange = lastRange ? { ...lastRange } : null;
+      steps += 1;
+      onProgress(`Loading AuctionNinja catalog... ${before}/${expectedTotal} lot(s)`);
+      debug('auctionninja next page click', { step: steps, before, beforeRange, label: controlLabel(next), href: controlHref(next) });
+      next.click?.();
+
+      let changed = false;
+      for (let i = 0; i < 20; i += 1) {
+        if (shouldStop()) break;
+        await wait(250);
+        const pageLots = extractAuctionNinjaCatalogLots(root);
+        mergeAuctionNinjaLots(lotsByKey, pageLots);
+        lastRange = parseAuctionNinjaCatalogRange(textOf(root?.body || root?.documentElement || root)) || lastRange;
+        if (lotsByKey.size > before || JSON.stringify(lastRange) !== JSON.stringify(beforeRange)) {
+          const pageNumber = lastRange?.start && lastRange?.pageSize
+            ? Math.ceil(lastRange.start / Math.max(1, lastRange.pageSize))
+            : getAuctionNinjaPageNumber(typeof location !== 'undefined' ? location.href : context.url);
+          const auditUrl = auctionNinjaCatalogPageUrl(context.url, pageNumber);
+          recordPageAudit(buildAuctionNinjaPageAudit(pageLots, auditUrl, lastRange?.total, lastRange));
+          changed = true;
+          break;
+        }
+      }
+      debug('auctionninja catalog step', { step: steps, before, after: lotsByKey.size, range: lastRange, changed });
+      if (!changed || lotsByKey.size <= before) {
+        stopReason = 'stuck-after-next-page';
+        break;
+      }
+    }
+
+    let stopped = shouldStop();
+    let lots = Array.from(lotsByKey.values()).sort((a, b) => String(a.lot || a.title).localeCompare(String(b.lot || b.title), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+    const firstAdvertisedTotal = pageAudits.find(page => page.total !== null
+      && page.total !== undefined
+      && Number.isFinite(Number(page.total)))?.total;
+    const expectedTotal = firstAdvertisedTotal !== null
+      && firstAdvertisedTotal !== undefined
+      && Number.isFinite(Number(firstAdvertisedTotal))
+      ? Number(firstAdvertisedTotal)
+      : null;
+    const pageCoverage = validateAuctionNinjaPageCoverage(pageAudits, expectedTotal, { requireRanges: true });
+    const currentRoute = typeof location !== 'undefined' ? resolveAuctionNinjaPage(location) : route;
+    const currentFingerprint = auctionNinjaRouteFingerprint(currentRoute, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    let enrichmentAudit = { requested: 0, succeeded: 0, failed: [], stopped: false };
+    if (!stopped && routeMatches && pageCoverage.complete && failedPages.length === 0 && duplicateIds.size === 0) {
+      const enriched = await enrichAuctionNinjaProductItems(lots, onProgress, shouldStop);
+      enrichmentAudit = enriched.audit || enrichmentAudit;
+      lots = Array.from(enriched);
+      stopped = shouldStop();
+    }
+    const incomplete = stopped
+      || !routeMatches
+      || !pageCoverage.complete
+      || failedPages.length > 0
+      || duplicateIds.size > 0
+      || enrichmentAudit.failed.length > 0
+      || enrichmentAudit.stopped;
+    stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedPages.length
+          ? 'failed-pages'
+          : (duplicateIds.size
+            ? 'duplicate-identities'
+            : (!pageCoverage.complete
+              ? pageCoverage.reason
+              : (enrichmentAudit.failed.length ? 'detail-enrichment-failed' : 'verified-total-reached')))));
+    const coverage = {
+      proofTier: expectedTotal === null ? 'unproven' : 'pagination-exact',
+      strategy: 'auctionninja-sale-pagination-plus-detail',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      enumeratedIds: lots.map(item => scraperStableIdentity(item, 'auctionninja')).filter(Boolean),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages,
+      failedBatches: enrichmentAudit.failed,
+      pageCoverage,
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('auctionninja.catalog.coverage', { lots: lots.length, expectedTotal, steps, stopReason, coverage });
+    return {
+      source: 'auctionninja-dom',
+      items: lots,
+      lots,
+      expectedTotal,
+      context,
+      stopped,
+      stopReason,
+      incomplete,
+      pageSteps: steps,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      failedPages,
+      audit: { pages: pageAudits, enrichment: enrichmentAudit }
+    };
+  }
+
+  function mergeAuctionNinjaSales(target, sales, duplicateIds = null) {
+    sales.forEach(sale => {
+      const key = canonicalAuctionNinjaSaleUrl(sale.url) || sale.id || sale.title;
+      if (!key || !sale.title) return;
+      if (target.has(String(key))) duplicateIds?.add?.(String(key));
+      target.set(String(key), sale);
+    });
+    return target;
+  }
+
+  async function scrapeAuctionNinjaAuctionSearchSales(onProgress = () => {}, shouldStop = () => false, root = document) {
+    const salesByKey = new Map();
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAuctionNinjaPage(loc) : { kind: 'auction-search', source: 'auctionninja' };
+    const startedAt = Date.now();
+    const activeFilters = extractAuctionNinjaSearchActiveFilters(root, loc);
+    const routeFingerprint = auctionNinjaSearchRouteFingerprint(route, loc, activeFilters);
+    const duplicateIds = new Set();
+    const failedPages = [];
+    const pageAudits = [];
+    let steps = 0;
+    let stopReason = '';
+    const context = extractAuctionNinjaAuctionSearchContext(root, loc);
+    const initialSales = extractAuctionNinjaAuctionSearchSales(root, loc);
+    mergeAuctionNinjaSales(salesByKey, initialSales, duplicateIds);
+    pageAudits.push(buildAuctionNinjaPageAudit(initialSales, loc?.href || context.url, context.totalSales));
+    debug('auctionninja auction-search scrape start', { count: salesByKey.size, context });
+
+    const queuedPageUrls = [];
+    const seenPageUrls = new Set();
+    const seenPageNumbers = new Set([getAuctionNinjaPageNumber(loc?.href || context.url)]);
+    let paginationScope = '';
+    const enqueuePageUrls = (urls) => {
+      urls.forEach(url => {
+        const page = getAuctionNinjaPageNumber(url);
+        if (!url || seenPageUrls.has(url) || seenPageNumbers.has(page)) return;
+        if (!auctionNinjaSearchPageMatches(loc?.href || context.url, url, paginationScope, activeFilters)) return;
+        if (!paginationScope && /\/marketplace_ajax\.php$/i.test(new URL(url).pathname)) paginationScope = auctionNinjaPaginationScope(url);
+        if (paginationScope && auctionNinjaPaginationScope(url) !== paginationScope) return;
+        seenPageUrls.add(url);
+        seenPageNumbers.add(page);
+        queuedPageUrls.push(url);
+      });
+    };
+    enqueuePageUrls(findAuctionNinjaAuctionSearchPageUrls(root, loc));
+
+    if (queuedPageUrls.length && typeof fetch === 'function' && typeof DOMParser !== 'undefined') {
+      while (queuedPageUrls.length && !shouldStop()) {
+        if (steps >= 100) {
+          stopReason = 'max-fetch-steps';
+          break;
+        }
+        const expectedTotal = context.totalSales || 0;
+        if (expectedTotal && salesByKey.size === expectedTotal) {
+          stopReason = 'expected-total-reached';
+          break;
+        }
+        const url = queuedPageUrls.shift();
+        const before = salesByKey.size;
+        steps += 1;
+        onProgress(`Fetching AuctionNinja auction page ${steps}... ${before}/${expectedTotal || '?'} sale(s)`);
+        debug('auctionninja auction-search page fetch start', { step: steps, url, before, expectedTotal });
+        const fetched = await fetchHtmlDocumentWithRetries(url, 'auctionninja.search.pagination', shouldStop);
+        if (!fetched.document) {
+          failedPages.push({ url: new URL(url).pathname, error: fetched.error });
+          continue;
+        }
+        const pageUrl = new URL(fetched.responseUrl || url);
+        if (!auctionNinjaSearchPageMatches(loc?.href || context.url, pageUrl, paginationScope, activeFilters)) {
+          failedPages.push({ page: getAuctionNinjaPageNumber(pageUrl), error: 'auction-search-filter-drift' });
+          continue;
+        }
+        const pageSales = extractAuctionNinjaAuctionSearchSales(fetched.document, pageUrl);
+        const pageContext = extractAuctionNinjaAuctionSearchContext(fetched.document, pageUrl);
+        mergeAuctionNinjaSales(salesByKey, pageSales, duplicateIds);
+        pageAudits.push(buildAuctionNinjaPageAudit(pageSales, pageUrl, fetched.totalSales ?? pageContext.totalSales));
+        enqueuePageUrls(findAuctionNinjaAuctionSearchPageUrls(fetched.document, pageUrl));
+        debug('auctionninja auction-search page fetch finished', { step: steps, url, before, after: salesByKey.size, queued: queuedPageUrls.length });
+      }
+    }
+
+    if (!stopReason) {
+      stopReason = shouldStop()
+        ? 'stopped-by-user'
+        : (context.totalSales && salesByKey.size === context.totalSales ? 'expected-total-reached' : 'visible-or-fetch-complete');
+    }
+    const stopped = shouldStop();
+    let sales = Array.from(salesByKey.values());
+    const expectedTotal = context.totalSales !== null && context.totalSales !== undefined && Number.isFinite(Number(context.totalSales))
+      ? Number(context.totalSales)
+      : null;
+    const pageCoverage = validateAuctionNinjaPageCoverage(pageAudits, expectedTotal);
+    sales = sales.sort((a, b) => String(a.closingText || a.title).localeCompare(String(b.closingText || b.title), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+    const currentRoute = typeof location !== 'undefined' ? resolveAuctionNinjaPage(location) : route;
+    const currentLocation = typeof location !== 'undefined' ? location : loc;
+    const currentFilters = extractAuctionNinjaSearchActiveFilters(root, currentLocation);
+    const currentFingerprint = auctionNinjaSearchRouteFingerprint(currentRoute, currentLocation, currentFilters);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const incomplete = stopped || !routeMatches || !pageCoverage.complete || failedPages.length > 0 || duplicateIds.size > 0;
+    stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedPages.length
+          ? 'failed-pages'
+          : (duplicateIds.size
+            ? 'duplicate-identities'
+            : (pageCoverage.complete ? 'verified-total-reached' : pageCoverage.reason))));
+    const coverage = {
+      proofTier: expectedTotal === null ? 'unproven' : 'pagination-exact',
+      strategy: 'auctionninja-search-pagination',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      enumeratedIds: sales.map(item => scraperStableIdentity(item, 'auctionninja')).filter(Boolean),
+      duplicateIds: Array.from(duplicateIds),
+      failedPages,
+      pageCoverage,
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('auctionninja.search.coverage', { sales: sales.length, expectedTotal, steps, stopReason, coverage });
+    return {
+      source: 'auctionninja-auction-search-dom',
+      context,
+      items: sales,
+      sales,
+      expectedTotal,
+      stopped,
+      stopReason,
+      incomplete,
+      pageSteps: steps,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage,
+      failedPages,
+      audit: { pages: pageAudits }
+    };
+  }
+
+  function parseAuctionNinjaAccountTotal(value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    const direct = text.match(/\bTotal\s*:\s*([\d,]+)\b/i);
+    if (direct) return Number(direct[1].replace(/,/g, ''));
+    const range = parseAuctionNinjaCatalogRange(text);
+    return range?.total ?? null;
+  }
+
+  function hasAuctionNinjaExplicitEmptyState(root = document) {
+    if (getAuctionNinjaAccountCards(root).length > 0) return false;
+    const heading = textOf(root?.querySelector?.('.myaccount-top-head, h1'));
+    if (parseAuctionNinjaAccountTotal(heading) === 0) return true;
+    const emptyNodes = Array.from(root?.querySelectorAll?.([
+      '.dashboard-search-result .no-results',
+      '.dashboard-search-result .empty-state',
+      '.myaccount-content .no-results',
+      '.myaccount-content .empty-state',
+      '[data-account-items] .no-results',
+      '[data-account-items] .empty-state',
+      '[class*="account"] [class*="no-result"]',
+      '[class*="account"] [class*="empty-state"]'
+    ].join(', ')) || []);
+    return emptyNodes.some(node => /\b(?:no items?|no lots?|nothing to show|no bid history|no results?)\b/i.test(textOf(node)));
+  }
+
+  function findAuctionNinjaAccountPageUrls(root = document, loc = (typeof location !== 'undefined' ? location : null), kind = '') {
+    const base = getAuctionNinjaBaseUrl(root, loc);
+    let sourceUrl;
+    try {
+      sourceUrl = new URL(base, 'https://www.auctionninja.com/');
+    } catch {
+      return [];
+    }
+    const sourceRoute = resolveAuctionNinjaPage(sourceUrl);
+    const expectedKind = kind || sourceRoute.kind;
+    const scope = auctionNinjaPaginationScope(sourceUrl);
+    const pages = new Map();
+    Array.from(root?.querySelectorAll?.('.paging-deta a[href], .pagination a[href], a[href*="Page="], a[href*="page="]') || []).forEach(anchor => {
+      const href = controlHref(anchor);
+      const label = controlLabel(anchor);
+      if (!href || /bid|checkout|invoice|payment|settings|logout|login|follow|watch/i.test(`${href} ${label}`)) return;
+      let target;
+      try {
+        target = new URL(href, sourceUrl);
+      } catch {
+        return;
+      }
+      const targetRoute = resolveAuctionNinjaPage(target);
+      if (!targetRoute.supported || targetRoute.kind !== expectedKind) return;
+      if (auctionNinjaPaginationScope(target) !== scope) return;
+      const page = getAuctionNinjaPageNumber(target);
+      if (page === getAuctionNinjaPageNumber(sourceUrl)) return;
+      pages.set(page, target.href);
+    });
+    return Array.from(pages.entries()).sort((a, b) => a[0] - b[0]).map(([, url]) => url);
+  }
+
+  function extractAuctionNinjaAccountContext(kind = 'followed-items', root = document, loc = (typeof location !== 'undefined' ? location : null)) {
+    const raw = textOf(root?.body || root?.documentElement || root);
+    const labels = {
+      'followed-items': 'AuctionNinja Followed Items',
+      'items-won': 'AuctionNinja Items Won',
+      'bid-history': 'AuctionNinja Bid History'
+    };
+    const title = String(root?.title || '')
+      .replace(/\s*\|\s*AuctionNinja.*$/i, '')
+      .trim()
+      || raw.match(/\b(Items\s+(?:I am following|Won)|Followed\s+Items)\b/i)?.[1]
+      || labels[kind]
+      || 'AuctionNinja Account Export';
+    const heading = textOf(root?.querySelector?.('.myaccount-top-head, h1'));
+    return {
+      source: 'AuctionNinja',
+      pageKind: kind,
+      title,
+      url: sanitizeAuctionNinjaAccountUrl(loc?.href || (typeof location !== 'undefined' ? location.href : '')),
+      expectedTotal: parseAuctionNinjaAccountTotal(heading),
+      explicitEmpty: hasAuctionNinjaExplicitEmptyState(root),
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  async function settleAuctionNinjaAccountDom(extractItems, root = document, onProgress = () => {}, shouldStop = () => false) {
+    const canObserve = typeof window !== 'undefined'
+      && typeof document !== 'undefined'
+      && root === document
+      && typeof extractItems === 'function';
+    const audit = {
+      attempted: canObserve,
+      complete: false,
+      reachedBottom: false,
+      settledPasses: 0,
+      initialCount: 0,
+      finalCount: 0,
+      initialHeight: 0,
+      finalHeight: 0,
+      loadMorePresent: false,
+      stopped: false
+    };
+    if (!canObserve) return { items: [], audit };
+
+    const originalY = Math.max(0, Number(window.scrollY || document.documentElement?.scrollTop || 0));
+    const scrollRoot = document.scrollingElement || document.documentElement || document.body;
+    let previousSignature = '';
+    let previousHeight = Number(scrollRoot?.scrollHeight || 0);
+    const accumulated = new Map();
+    const accumulate = (rows) => (Array.isArray(rows) ? rows : []).forEach(item => {
+      const identity = scraperStableIdentity(item, 'auctionninja');
+      if (identity) accumulated.set(identity, item);
+    });
+    accumulate(extractItems(root, location));
+    let finalItems = Array.from(accumulated.values());
+    audit.initialCount = finalItems.length;
+    audit.initialHeight = previousHeight;
+
+    try {
+      for (let pass = 1; pass <= 12 && !shouldStop(); pass += 1) {
+        window.scrollTo({ top: Number(scrollRoot?.scrollHeight || 0), left: 0, behavior: 'instant' });
+        await wait(350);
+        accumulate(extractItems(root, location));
+        finalItems = Array.from(accumulated.values());
+        const signature = Array.from(accumulated.keys()).sort().join('|');
+        const height = Number(scrollRoot?.scrollHeight || 0);
+        const bottom = Math.ceil(Number(window.scrollY || 0) + Number(window.innerHeight || 0)) >= height - 4;
+        const loadMore = Array.from(root.querySelectorAll?.('.paging-deta a, .pagination a, button, [role="button"]') || []).find(control => {
+          const label = controlLabel(control);
+          const disabled = control?.disabled || /\bdisabled\b/i.test(control?.getAttribute?.('class') || '') || control?.getAttribute?.('aria-disabled') === 'true';
+          return !disabled && isVisible(control) && /^(?:load|show)\s+more\b|^next\b|[›»]$|→$|$|\s*Next/i.test(label);
+        });
+        audit.reachedBottom = bottom;
+        audit.loadMorePresent = Boolean(loadMore);
+        if (bottom && !loadMore && signature && signature === previousSignature && height === previousHeight) {
+          audit.settledPasses += 1;
+        } else {
+          audit.settledPasses = 0;
+        }
+        previousSignature = signature;
+        previousHeight = height;
+        onProgress(`Settling AuctionNinja account page... ${finalItems.length} item(s)`);
+        if (audit.settledPasses >= 3) break;
+      }
+    } finally {
+      window.scrollTo({ top: originalY, left: 0, behavior: 'instant' });
+    }
+
+    audit.finalCount = finalItems.length;
+    audit.finalHeight = previousHeight;
+    audit.stopped = shouldStop();
+    audit.complete = !audit.stopped
+      && audit.reachedBottom
+      && !audit.loadMorePresent
+      && audit.settledPasses >= 3
+      && audit.finalCount > 0;
+    debugEvent('auctionninja.account.dom-settle', audit);
+    return { items: finalItems, audit };
+  }
+
+  async function scrapeAuctionNinjaAccountItems(kind = 'followed-items', onProgress = () => {}, shouldStop = () => false, root = document) {
+    const normalizedKind = kind === 'items-won' || kind === 'bid-history' ? kind : 'followed-items';
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveAuctionNinjaPage(loc) : { kind: normalizedKind, source: 'auctionninja' };
+    const routeFingerprint = auctionNinjaRouteFingerprint(route, loc);
+    const context = extractAuctionNinjaAccountContext(normalizedKind, root, loc);
+    const expectedTotal = context.expectedTotal !== null && context.expectedTotal !== undefined && Number.isFinite(Number(context.expectedTotal))
+      ? Number(context.expectedTotal)
+      : (context.explicitEmpty ? 0 : null);
+    if (shouldStop()) {
+      return {
+        source: 'auctionninja-account-dom',
+        context,
+        items: [],
+        expectedTotal: context.expectedTotal,
+        stopped: true,
+        incomplete: true,
+        stopReason: 'stopped-by-user',
+        routeFingerprint,
+        coverage: { proofTier: 'unproven', strategy: 'account-pagination', routeFingerprint, routeMatches: true, enumeratedIds: [] }
+      };
+    }
+
+    onProgress(`Reading AuctionNinja ${normalizedKind === 'items-won' ? 'won items' : (normalizedKind === 'bid-history' ? 'bid history' : 'followed items')}...`);
+    const extract = (pageRoot, pageLoc) => normalizedKind === 'items-won'
+      ? extractAuctionNinjaWonItems(pageRoot, pageLoc)
+      : (normalizedKind === 'bid-history'
+        ? extractAuctionNinjaBidHistoryItems(pageRoot, pageLoc)
+        : extractAuctionNinjaFollowedItems(pageRoot, pageLoc));
+    const itemsById = new Map();
+    const duplicateIds = new Set();
+    const failedPages = [];
+    const pageAudits = [];
+    const merge = (rows) => rows.forEach(item => {
+      const identity = scraperStableIdentity(item, 'auctionninja');
+      if (!identity) return;
+      if (itemsById.has(identity)) duplicateIds.add(identity);
+      itemsById.set(identity, item);
+    });
+    const initialItems = extract(root, loc);
+    merge(initialItems);
+    pageAudits.push(buildAuctionNinjaPageAudit(initialItems, loc?.href || context.url, context.expectedTotal));
+    const pageUrls = findAuctionNinjaAccountPageUrls(root, loc, normalizedKind);
+    for (const pageUrlValue of pageUrls) {
+      if (shouldStop()) break;
+      const requestedPageUrl = new URL(pageUrlValue);
+      onProgress(`Fetching AuctionNinja account page ${getAuctionNinjaPageNumber(requestedPageUrl)}...`);
+      const fetched = await fetchHtmlDocumentWithRetries(requestedPageUrl.href, 'auctionninja.account.pagination', shouldStop);
+      if (!fetched.document) {
+        failedPages.push({ page: getAuctionNinjaPageNumber(requestedPageUrl), error: fetched.error });
+        continue;
+      }
+      const pageUrl = new URL(fetched.responseUrl || requestedPageUrl.href);
+      const pageRoute = resolveAuctionNinjaPage(pageUrl);
+      if (pageRoute.kind !== normalizedKind || auctionNinjaPaginationScope(pageUrl) !== auctionNinjaPaginationScope(loc?.href || context.url)) {
+        failedPages.push({ page: getAuctionNinjaPageNumber(pageUrl), error: 'account-route-drift' });
+        continue;
+      }
+      const pageItems = extract(fetched.document, pageUrl);
+      const pageContext = extractAuctionNinjaAccountContext(normalizedKind, fetched.document, pageUrl);
+      merge(pageItems);
+      pageAudits.push(buildAuctionNinjaPageAudit(pageItems, pageUrl, pageContext.expectedTotal));
+    }
+
+    let accountSettleAudit = {
+      attempted: false,
+      complete: false,
+      reachedBottom: false,
+      settledPasses: 0,
+      initialCount: initialItems.length,
+      finalCount: initialItems.length,
+      loadMorePresent: false,
+      stopped: false
+    };
+    if (expectedTotal === null && pageUrls.length === 0 && initialItems.length > 0 && !shouldStop()) {
+      const settled = await settleAuctionNinjaAccountDom(extract, root, onProgress, shouldStop);
+      accountSettleAudit = settled.audit || accountSettleAudit;
+      if (accountSettleAudit.attempted) {
+        itemsById.clear();
+        duplicateIds.clear();
+        (settled.items || []).forEach(item => {
+          const identity = scraperStableIdentity(item, 'auctionninja');
+          if (identity) itemsById.set(identity, item);
+        });
+        pageAudits.splice(0, pageAudits.length,
+          buildAuctionNinjaPageAudit(Array.from(itemsById.values()), loc?.href || context.url, null));
+      }
+    }
+
+    let items = Array.from(itemsById.values());
+    let stopped = shouldStop();
+    const exactCoverage = expectedTotal === null ? null : validateAuctionNinjaPageCoverage(pageAudits, expectedTotal);
+    const settledDom = expectedTotal === null && accountSettleAudit.complete === true;
+    const paginationComplete = exactCoverage?.complete === true || settledDom;
+    let enrichmentAudit = { requested: 0, succeeded: 0, failed: [], stopped: false };
+    if (paginationComplete && duplicateIds.size === 0 && !stopped && items.length) {
+      const enriched = await enrichAuctionNinjaProductItems(items, onProgress, shouldStop);
+      enrichmentAudit = enriched.audit || enrichmentAudit;
+      items = Array.from(enriched);
+      stopped = shouldStop();
+    }
+    items = items.map(sanitizeAuctionNinjaAccountItem);
+    const currentRoute = typeof location !== 'undefined' ? resolveAuctionNinjaPage(location) : route;
+    const currentFingerprint = auctionNinjaRouteFingerprint(currentRoute, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const identities = items.map(item => scraperStableIdentity(item, 'auctionninja'));
+    const missingIdentity = identities.some(id => !id);
+    const incomplete = stopped
+      || !routeMatches
+      || !paginationComplete
+      || duplicateIds.size > 0
+      || missingIdentity
+      || failedPages.length > 0
+      || enrichmentAudit.failed.length > 0;
+    const stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (failedPages.length
+          ? 'failed-pages'
+          : (duplicateIds.size
+            ? 'duplicate-identities'
+            : (missingIdentity
+              ? 'missing-stable-identities'
+              : (!paginationComplete
+                ? (exactCoverage?.reason || 'account-total-unavailable')
+                : (enrichmentAudit.failed.length ? 'detail-enrichment-failed' : (settledDom ? 'settled-account-dom' : 'verified-total-reached')))))));
+    debug('auctionninja account scrape finished', { kind: normalizedKind, count: items.length, expectedTotal, stopReason });
+    return {
+      source: 'auctionninja-account-dom',
+      context,
+      items,
+      expectedTotal,
+      stopped,
+      stopReason,
+      incomplete,
+      routeFingerprint,
+      coverage: {
+        proofTier: exactCoverage?.complete ? 'pagination-exact' : (settledDom ? 'dom-bottom-settled' : 'unproven'),
+        strategy: 'account-pagination-plus-detail',
+        routeFingerprint,
+        currentFingerprint,
+        routeMatches,
+        enumeratedIds: identities.filter(Boolean),
+        duplicateIds: Array.from(duplicateIds),
+        reachedBottom: accountSettleAudit.reachedBottom === true,
+        failedPages,
+        failedBatches: enrichmentAudit.failed,
+        pageCoverage: exactCoverage
+      },
+      audit: { pages: pageAudits, enrichment: enrichmentAudit, domSettle: accountSettleAudit }
+    };
+  }
+
+  function resolveHiBidPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const search = String(loc.search || '');
+    const parts = pathSegments(loc);
+    const lowerParts = parts.map(part => part.toLowerCase());
+
+    if (!isHiBidHost(host)) {
+      return { supported: false, kind: 'unsupported', host, reason: 'unsupported host' };
+    }
+
+    const accountIndex = lowerParts[0] === 'account' ? 0 : (lowerParts[1] === 'account' ? 1 : -1);
+    const statePrefix = accountIndex === 1 ? parts[0] : '';
+
+    if (accountIndex >= 0 && lowerParts[accountIndex + 1] === 'watchlist') {
+      const status = String(
+        loc.searchParams?.get?.('status')
+        || search.match(/[?&]status=([^&]+)/i)?.[1]
+        || ''
+      ).trim().toUpperCase();
+      return status === 'OUTBID'
+        ? { supported: true, kind: 'watchlist-outbid', host, statePrefix, reason: 'outbid watchlist route' }
+        : { supported: true, kind: 'watchlist', host, statePrefix, reason: 'watchlist route' };
+    }
+
+    if (accountIndex >= 0 && lowerParts[accountIndex + 1] === 'pastbidsm') {
+      return {
+        supported: true,
+        kind: 'pastbids',
+        host,
+        statePrefix,
+        reason: 'past bids auction route'
+      };
+    }
+
+    if (accountIndex >= 0 && lowerParts[accountIndex + 1] === 'pastwatchlist') {
+      return {
+        supported: true,
+        kind: 'pastwatchlist',
+        host,
+        statePrefix,
+        reason: 'past watchlist auction route'
+      };
+    }
+
+    if (accountIndex >= 0 && lowerParts[accountIndex + 1] === 'currentbids') {
+      const status = String(
+        loc.searchParams?.get?.('status')
+        || search.match(/[?&]status=([^&]+)/i)?.[1]
+        || ''
+      ).trim().toUpperCase();
+      if (status === 'WINNING') {
+        return { supported: true, kind: 'currentbids-winning', host, statePrefix, status, reason: 'winning current bids route' };
+      }
+      if (status === 'OUTBID') {
+        return { supported: true, kind: 'currentbids-outbid', host, statePrefix, status, reason: 'outbid current bids route' };
+      }
+      return { supported: false, kind: 'currentbids', host, statePrefix, status, reason: 'current bids status is not WINNING or OUTBID' };
+    }
+
+    if (lowerParts[0] === 'livecatalog') {
+      return { supported: true, kind: 'live', host, auctionId: parts[1] || '', reason: 'livecatalog route' };
+    }
+
+    if (lowerParts[0] === 'catalog') {
+      return { supported: true, kind: 'catalog', host, auctionId: parts[1] || '', reason: 'catalog route' };
+    }
+
+    if (lowerParts[0] === 'lots' || lowerParts[0] === 'lot') {
+      return {
+        supported: true,
+        kind: lowerParts[0] === 'lot' ? 'lot' : 'catalog',
+        host,
+        auctionId: parts[1] || '',
+        reason: `${lowerParts[0]} route`
+      };
+    }
+
+    if (lowerParts[1] === 'lots' || lowerParts[1] === 'lot') {
+      return {
+        supported: true,
+        kind: lowerParts[1] === 'lot' ? 'lot' : 'catalog',
+        host,
+        statePrefix: parts[0] || '',
+        auctionId: parts[2] || '',
+        reason: `state-prefixed ${lowerParts[1]} route`
+      };
+    }
+
+    return { supported: false, kind: 'unsupported', host, reason: 'unsupported HiBid path' };
+  }
+
+  function isWatchlistOutbidPage(loc = location) {
+    return resolveHiBidPage(loc).kind === 'watchlist-outbid';
+  }
+
+  function isLiveCatalogPage(loc = location) {
+    return resolveHiBidPage(loc).kind === 'live';
+  }
+
+  function isEbayBulkSellPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const pathname = String(loc.pathname || '');
+    return (host === 'www.ebay.com' || host === 'ebay.com')
+      && (/^\/bulksell\b/i.test(pathname) || /^\/sh\/lst\/active\/bulkedit\/?$/i.test(pathname));
+  }
+
+  function auctionNinjaPaginationScope(url, ignoredKeys = ['Page', 'page', 'p', 'pagenum', 'an']) {
+    try {
+      const parsed = new URL(url, 'https://www.auctionninja.com/');
+      const ignored = new Set(ignoredKeys.map(key => String(key).toLowerCase()));
+      const search = Array.from(parsed.searchParams.entries())
+        .filter(([key]) => !ignored.has(String(key).toLowerCase()))
+        .sort(([aKey, aValue], [bKey, bValue]) => aKey.localeCompare(bKey) || aValue.localeCompare(bValue))
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+        .join('&');
+      return `${parsed.hostname.toLowerCase()}|${parsed.pathname.replace(/\/+$/, '') || '/'}|${search}`;
+    } catch {
+      return '';
+    }
+  }
+
+  function auctionNinjaCategoryPageMatches(source, target) {
+    try {
+      const sourceUrl = new URL(source, 'https://www.auctionninja.com/');
+      const targetUrl = new URL(target, sourceUrl);
+      if (!sourceUrl.searchParams.has('srt')) sourceUrl.searchParams.set('srt', 'Distance');
+      if (!targetUrl.searchParams.has('srt')) targetUrl.searchParams.set('srt', 'Distance');
+      const sourceRoute = resolveAuctionNinjaPage(sourceUrl);
+      const targetRoute = resolveAuctionNinjaPage(targetUrl);
+      return sourceRoute.supported
+        && targetRoute.supported
+        && sourceRoute.kind === 'category-search'
+        && targetRoute.kind === 'category-search'
+        && sourceRoute.categorySlug === targetRoute.categorySlug
+        && auctionNinjaPaginationScope(sourceUrl) === auctionNinjaPaginationScope(targetUrl);
+    } catch {
+      return false;
+    }
+  }
+
+  function auctionNinjaSearchPageMatches(source, target, expectedPaginationScope = '', activeFilters = null) {
+    try {
+      const sourceUrl = new URL(source, 'https://www.auctionninja.com/');
+      const targetUrl = new URL(target, sourceUrl);
+      if (!isAuctionNinjaHost(targetUrl.hostname)) return false;
+      const sourceRoute = resolveAuctionNinjaPage(sourceUrl);
+      const sourceIsAjax = /\/marketplace_ajax\.php$/i.test(sourceUrl.pathname);
+      if (!sourceIsAjax && (!sourceRoute.supported || sourceRoute.kind !== 'auction-search')) return false;
+      const isAjax = /\/marketplace_ajax\.php$/i.test(targetUrl.pathname);
+      const targetRoute = resolveAuctionNinjaPage(targetUrl);
+      if (!isAjax && (!targetRoute.supported || targetRoute.kind !== 'auction-search')) return false;
+      const expected = {
+        zip: String(sourceRoute.zip || sourceUrl.searchParams.get('zip') || ''),
+        miles: String(sourceUrl.searchParams.get('miles') || ''),
+        ...(activeFilters || {})
+      };
+      const aliases = {
+        srt: ['srt', 'sort'],
+        category: ['category', 'cat', 'cat_id', 'category_id'],
+        miles: ['miles'],
+        zip: ['zip'],
+        shipping: ['shipping'],
+        pickup: ['pickup'],
+        seller: ['seller'],
+        state: ['state'],
+        auc_date: ['auc_date'],
+        ninjaship: ['ninjaship']
+      };
+      const canonicalByAlias = new Map(Object.entries(aliases).flatMap(([canonical, names]) => names.map(name => [name, canonical])));
+      const allowedKeys = new Set(['page', 'p', 'pagenum', 'an', '_', ...canonicalByAlias.keys()]);
+      for (const [key] of targetUrl.searchParams.entries()) {
+        if (!allowedKeys.has(String(key).toLowerCase())) return false;
+      }
+      const targetValue = (canonical) => (aliases[canonical] || [canonical])
+        .map(name => targetUrl.searchParams.get(name) || '')
+        .find(Boolean) || '';
+      for (const [canonical, expectedValueRaw] of Object.entries(expected)) {
+        const expectedValue = String(expectedValueRaw || '');
+        if (!expectedValue || !aliases[canonical]) continue;
+        const actualValue = targetValue(canonical);
+        if (actualValue && actualValue !== expectedValue) return false;
+        const sourceRequires = (aliases[canonical] || [canonical]).some(name => sourceUrl.searchParams.has(name));
+        const transportRequires = ['zip', 'miles', 'shipping', 'pickup', 'category', 'seller', 'state', 'auc_date', 'ninjaship'].includes(canonical)
+          || (canonical === 'srt' && !/^distance$/i.test(expectedValue));
+        if ((sourceRequires || transportRequires) && !actualValue) return false;
+      }
+      if (activeFilters) {
+        for (const [key, value] of targetUrl.searchParams.entries()) {
+          const canonical = canonicalByAlias.get(String(key).toLowerCase());
+          if (!canonical || !value) continue;
+          if (!String(expected[canonical] || '')) return false;
+        }
+      }
+      if (isAjax && !targetUrl.searchParams.get('Page')) return false;
+      if (expectedPaginationScope && auctionNinjaPaginationScope(targetUrl) !== expectedPaginationScope) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function validateAuctionNinjaPageCoverage(pageAudits = [], expectedTotal = null, options = {}) {
+    const total = expectedTotal !== null && expectedTotal !== undefined ? Number(expectedTotal) : Number.NaN;
+    const audits = Array.isArray(pageAudits) ? pageAudits.filter(Boolean) : [];
+    const ids = audits.flatMap(page => Array.isArray(page.ids) ? page.ids.filter(Boolean).map(String) : []);
+    const identityCounts = new Map();
+    ids.forEach(id => identityCounts.set(id, (identityCounts.get(id) || 0) + 1));
+    const duplicateIds = Array.from(identityCounts.entries()).filter(([, count]) => count > 1).map(([id]) => id);
+    const pageNumbers = audits.map(page => Number(page.page)).filter(Number.isFinite).sort((a, b) => a - b);
+    const maxPage = pageNumbers.length ? pageNumbers[pageNumbers.length - 1] : 0;
+    const missingPages = Array.from({ length: maxPage }, (_, index) => index + 1).filter(page => !pageNumbers.includes(page));
+    const totals = uniqueNonEmpty(audits.map(page => page.total).filter(value => value !== null && value !== undefined).map(String));
+    let reason = 'complete';
+    if (!Number.isFinite(total) || total < 0) reason = 'authoritative-total-unavailable';
+    else if (!audits.length) reason = 'no-pages';
+    else if (missingPages.length) reason = 'missing-pages';
+    else if (totals.some(value => Number(value) !== total)) reason = 'total-drift';
+    else if (audits.some(page => Number(page.count) !== (Array.isArray(page.ids) ? page.ids.length : Number(page.count)))) reason = 'page-count-mismatch';
+    else if (duplicateIds.length) reason = 'duplicate-identities';
+    else if (ids.length !== total || identityCounts.size !== total) reason = 'count-mismatch';
+
+    const hasAnyRange = audits.some(page => (page.start !== null && page.start !== undefined)
+      || (page.end !== null && page.end !== undefined));
+    const ranged = audits.every(page => page.start !== null
+      && page.start !== undefined
+      && page.end !== null
+      && page.end !== undefined
+      && Number.isFinite(Number(page.start))
+      && Number.isFinite(Number(page.end)));
+    if (reason === 'complete' && hasAnyRange && !ranged) reason = 'incomplete-range-proof';
+    if (reason === 'complete' && options.requireRanges && !ranged) reason = 'missing-range-proof';
+    if (reason === 'complete' && ranged) {
+      const ordered = audits.slice().sort((a, b) => Number(a.start) - Number(b.start));
+      let nextStart = 1;
+      for (const page of ordered) {
+        const start = Number(page.start);
+        const end = Number(page.end);
+        const count = Number(page.count);
+        if (start !== nextStart || end < start || count !== end - start + 1) {
+          reason = start < nextStart ? 'overlapping-ranges' : 'range-gap';
+          break;
+        }
+        nextStart = end + 1;
+      }
+      if (reason === 'complete' && nextStart - 1 !== total) reason = 'range-total-mismatch';
+    }
+    return {
+      complete: reason === 'complete',
+      reason,
+      expectedTotal: Number.isFinite(total) ? total : null,
+      collectedCount: ids.length,
+      uniqueIdentityCount: identityCounts.size,
+      duplicateIds,
+      missingPages,
+      pageCount: audits.length
+    };
+  }
+
+  function buildAuctionNinjaPageAudit(items, url, total = null, range = null, siteKind = 'auctionninja') {
+    const rows = Array.isArray(items) ? items : [];
+    const identities = rows.map(item => scraperStableIdentity(item, siteKind)).filter(Boolean);
+    return {
+      page: getAuctionNinjaPageNumber(url),
+      total: total !== null && total !== undefined && Number.isFinite(Number(total)) ? Number(total) : null,
+      start: range?.start !== null && range?.start !== undefined && Number.isFinite(Number(range.start)) ? Number(range.start) : null,
+      end: range?.end !== null && range?.end !== undefined && Number.isFinite(Number(range.end)) ? Number(range.end) : null,
+      count: rows.length,
+      ids: identities
+    };
+  }
+
+  async function fetchHtmlDocumentWithRetries(url, namespace = 'pagination', shouldStop = () => false, options = {}) {
+    if (typeof fetch !== 'function' || typeof DOMParser === 'undefined') {
+      return { document: null, error: 'fetch-unavailable', attempts: 0 };
+    }
+    const maxAttempts = Math.max(1, Math.min(3, Number(options.maxAttempts || 3)));
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 20000));
+    let lastError = '';
+    for (let attempt = 1; attempt <= maxAttempts && !shouldStop(); attempt += 1) {
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = controller ? globalThis.setTimeout(() => controller.abort(), timeoutMs) : null;
+      const stopTimer = controller ? globalThis.setInterval?.(() => {
+        if (shouldStop()) controller.abort();
+      }, 100) : null;
+      try {
+        const parsed = new URL(url, typeof location !== 'undefined' ? location.href : 'https://invalid.local/');
+        debugEvent(`${namespace}.request`, { attempt, path: parsed.pathname, page: parsed.searchParams.get('Page') || parsed.searchParams.get('page') || '' });
+        const response = await fetch(parsed.href, { credentials: 'include', cache: 'no-store', signal: controller?.signal });
+        if (!response?.ok) throw new Error(`HTTP ${response?.status || 'unknown'}`);
+        const parsedResponse = parseAuctionNinjaPagedResponse(await response.text());
+        const documentValue = parseAuctionNinjaHtmlDocument(parsedResponse.html);
+        if (!documentValue) throw new Error('parse-empty');
+        debugEvent(`${namespace}.response`, {
+          attempt,
+          responseKind: parsedResponse.responseKind,
+          totalSales: parsedResponse.totalSales,
+          ignoredKeys: parsedResponse.ignoredSensitiveKeys
+        });
+        return {
+          document: documentValue,
+          error: '',
+          attempts: attempt,
+          responseKind: parsedResponse.responseKind,
+          totalSales: parsedResponse.totalSales,
+          responseUrl: String(response.url || parsed.href)
+        };
+      } catch (error) {
+        lastError = String(error?.message || error);
+        debugEvent(`${namespace}.retry`, { attempt, error: lastError });
+      } finally {
+        if (timer) globalThis.clearTimeout(timer);
+        if (stopTimer) globalThis.clearInterval?.(stopTimer);
+      }
+    }
+    return { document: null, error: shouldStop() ? 'stopped-by-user' : (lastError || 'fetch-failed'), attempts: maxAttempts };
+  }
+
+  function findEbayBulkEditLink(root = document) {
+    return Array.from(root?.querySelectorAll?.('a[href]') || []).find(link => {
+      const href = String(link.getAttribute?.('href') || link.href || '');
+      const label = textOf(link);
+      return /^https:\/\/www\.ebay\.com\/sh\/lst\/active\/bulkedit\b/i.test(absoluteUrl(href, 'https://www.ebay.com/'))
+        && /edit\s+all|bulk\s+edit/i.test(label);
+    }) || null;
+  }
+
+  function isEbayMyLifecyclePath(pathname, leaf) {
+    const escapedLeaf = String(leaf || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^/mys/${escapedLeaf}(?:/rf(?:/.*)?)?/?$`, 'i').test(String(pathname || ''));
+  }
+
+  function isFlipTrackerListingPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const pathname = String(loc.pathname || '');
+    if (isEbayBulkSellPage(loc)) return true;
+    if (host === 'www.ebay.com') {
+      return /^\/sh\/lst\/active\/?$/i.test(pathname)
+        || /^\/sh\/lst\/ended\/?$/i.test(pathname)
+        || isEbayMyLifecyclePath(pathname, 'active')
+        || isEbayMyLifecyclePath(pathname, 'sold')
+        || /^\/mes\/transactionlist\/?$/i.test(pathname);
+    }
+    if (host === 'www.facebook.com' || host === 'facebook.com') {
+      return /^\/marketplace\/(?:you|profile)\b/i.test(pathname)
+        || /^\/marketplace\/create\/item\b/i.test(pathname)
+        || /^\/marketplace\/create\/?$/i.test(pathname)
+        || /^\/marketplace\/item\/\d+\b/i.test(pathname);
+    }
+    return false;
+  }
+
+  function resolveFlipTrackerPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const pathname = String(loc.pathname || '');
+    if ((host === 'www.ebay.com' || host === 'ebay.com')
+      && (/^\/bulksell\b/i.test(pathname) || /^\/sh\/lst\/active\/bulkedit\/?$/i.test(pathname))) {
+      return { supported: true, kind: 'fliptracker-ebay-bulk', source: 'ebay', host, reason: 'eBay bulk-sell listing export route' };
+    }
+    if (host === 'www.ebay.com' && (/^\/sh\/lst\/active\/?$/i.test(pathname) || isEbayMyLifecyclePath(pathname, 'active'))) {
+      return { supported: true, kind: 'fliptracker-ebay-active', source: 'ebay', host, reason: 'eBay active listing export route' };
+    }
+    if (host === 'www.ebay.com' && /^\/sh\/lst\/ended\/?$/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-ebay-ended', source: 'ebay', host, reason: 'eBay ended listing reconciliation route' };
+    }
+    if (host === 'www.ebay.com' && isEbayMyLifecyclePath(pathname, 'sold')) {
+      return { supported: true, kind: 'fliptracker-ebay-sold', source: 'ebay', host, reason: 'eBay sold order export route' };
+    }
+    if (host === 'www.ebay.com' && /^\/mes\/transactionlist\/?$/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-ebay-transactions', source: 'ebay', host, reason: 'eBay seller transaction export route' };
+    }
+    if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/(?:you|profile)\b/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-facebook', source: 'facebook', host, reason: 'Facebook Marketplace listing export route' };
+    }
+    if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/create\/item\b/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-facebook-create', source: 'facebook', host, reason: 'Facebook Marketplace item draft route' };
+    }
+    if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/create\/?$/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-facebook-create-hub', source: 'facebook', host, reason: 'Facebook Marketplace saved-draft confirmation route' };
+    }
+    if ((host === 'www.facebook.com' || host === 'facebook.com') && /^\/marketplace\/item\/\d+\b/i.test(pathname)) {
+      return { supported: true, kind: 'fliptracker-facebook-published', source: 'facebook', host, reason: 'Facebook Marketplace published item route' };
+    }
+    return { supported: false, kind: 'unsupported', source: 'unknown', host, reason: 'unsupported FlipTracker listing route' };
+  }
+
+  function resolveAjWillnerPage(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    const pathname = String(loc.pathname || '');
+    if (host !== 'bid.ajwillnerauctions.com') {
+      return { supported: false, kind: 'unsupported', source: 'ajwillner', host, reason: 'unsupported AJ Willner host' };
+    }
+    if (!/^\/ui\/auctions\/\d+/i.test(pathname)) {
+      return { supported: false, kind: 'unsupported', source: 'ajwillner', host, reason: 'unsupported AJ Willner path' };
+    }
+    return {
+      supported: true,
+      kind: 'catalog',
+      source: 'ajwillner',
+      host,
+      auctionId: getAjWillnerAuctionId(loc),
+      reason: 'AJ Willner auction route'
+    };
+  }
+
+  function getRouteManifest() {
+    return [
+      {
+        site: 'hibid',
+        label: 'HiBid',
+        source: 'hibid',
+        mode: 'catalog',
+        navigation: { group: 'auction', url: 'https://hibid.com/lots', modeHint: 'catalog', help: 'Open HiBid lots search in this tab.' },
+        routeKinds: ['catalog', 'live', 'lot', 'watchlist', 'watchlist-outbid', 'currentbids-winning', 'currentbids-outbid', 'pastbids', 'pastwatchlist'],
+        proofPolicy: 'api-exact-or-scoped-account'
+      },
+      {
+        site: 'ajwillner',
+        label: 'AJ Willner',
+        source: 'ajwillner',
+        mode: 'catalog',
+        navigation: { group: 'auction', url: 'https://bid.ajwillnerauctions.com/', modeHint: 'auctions', help: 'Open the AJ Willner auction site in this tab.' },
+        routeKinds: ['catalog'],
+        proofPolicy: 'api-exact'
+      },
+      {
+        site: 'auctionninja',
+        label: 'AuctionNinja',
+        source: 'auctionninja',
+        mode: 'auctionninja',
+        navigation: { group: 'auction', url: 'https://www.auctionninja.com/auctions', modeHint: 'auctions', help: 'Open AuctionNinja auction search in this tab.' },
+        routeKinds: ['auction-search', 'category-search', 'sale-catalog', 'item-detail', 'followed-items', 'items-won', 'bid-history'],
+        proofPolicy: 'pagination-exact-or-scoped-account'
+      },
+      {
+        site: 'aar',
+        label: 'AAR Auctions',
+        source: 'aar',
+        mode: 'aar',
+        navigation: { group: 'auction', url: 'https://aarauctions.com/auctions/', modeHint: 'auctions', help: 'Open the AAR Auctions calendar in this tab.' },
+        routeKinds: ['aar-auction-list', 'aar-auction-catalog', 'aar-item-detail'],
+        proofPolicy: 'pagination-exact-or-single-record'
+      },
+      {
+        site: 'govdeals',
+        label: 'GovDeals',
+        source: 'govdeals',
+        mode: 'govdeals',
+        navigation: { group: 'auction', url: 'https://www.govdeals.com/en/search', modeHint: 'search', help: 'Open GovDeals search in this tab.' },
+        routeKinds: ['govdeals-seller', 'govdeals-new-listings', 'govdeals-asset'],
+        proofPolicy: 'api-exact-or-pagination-exact'
+      },
+      {
+        site: 'ebay',
+        label: 'eBay',
+        source: 'ebay',
+        mode: 'fliptracker',
+        navigation: {
+          group: 'selling',
+          workflows: [
+            { id: 'ebay-active', label: 'eBay Active', modeHint: 'listings', url: 'https://www.ebay.com/sh/lst/active', help: 'Open active eBay Seller Hub listings.' },
+            { id: 'ebay-bulk', label: 'eBay Bulk Edit', modeHint: 'bulk', url: 'https://www.ebay.com/sh/lst/active#flipperaddon-bulk-edit', help: 'Open Seller Hub Active and continue to its current Edit all listings workflow.' },
+            { id: 'ebay-ended', label: 'eBay Ended', modeHint: 'ended', url: 'https://www.ebay.com/sh/lst/ended', help: 'Open ended eBay Seller Hub listings.' },
+            { id: 'ebay-sold', label: 'eBay Sold', modeHint: 'sold', url: 'https://www.ebay.com/mys/sold', help: 'Open My eBay sold orders.' },
+            { id: 'ebay-transactions', label: 'eBay Transactions', modeHint: 'records', url: 'https://www.ebay.com/mes/transactionlist?sh=true', help: 'Open eBay seller transaction records.' }
+          ]
+        },
+        routeKinds: ['fliptracker-ebay-active', 'fliptracker-ebay-bulk', 'fliptracker-ebay-ended', 'fliptracker-ebay-sold', 'fliptracker-ebay-transactions'],
+        proofPolicy: 'pagination-exact'
+      },
+      {
+        site: 'facebook',
+        label: 'Facebook Marketplace',
+        source: 'facebook',
+        mode: 'fliptracker',
+        navigation: {
+          group: 'selling',
+          workflows: [
+            { id: 'facebook-selling', label: 'Facebook Selling', modeHint: 'listings', url: 'https://www.facebook.com/marketplace/you/selling', help: 'Open your Facebook Marketplace selling listings.' },
+            { id: 'facebook-create', label: 'Facebook Create Listing', modeHint: 'create', url: 'https://www.facebook.com/marketplace/create/item', help: 'Open the official Facebook Marketplace listing form.' }
+          ]
+        },
+        routeKinds: ['fliptracker-facebook', 'fliptracker-facebook-create', 'fliptracker-facebook-create-hub', 'fliptracker-facebook-published'],
+        proofPolicy: 'dom-bottom-settled'
+      }
+    ];
+  }
+
+  function getNetworkEndpointManifest() {
+    return {
+      hibid: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'POST', url: 'https://hibid-api.io/sr/main/v1/search/lot', variables: ['auctionId', 'auctioneerId', 'categoryId', 'country', 'location', 'page', 'shipping', 'size', 'sortOrder', 'status'] },
+        hydrate: { method: 'POST', url: 'https://hibid.com/graphql', operation: 'LotSearchLotOnly', variables: ['auctionId', 'eventItemIds', 'sortOrder', 'status'] }
+      },
+      ajwillner: {
+        discovery: 'chrome-cdp',
+        bootstrap: { method: 'GET', url: 'https://bid.ajwillnerauctions.com/api/auctions/{auctionId}', variables: ['page', 'include_items_data', 'include_documents'] },
+        enumerate: { method: 'GET', url: 'https://bid.ajwillnerauctions.com/api/items/search', variables: ['auction_id', 'page', 'per_page', 'category', 'sub_category', 'query', 'exact_category_match'] }
+      },
+      auctionninja: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'GET', url: 'document pagination', variables: ['Page', 'srt', 'miles', 'zip'] },
+        auctionSearch: { method: 'GET', url: 'https://www.auctionninja.com/marketplace_ajax.php', variables: ['Page', 'miles', 'zip', 'shipping', 'pickup'], response: 'JSON head/body/pagination fragments' },
+        enrich: { method: 'GET', url: 'canonical product document', variables: ['productId'] },
+        note: 'Sale and category listings use deterministic HTML pages; nearby-auction pages use first-party JSON fragments and ignore map/contact payload keys.'
+      },
+      aar: {
+        discovery: 'chrome-cdp',
+        calendar: { method: 'GET', url: 'https://aarauctions.com/auctions/', variables: ['canonical auctionId'] },
+        enumerate: { method: 'GET', url: 'https://aarauctions.com/servlet/Search.do', variables: ['auctionId', 'categoryName', 'keyword', 'lotId', 'orderBy', 'page', 'perPage'] },
+        enrich: { method: 'GET', url: 'https://aarauctions.com/servlet/Search.do?auctionId={auctionId}&itemId={itemId}', variables: ['auctionId', 'itemId'] },
+        note: 'Catalogs use deterministic perPage=100 servlet documents plus identity-checked item detail hydration; calendars require a settled-bottom canonical-ID audit.'
+      },
+      govdeals: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'POST', url: 'https://maestro.lqdt1.com/search/list', variables: ['categoryIds', 'searchText', 'page', 'displayRows', 'sortField', 'sortOrder', 'facetsFilter', 'accountIds', 'zipcode', 'proximityWithinDistance'], total: 'x-total-count', stableId: 'accountId:assetId' },
+        enrich: { method: 'POST', url: 'https://maestro.lqdt1.com/assets/{assetId}/{accountId}/false', variables: ['businessId', 'siteId'] },
+        note: 'Capture and replay the exact read request in page memory; never persist or log session/header values or seller contact data. DOM snapshots remain unproven partials.'
+      },
+      ebay: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'GET', url: 'Seller Hub document pagination', variables: ['offset', 'limit', 'page'] },
+        note: 'Seller Hub rows are server-rendered; lifecycle exports exclude buyer PII.'
+      },
+      facebook: {
+        discovery: 'chrome-cdp',
+        enumerate: { method: 'DOM', url: 'Marketplace selling virtual list', variables: ['canonical listing id'] },
+        note: 'Private GraphQL operations are not persisted or replayed; use settled virtual-DOM coverage.'
+      }
+    };
+  }
+
+  function resolveSiteRoute(loc = location) {
+    const host = String(loc.hostname || '').toLowerCase();
+    if (host === 'bid.ajwillnerauctions.com') return resolveAjWillnerPage(loc);
+    if (isFlipTrackerListingPage(loc)) return resolveFlipTrackerPage(loc);
+    if (isAuctionNinjaHost(host)) return { ...resolveAuctionNinjaPage(loc), source: 'auctionninja' };
+    if (isAarAuctionsHost(host)) return { ...resolveAarAuctionsPage(loc), source: 'aar' };
+    if (isGovDealsHost(host)) return { ...resolveGovDealsPage(loc), source: 'govdeals' };
+    if (isHiBidHost(host)) return { ...resolveHiBidPage(loc), source: 'hibid' };
+    return { supported: false, kind: 'unsupported', source: 'unknown', host, reason: 'unsupported host' };
+  }
+
+  function modeForResolvedRoute(route = {}) {
+    const source = String(route?.source || '').toLowerCase();
+    if (source === 'ajwillner') return 'catalog';
+    if (source === 'ebay' || source === 'facebook') return 'fliptracker';
+    if (source === 'auctionninja') return 'auctionninja';
+    if (source === 'aar') return 'aar';
+    if (source === 'govdeals') return 'govdeals';
+    if (source === 'hibid') return route.kind === 'live' ? 'live' : 'catalog';
+    return 'unsupported';
+  }
+
+  function shouldInitOnLocation(loc = location) {
+    return resolveSiteRoute(loc).supported === true;
+  }
+
+  function resolveAssistantMode(loc = location) {
+    const route = resolveSiteRoute(loc);
+    const mode = modeForResolvedRoute(route);
+    return {
+      supported: route.supported === true,
+      mode: route.supported ? mode : 'unsupported',
+      source: route.source || 'unknown',
+      reason: route.reason || '',
+      route
+    };
+  }
+
+  function getLoadTarget(options = {}, loc = location) {
+    const onOutbidWatchlist = /\/account\/watchlist/i.test(loc.pathname || '') && /status=OUTBID/i.test(loc.search || '');
+    if (options.requireOutbid && !onOutbidWatchlist) return OUTBID_WATCHLIST_URL;
+    return null;
+  }
+
+  function scanPlan(plan, options = {}, cachedLots = []) {
+    const lots = uniqueLots(getLotTiles().map(extractLot));
+    if (!lots.length) lots.push(...extractTextLots());
+    const byLot = new Map(cachedLots.concat(lots).filter(lot => lot?.lot).map(lot => [String(lot.lot), lot]));
+    const rows = [];
+    const plannedLots = new Set(Object.keys(plan).map(String));
+
+    Object.entries(plan).forEach(([lotNumber, entry]) => {
+      const lot = byLot.get(String(lotNumber));
+      if (!lot) {
+        rows.push({ lot: lotNumber, title: entry.title || '', max: entry.max, status: 'not found', eligible: false });
+        return;
+      }
+
+      const decision = evaluateLot(lot, entry, options);
+      rows.push({ ...lot, max: entry.max, expectedTitle: entry.title, ...decision });
+    });
+
+    if (options.includeUnplanned) {
+      byLot.forEach((lot, lotNumber) => {
+        if (plannedLots.has(String(lotNumber))) return;
+        rows.push({ ...lot, max: '', status: 'loaded from OUTBID - add max', eligible: false });
+      });
+    }
+
+    rows.sort((a, b) => {
+      if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
+      return Number(a.lot || 0) - Number(b.lot || 0);
+    });
+    return rows;
+  }
+
+  async function findLotOnPage(lotNumber, status, shouldStop = () => false) {
+    const wanted = String(lotNumber);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    await wait(350);
+
+    let lastScrollY = -1;
+    let stuck = 0;
+    for (let i = 0; i < 350; i += 1) {
+      if (shouldStop()) return null;
+      const lot = uniqueLots(getLotTiles().map(extractLot)).find(item => String(item.lot) === wanted);
+      if (lot?.tile) return lot;
+
+      const scrollY = Math.round(window.scrollY || document.documentElement.scrollTop || 0);
+      const maxScrollY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      if (scrollY >= Math.max(0, maxScrollY - 2) && scrollY === lastScrollY) stuck += 1;
+      else stuck = 0;
+      if (stuck >= 3) break;
+      lastScrollY = scrollY;
+      status(`Searching visible list for Lot ${wanted}...`);
+      window.scrollBy({ top: Math.max(650, Math.floor(window.innerHeight * 0.85)), left: 0, behavior: 'instant' });
+      await wait(180);
+    }
+
+    return null;
+  }
+
+  function extractTextLots(root = document) {
+    const text = textOf(root.body || root.documentElement || root);
+    const chunks = text.split(/(?=\bLot\s*#?\s*:?\s*\d+[A-Za-z-]*\b\s*(?:\||[-:]|\s+[A-Z0-9]))/i);
+
+    return chunks.map(chunk => {
+      const firstLine = chunk.match(/\bLot\s*#?\s*:?\s*(\d+[A-Za-z-]*)\s*(?:\||[-:])?\s*([\s\S]*?)(?=\s+(?:Unwatch|Watch|Notes|READ DESCRIPTION|Current Bid|High Bid|Price Realized|Bidding Closed|Sold For|Lot Won|Starting Bid|Opening Bid|\d+\s+Bids?\b|Bid\s+[\d,.]+\s*USD)|$)/i);
+      if (!firstLine) return null;
+
+      const highBid = chunk.match(/(?:High Bid|Current Bid|Price Realized|Lot Won|Sold For):?\s*\$?\s*([\d,.]+\s*(?:USD)?(?:\s*\/\s*(?:Lot|ea))?)/i)?.[1] || '';
+      const nextBid = chunk.match(/\bBid\s+([\d,.]+\s*USD)\b/i)?.[1] || '';
+      const bidCount = chunk.match(/\b\d+\s+Bids?\b/i)?.[0] || '';
+      const status = extractUserBidStatus(chunk) || (/\bWon\b/i.test(chunk) ? 'Won' : '');
+
+      return {
+        tile: null,
+        bidButton: null,
+        id: firstLine[1],
+        lot: firstLine[1],
+        title: firstLine[2].replace(/\s+/g, ' ').trim(),
+        url: '',
+        highBid: highBid ? `High Bid: ${highBid}` : '',
+        highBidAmount: moneyFromText(highBid),
+        bidCount,
+        bidCountNumber: numberFromText(bidCount),
+        timeLeft: '',
+        nextBid,
+        nextBidAmount: moneyFromText(nextBid),
+        description: chunk.match(/(?:Description|Features and Notes|Auctioneer'?s Note)\s*:?\s*([\s\S]*?)(?=\s+(?:High Bid|Current Bid|Price Realized|Bidding Closed|Sold For|Lot Won|Starting Bid|Opening Bid|\d+\s+Bids?\b|$))/i)?.[1]?.trim() || '',
+        rawText: chunk,
+        userBidStatus: status,
+        isWinning: status === 'Winning',
+        isOutbid: status === 'Outbid',
+        statusClass: 'text-fallback'
+      };
+    }).filter(Boolean);
+  }
+
+  function cleanLiveTitle(value) {
+    return String(value || '')
+      .replace(/\s*(?:Current Bid|High Bid|Asking Bid|Next Bid|Min(?:imum)? Bid|Bid\s+[\d,.]+\s*USD|Bidding Closed|Opening Bid|Price Realized).*$/i, '')
+      .replace(/\s+\d+\s+Bids?\s*$/i, '')
+      .trim();
+  }
+
+  function extractLiveAuctionState(root = document) {
+    const source = root.body || root.documentElement || root;
+    const text = textOf(source);
+    const lotMatch = text.match(/\bLot\s+(\d+[A-Za-z-]*)\s*(?:\||-|:)?\s*([\s\S]*?)(?=\s+(?:Current Bid|High Bid|Asking Bid|Next Bid|Min(?:imum)? Bid|Bid\s+[\d,.]+\s*USD|Bidding Closed|Opening Bid|Price Realized)|$)/i);
+    const currentBid = text.match(/(?:Current Bid|High Bid|Price Realized):?\s*([\d,.]+\s*USD)/i)?.[1] || '';
+    const bidCount = text.match(/\b\d+\s+Bids?\b/i)?.[0] || '';
+    const explicitNext = text.match(/(?:Next Bid|Asking Bid|Min(?:imum)? Bid):?\s*([\d,.]+\s*USD)/i)?.[1] || '';
+    const bidButton = findLiveBidButton(root);
+    const buttonLabelText = controlLabel(bidButton);
+    const buttonNext = buttonLabelText.match(/\bBid\s+([\d,.]+\s*USD)\b/i)?.[1] || '';
+    const nextBid = explicitNext || buttonNext;
+    const state = {
+      root,
+      lot: lotMatch?.[1] || '',
+      title: cleanLiveTitle(lotMatch?.[2] || ''),
+      highBid: currentBid ? `High Bid: ${currentBid}` : '',
+      currentBid: currentBid ? `Current Bid: ${currentBid}` : '',
+      currentBidAmount: moneyFromText(currentBid),
+      nextBid: nextBid ? `Bid ${nextBid}` : '',
+      nextBidAmount: moneyFromText(nextBid),
+      bidCount,
+      bidCountNumber: numberFromText(bidCount),
+      bidButton,
+      isLive: true
+    };
+
+    debug('live state extracted', {
+      lot: state.lot,
+      title: state.title,
+      currentBidAmount: state.currentBidAmount,
+      nextBidAmount: state.nextBidAmount,
+      bidCount: state.bidCount,
+      hasBidButton: Boolean(state.bidButton),
+      bidButtonLabel: buttonLabelText
+    });
+
+    return state;
+  }
+
+  function extractLivePageLots(root = document) {
+    const text = textOf(root.body || root.documentElement || root);
+    const chunks = text.split(/(?=Lot\s+\d+[A-Za-z-]*\s*\|)/i);
+    return chunks.map(chunk => {
+      const firstLine = chunk.match(/Lot\s+(\d+[A-Za-z-]*)\s*\|\s*([\s\S]*?)(?=\s+(?:Watch|Unwatch|High Bid:|Current Bid:|Price Realized:|Bidding Closed|Bid\s+[\d,.]+\s*USD)|$)/i);
+      if (!firstLine) return null;
+      const highBid = chunk.match(/(?:High Bid|Current Bid|Price Realized):\s*([\d,.]+\s*USD)/i)?.[1] || '';
+      const nextBid = chunk.match(/\bBid\s+([\d,.]+\s*USD)\b/i)?.[1] || '';
+      const bidCount = chunk.match(/\b\d+\s+Bids?\b/i)?.[0] || '';
+      const timeLeft = chunk.match(/\b\d+\s*(?:d|h|m|s)\b/i)?.[0] || '';
+      const valueHint = chunk.match(/(?:High Bid|Current Bid):\s*[\d,.]+\s*USD\s+([\d,.]+\s*USD)/i)?.[1] || '';
+      const userBidStatus = extractUserBidStatus(chunk);
+      const lot = firstLine[1];
+      return {
+        source: 'hibid',
+        pageKind: 'live',
+        id: lot,
+        lot,
+        title: firstLine[2].replace(/\s+/g, ' ').trim(),
+        highBid: highBid ? `High Bid: ${highBid}` : '',
+        highBidAmount: moneyFromText(highBid),
+        estimatedValue: moneyFromText(valueHint),
+        bidCount,
+        bidCountNumber: numberFromText(bidCount),
+        timeLeft,
+        nextBid: nextBid ? `Bid ${nextBid}` : '',
+        nextBidAmount: moneyFromText(nextBid),
+        userBidStatus,
+        status: /bidding closed/i.test(chunk) ? 'Bidding Closed' : (/incoming bid/i.test(chunk) ? 'Incoming Bid' : ''),
+        rawText: chunk.replace(/\s+/g, ' ').trim().slice(0, 1200)
+      };
+    }).filter(Boolean);
+  }
+
+  function liveAuctionContext(root = document) {
+    const text = textOf(root.body || root.documentElement || root);
+    return {
+      source: 'hibid',
+      pageKind: 'live',
+      title: text.match(/\bThe Luxe Edit\b/i)?.[0] || document.title || '',
+      url: location.href,
+      totalLots: numberFromText(text.match(/Total Lots:\s*([\d,]+)/i)?.[1] || ''),
+      openLots: numberFromText(text.match(/Open Lots:\s*([\d,]+)/i)?.[1] || '')
+    };
+  }
+
+  function catalogAuctionContext(root = document) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const isAjWillner = loc && isAjWillnerHost(loc.hostname);
+    const route = loc
+      ? (isAjWillner ? resolveAssistantMode(loc).route : resolveHiBidPage(loc))
+      : null;
+    return {
+      title: (typeof document !== 'undefined' ? document.title : '') || textOf(root.querySelector?.('h1')) || '',
+      url: loc ? loc.href : '',
+      route,
+      source: isAjWillner ? 'ajwillner' : 'hibid',
+      totalLots: isAjWillner ? getAjWillnerExpectedTotal(root, findAjWillnerScrollContainer(root)) : getExpectedLotTotal(root),
+      openLots: null
+    };
+  }
+
+  function mergeLiveLots(target, lots) {
+    lots.forEach(lot => {
+      if (!lot?.lot) return;
+      target.set(String(lot.lot), lot);
+    });
+  }
+
+  function scrollLiveLots(root = document) {
+    const doc = root?.nodeType === 9 ? root : document;
+    const win = doc?.defaultView || (typeof window !== 'undefined' ? window : null);
+    const scroller = root?.documentElement || doc?.documentElement;
+    const body = root?.body || doc?.body;
+    if (win?.scrollBy) {
+      win.scrollBy({ top: Math.max(700, Math.floor((win.innerHeight || 900) * 0.85)), left: 0, behavior: 'instant' });
+      return true;
+    }
+    if (scroller) {
+      scroller.scrollTop = (scroller.scrollTop || 0) + 700;
+      return true;
+    }
+    if (body) {
+      body.scrollTop = (body.scrollTop || 0) + 700;
+      return true;
+    }
+    return false;
+  }
+
+  async function expandLivePageLots(onProgress = () => {}, shouldStop = () => false, root = document, options = {}) {
+    const maxSteps = options.maxSteps ?? 80;
+    const waitMs = options.waitMs ?? 350;
+    const lotsById = new Map();
+    const context = liveAuctionContext(root);
+    const expectedOpenLots = context.openLots || 0;
+    let lastCount = -1;
+    let stuckSteps = 0;
+    let loadMoreClicks = 0;
+    let scrolls = 0;
+
+    for (let step = 0; step < maxSteps; step += 1) {
+      mergeLiveLots(lotsById, extractLivePageLots(root));
+      const countText = expectedOpenLots ? `${lotsById.size}/${expectedOpenLots}` : String(lotsById.size);
+      onProgress(`Loading live lots... ${countText}`);
+      debug('live expansion step', { step, lots: lotsById.size, expectedOpenLots, loadMoreClicks, scrolls });
+
+      if (shouldStop()) {
+        debug('live expansion stopped by user', { lots: lotsById.size });
+        break;
+      }
+      if (expectedOpenLots && lotsById.size >= expectedOpenLots) break;
+
+      const loadMoreButton = findLiveLoadMoreButton(root);
+      if (loadMoreButton) {
+        const label = controlLabel(loadMoreButton);
+        loadMoreButton.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+        loadMoreButton.click();
+        loadMoreClicks += 1;
+        debug('live load-more clicked', { label, loadMoreClicks });
+        await wait(waitMs);
+        continue;
+      }
+
+      const didScroll = scrollLiveLots(root);
+      if (didScroll) scrolls += 1;
+      await wait(waitMs);
+      mergeLiveLots(lotsById, extractLivePageLots(root));
+
+      if (lotsById.size === lastCount) {
+        stuckSteps += 1;
+      } else {
+        stuckSteps = 0;
+        lastCount = lotsById.size;
+      }
+
+      if (stuckSteps >= 4) {
+        debug('live expansion stopped after no new lots', { lots: lotsById.size, expectedOpenLots, loadMoreClicks, scrolls });
+        break;
+      }
+    }
+
+    mergeLiveLots(lotsById, extractLivePageLots(root));
+    const lots = Array.from(lotsById.values()).sort((a, b) => String(a.lot).localeCompare(String(b.lot), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    }));
+    const incomplete = Boolean(expectedOpenLots && lots.length < expectedOpenLots);
+    return {
+      source: 'hibid-live-dom',
+      context,
+      lots,
+      items: lots,
+      expectedTotal: expectedOpenLots || null,
+      expectedOpenLots,
+      incomplete,
+      stopReason: incomplete ? 'below-expected-open-lots' : 'complete',
+      loadMoreClicks,
+      scrolls
+    };
+  }
+
+  function buildLlmAuctionBrief(lots, context = liveAuctionContext()) {
+    const fullLots = lots.map(lot => ({
+      source: lot.source || '',
+      id: lot.id ?? '',
+      lot: lot.lot,
+      title: lot.title,
+      url: lot.url || '',
+      image: lot.image || '',
+      images: Array.isArray(lot.images) ? lot.images : (lot.image ? [lot.image] : []),
+      imageCount: lot.imageCount ?? lot.pictureCount ?? null,
+      description: lot.description || '',
+      descriptionHtml: lot.descriptionHtml || '',
+      category: lot.category || '',
+      categoryPath: Array.isArray(lot.categoryPath) ? lot.categoryPath : [],
+      quantity: lot.quantity ?? null,
+      location: lot.location || '',
+      scheduledEndTime: lot.scheduledEndTime || '',
+      estimateLow: lot.estimateLow ?? null,
+      estimateHigh: lot.estimateHigh ?? null,
+      highBid: lot.highBid || '',
+      highBidAmount: lot.highBidAmount ?? null,
+      currentPrice: lot.currentPrice ?? null,
+      currentBid: lot.currentBid ?? null,
+      nextBid: lot.nextBid || '',
+      nextBidAmount: lot.nextBidAmount ?? null,
+      bidCount: lot.bidCount || '',
+      bidCountNumber: lot.bidCountNumber ?? null,
+      timeLeft: lot.timeLeft || '',
+      valueHint: lot.estimatedValue ?? null,
+      status: lot.status || lot.userBidStatus || '',
+      userBidStatus: lot.userBidStatus || '',
+      isWinning: Boolean(lot.isWinning),
+      isOutbid: Boolean(lot.isOutbid),
+      watched: Boolean(lot.watched),
+      pictureCount: lot.pictureCount ?? lot.imageCount ?? null,
+      auctionTitle: lot.auctionTitle || '',
+      buyerPremium: lot.buyerPremium || '',
+      rawText: lot.rawText || ''
+    }));
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      'Parsed auction context:',
+      JSON.stringify(context, null, 2),
+      '',
+      `Lots scraped: ${fullLots.length}`,
+      '',
+      'Full lot data JSON:',
+      JSON.stringify(fullLots, null, 2)
+    ].join('\n');
+  }
+
+  function buildAuctionNinjaLlmBrief(lots, context = extractAuctionNinjaSaleContext()) {
+    const saleTerms = [
+      'AuctionNinja sale terms:',
+      `Title: ${context.title || ''}`,
+      `Seller: ${context.seller || ''}`,
+      `Location: ${context.location || ''}`,
+      `Buyer premium: ${context.buyerPremium || ''}`,
+      `Pickup window: ${context.pickupWindow || ''}`,
+      `Shipping: ${context.shipping || ''}`,
+      `Special instructions: ${context.specialInstructions || ''}`,
+      '',
+      'AuctionNinja safety boundary: this export is for resale research and planning only. Do not click bid, submit, checkout, invoice, payment, or account controls from this brief.',
+      'For this site, sold/completed comps first, profit second, hunches last. Apply buyer premium, sales tax, pickup friction, and sedan/logistics risk before recommending max bids.'
+    ].join('\n');
+
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      saleTerms,
+      '',
+      'Parsed auction context:',
+      JSON.stringify(context, null, 2),
+      '',
+      `Lots scraped: ${lots.length}`,
+      '',
+      'Full lot data JSON:',
+      JSON.stringify(lots, null, 2)
+    ].join('\n');
+  }
+
+  function buildAuctionNinjaAccountLlmBrief(items, context = {}, kind = 'followed-items') {
+    const safeExport = sanitizeAuctionNinjaAccountExport(context, items);
+    const safeContext = safeExport.context;
+    const safeItems = safeExport.items;
+    const pageKind = kind === 'items-won' || kind === 'bid-history' ? kind : 'followed-items';
+    const task = pageKind === 'items-won'
+      ? [
+        'AuctionNinja account task: post-win inventory and resale planning.',
+        'Prioritize listing priority, expected resale range, pickup/shipping logistics, profitability after buyer premium and tax, and reconciliation against what was actually won.'
+      ]
+      : (pageKind === 'bid-history'
+        ? [
+          'AuctionNinja account task: bid history review for resale decision feedback.',
+          'Find missed opportunities, overbid risks, recurring sellers/categories worth watching, and whether past max bids matched sold comps and profit thresholds.'
+        ]
+      : [
+        'AuctionNinja account task: active opportunity review for watched/followed items.',
+        'Review current bid versus profit threshold, pickup/logistics risk, sedan-fit risk, and sold comps first before calling anything a buy.'
+      ]);
+    const boundary = [
+      'AuctionNinja account safety boundary:',
+      'Do not bid from this brief. Do not click bid, checkout, invoice, payment, settings, or account-changing controls.',
+      'Use this export only for resale analysis, planning, listing prep, and manual decision support.'
+    ].join('\n');
+
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      ...task,
+      '',
+      boundary,
+      '',
+      'AuctionNinja account context:',
+      JSON.stringify(safeContext, null, 2),
+      '',
+      `Items exported: ${safeItems.length}`,
+      '',
+      'AuctionNinja account item JSON:',
+      JSON.stringify(safeExport, null, 2)
+    ].join('\n');
+  }
+
+  function buildAuctionNinjaFollowedItemsLlmBrief(items, context = extractAuctionNinjaAccountContext('followed-items')) {
+    return buildAuctionNinjaAccountLlmBrief(items, { ...context, pageKind: 'followed-items' }, 'followed-items');
+  }
+
+  function buildAuctionNinjaWonItemsLlmBrief(items, context = extractAuctionNinjaAccountContext('items-won')) {
+    return buildAuctionNinjaAccountLlmBrief(items, { ...context, pageKind: 'items-won' }, 'items-won');
+  }
+
+  function buildAuctionNinjaBidHistoryLlmBrief(items, context = extractAuctionNinjaAccountContext('bid-history')) {
+    return buildAuctionNinjaAccountLlmBrief(items, { ...context, pageKind: 'bid-history' }, 'bid-history');
+  }
+
+  function buildAuctionNinjaAuctionSearchLlmBrief(sales, context = extractAuctionNinjaAuctionSearchContext()) {
+    const searchTerms = [
+      'AuctionNinja auction-search task: whole-auction triage.',
+      'Rank sales by resale potential before drilling into lots. Favor auctions likely to contain portable, underpriced, searchable goods with enough item count and pickup/shipping terms to justify attention.',
+      'Use sold/completed comps first, profit second, hunches last. Consider buyer premium uncertainty, travel time, local pickup limits, shipping availability, sedan/logistics risk, and time left before recommending which auction pages to open next.',
+      '',
+      'AuctionNinja auction-search safety boundary: this export is for resale research and planning only. Do not click bid, submit, checkout, invoice, payment, settings, or account-changing controls from this brief.'
+    ].join('\n');
+
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      searchTerms,
+      '',
+      'AuctionNinja auction-search context:',
+      JSON.stringify(context, null, 2),
+      '',
+      `Sales exported: ${sales.length}`,
+      '',
+      'AuctionNinja auction-search sale JSON:',
+      JSON.stringify({ context, sales }, null, 2)
+    ].join('\n');
+  }
+
+  function buildAuctionNinjaCategoryLlmBrief(items, context = extractAuctionNinjaCategoryContext()) {
+    const categoryTerms = [
+      'AuctionNinja category-search task: item-level resale triage.',
+      `Category: ${context.category || context.categorySlug || ''}`,
+      `Location filter: ${context.zip ? `ZIP ${context.zip}` : 'not provided'}${context.miles ? ` within ${context.miles} miles` : ''}.`,
+      'Read each item title, image, current price, seller/location, shipping signal, and time left before ranking it.',
+      'Use sold/completed comps first, profit second, hunches last. Treat category pages as discovery data and open the product detail page when description, condition, model, or photos are needed.',
+      '',
+      'AuctionNinja category-search safety boundary: this export is for resale research only. Do not click bid, submit, follow, checkout, invoice, payment, settings, or account-changing controls from this brief.'
+    ].join('\n');
+
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      categoryTerms,
+      '',
+      'AuctionNinja category-search context:',
+      JSON.stringify(context, null, 2),
+      '',
+      `Items exported: ${items.length}`,
+      '',
+      'AuctionNinja category item JSON:',
+      JSON.stringify({ context, items }, null, 2)
+    ].join('\n');
+  }
+
+  function buildAarDistanceResearchBlock(settings = getResearchSettings()) {
+    const research = normalizeResearchSettings(settings);
+    const origin = research.originLabel;
+    const radius = research.radiusMiles;
+    return [
+      'AAR Auctions distance research requirement:',
+      `Origin: ${origin}`,
+      `Radius: ${radius} miles`,
+      `Sales tax assumption: ${research.salesTaxRate}`,
+      `Vehicle/logistics profile: ${research.vehicleProfile}`,
+      research.researchNotes ? `Additional research notes: ${research.researchNotes}` : '',
+      'Distance Agent: assign one research lane/subagent to verify every auction location and every recommended lead against this origin/radius using live map/search results, not assumptions.',
+      'Do not recommend an AAR auction or lot as a buy unless its pickup/location is proven within the configured radius, shipping is explicitly available, or it is marked needs_distance_verification.',
+      'For the spreadsheet, add and fill these columns: distance_miles, distance_proof_url, distance_status, assigned_agent.',
+      'Valid distance_status values: in_range, out_of_range, shipping_available, needs_distance_verification.'
+    ].join('\n');
+  }
+
+  function buildAarAuctionListLlmBrief(sales, context = {}, settings = getResearchSettings()) {
+    const ctx = { ...context, researchSettings: settings };
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      'AAR Auctions task: auction-calendar triage before drilling into catalogs.',
+      'Rank auctions by likely resale opportunity, enough lot volume, pickup practicality, shipping availability, and time remaining.',
+      'Use sold/completed comps first, profit second, hunches last.',
+      '',
+      buildAarDistanceResearchBlock(settings),
+      '',
+      'AAR auction-calendar context:',
+      JSON.stringify(ctx, null, 2),
+      '',
+      `Auctions exported: ${sales.length}`,
+      '',
+      'AAR auction-calendar JSON:',
+      JSON.stringify({ context: ctx, sales }, null, 2)
+    ].join('\n');
+  }
+
+  function buildAarCatalogLlmBrief(lots, context = {}, settings = getResearchSettings()) {
+    const ctx = { ...context, researchSettings: settings };
+    const saleTerms = [
+      'AAR Auctions sale terms:',
+      `Title: ${context.title || ''}`,
+      `Auction ID: ${context.auctionId || ''}`,
+      `Buyer premium: ${context.buyerPremium || ''}`,
+      `Pickup: ${context.pickupText || ''}`,
+      `Payment: ${context.paymentText || ''}`,
+      `Location: ${context.location || ''}`,
+      `Directions/map proof seed: ${context.directionsUrl || context.mapSearchUrl || ''}`,
+      '',
+      'AAR safety boundary: this export is for resale research and planning only. Do not click bid, register, payment, invoice, login, or account controls from this brief.'
+    ].join('\n');
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      saleTerms,
+      '',
+      buildAarDistanceResearchBlock(settings),
+      '',
+      'Parsed AAR auction context:',
+      JSON.stringify(ctx, null, 2),
+      '',
+      `Lots scraped: ${lots.length}`,
+      '',
+      'Full AAR lot data JSON:',
+      JSON.stringify({ context: ctx, lots }, null, 2)
+    ].join('\n');
+  }
+
+  function buildAarItemLlmBrief(item, context = {}, settings = getResearchSettings()) {
+    const itemContext = {
+      ...context,
+      pageKind: 'aar-item-detail',
+      itemId: context.itemId || item?.itemId || '',
+      itemTitle: context.itemTitle || item?.title || '',
+      expectedTotal: 1,
+      researchSettings: settings
+    };
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      'AAR Auctions single-item research task:',
+      'Review this exact item detail as one lot. Use the full description and every available photo before making a resale judgment.',
+      'Do not treat the parent auction count as the number of exported items. This payload contains only the requested item detail.',
+      '',
+      buildAarDistanceResearchBlock(settings),
+      '',
+      'AAR item context:',
+      JSON.stringify(itemContext, null, 2),
+      '',
+      'AAR item JSON:',
+      JSON.stringify({ context: itemContext, items: item ? [item] : [] }, null, 2)
+    ].join('\n');
+  }
+
+  function buildGovDealsDistanceResearchBlock(settings = getResearchSettings(), context = {}) {
+    const research = normalizeResearchSettings(settings);
+    const origin = research.originLabel;
+    const radius = research.radiusMiles;
+    const urlZip = context?.zipcode ? `GovDeals URL zipcode filter: ${context.zipcode}` : '';
+    const urlMiles = context?.miles ? `GovDeals URL radius filter: ${context.miles} miles` : '';
+    return [
+      'GovDeals distance research requirement:',
+      `Shared origin: ${origin}`,
+      `Shared radius: ${radius} miles`,
+      `Sales tax assumption: ${research.salesTaxRate}`,
+      `Vehicle/logistics profile: ${research.vehicleProfile}`,
+      research.researchNotes ? `Additional research notes: ${research.researchNotes}` : '',
+      urlZip,
+      urlMiles,
+      'Distance Agent: verify every recommended GovDeals asset location against the shared origin and any URL zipcode/miles filter using live map/search proof, not assumptions.',
+      'Do not recommend a GovDeals listing as a buy unless pickup is proven in range, shipping is explicitly available, or distance_status is marked needs_distance_verification.',
+      'For spreadsheet output, add and fill: distance_miles, distance_proof_url, distance_status, assigned_agent.',
+      'Valid distance_status values: in_range, out_of_range, shipping_available, needs_distance_verification.'
+    ].filter(Boolean).join('\n');
+  }
+
+  function buildGovDealsLlmBrief(listings, context = {}, settings = getResearchSettings()) {
+    const ctx = { ...context, researchSettings: settings };
+    const taskLabel = context.pageKind === 'govdeals-seller'
+      ? 'GovDeals seller task: triage one seller/storefront for resale opportunities before opening individual assets.'
+      : (context.pageKind === 'govdeals-asset'
+        ? 'GovDeals asset task: analyze this asset for resale value, logistics risk, and max-buy guidance.'
+        : 'GovDeals new-listings task: triage nearby/new GovDeals listings for resale opportunities.');
+    return [
+      AUCTION_RESALE_COORDINATOR_PROMPT,
+      '',
+      taskLabel,
+      'Use sold/completed comps first, profit second, hunches last. Apply buyer premium, taxes, payment/pickup rules, seller terms, shipping availability, travel time, and sedan/logistics risk before recommending a buy.',
+      '',
+      'GovDeals safety boundary: this export is for resale research and planning only. Do not click bid, offer, cart, checkout, payment, registration, login, invoice, or account-changing controls from this brief.',
+      context?.enrichment?.skippedDueLimit
+        ? `Detail enrichment was deliberately capped: ${context.enrichment.succeeded || 0} enriched, ${context.enrichment.skippedDueLimit} deferred. A blank description is not evidence of low value; open the asset URL and inspect its full description/photos before rejecting a lead.`
+        : '',
+      '',
+      buildGovDealsDistanceResearchBlock(settings, context),
+      '',
+      'GovDeals context:',
+      JSON.stringify(ctx, null, 2),
+      '',
+      `GovDeals listings exported: ${listings.length}`,
+      '',
+      'GovDeals listing JSON:',
+      JSON.stringify({ context: ctx, listings }, null, 2)
+    ].join('\n');
+  }
+
+  function installAssistantCatalogScraperButton(status = () => {}) {
+    const buttonId = 'hibid-scraper-copy-button';
+    const fallbackId = 'hibid-scraper-json';
+    const state = { running: false, stopRequested: false };
+
+    function setButton(text, color = '#111') {
+      const button = document.getElementById(buttonId);
+      if (!button) return;
+      button.textContent = text;
+      button.style.backgroundColor = color;
+    }
+
+    function showFallback(payload) {
+      let box = document.getElementById(fallbackId);
+      if (!box) {
+        box = document.createElement('textarea');
+        box.id = fallbackId;
+        box.style.cssText =
+          'position:fixed;left:16px;bottom:64px;z-index:2147483647;width:520px;height:300px;background:#111;color:#fff;border:1px solid #fff5;border-radius:12px;padding:10px;font:12px monospace;box-shadow:0 8px 30px #0008';
+        document.body.appendChild(box);
+      }
+      box.value = payload;
+      box.focus();
+      box.select();
+    }
+
+    function collectCatalogLots(itemsMap) {
+      getLotTiles().forEach(tile => {
+        const lot = extractLot(tile);
+        const key = lot.url || lot.id || lot.lot;
+        if (key && lot.title) itemsMap.set(String(key), lot);
+      });
+      return itemsMap.size;
+    }
+
+    async function copyAllLots() {
+      if (state.running) {
+        state.stopRequested = true;
+        setButton('Stopping...', '#9c1b1b');
+        status('Catalog scraper stop requested.');
+        return;
+      }
+
+      state.running = true;
+      state.stopRequested = false;
+      setButton('Starting...', '#d32f2f');
+
+      try {
+        let lots = [];
+        let stopped = false;
+        let expectedTotal = 0;
+
+        if (isLiveCatalogPage()) {
+          const expanded = await expandLivePageLots(message => {
+            setButton(message, '#d32f2f');
+            status(message);
+          }, () => state.stopRequested);
+          lots = expanded.lots || [];
+          stopped = expanded.stopped;
+          expectedTotal = expanded.expectedOpenLots;
+        } else {
+          const itemsMap = new Map();
+          await loadLots(message => {
+            setButton(message, '#d32f2f');
+            status(message);
+          }, () => state.stopRequested, () => collectCatalogLots(itemsMap));
+          collectCatalogLots(itemsMap);
+          lots = Array.from(itemsMap.values());
+          stopped = state.stopRequested;
+          expectedTotal = numberFromText(textOf(document.querySelector('.lot-list-header')).match(/Total Lots:\s*([\d,]+)/i)?.[1] || '');
+        }
+
+        if (!lots.length) {
+          setButton('Failed. Try again.', '#111');
+          status('Catalog scraper found no lots.');
+          return;
+        }
+
+        const payload = JSON.stringify(lots, null, 2);
+        const copied = await writeClipboard(payload).catch(() => false);
+        if (!copied) showFallback(payload);
+        const countText = expectedTotal ? `${lots.length}/${expectedTotal}` : String(lots.length);
+        setButton(stopped
+          ? (copied ? `Stopped. Copied ${countText}.` : `Stopped at ${countText}. Select text box.`)
+          : (copied ? `Success! Copied ${countText}.` : `Scraped ${countText}. Select text box.`), '#2e7d32');
+        status(copied ? `Catalog scraper copied ${countText} lot(s).` : `Catalog scraper scraped ${countText}; select fallback text box.`);
+      } finally {
+        state.running = false;
+        state.stopRequested = false;
+        setTimeout(() => setButton('Copy All HiBid Lots', '#111'), 5000);
+      }
+    }
+
+    function ensureButton() {
+      if (!shouldInitOnLocation() || isFlipTrackerListingPage() || !document.body) return;
+      if (document.getElementById(buttonId)) return;
+      const button = document.createElement('button');
+      button.id = buttonId;
+      button.type = 'button';
+      button.textContent = 'Copy All HiBid Lots';
+      button.style.cssText =
+        'position:fixed;left:16px;bottom:16px;z-index:2147483647;padding:12px 16px;border-radius:999px;border:1px solid #fff3;background:#111;color:white;font:600 13px system-ui;box-shadow:0 8px 30px #0008;cursor:pointer;transition:background-color 0.3s;';
+      button.addEventListener('click', copyAllLots);
+      document.body.appendChild(button);
+    }
+
+    ensureButton();
+    setTimeout(ensureButton, 1000);
+    setTimeout(ensureButton, 3000);
+    setInterval(ensureButton, 5000);
+  }
+
+  function copyWithExecCommand(payload) {
+    if (typeof document === 'undefined' || !document.createElement || typeof document.execCommand !== 'function') {
+      return false;
+    }
+    const host = document.body || document.documentElement;
+    if (!host) return false;
+
+    const textarea = document.createElement('textarea');
+    textarea.value = String(payload ?? '');
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-10000px';
+    textarea.style.top = '0';
+    textarea.style.opacity = '0';
+    textarea.style.pointerEvents = 'none';
+    host.appendChild(textarea);
+    try {
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange?.(0, textarea.value.length);
+      return Boolean(document.execCommand('copy'));
+    } finally {
+      textarea.remove();
+    }
+  }
+
+  function parseAuctionNinjaPagedResponse(value) {
+    const raw = String(value || '');
+    let payload = null;
+    if (/^\s*\{/.test(raw)) {
+      try {
+        const candidate = JSON.parse(raw);
+        if (candidate && typeof candidate === 'object' && typeof candidate.body === 'string') payload = candidate;
+      } catch {
+        payload = null;
+      }
+    }
+    if (!payload) {
+      return {
+        html: raw,
+        responseKind: 'document-html',
+        totalSales: null,
+        ignoredSensitiveKeys: []
+      };
+    }
+    const head = String(payload.head || '');
+    const body = String(payload.body || '');
+    const pagination = String(payload.pagination || '');
+    const headText = head.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    return {
+      html: `${head}\n${body}\n${pagination}`,
+      responseKind: 'auctionninja-json-fragment',
+      totalSales: parseAuctionNinjaAuctionSearchTotal(headText),
+      ignoredSensitiveKeys: Object.keys(payload).filter(key => !['head', 'body', 'pagination'].includes(key)).sort()
+    };
+  }
+
+  function auctionNinjaSaleStableIdentity(url) {
+    const canonical = canonicalAuctionNinjaSaleUrl(url);
+    if (!canonical) return '';
+    try {
+      const parsed = new URL(canonical);
+      return `${parsed.hostname.toLowerCase()}${parsed.pathname.replace(/\/+$/, '')}`;
+    } catch {
+      return canonical.replace(/[?#].*$/, '').replace(/\/+$/, '');
+    }
+  }
+
+  function auctionNinjaRouteFingerprint(route = {}, locationLike = null) {
+    const fallback = route?.url || route?.href || (typeof location !== 'undefined' ? location.href : 'https://www.auctionninja.com/');
+    let parsed;
+    try {
+      parsed = urlFromLocationLike(locationLike || fallback);
+    } catch {
+      parsed = new URL('https://www.auctionninja.com/');
+    }
+    parsed.searchParams.delete('an');
+    return genericRouteFingerprint({ ...route, source: 'auctionninja' }, parsed);
+  }
+
+  async function writeClipboard(payload) {
+    const textPayload = String(payload ?? '');
+    const bytes = textPayload.length;
+    debugEvent('clipboard.write.begin', { bytes });
+    const waitForClipboard = (operation, method) => {
+      let timeoutId;
+      const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`${method} timed out after ${CLIPBOARD_WRITE_TIMEOUT_MS}ms`));
+        }, CLIPBOARD_WRITE_TIMEOUT_MS);
+      });
+      return Promise.race([Promise.resolve(operation), timeout]).finally(() => {
+        clearTimeout(timeoutId);
+      });
+    };
+
+    const attempt = async (method, operation) => {
+      debugEvent('clipboard.write.attempt', { method, bytes });
+      try {
+        await waitForClipboard(operation(), method);
+        debugEvent('clipboard.write.success', { method, bytes });
+        debugEvent('clipboard.write.result', { copied: true, method, bytes });
+        return true;
+      } catch (error) {
+        debug('clipboard write method failed', { method, error: String(error?.message || error) });
+        debugEvent('clipboard.write.failure', {
+          method,
+          bytes,
+          error: debugText(error?.message || error, 260),
+        });
+        return false;
+      }
+    };
+
+    if (globalThis.GM?.setClipboard) {
+      const copied = await attempt('GM.setClipboard', () => globalThis.GM.setClipboard(textPayload, 'text'));
+      if (copied) return true;
+    }
+
+    if (typeof GM_setClipboard === 'function') {
+      const copied = await attempt('GM_setClipboard(callback)', () => new Promise((resolve, reject) => {
+        try {
+          GM_setClipboard(textPayload, 'text', resolve);
+        } catch (error) {
+          reject(error);
+        }
+      }));
+      if (copied) return true;
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      const copied = await attempt('navigator.clipboard.writeText', () => navigator.clipboard.writeText(textPayload));
+      if (copied) return true;
+    }
+
+    if (typeof document !== 'undefined' && typeof document.execCommand === 'function') {
+      const copied = await attempt('document.execCommand', () => {
+        if (!copyWithExecCommand(textPayload)) throw new Error('document.execCommand returned false');
+      });
+      if (copied) return true;
+    }
+
+    debugEvent('clipboard.write.unavailable', { bytes });
+    debugEvent('clipboard.write.result', { copied: false, method: '', bytes });
+    return false;
+  }
+
+  async function copyTextForDebug(payload) {
+    const bytes = String(payload ?? '').length;
+    debugEvent('debug-clipboard.begin', { bytes });
+    // A click-triggered page clipboard write is more reliable in Waterfox than
+    // the legacy userscript clipboard bridge. Keep both paths, then use the
+    // old textarea command as a final browser-native fallback.
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        debug('debug export trying navigator.clipboard.writeText');
+        debugEvent('debug-clipboard.attempt', { method: 'navigator.clipboard.writeText', bytes });
+        let timeoutId;
+        const timeout = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('browser clipboard timed out')), DEBUG_CLIPBOARD_TIMEOUT_MS);
+        });
+        try {
+          await Promise.race([Promise.resolve(navigator.clipboard.writeText(payload)), timeout]);
+        } finally {
+          clearTimeout(timeoutId);
+        }
+        debug('debug export navigator clipboard resolved');
+        debugEvent('debug-clipboard.success', { method: 'navigator.clipboard.writeText', bytes });
+        return true;
+      }
+    } catch (error) {
+      debug('debug clipboard browser write failed', { error: String(error?.message || error) });
+      debugEvent('debug-clipboard.failure', { method: 'navigator.clipboard.writeText', bytes, error: debugText(error?.message || error, 260) });
+    }
+
+    try {
+      if (typeof document !== 'undefined' && document.createElement) {
+        const host = document.body || document.documentElement;
+        if (host) {
+          const textarea = document.createElement('textarea');
+          textarea.value = payload;
+          textarea.setAttribute('readonly', '');
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          textarea.style.pointerEvents = 'none';
+          host.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          const copied = typeof document.execCommand === 'function' && document.execCommand('copy');
+          textarea.remove();
+          debug('debug export textarea command resolved', { copied: Boolean(copied) });
+          debugEvent(copied ? 'debug-clipboard.success' : 'debug-clipboard.failure', {
+            method: 'document.execCommand',
+            bytes,
+            copied: Boolean(copied),
+          });
+          if (copied) return true;
+        }
+      }
+    } catch (error) {
+      debug('debug clipboard textarea fallback failed', { error: String(error?.message || error) });
+      debugEvent('debug-clipboard.failure', { method: 'document.execCommand', bytes, error: debugText(error?.message || error, 260) });
+    }
+
+    debug('debug export trying userscript clipboard bridge');
+    debugEvent('debug-clipboard.attempt', { method: 'userscript-clipboard-bridge', bytes });
+    const copied = await writeClipboard(payload).catch((error) => {
+      debug('debug export userscript clipboard rejected', { error: String(error?.message || error) });
+      return false;
+    });
+    debug('debug export userscript clipboard resolved', { copied });
+    debugEvent(copied ? 'debug-clipboard.success' : 'debug-clipboard.failure', {
+      method: 'userscript-clipboard-bridge',
+      bytes,
+      copied,
+    });
+    debugEvent('debug-clipboard.result', { copied, payloadLength: payload.length, storedEntries: getDebugLog().length });
+    return copied;
+  }
+
+  function downloadDebugLog() {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `flipperaddon-debug-${stamp}.txt`;
+    debugEvent('debug-download.requested', { filename, storedEntries: getDebugLog().length });
+    const payload = getDebugLogPayload();
+    debugEvent('debug-download.begin', { filename, bytes: payload.length, storedEntries: getDebugLog().length });
+
+    try {
+      const objectUrl = URL.createObjectURL(new Blob([payload], { type: 'text/plain;charset=utf-8' }));
+      if (typeof GM_download === 'function') {
+        debugEvent('debug-download.attempt', { method: 'GM_download', filename, bytes: payload.length });
+        GM_download({
+          url: objectUrl,
+          name: filename,
+          saveAs: false,
+          onload: () => {
+            debug('debug download completed', { method: 'GM_download', filename, bytes: payload.length });
+            debugEvent('debug-download.success', { method: 'GM_download', filename, bytes: payload.length });
+            window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+          },
+          onerror: (error) => {
+            debug('debug GM_download failed', { filename, error: safeClone(error) });
+            debugEvent('debug-download.failure', { method: 'GM_download', filename, error: debugText(error?.error || error?.message || error, 240) });
+            window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+          }
+        });
+        debug('debug download requested', { method: 'GM_download', filename, bytes: payload.length });
+        debugEvent('debug-download.requested', { method: 'GM_download', filename, bytes: payload.length });
+        return true;
+      }
+      if (globalThis.GM?.download) {
+        debugEvent('debug-download.attempt', { method: 'GM.download', filename, bytes: payload.length });
+        Promise.resolve(globalThis.GM.download({ url: objectUrl, name: filename, saveAs: false }))
+          .then(() => {
+            debug('debug download completed', { method: 'GM.download', filename, bytes: payload.length });
+            debugEvent('debug-download.success', { method: 'GM.download', filename, bytes: payload.length });
+          })
+          .catch(error => {
+            debug('debug GM.download failed', { filename, error: String(error?.message || error) });
+            debugEvent('debug-download.failure', { method: 'GM.download', filename, error: debugText(error?.message || error, 240) });
+          })
+          .finally(() => window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000));
+        debug('debug download requested', { method: 'GM.download', filename, bytes: payload.length });
+        return true;
+      }
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+      debug('debug download requested', { method: 'anchor-blob', filename, bytes: payload.length });
+      debugEvent('debug-download.requested', { method: 'anchor-blob', filename, bytes: payload.length });
+      return true;
+    } catch (error) {
+      debug('debug blob download setup failed', { filename, error: String(error?.message || error) });
+      debugEvent('debug-download.failure', { method: 'blob-or-userscript', filename, error: debugText(error?.message || error, 240) });
+    }
+
+    try {
+      downloadTextFile(filename, payload, 'text/plain;charset=utf-8');
+      debug('debug download requested', { method: 'legacy-anchor', filename, bytes: payload.length });
+      debugEvent('debug-download.requested', { method: 'legacy-anchor', filename, bytes: payload.length });
+      return true;
+    } catch (error) {
+      debug('debug log download fallback failed', { error: String(error?.message || error) });
+      debugEvent('debug-download.failure', { method: 'legacy-anchor', filename, error: debugText(error?.message || error, 240) });
+      return false;
+    }
+  }
+
+  function revealDebugExportField(panel) {
+    const field = panel?.querySelector?.('#hibid-debug-export');
+    if (!field) return false;
+    field.value = getDebugLogPayload();
+    field.hidden = false;
+    field.removeAttribute('hidden');
+    field.focus();
+    field.select();
+    return true;
+  }
+
+  function safeTimestamp(value = new Date()) {
+    const date = value instanceof Date ? value : new Date(value);
+    return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  }
+
+  function downloadTextFile(filename, contents, type = 'text/html;charset=utf-8') {
+    const blob = new Blob([contents], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+      link.remove();
+    }, 1000);
+  }
+
+  function getFlipTrackerSyncToken() {
+    if (typeof GM_getValue !== 'function') return '';
+    return String(GM_getValue(FLIPTRACKER_SYNC_TOKEN_KEY, '') || '').trim();
+  }
+
+  function saveFlipTrackerSyncToken(value) {
+    const token = String(value || '').trim();
+    if (typeof GM_setValue === 'function') GM_setValue(FLIPTRACKER_SYNC_TOKEN_KEY, token);
+    return token;
+  }
+
+  function getCrosslistLocation() {
+    if (typeof GM_getValue !== 'function') return 'Carteret, NJ';
+    return String(GM_getValue(CROSSLIST_LOCATION_KEY, 'Carteret, NJ') || '').trim();
+  }
+
+  function saveCrosslistLocation(value) {
+    const locationValue = String(value || '').trim();
+    if (typeof GM_setValue === 'function') GM_setValue(CROSSLIST_LOCATION_KEY, locationValue);
+    return locationValue;
+  }
+
+  function getPendingCrosslist() {
+    if (typeof GM_getValue !== 'function') return null;
+    const value = GM_getValue(CROSSLIST_PENDING_KEY, null);
+    if (!value) return null;
+    if (typeof value === 'object') return value;
+    try { return JSON.parse(String(value)); } catch (_) { return null; }
+  }
+
+  function savePendingCrosslist(value) {
+    if (typeof GM_setValue === 'function') GM_setValue(CROSSLIST_PENDING_KEY, value || null);
+    return value || null;
+  }
+
+  function crosslistBridgeRequest(path, payload = {}, token = getFlipTrackerSyncToken()) {
+    return new Promise(resolve => {
+      if (!token) {
+        resolve({ ok: false, reason: 'missing-token' });
+        return;
+      }
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        resolve({ ok: false, reason: 'bridge-request-unavailable' });
+        return;
+      }
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: `${FLIPTRACKER_BRIDGE_URL}${path}`,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-FlipTracker-Token': token,
+        },
+        data: JSON.stringify(payload || {}),
+        timeout: 15000,
+        onload: response => {
+          const ok = response.status >= 200 && response.status < 300;
+          let body = {};
+          try { body = JSON.parse(response.responseText || '{}'); } catch (_) { body = {}; }
+          resolve({ ok, status: response.status, ...body, reason: ok ? '' : (body.error || `HTTP ${response.status}`) });
+        },
+        onerror: () => resolve({ ok: false, reason: 'bridge-unreachable' }),
+        ontimeout: () => resolve({ ok: false, reason: 'bridge-timeout' }),
+      });
+    });
+  }
+
+  function gmCrosslistRequest(url, responseType = 'text', options = {}) {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        reject(new Error('Tampermonkey cross-origin request is unavailable.'));
+        return;
+      }
+      const loopback = String(url || '').startsWith(`${FLIPTRACKER_BRIDGE_URL}/`);
+      const token = options.token ?? (loopback ? getFlipTrackerSyncToken() : '');
+      if (loopback && !token) {
+        reject(new Error('FlipTracker sync token is required for archived photo access.'));
+        return;
+      }
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        headers: loopback ? { 'X-FlipTracker-Token': token } : {},
+        responseType,
+        timeout: 20000,
+        onload: response => {
+          if (response.status < 200 || response.status >= 300) {
+            reject(new Error(`HTTP ${response.status}`));
+            return;
+          }
+          resolve(responseType === 'blob' ? response.response : (response.responseText || response.response || ''));
+        },
+        onerror: () => reject(new Error('Cross-origin request failed.')),
+        ontimeout: () => reject(new Error('Cross-origin request timed out.')),
+      });
+    });
+  }
+
+  async function enrichEbayListingForCrosslist(activeListing, options = {}) {
+    const itemId = String(activeListing?.itemId || '').match(/\b\d{9,15}\b/)?.[0] || '';
+    if (!itemId) throw new Error('The selected eBay listing has no stable item ID.');
+    const itemUrl = `https://www.ebay.com/itm/${itemId}`;
+    const fetchText = options.fetchText || (async url => {
+      const response = await fetch(url, { credentials: 'include', redirect: 'follow' });
+      if (!response.ok) throw new Error(`eBay item fetch returned HTTP ${response.status}.`);
+      return response.text();
+    });
+    const html = await fetchText(itemUrl);
+    const detail = extractEbayItemDetailHtml(html, {
+      itemId,
+      itemUrl,
+      title: activeListing?.title,
+      price: activeListing?.price,
+    });
+    if (detail.descriptionUrl) {
+      try {
+        const fetchDescription = options.fetchDescriptionText || (url => gmCrosslistRequest(url, 'text'));
+        const descriptionHtml = await fetchDescription(detail.descriptionUrl);
+        const description = cleanEbayCrosslistDescription(descriptionHtml);
+        if (description && normalizedFacebookControlText(description) !== normalizedFacebookControlText(detail.title)) {
+          detail.description = description;
+        }
+      } catch (_) {
+        // The item-page description remains valid evidence when the iframe is unavailable.
+      }
+    }
+    return buildCrosslistEnvelope(detail, activeListing, {
+      generatedAt: options.generatedAt || new Date().toISOString(),
+      location: options.location ?? getCrosslistLocation(),
+    });
+  }
+
+  function normalizedFacebookControlText(value) {
+    return String(value || '')
+      .replace(/[\u2010-\u2015]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function normalizeCrosslistImageMode(value) {
+    return value === CROSSLIST_IMAGE_MODE_OPTIMIZED
+      ? CROSSLIST_IMAGE_MODE_OPTIMIZED
+      : CROSSLIST_IMAGE_MODE_VERIFIED;
+  }
+
+  function getCrosslistImageMode() {
+    if (typeof GM_getValue !== 'function') return CROSSLIST_IMAGE_MODE_VERIFIED;
+    return normalizeCrosslistImageMode(GM_getValue(CROSSLIST_IMAGE_MODE_KEY, CROSSLIST_IMAGE_MODE_VERIFIED));
+  }
+
+  function saveCrosslistImageMode(value) {
+    const mode = normalizeCrosslistImageMode(value);
+    if (typeof GM_setValue === 'function') GM_setValue(CROSSLIST_IMAGE_MODE_KEY, mode);
+    return mode;
+  }
+
+  function crosslistStageTimeout(operation, timeoutMs, label) {
+    const run = typeof operation === 'function' ? operation : () => operation;
+    const schedule = globalThis?.setTimeout;
+    const cancel = globalThis?.clearTimeout;
+    if (typeof schedule !== 'function') return Promise.resolve().then(run);
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+      timeoutId = schedule(() => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)), timeoutMs);
+    });
+    return Promise.race([Promise.resolve().then(run), timeout]).finally(() => {
+      if (typeof cancel === 'function') cancel(timeoutId);
+    });
+  }
+
+  function facebookNextDraftUrl(loc = location, itemId = '', options = {}) {
+    const origin = /^https:\/\/(?:www\.)?facebook\.com$/i.test(String(loc?.origin || ''))
+      ? loc.origin
+      : 'https://www.facebook.com';
+    const next = new URL('/marketplace/create/item', origin);
+    next.searchParams.set(CROSSLIST_AUTOFILL_PARAM, '1');
+    const normalizedItemId = String(itemId || '').match(/^\d{9,15}$/)?.[0] || '';
+    if (normalizedItemId) next.searchParams.set(CROSSLIST_ITEM_PARAM, normalizedItemId);
+    if (options.autoSave) next.searchParams.set(CROSSLIST_AUTOSAVE_PARAM, '1');
+    return next.toString();
+  }
+
+  function facebookAutofillRequested(loc = location) {
+    try {
+      return new URL(String(loc?.href || loc || ''), 'https://www.facebook.com')
+        .searchParams.get(CROSSLIST_AUTOFILL_PARAM) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function facebookAutofillItemId(loc = location) {
+    try {
+      return new URL(String(loc?.href || loc || ''), 'https://www.facebook.com')
+        .searchParams.get(CROSSLIST_ITEM_PARAM)?.match(/^\d{9,15}$/)?.[0] || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function facebookAutoSaveRequested(loc = location) {
+    try {
+      return new URL(String(loc?.href || loc || ''), 'https://www.facebook.com')
+        .searchParams.get(CROSSLIST_AUTOSAVE_PARAM) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function facebookAutoSaveResetRequested(loc = location) {
+    try {
+      return new URL(String(loc?.href || loc || ''), 'https://www.facebook.com')
+        .searchParams.get(CROSSLIST_AUTOSAVE_RESET_PARAM) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setFacebookAutoSaveBatchActive(active, storage = globalThis.sessionStorage) {
+    try {
+      if (active) storage?.setItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY, '1');
+      else storage?.removeItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY);
+    } catch (_) {
+      // Storage is a convenience for continuing after Facebook's save navigation.
+    }
+  }
+
+  function facebookAutoSaveBatchActive(storage = globalThis.sessionStorage) {
+    try {
+      return storage?.getItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function facebookAutoSaveTabId(storage = globalThis.sessionStorage) {
+    try {
+      let tabId = String(storage?.getItem?.(CROSSLIST_AUTOSAVE_TAB_KEY) || '');
+      if (!tabId) {
+        tabId = `fb-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        storage?.setItem?.(CROSSLIST_AUTOSAVE_TAB_KEY, tabId);
+      }
+      return tabId;
+    } catch (_) {
+      return 'fb-single-tab';
+    }
+  }
+
+  function claimFacebookAutoSaveLease(
+    storage = globalThis.localStorage,
+    session = globalThis.sessionStorage,
+    now = Date.now(),
+  ) {
+    const owner = facebookAutoSaveTabId(session);
+    try {
+      const existing = JSON.parse(storage?.getItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY) || 'null');
+      if (existing?.owner && existing.owner !== owner && Number(existing.expires_at || 0) > now) {
+        return false;
+      }
+      storage?.setItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY, JSON.stringify({
+        owner,
+        expires_at: now + CROSSLIST_AUTOSAVE_LEASE_MS,
+      }));
+      return true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function facebookAutoSaveLeaseOwned(
+    storage = globalThis.localStorage,
+    session = globalThis.sessionStorage,
+    now = Date.now(),
+  ) {
+    try {
+      const owner = facebookAutoSaveTabId(session);
+      const existing = JSON.parse(storage?.getItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY) || 'null');
+      return existing?.owner === owner && Number(existing.expires_at || 0) > now;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function releaseFacebookAutoSaveLease(
+    storage = globalThis.localStorage,
+    session = globalThis.sessionStorage,
+  ) {
+    try {
+      const owner = facebookAutoSaveTabId(session);
+      const existing = JSON.parse(storage?.getItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY) || 'null');
+      if (!existing?.owner || existing.owner === owner) storage?.removeItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY);
+    } catch (_) {
+      // A stale lease expires automatically.
+    }
+  }
+
+  function setFacebookPendingDraft(record, storage = globalThis.sessionStorage) {
+    try {
+      if (!record) storage?.removeItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY);
+      else storage?.setItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY, JSON.stringify(record));
+    } catch (_) {
+      // The bridge state remains Drafting if confirmation cannot be persisted.
+    }
+  }
+
+  function getFacebookPendingDraft(storage = globalThis.sessionStorage) {
+    try {
+      return JSON.parse(storage?.getItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY) || 'null');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function resetFacebookAutoSaveBatch(
+    storage = globalThis.localStorage,
+    session = globalThis.sessionStorage,
+  ) {
+    try {
+      // Clear legacy profile-wide state left by v0.7.96 and earlier.
+      storage?.removeItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY);
+      storage?.removeItem?.(CROSSLIST_AUTOSAVE_LEASE_KEY);
+      storage?.removeItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY);
+      session?.removeItem?.(CROSSLIST_AUTOSAVE_STORAGE_KEY);
+      session?.removeItem?.(CROSSLIST_AUTOSAVE_PENDING_KEY);
+      session?.removeItem?.(CROSSLIST_AUTOSAVE_TAB_KEY);
+    } catch (_) {
+      // The reset route is best-effort; the bridge remains the audit source of truth.
+    }
+  }
+
+  function facebookSavedDraftVisible(root, pending) {
+    const text = normalizedFacebookControlText(root?.body?.innerText || root?.body?.textContent || '');
+    const title = normalizedFacebookControlText(pending?.title || '');
+    const titleNeedle = title.slice(0, Math.min(36, title.length));
+    return Boolean(titleNeedle && text.includes(titleNeedle) && /(^|\s)draft($|\s)/.test(text));
+  }
+
+  async function saveFacebookMarketplaceDraft(root = document, options = {}) {
+    const candidates = facebookPageNodes(root, 'button, a, [role="button"], span, div');
+    let control = null;
+    for (const candidate of candidates) {
+      if (normalizedFacebookControlText(candidate?.textContent) !== 'save draft') continue;
+      const clickable = candidate.matches?.('button, a, [role="button"]')
+        ? candidate
+        : candidate.closest?.('button, a, [role="button"]');
+      const rect = clickable?.getBoundingClientRect?.();
+      const style = clickable ? globalThis.getComputedStyle?.(clickable) : null;
+      const visible = Boolean(
+        clickable
+        && (!rect || (rect.width > 0 && rect.height > 0))
+        && style?.display !== 'none'
+        && style?.visibility !== 'hidden'
+      );
+      if (visible && !isFlipperAddonNode(clickable)) {
+        control = clickable;
+        break;
+      }
+    }
+    if (!control) return { ok: false, reason: 'Facebook Save draft control was not found.' };
+    control.click();
+    const waitMs = Math.max(0, Number(options.waitMs ?? 1200));
+    if (waitMs) await new Promise(resolve => globalThis.setTimeout(resolve, waitMs));
+    return { ok: true, reason: '' };
+  }
+
+  function facebookDraftHasContent(root = document) {
+    return ['Title', 'Price', 'Description'].some(label => {
+      const control = findFacebookLabeledControl(root, label);
+      return Boolean(String(control?.value ?? control?.textContent ?? '').trim());
+    });
+  }
+
+  async function refreshCrosslistQueueRecords(listings, options = {}) {
+    const records = (Array.isArray(listings) ? listings : [])
+      .filter(row => String(row?.item_id || row?.itemId || '').match(/^\d{9,15}$/));
+    const concurrency = Math.max(1, Math.min(4, Number(options.concurrency) || 3));
+    const enrich = options.enrich || enrichEbayListingForCrosslist;
+    const queue = options.queue || (envelope => crosslistBridgeRequest('/crosslist/queue', envelope));
+    const counts = { created: 0, updated: 0, duplicate: 0, published: 0, failed: 0 };
+    const failures = [];
+    let cursor = 0;
+    let completed = 0;
+
+    const worker = async () => {
+      while (cursor < records.length) {
+        const index = cursor;
+        cursor += 1;
+        const listing = records[index];
+        const itemId = String(listing.item_id || listing.itemId);
+        options.onProgress?.({ index, completed, total: records.length, listing });
+        try {
+          const envelope = await enrich({
+            ...listing,
+            itemId,
+            customLabel: listing.custom_label || listing.customLabel,
+            quantityAvailable: listing.quantity_available ?? listing.quantityAvailable,
+          }, { location: options.location || '', imageMode: options.imageMode || getCrosslistImageMode() });
+          const missing = crosslistEnvelopeMissingEvidence(envelope);
+          if (missing.length) throw new Error(`incomplete eBay evidence: ${missing.join(', ')}`);
+          const result = await queue(envelope);
+          if (!result?.ok) throw new Error(result?.reason || 'bridge rejected the draft');
+          if (result.action === 'published-blocked') counts.published += 1;
+          else if (Object.hasOwn(counts, result.action)) counts[result.action] += 1;
+          else counts.updated += 1;
+        } catch (error) {
+          counts.failed += 1;
+          const failure = { itemId, error: String(error?.message || error) };
+          failures.push(failure);
+          options.onError?.(failure);
+        } finally {
+          completed += 1;
+          options.onProgress?.({ index, completed, total: records.length, listing });
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, records.length) }, worker));
+    return { counts, failures, completed, total: records.length };
+  }
+
+  function isFlipperAddonNode(node) {
+    try {
+      return Boolean(node?.closest?.(`#${PANEL_ID}`));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function facebookPageNodes(root, selector) {
+    return Array.from(root?.querySelectorAll?.(selector) || [])
+      .filter(node => !isFlipperAddonNode(node));
+  }
+
+  function findFacebookLabeledControl(root, label) {
+    const target = normalizedFacebookControlText(label);
+    const candidates = facebookPageNodes(root, 'input, textarea, select, [contenteditable="true"], [role="combobox"], [role="button"]');
+    const scored = candidates.map(control => {
+      const values = [
+        control.getAttribute?.('aria-label'),
+        control.getAttribute?.('placeholder'),
+        control.getAttribute?.('name'),
+        control.getAttribute?.('data-testid'),
+      ].map(normalizedFacebookControlText).filter(Boolean);
+      let score = values.some(value => value === target) ? 100 : 0;
+      if (!score && values.some(value => value.includes(target) || target.includes(value))) score = 70;
+      const parentText = normalizedFacebookControlText(control.closest?.('label')?.textContent || '');
+      if (!score && parentText === target) score = 90;
+      if (!score && parentText.startsWith(target)) score = 60;
+      return { control, score };
+    }).filter(value => value.score > 0).sort((left, right) => right.score - left.score);
+    if (scored.length) return scored[0].control;
+
+    const labels = facebookPageNodes(root, 'label');
+    for (const labelElement of labels) {
+      const text = normalizedFacebookControlText(labelElement.textContent || '');
+      if (text !== target && !text.startsWith(target)) continue;
+      const nested = labelElement.querySelector?.('input, textarea, select, [contenteditable="true"], [role="combobox"]');
+      if (nested) return nested;
+      const htmlFor = labelElement.getAttribute?.('for');
+      if (htmlFor && root.getElementById?.(htmlFor)) return root.getElementById(htmlFor);
+    }
+    return null;
+  }
+
+  function dispatchFacebookInput(control) {
+    ['input', 'change', 'blur'].forEach(type => {
+      try {
+        control.dispatchEvent(new Event(type, { bubbles: true }));
+      } catch (_) {
+        // Tests and old browser contexts may not expose Event; value verification still applies.
+      }
+    });
+  }
+
+  function setFacebookControlValue(control, value) {
+    if (!control) return false;
+    const nextValue = String(value ?? '');
+    if (control.isContentEditable || control.getAttribute?.('contenteditable') === 'true') {
+      control.textContent = nextValue;
+      dispatchFacebookInput(control);
+      return normalizedFacebookControlText(control.textContent) === normalizedFacebookControlText(nextValue);
+    }
+    const tagName = String(control.tagName || '').toLowerCase();
+    const constructorName = tagName === 'textarea' ? 'HTMLTextAreaElement' : (tagName === 'select' ? 'HTMLSelectElement' : 'HTMLInputElement');
+    const constructor = globalThis?.[constructorName];
+    const setter = constructor?.prototype
+      ? Object.getOwnPropertyDescriptor(constructor.prototype, 'value')?.set
+      : null;
+    try {
+      if (setter) setter.call(control, nextValue);
+      else control.value = nextValue;
+    } catch (_) {
+      return false;
+    }
+    dispatchFacebookInput(control);
+    return String(control.value ?? '') === nextValue;
+  }
+
+  function setFacebookAutocompleteValue(control, value) {
+    if (!control) return false;
+    const nextValue = String(value ?? '');
+    const setter = globalThis?.HTMLInputElement?.prototype
+      ? Object.getOwnPropertyDescriptor(globalThis.HTMLInputElement.prototype, 'value')?.set
+      : null;
+    try {
+      if (setter) setter.call(control, nextValue);
+      else control.value = nextValue;
+      const InputEventClass = globalThis.InputEvent || globalThis.Event;
+      control.dispatchEvent(new InputEventClass('input', {
+        bubbles: true,
+        data: nextValue,
+        inputType: 'insertText',
+      }));
+    } catch (_) {
+      return false;
+    }
+    return String(control.value ?? '') === nextValue;
+  }
+
+  async function setFacebookTextField(root, label, value) {
+    const control = findFacebookLabeledControl(root, label);
+    if (!control) return { ok: false, reason: `${label} control was not found.` };
+    let ok = setFacebookControlValue(control, value);
+    if (!ok && normalizedFacebookControlText(label) === 'price') {
+      const actual = Number(String(control.value ?? '').replace(/[^\d.]/g, ''));
+      const expected = Number(String(value ?? '').replace(/[^\d.]/g, ''));
+      ok = Number.isFinite(actual) && Number.isFinite(expected) && actual === expected;
+    }
+    return { ok, reason: ok ? '' : `${label} did not retain the supplied value.` };
+  }
+
+  const FACEBOOK_CATEGORY_PARENTS = Object.freeze({
+    'appliances': 'home & garden',
+    'furniture': 'home & garden',
+    'garden': 'home & garden',
+    'household': 'home & garden',
+    'tools': 'home & garden',
+    'video games': 'entertainment',
+    'books, movies & music': 'entertainment',
+    'bags & luggage': 'clothing & accessories',
+    "men's clothing & shoes": 'clothing & accessories',
+    "women's clothing & shoes": 'clothing & accessories',
+    'jewelry & accessories': 'clothing & accessories',
+    'baby & kids': 'family',
+    'health & beauty': 'family',
+    'pet supplies': 'family',
+    'toys & games': 'family',
+    'electronics & computers': 'electronics',
+    'mobile phones': 'electronics',
+    'antiques & collectibles': 'hobbies',
+    'arts & crafts': 'hobbies',
+    'auto parts': 'hobbies',
+    'bicycles': 'hobbies',
+    'musical instruments': 'hobbies',
+    'sports & outdoors': 'hobbies',
+    'garage sale': 'classifieds',
+    'miscellaneous': 'classifieds',
+    'vehicles': 'classifieds',
+  });
+
+  function facebookCategoryParent(value) {
+    return FACEBOOK_CATEGORY_PARENTS[normalizedFacebookControlText(value)] || '';
+  }
+
+  async function chooseFacebookDropdownValue(root, label, value, options = {}) {
+    const control = findFacebookLabeledControl(root, label);
+    if (!control) return { ok: false, reason: `${label} control was not found.` };
+    control.click?.();
+    const deadline = Date.now() + (options.timeoutMs || 6000);
+    const target = normalizedFacebookControlText(value);
+    const aliases = uniqueNonEmpty([
+      target,
+      target.replace(/^used - /, ''),
+      target === 'miscellaneous' ? 'other' : '',
+    ]);
+    const parentCategory = normalizedFacebookControlText(label) === 'category'
+      ? facebookCategoryParent(target)
+      : '';
+    let parentOpened = false;
+    while (Date.now() < deadline) {
+      const dropdownSelector = '[role="dialog"][aria-label*="Dropdown" i], [role="listbox"], [role="menu"]';
+      const dropdowns = facebookPageNodes(root, dropdownSelector);
+      const fallbackDropdown = root?.querySelector?.(dropdownSelector);
+      if (!dropdowns.length && fallbackDropdown && !isFlipperAddonNode(fallbackDropdown)) dropdowns.push(fallbackDropdown);
+      const semanticLeafElements = dropdowns.flatMap(dropdown => (
+        Array.from(dropdown?.querySelectorAll?.('div, span') || []).filter(option => {
+          const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
+          return aliases.some(alias => alias && (text === alias || text.startsWith(alias)));
+        })
+      ));
+      const optionElements = Array.from(new Set([
+        ...facebookPageNodes(root, '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"]'),
+        ...dropdowns.flatMap(dropdown => Array.from(dropdown?.querySelectorAll?.('[aria-disabled="false"]') || [])),
+        ...semanticLeafElements,
+      ]));
+      const exact = optionElements.find(option => aliases.includes(normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'))));
+      const partial = optionElements.find(option => aliases.some(alias => {
+        const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
+        return alias && (text.startsWith(alias) || text.includes(alias));
+      }));
+      const match = exact || partial;
+      if (match) {
+        match.click?.();
+        await wait(100);
+        return { ok: true, reason: '' };
+      }
+      if (parentCategory && !parentOpened) {
+        const parent = optionElements.find(option => {
+          const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
+          return text === parentCategory || text.startsWith(`${parentCategory} `);
+        });
+        if (parent) {
+          parent.click?.();
+          parentOpened = true;
+          await wait(150);
+          continue;
+        }
+      }
+      await wait(100);
+    }
+    return { ok: false, reason: `${label} option '${value}' was not found.` };
+  }
+
+  async function chooseFacebookLocationValue(root, value, options = {}) {
+    const target = String(value || '').trim();
+    if (!target) return { ok: false, reason: 'Location is missing from the queued draft.' };
+    const searchText = target.split(',')[0].trim() || target;
+    const city = normalizedFacebookControlText(searchText);
+    const existingLocation = facebookPageNodes(root,
+      '[role="button"][aria-disabled="true"], input[aria-label="Location"][role="combobox"]'
+    ).find(node => {
+      const text = normalizedFacebookControlText(node.value ?? node.textContent);
+      const selectedInput = String(node.tagName || '').toLowerCase() === 'input'
+        && node.getAttribute?.('aria-expanded') !== 'true';
+      const selectedSummary = node.getAttribute?.('role') === 'button'
+        && node.getAttribute?.('aria-disabled') === 'true';
+      return (selectedInput || selectedSummary) && text && (text === city || text.startsWith(`${city},`));
+    });
+    if (existingLocation) return { ok: true, reason: '', preserved: true };
+
+    let control = findFacebookLabeledControl(root, 'Location');
+    if (!control) {
+      const moreDetailsLabel = facebookPageNodes(root, 'button, [role="button"], div, span')
+        .filter(candidate => {
+          const text = normalizedFacebookControlText(candidate.textContent || candidate.getAttribute?.('aria-label'));
+          return text === 'more details' || (text.startsWith('more details ') && text.length < 140);
+        })
+        .sort((left, right) => String(left.textContent || '').length - String(right.textContent || '').length)[0];
+      const moreDetails = moreDetailsLabel?.closest?.('button, [role="button"]') || moreDetailsLabel;
+      if (moreDetails) {
+        moreDetails.click?.();
+        const revealDeadline = Date.now() + Math.min(options.timeoutMs || 6000, 2000);
+        while (!control && Date.now() < revealDeadline) {
+          await wait(100);
+          control = findFacebookLabeledControl(root, 'Location');
+        }
+      }
+    }
+    if (!control) {
+      const previewLocation = facebookPageNodes(root, 'div, span')
+        .map(node => String(node.textContent || '').trim())
+        .filter(text => /^listed\s+(?:a few seconds|just now)\s+ago\s+in\s+[^\n]+$/i.test(text) && text.length < 140)
+        .sort((left, right) => left.length - right.length)[0] || '';
+      const previewCity = previewLocation.replace(/^.*?\s+in\s+/i, '').trim();
+      if (previewCity && normalizedFacebookControlText(previewCity).startsWith(city)) {
+        return { ok: true, reason: '', preserved: true, previewLocation };
+      }
+      return {
+        ok: false,
+        warningOnly: true,
+        previewLocation,
+        reason: previewCity
+          ? `Facebook did not expose a per-listing Location field; its preview currently shows ${previewCity}. Review location before publishing.`
+          : `Facebook did not expose a per-listing Location field. Review location before publishing.`,
+      };
+    }
+    control.focus?.();
+    control.click?.();
+    setFacebookAutocompleteValue(control, '');
+    control.select?.();
+    const inserted = setFacebookAutocompleteValue(control, searchText);
+    if (!inserted) {
+      return { ok: false, reason: 'Location did not retain the supplied search text.' };
+    }
+    try {
+      control.dispatchEvent(new KeyboardEvent('keyup', {
+        bubbles: true,
+        key: searchText.slice(-1),
+      }));
+    } catch (_) {
+      // The input event dispatched above is sufficient in older test contexts.
+    }
+
+    const normalizedTarget = normalizedFacebookControlText(target);
+    const deadline = Date.now() + (options.timeoutMs || 6000);
+    while (Date.now() < deadline) {
+      const optionElements = Array.from(new Set([
+        ...facebookPageNodes(root, '[role="option"], [role="listbox"] [role="button"], [role="menuitem"]'),
+        ...facebookPageNodes(root, '[aria-selected]'),
+      ])).filter(option => {
+        const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
+        return text && (text === normalizedTarget || text.startsWith(normalizedTarget) || (city && text.startsWith(city)));
+      });
+      const match = optionElements.find(option => {
+        const text = normalizedFacebookControlText(option.textContent || option.getAttribute?.('aria-label'));
+        return text === normalizedTarget || text.startsWith(normalizedTarget);
+      }) || optionElements[0];
+      if (match) {
+        match.click?.();
+        await wait(150);
+        const selectedValue = normalizedFacebookControlText(control.value ?? control.textContent);
+        const collapsed = control.getAttribute?.('aria-expanded') !== 'true';
+        if (collapsed && selectedValue && (!city || selectedValue.startsWith(city))) {
+          return { ok: true, reason: '' };
+        }
+      }
+      await wait(100);
+    }
+    return { ok: false, reason: `Location suggestion '${value}' was not selected.` };
+  }
+
+  function selectCrosslistManifestPhotos(record, requestedMode = '') {
+    const manifest = record?.photo_manifest;
+    const itemId = String(record?.item_id || record?.listing?.item_id || manifest?.item_id || '').trim();
+    if (!manifest || typeof manifest !== 'object') throw new Error('The queued draft has no verified photo manifest.');
+    if (!/^\d{9,15}$/.test(itemId) || String(manifest.item_id || '') !== itemId) {
+      throw new Error('The photo manifest does not match the queued eBay item.');
+    }
+    const expectedCount = Math.max(0, Number(manifest.expected_count || 0));
+    const requiredCount = Math.min(expectedCount, FACEBOOK_PHOTO_LIMIT);
+    const archivedCount = Math.max(0, Number(manifest.archived_count || 0));
+    const declaredUploadCount = Math.max(0, Number(manifest.facebook_upload_count || 0));
+    const photos = Array.isArray(manifest.photos) ? [...manifest.photos] : [];
+    if (!expectedCount || !requiredCount) throw new Error('The photo manifest has no expected source photos.');
+    if (archivedCount !== photos.length || archivedCount < requiredCount || declaredUploadCount !== requiredCount) {
+      throw new Error(`The photo archive is incomplete (${Math.min(archivedCount, photos.length)}/${requiredCount} required for Facebook; ${expectedCount} source photo(s)).`);
+    }
+    photos.sort((a, b) => Number(a?.sequence || 0) - Number(b?.sequence || 0));
+    const mode = normalizeCrosslistImageMode(requestedMode || record?.image_mode || record?.facebook_draft?.image_mode || record?.listing?.image_mode);
+    const seenSequences = new Set();
+    const seenHashes = new Set();
+    const seenPaths = new Set();
+    const validated = photos.map((photo, index) => {
+      const sequence = Number(photo?.sequence || 0);
+      if (sequence !== index + 1 || seenSequences.has(sequence)) {
+        throw new Error(`Photo manifest sequence ${index + 1} is missing or duplicated.`);
+      }
+      seenSequences.add(sequence);
+      const candidate = mode === CROSSLIST_IMAGE_MODE_OPTIMIZED ? photo?.variants?.['2048'] : photo;
+      if (!candidate || typeof candidate !== 'object') {
+        throw new Error(`Photo ${sequence} has no ${mode === CROSSLIST_IMAGE_MODE_OPTIMIZED ? '2048px optimized' : 'verified source'} file.`);
+      }
+      const filename = String(candidate.filename || '').trim();
+      const relativePath = String(candidate.relative_path || '').replace(/\\/g, '/').trim();
+      const sha256 = String(candidate.sha256 || '').toLowerCase();
+      const width = Number(candidate.width || 0);
+      const height = Number(candidate.height || 0);
+      const bytes = Number(candidate.bytes || 0);
+      const expectedPrefix = `photos/${itemId}/`;
+      if (!filename || filename.includes('/') || filename.includes('\\') || !relativePath.startsWith(expectedPrefix) || !relativePath.endsWith(`/${filename}`)) {
+        throw new Error(`Photo ${sequence} has an invalid archived path.`);
+      }
+      if (!/^[a-f0-9]{64}$/.test(sha256) || width < 160 || height < 160 || bytes < 3072) {
+        throw new Error(`Photo ${sequence} failed manifest integrity checks.`);
+      }
+      if (seenHashes.has(sha256) || seenPaths.has(relativePath)) {
+        throw new Error(`Photo ${sequence} duplicates an earlier archived image.`);
+      }
+      seenHashes.add(sha256);
+      seenPaths.add(relativePath);
+      const encodedItem = encodeURIComponent(itemId);
+      const encodedFilename = encodeURIComponent(filename);
+      return {
+        sequence,
+        filename,
+        relative_path: relativePath,
+        sha256,
+        width,
+        height,
+        bytes,
+        mime_type: String(candidate.mime_type || candidate.mime || 'image/jpeg'),
+        url: `${FLIPTRACKER_BRIDGE_URL}/crosslist/photo/${encodedItem}/${encodedFilename}`,
+      };
+    });
+    return {
+      item_id: itemId,
+      mode,
+      expected_count: expectedCount,
+      archived_count: archivedCount,
+      upload_count: requiredCount,
+      capped: expectedCount > FACEBOOK_PHOTO_LIMIT,
+      photos: validated.slice(0, requiredCount),
+    };
+  }
+
+  async function downloadCrosslistImageFiles(record, itemId, options = {}) {
+    const selection = options.selection || selectCrosslistManifestPhotos(record, options.imageMode);
+    if (itemId && selection.item_id !== String(itemId)) throw new Error('Photo selection item ID does not match the draft.');
+    const requestBlob = options.requestBlob || (url => gmCrosslistRequest(url, 'blob'));
+    const imageTimeoutMs = Math.max(100, Number(options.imageTimeoutMs) || 25000);
+    const files = await Promise.all(selection.photos.map(async (photo, index) => {
+      debug('Facebook draft photo download started', { item_id: selection.item_id, index: index + 1, total: selection.upload_count, mode: selection.mode });
+      const blob = await crosslistStageTimeout(
+        () => requestBlob(photo.url),
+        imageTimeoutMs,
+        `archived photo ${index + 1}/${selection.upload_count}`,
+      );
+      if (!blob || (typeof blob.size === 'number' && blob.size <= 0)) throw new Error(`Archived photo ${index + 1} was empty.`);
+      if (typeof blob.size === 'number' && blob.size !== photo.bytes) {
+        throw new Error(`Archived photo ${index + 1} failed byte-count verification (${blob.size}/${photo.bytes}).`);
+      }
+      const type = String(blob?.type || '').toLowerCase();
+      if (type && !type.startsWith('image/')) throw new Error(`Archived photo ${index + 1} returned ${type} instead of an image.`);
+      debug('Facebook draft photo download finished', { item_id: selection.item_id, index: index + 1, total: selection.upload_count, mode: selection.mode });
+      return new File([blob], photo.filename, { type: blob?.type || photo.mime_type || 'image/jpeg' });
+    }));
+    return { ...selection, files };
+  }
+
+  async function uploadFacebookDraftPhotos(root, record, itemId, options = {}) {
+    let downloaded;
+    try {
+      downloaded = await downloadCrosslistImageFiles(record, itemId, options);
+    } catch (error) {
+      return { ok: false, reason: String(error?.message || error), count: 0 };
+    }
+    const input = facebookPageNodes(root, 'input[type="file"]')
+      .find(candidate => /image|jpeg|jpg|png|webp/i.test(candidate.getAttribute?.('accept') || 'image'));
+    if (!input) return { ok: false, reason: 'Facebook photo upload control was not found.', count: 0 };
+    const files = downloaded.files;
+    if (!files.length) return { ok: false, reason: 'No eBay photos could be downloaded.', count: 0 };
+    const Transfer = options.DataTransferClass || globalThis.DataTransfer;
+    if (!Transfer) return { ok: false, reason: 'This browser cannot assign selected photo files.', count: 0 };
+    const transfer = new Transfer();
+    files.forEach(file => transfer.items.add(file));
+    try {
+      input.files = transfer.files;
+    } catch (_) {
+      return { ok: false, reason: 'Facebook rejected the selected photo files.', count: 0 };
+    }
+    dispatchFacebookInput(input);
+    const count = Number(input.files?.length || 0);
+    const complete = count === downloaded.upload_count;
+    return {
+      ok: complete,
+      reason: complete ? '' : `Facebook accepted ${count}/${downloaded.upload_count} required photos.`,
+      count,
+      expected_count: downloaded.expected_count,
+      archived_count: downloaded.archived_count,
+      upload_count: downloaded.upload_count,
+      image_mode: downloaded.mode,
+      capped: downloaded.capped,
+    };
+  }
+
+  async function fillFacebookMarketplaceDraft(record, options = {}) {
+    const draft = record?.facebook_draft || {};
+    const itemId = String(record?.item_id || record?.listing?.item_id || '');
+    const root = options.root || (typeof document !== 'undefined' ? document : null);
+    const setField = options.setField || ((label, value) => setFacebookTextField(root, label, value));
+    const selectField = options.selectField || ((label, value) => chooseFacebookDropdownValue(root, label, value, options));
+    const selectLocation = options.selectLocation
+      || (options.setField
+        ? (value => setField('Location', value))
+        : (value => chooseFacebookLocationValue(root, value, options)));
+    const uploadPhotos = options.uploadPhotos || (() => uploadFacebookDraftPhotos(root, record, itemId, options));
+    const errors = [];
+    const warnings = [...(Array.isArray(record?.warnings) ? record.warnings : [])];
+    const fields = {};
+    const fieldTimeoutMs = Math.max(100, Number(options.fieldTimeoutMs) || 8000);
+    const dropdownTimeoutMs = Math.max(100, Number(options.dropdownTimeoutMs) || 15000);
+    const photoTimeoutMs = Math.max(100, Number(options.photoTimeoutMs) || 30000);
+
+    for (const [label, value, required] of [
+      ['Title', draft.title, true],
+      ['Price', Number.isFinite(Number(draft.price)) ? String(Number(draft.price)) : '', true],
+      ['Description', draft.description, true],
+    ]) {
+      if (!value && required) {
+        errors.push(`${label} is missing from the queued draft.`);
+        continue;
+      }
+      debug('Facebook draft field started', { item_id: itemId, field: label });
+      const result = await crosslistStageTimeout(
+        () => setField(label, value),
+        fieldTimeoutMs,
+        `Facebook ${label} field`,
+      );
+      fields[label] = result;
+      if (!result?.ok) errors.push(result?.reason || `${label} could not be filled.`);
+      debug('Facebook draft field finished', { item_id: itemId, field: label, ok: Boolean(result?.ok) });
+    }
+
+    debug('Facebook draft photo upload started', { item_id: itemId, count: record?.photo_manifest?.facebook_upload_count || 0, image_mode: record?.image_mode || draft.image_mode || '' });
+    const photoResult = await crosslistStageTimeout(
+      uploadPhotos,
+      photoTimeoutMs,
+      'Facebook photo upload',
+    );
+    fields.Photos = photoResult;
+    if (!photoResult?.ok) errors.push(photoResult?.reason || 'Photos could not be uploaded.');
+    if (photoResult?.ok && photoResult?.capped) {
+      warnings.push(`Facebook accepts ${photoResult.upload_count} photos; eBay reported ${photoResult.expected_count} source photos and FlipTracker archived ${photoResult.archived_count}.`);
+    }
+    debug('Facebook draft photo upload finished', { item_id: itemId, ok: Boolean(photoResult?.ok), count: photoResult?.count || 0 });
+
+    for (const [label, value] of [['Category', draft.category], ['Condition', draft.condition]]) {
+      if (!value) {
+        warnings.push(`${label} needs manual selection.`);
+        continue;
+      }
+      debug('Facebook draft dropdown started', { item_id: itemId, field: label, value });
+      const result = await crosslistStageTimeout(
+        () => selectField(label, value),
+        dropdownTimeoutMs,
+        `Facebook ${label} selection`,
+      );
+      fields[label] = result;
+      if (!result?.ok) warnings.push(result?.reason || `${label} needs manual selection.`);
+      debug('Facebook draft dropdown finished', { item_id: itemId, field: label, ok: Boolean(result?.ok) });
+    }
+    if (draft.location) {
+      debug('Facebook draft location started', { item_id: itemId, value: draft.location });
+      const locationResult = await crosslistStageTimeout(
+        () => selectLocation(draft.location),
+        dropdownTimeoutMs,
+        'Facebook Location selection',
+      );
+      fields.Location = locationResult;
+      if (!locationResult?.ok) {
+        const reason = locationResult?.reason || 'Location could not be selected.';
+        if (locationResult?.warningOnly) warnings.push(reason);
+        else errors.push(reason);
+      }
+      debug('Facebook draft location finished', { item_id: itemId, ok: Boolean(locationResult?.ok) });
+    } else {
+      errors.push('Location is missing from the queued draft.');
+    }
+
+    return {
+      ok: errors.length === 0,
+      item_id: itemId,
+      evidence_hash: record?.evidence_hash || '',
+      fields,
+      photo_count: Number(photoResult?.count || 0),
+      errors,
+      warnings: uniqueNonEmpty(warnings),
+    };
+  }
+
+  function postEbayLifecycleEnvelope(envelope, token = getFlipTrackerSyncToken()) {
+    return new Promise(resolve => {
+      let safeEnvelope;
+      try {
+        safeEnvelope = prepareEbayLifecycleEnvelopeForExport(envelope);
+      } catch (error) {
+        resolve({ ok: false, reason: 'unsafe-envelope', error: sanitizeEbayLifecycleString(error?.message || error) });
+        return;
+      }
+      if (!token) {
+        resolve({ ok: false, reason: 'missing-token' });
+        return;
+      }
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        resolve({ ok: false, reason: 'bridge-request-unavailable' });
+        return;
+      }
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: `${FLIPTRACKER_BRIDGE_URL}/ingest`,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-FlipTracker-Token': token,
+        },
+        data: JSON.stringify(safeEnvelope),
+        timeout: 10000,
+        onload: response => {
+          const ok = response.status >= 200 && response.status < 300;
+          let payload = {};
+          try { payload = JSON.parse(response.responseText || '{}'); } catch (_) { payload = {}; }
+          resolve({ ok, status: response.status, ...payload, reason: ok ? '' : (payload.error || `HTTP ${response.status}`) });
+        },
+        onerror: () => resolve({ ok: false, reason: 'bridge-unreachable' }),
+        ontimeout: () => resolve({ ok: false, reason: 'bridge-timeout' }),
+      });
+    });
+  }
+
+  function downloadEbayLifecycleEnvelope(envelope) {
+    const safeEnvelope = prepareEbayLifecycleEnvelopeForExport(envelope);
+    const pageKind = safeEnvelope?.page_kind || 'page';
+    const filename = `FlipTracker-ebay-${pageKind}-${safeTimestamp()}.json`;
+    downloadTextFile(filename, `${JSON.stringify(safeEnvelope, null, 2)}\n`, 'application/json;charset=utf-8');
+    return filename;
+  }
+
+  function canExportEbayLifecycleEnvelope(envelope) {
+    const records = Array.isArray(envelope?.records) ? envelope.records : [];
+    return envelope?.completeness?.complete === true
+      && (records.length > 0 || envelope?.completeness?.expected_count === 0);
+  }
+
+  function scanCurrentEbayLifecycle(route = resolveFlipTrackerPage(location)) {
+    const html = document.documentElement?.outerHTML || '';
+    const pageKind = ebayLifecyclePageKind(route);
+    if (!pageKind) throw new Error('Current route is not a supported eBay lifecycle page.');
+    const records = parseEbayLifecycleHtml(html, { pageKind, route });
+    const envelope = buildEbayLifecycleEnvelope(records, {
+      pageKind,
+      pageUrl: location.href,
+      generatedAt: new Date().toISOString(),
+      expectedCount: expectedEbayLifecycleCount(html, pageKind),
+      hasNextPage: ebayLifecycleHasNextPage(html),
+    });
+    const validation = validateFlipTrackerExportAgainstRoute(envelope, route);
+    if (!validation.ok) throw new Error('Current eBay lifecycle route does not match parsed records.');
+    return envelope;
+  }
+
+  function ebayLifecycleRecordIdentity(record, index = 0) {
+    const row = record && typeof record === 'object' ? record : {};
+    const type = String(row.record_type || 'record');
+    const stableId = row.transaction_id
+      || row.order_line_id
+      || ([row.order_id, row.item_id].filter(Boolean).join('|'))
+      || row.item_id
+      || row.custom_label;
+    return stableId ? `${type}|${stableId}` : `${type}|review-${index}`;
+  }
+
+  async function fetchEbayLifecycleHtml(pageUrl, options = {}) {
+    const response = await fetch(pageUrl, { credentials: 'include', redirect: 'follow', signal: options.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return {
+      html: await response.text(),
+      pageUrl: response.url || pageUrl,
+    };
+  }
+
+  async function collectPaginatedEbayLifecycleEnvelope(pageKind, pageUrl, options = {}) {
+    const fetchHtml = options.fetchHtml || fetchEbayLifecycleHtml;
+    const maxPages = Math.max(1, Math.min(100, Number(options.maxPages) || 25));
+    const recordsByIdentity = new Map();
+    const seenUrls = new Set();
+    let currentUrl = String(pageUrl || '');
+    let currentHtml = options.initialHtml == null ? null : String(options.initialHtml);
+    let expectedCount = null;
+    let pageCount = 0;
+    let pendingNextUrl = '';
+    let pendingDomNext = false;
+    let collectionError = '';
+
+    while (currentUrl && pageCount < maxPages) {
+      if (options.signal?.aborted) {
+        collectionError = 'Fetch cancelled.';
+        break;
+      }
+      const normalizedUrl = currentUrl.replace(/#.*$/, '');
+      if (seenUrls.has(normalizedUrl)) {
+        collectionError = 'Pagination loop detected.';
+        break;
+      }
+      seenUrls.add(normalizedUrl);
+
+      try {
+        if (currentHtml == null) {
+          const fetched = await fetchHtml(currentUrl, { signal: options.signal });
+          currentHtml = String(fetched?.html || '');
+          currentUrl = String(fetched?.pageUrl || currentUrl);
+        }
+      } catch (error) {
+        collectionError = options.signal?.aborted
+          ? 'Fetch cancelled.'
+          : sanitizeEbayLifecycleString(`Fetch failed: ${error?.message || error}`);
+        break;
+      }
+
+      pageCount += 1;
+      const pageExpected = expectedEbayLifecycleCount(currentHtml, pageKind);
+      if (Number.isFinite(pageExpected)) {
+        expectedCount = expectedCount == null ? pageExpected : Math.max(expectedCount, pageExpected);
+      }
+      parseEbayLifecycleHtml(currentHtml, { pageKind }).forEach((record, index) => {
+        const identity = ebayLifecycleRecordIdentity(record, recordsByIdentity.size + index);
+        if (!recordsByIdentity.has(identity)) recordsByIdentity.set(identity, record);
+      });
+
+      pendingNextUrl = ebayLifecycleNextPageUrl(currentHtml, currentUrl);
+      pendingDomNext = ebayLifecycleHasDomNextPage(currentHtml);
+      if (!pendingNextUrl && pendingDomNext && typeof options.advancePage === 'function') {
+        try {
+          const advanced = await options.advancePage({
+            pageKind,
+            pageIndex: pageCount,
+            expectedCount,
+            parsedCount: recordsByIdentity.size,
+            signal: options.signal,
+          });
+          if (advanced?.html) {
+            currentHtml = String(advanced.html);
+            const separator = String(pageUrl || '').includes('?') ? '&' : '?';
+            currentUrl = `${pageUrl}${separator}flipperaddon_dom_page=${pageCount + 1}`;
+            pendingDomNext = false;
+            continue;
+          }
+          if (advanced?.error) collectionError = sanitizeEbayLifecycleString(advanced.error);
+        } catch (error) {
+          collectionError = options.signal?.aborted
+            ? 'Fetch cancelled.'
+            : sanitizeEbayLifecycleString(`DOM pagination failed: ${error?.message || error}`);
+        }
+      }
+      if (!pendingNextUrl) break;
+      currentUrl = pendingNextUrl;
+      currentHtml = null;
+    }
+
+    const hasNextPage = Boolean((pendingNextUrl || pendingDomNext) && (collectionError || pageCount >= maxPages || pendingDomNext));
+    const envelope = buildEbayLifecycleEnvelope(Array.from(recordsByIdentity.values()), {
+      pageKind,
+      pageUrl,
+      generatedAt: options.generatedAt || new Date().toISOString(),
+      expectedCount,
+      hasNextPage,
+    });
+    envelope.completeness.page_count = pageCount;
+    if (collectionError) {
+      envelope.completeness.complete = false;
+      envelope.completeness.reason = collectionError;
+    } else if (hasNextPage) {
+      envelope.completeness.complete = false;
+      envelope.completeness.reason = `Stopped after ${pageCount} page(s); more eBay result pages remain.`;
+    }
+    return prepareEbayLifecycleEnvelopeForExport(envelope);
+  }
+
+  function ebayLifecycleDomCardSignature(root = document) {
+    return Array.from(root?.querySelectorAll?.('[qa-id^="active-item-"], .sold-itemcard, [data-testid="order-card"]') || [])
+      .map(node => node.getAttribute?.('qa-id') || node.getAttribute?.('data-order-id') || normalizedFacebookControlText(node.textContent).slice(0, 120))
+      .filter(Boolean)
+      .join('|');
+  }
+
+  function enabledEbayLifecyclePager(selector, root = document) {
+    const control = root?.querySelector?.(selector);
+    if (!control || control.disabled || control.getAttribute?.('aria-disabled') === 'true') return null;
+    return control;
+  }
+
+  async function clickEbayLifecyclePagerAndWait(control, root = document, options = {}) {
+    if (!control) return { ok: false, error: 'Pagination control is unavailable.' };
+    const before = ebayLifecycleDomCardSignature(root);
+    control.click?.();
+    const deadline = Date.now() + Math.max(2000, Number(options.timeoutMs) || 12000);
+    while (Date.now() < deadline) {
+      if (options.signal?.aborted) return { ok: false, error: 'Fetch cancelled.' };
+      await wait(150);
+      const after = ebayLifecycleDomCardSignature(root);
+      if (after && after !== before) {
+        return { ok: true, html: root.documentElement?.outerHTML || '' };
+      }
+    }
+    return { ok: false, error: 'eBay did not render the next listing page before timeout.' };
+  }
+
+  async function rewindEbayLifecycleDomToFirstPage(root = document, options = {}) {
+    for (let step = 0; step < 100; step += 1) {
+      const previous = enabledEbayLifecyclePager('button.pagination__previous, a.pagination__previous', root);
+      if (!previous) return { ok: true, html: root.documentElement?.outerHTML || '' };
+      const moved = await clickEbayLifecyclePagerAndWait(previous, root, options);
+      if (!moved.ok) return moved;
+    }
+    return { ok: false, error: 'Could not return eBay pagination to the first page.' };
+  }
+
+  async function advanceEbayLifecycleDomPage(root = document, options = {}) {
+    const next = enabledEbayLifecyclePager('button.pagination__next, a.pagination__next', root);
+    if (!next) return null;
+    return clickEbayLifecyclePagerAndWait(next, root, options);
+  }
+
+  async function fetchEbayLifecycleEnvelope(pageKind, pageUrl, options = {}) {
+    if (pageKind === 'ended') {
+      return collectPaginatedEbayLifecycleEnvelope(pageKind, pageUrl, options);
+    }
+    try {
+      const response = await fetch(pageUrl, { credentials: 'include', redirect: 'follow', signal: options.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const html = await response.text();
+      const records = parseEbayLifecycleHtml(html, { pageKind });
+      return buildEbayLifecycleEnvelope(records, {
+        pageKind,
+        pageUrl,
+        generatedAt: new Date().toISOString(),
+        expectedCount: expectedEbayLifecycleCount(html, pageKind),
+        hasNextPage: ebayLifecycleHasNextPage(html),
+      });
+    } catch (error) {
+      const envelope = buildEbayLifecycleEnvelope([], { pageKind, pageUrl, generatedAt: new Date().toISOString() });
+      envelope.completeness.reason = options.signal?.aborted
+        ? 'Fetch cancelled.'
+        : sanitizeEbayLifecycleString(`Fetch failed: ${error?.message || error}`);
+      return prepareEbayLifecycleEnvelopeForExport(envelope);
+    }
+  }
+
+  async function runEbayLifecycleSyncAll(options = {}) {
+    const pages = options.pages || [
+      { pageKind: 'active', pageUrl: 'https://www.ebay.com/sh/lst/active' },
+      { pageKind: 'ended', pageUrl: 'https://www.ebay.com/sh/lst/ended?status=ENDED&timePeriod=LAST_90_DAYS&source=filterbar&action=search' },
+      { pageKind: 'sold', pageUrl: 'https://www.ebay.com/mys/sold' },
+      { pageKind: 'transactions', pageUrl: 'https://www.ebay.com/mes/transactionlist?sh=true' },
+    ];
+    const currentRoute = options.currentRoute || {};
+    const currentKind = ebayLifecyclePageKind(currentRoute);
+    const setBusy = typeof options.setBusy === 'function' ? options.setBusy : () => {};
+    const scanCurrent = options.scanCurrent || ((route) => {
+      const pageKind = ebayLifecyclePageKind(route);
+      if (pageKind !== 'ended') return scanCurrentEbayLifecycle(route);
+      return collectPaginatedEbayLifecycleEnvelope(pageKind, location.href, {
+        initialHtml: document.documentElement?.outerHTML || '',
+        signal: options.signal,
+      });
+    });
+    const fetchPage = options.fetchPage || fetchEbayLifecycleEnvelope;
+    const postEnvelope = options.postEnvelope || postEbayLifecycleEnvelope;
+    const downloadEnvelope = options.downloadEnvelope || downloadEbayLifecycleEnvelope;
+    const isCancelled = () => Boolean(options.signal?.aborted || options.isCancelled?.());
+    const summary = {
+      envelopes: [],
+      synced: 0,
+      downloaded: 0,
+      skipped: 0,
+      incomplete: [],
+      errors: [],
+      cancelled: false,
+    };
+    const noteError = (stage, pageKind, error) => {
+      summary.errors.push({
+        stage,
+        page_kind: pageKind || '',
+        reason: sanitizeEbayLifecycleString(error?.message || error || 'Unknown error'),
+      });
+    };
+
+    try {
+      setBusy(true);
+      for (const page of pages) {
+        if (isCancelled()) {
+          summary.cancelled = true;
+          break;
+        }
+        let envelope;
+        try {
+          envelope = page.pageKind === currentKind
+            ? await scanCurrent(currentRoute, { signal: options.signal })
+            : await fetchPage(page.pageKind, page.pageUrl, { signal: options.signal });
+          if (isCancelled()) {
+            summary.cancelled = true;
+            break;
+          }
+          envelope = prepareEbayLifecycleEnvelopeForExport(envelope);
+          summary.envelopes.push(envelope);
+        } catch (error) {
+          noteError('collect', page.pageKind, error);
+          const failedEnvelope = buildEbayLifecycleEnvelope([], {
+            pageKind: page.pageKind,
+            pageUrl: page.pageUrl,
+            generatedAt: new Date().toISOString(),
+          });
+          failedEnvelope.completeness.reason = sanitizeEbayLifecycleString(`Collection failed: ${error?.message || error}`);
+          summary.envelopes.push(prepareEbayLifecycleEnvelopeForExport(failedEnvelope));
+        }
+      }
+
+      summary.incomplete = summary.envelopes
+        .filter(envelope => !envelope.completeness.complete)
+        .map(envelope => envelope.page_kind);
+
+      for (const envelope of summary.envelopes) {
+        if (isCancelled()) {
+          summary.cancelled = true;
+          break;
+        }
+        if (!canExportEbayLifecycleEnvelope(envelope)) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        let postResult;
+        try {
+          postResult = await postEnvelope(envelope);
+        } catch (error) {
+          noteError('post', envelope.page_kind, error);
+          postResult = { ok: false, reason: 'post-threw' };
+        }
+        if (isCancelled()) {
+          summary.cancelled = true;
+          break;
+        }
+        if (postResult?.ok) {
+          summary.synced += 1;
+          continue;
+        }
+
+        try {
+          await downloadEnvelope(envelope);
+          summary.downloaded += 1;
+        } catch (error) {
+          noteError('download', envelope.page_kind, error);
+        }
+      }
+      return summary;
+    } finally {
+      try {
+        setBusy(false);
+      } catch (error) {
+        noteError('cleanup', '', error);
+      }
+    }
+  }
+
+  function scanCurrentFlipTrackerListings() {
+    if (isEbayBulkSellPage()) return extractEbayBulkSellListings(document);
+    return parseFlipTrackerActiveListingsHtml(document.documentElement?.outerHTML || '', {
+      url: location.href
+    });
+  }
+
+  async function collectFacebookMarketplaceListings(root = document, options = {}) {
+    const loc = typeof location !== 'undefined' ? location : null;
+    const route = loc ? resolveFlipTrackerPage(loc) : { kind: 'fliptracker-facebook', source: 'facebook' };
+    const startedAt = Date.now();
+    const routeFingerprint = genericRouteFingerprint(route, loc);
+    const rowsById = new Map();
+    const duplicateIds = new Set();
+    const missingIdentityRows = [];
+    const maxSteps = Math.max(1, Math.min(250, Number(options.maxSteps || 160)));
+    const settleTarget = Math.max(2, Math.min(10, Number(options.settleCycles || 4)));
+    const waitMs = Math.max(100, Number(options.waitMs || 450));
+    const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
+    const view = root?.defaultView || (typeof window !== 'undefined' ? window : null);
+    const originalY = Number(view?.scrollY || 0);
+    let stableCycles = 0;
+    let previousCount = -1;
+    let previousHeight = -1;
+    let reachedBottom = false;
+    let steps = 0;
+    for (; steps < maxSteps && !shouldStop(); steps += 1) {
+      const html = root?.documentElement?.outerHTML || '';
+      parseFacebookMarketplaceListingsHtml(html).forEach(row => {
+        const identity = scraperStableIdentity(row, 'facebook');
+        if (!identity) {
+          missingIdentityRows.push(row.title || `row-${missingIdentityRows.length + 1}`);
+          return;
+        }
+        if (rowsById.has(identity)) duplicateIds.add(identity);
+        rowsById.set(identity, row);
+      });
+      const documentElement = root?.documentElement;
+      const body = root?.body;
+      const height = Math.max(Number(documentElement?.scrollHeight || 0), Number(body?.scrollHeight || 0));
+      const viewport = Number(view?.innerHeight || documentElement?.clientHeight || 0);
+      const y = Number(view?.scrollY || documentElement?.scrollTop || body?.scrollTop || 0);
+      reachedBottom = Boolean(view?.scrollTo && height > 0 && viewport > 0 && y + viewport >= height - 8);
+      const unchanged = rowsById.size === previousCount && height === previousHeight;
+      stableCycles = unchanged && reachedBottom ? stableCycles + 1 : 0;
+      debugEvent('facebook.dom.progress', { step: steps + 1, count: rowsById.size, height, reachedBottom, stableCycles });
+      options.onProgress?.(`Reading Facebook listings... ${rowsById.size} found.`);
+      if (stableCycles >= settleTarget) break;
+      previousCount = rowsById.size;
+      previousHeight = height;
+      if (!view?.scrollTo || !height) break;
+      view.scrollTo(0, height);
+      await wait(waitMs);
+    }
+    if (options.restoreScroll !== false && view?.scrollTo) view.scrollTo(0, originalY);
+    const currentRoute = typeof location !== 'undefined' ? resolveFlipTrackerPage(location) : route;
+    const currentFingerprint = genericRouteFingerprint(currentRoute, typeof location !== 'undefined' ? location : loc);
+    const routeMatches = routeFingerprint === currentFingerprint;
+    const stopped = shouldStop();
+    const settledBottom = reachedBottom && stableCycles >= settleTarget;
+    const items = Array.from(rowsById.values());
+    const incomplete = stopped || !routeMatches || !settledBottom || missingIdentityRows.length > 0;
+    const stopReason = stopped
+      ? 'stopped-by-user'
+      : (!routeMatches
+        ? 'route-fingerprint-changed'
+        : (missingIdentityRows.length ? 'missing-stable-identities' : (settledBottom ? 'settled-bottom' : 'bottom-not-proven')));
+    const coverage = {
+      proofTier: settledBottom ? 'dom-bottom-settled' : 'unproven',
+      strategy: 'canonical-listing-id-virtual-scroll',
+      routeFingerprint,
+      currentFingerprint,
+      routeMatches,
+      reachedBottom,
+      settledBottom,
+      enumeratedIds: Array.from(rowsById.keys()),
+      duplicateIds: Array.from(duplicateIds),
+      missingIdentityRows,
+      failedPages: [],
+      durationMs: Date.now() - startedAt
+    };
+    debugEvent('facebook.dom.coverage', { count: items.length, incomplete, stopReason, coverage });
+    return {
+      source: 'facebook-dom',
+      context: { source: 'Facebook Marketplace', pageKind: 'fliptracker-facebook', url: loc?.href || '' },
+      items,
+      listings: items,
+      expectedTotal: null,
+      stopped,
+      incomplete,
+      stopReason,
+      routeFingerprint,
+      durationMs: coverage.durationMs,
+      coverage
+    };
+  }
+
+  function lotSummary(rows) {
+    return rows
+      .map(row => row.lot)
+      .filter(Boolean)
+      .slice(0, 12)
+      .join(', ');
+  }
+
+  function findDialog() {
+    return document.querySelector('ngb-modal-window, .modal.show, .modal-dialog, [role="dialog"], [aria-modal="true"], app-bid-confirmation, app-confirm-bid');
+  }
+
+  function buttonLabel(btn) {
+    return [
+      textOf(btn),
+      btn?.getAttribute?.('aria-label') || '',
+      btn?.getAttribute?.('title') || '',
+      btn?.getAttribute?.('id') || btn?.id || '',
+      btn?.getAttribute?.('name') || btn?.name || '',
+      btn?.getAttribute?.('value') || btn?.value || ''
+    ].join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function findConfirmButton(dialog) {
+    const candidates = Array.from(dialog.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], a.btn'))
+      .filter(btn => !btn.disabled && !btn.getAttribute?.('aria-disabled'))
+      .filter(isVisible)
+      .map(btn => {
+        const text = buttonLabel(btn).toLowerCase();
+        let score = 0;
+        if (/cancel|close|reject|no\b|deny|dismiss|hide/i.test(text)) {
+          score = -100;
+        } else if (/bid-confirm-confirm-bid|click\s+to\s+confirm\s+bid|confirm\s+(?:your\s+)?(?:max\s+)?bid/i.test(text)) {
+          score = 12;
+        } else if (/confirm/i.test(text)) {
+          score = 8;
+        } else if (/place\s+bid|place\s+max\s+bid/i.test(text)) {
+          score = 7;
+        } else if (/submit/i.test(text)) {
+          score = 6;
+        } else if (/yes/i.test(text)) {
+          score = 5;
+        } else if (/ok/i.test(text)) {
+          score = 4;
+        } else if (/bid/i.test(text)) {
+          score = 3;
+        }
+        return { btn, score };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    return candidates[0]?.btn || null;
+  }
+
+  function isBidConfirmText(value) {
+    return /confirm\s+(?:your\s+)?(?:max\s+)?bid|bid\s+confirmation|click\s+to\s+confirm\s+bid|maximum\s+(?:amount|bid)|new\s+max\s+bid|submit\s+(?:your\s+)?bid/i.test(value || '');
+  }
+
+  function isStrongConfirmButton(btn) {
+    return /bid-confirm-confirm-bid|click\s+to\s+confirm\s+bid|confirm\s+(?:your\s+)?(?:max\s+)?bid/i.test(buttonLabel(btn));
+  }
+
+  function isBidHistorySurface(surface) {
+    return /bid\s+history|bid\s+history\s+for|\b\d+\s+bids?\b/i.test(textOf(surface));
+  }
+
+  function findConfirmSurface(root = document) {
+    const modalRoots = Array.from(root.querySelectorAll?.('ngb-modal-window, .modal.show, .modal-dialog, [role="dialog"], [aria-modal="true"], app-bid-confirmation, app-confirm-bid, #modal-body, .modal-body') || []);
+    const blockingHistoryDialog = modalRoots.find(surface => isVisible(surface) && isBidHistorySurface(surface));
+    if (blockingHistoryDialog) {
+      debug('confirm-surface blocked by bid history dialog', {
+        text: textOf(blockingHistoryDialog).slice(0, 220)
+      });
+      return null;
+    }
+
+    const roots = modalRoots.slice();
+    const pageRoot = root.body || root.documentElement;
+    if (pageRoot) roots.push(pageRoot);
+
+    const uniqueRoots = Array.from(new Set(roots));
+    debug('confirm-surface scan', { candidateRoots: uniqueRoots.length });
+
+    for (const surface of uniqueRoots) {
+      const visible = isVisible(surface);
+      if (!visible) {
+        debug('confirm-surface skipped invisible root', {
+          tag: surface?.tagName || '',
+          id: surface?.id || '',
+          className: String(surface?.className || '').slice(0, 120),
+          text: textOf(surface).slice(0, 160)
+        });
+        continue;
+      }
+      const button = findConfirmButton(surface);
+      const surfaceText = textOf(surface);
+      const textMatch = isBidConfirmText(surfaceText);
+      const strongButton = Boolean(button && isStrongConfirmButton(button));
+      const isPageRoot = surface === pageRoot;
+      debug('confirm-surface inspected visible root', {
+        tag: surface?.tagName || '',
+        id: surface?.id || '',
+        className: String(surface?.className || '').slice(0, 120),
+        isPageRoot,
+        textMatch,
+        hasButton: Boolean(button),
+        strongButton,
+        buttonLabel: button ? buttonLabel(button) : '',
+        text: surfaceText.slice(0, 220)
+      });
+      if (!button) continue;
+      if (isBidHistorySurface(surface)) continue;
+      if (isPageRoot && !strongButton && !/confirm\s+(?:your\s+)?(?:max\s+)?bid/i.test(surfaceText)) continue;
+      if (textMatch || strongButton) {
+        debug('confirm-surface matched', {
+          buttonLabel: buttonLabel(button),
+          surfaceText: surfaceText.slice(0, 220)
+        });
+        return { surface, button };
+      }
+    }
+
+    debug('confirm-surface no match');
+    return null;
+  }
+
+  async function prepareBid(row, status) {
+    debug('bid action blocked: scraper-first mode', { lot: row?.lot });
+    status?.('Bidding actions are removed in scraper-first mode.');
+    return false;
+  }
+
+  async function prepareLiveBid(row, status) {
+    debug('live bid action blocked: scraper-first mode', { lot: row?.lot });
+    status?.('Live bidding actions are removed in scraper-first mode.');
+    return false;
+  }
+
+  function defaultPlanText() {
+    return JSON.stringify({}, null, 2);
+  }
+
+  function storageSafeSegment(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9.-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'page';
+  }
+
+  function getAjWillnerAuctionId(loc = location) {
+    const match = String(loc.pathname || '').match(/\/ui\/auctions\/([^/?#]+)/i);
+    return match?.[1] || '';
+  }
+
+  function getPlanStorageKey(loc = location) {
+    const host = storageSafeSegment(loc.hostname || 'page');
+    if (host === 'bid.ajwillnerauctions.com') {
+      const auctionId = getAjWillnerAuctionId(loc);
+      return `${PLAN_KEY_PREFIX}:${host}:${auctionId ? `auction:${storageSafeSegment(auctionId)}` : 'catalog'}`;
+    }
+
+    if (isFlipTrackerListingPage(loc)) return `${PLAN_KEY_PREFIX}:${host}:fliptracker`;
+
+    if (isAuctionNinjaHost(loc.hostname || '')) {
+      const route = resolveAuctionNinjaPage(loc);
+      if (route.saleId) return `${PLAN_KEY_PREFIX}:${host}:auctionninja:sale:${storageSafeSegment(route.saleId)}`;
+      if (route.productId) return `${PLAN_KEY_PREFIX}:${host}:auctionninja:item:${storageSafeSegment(route.productId)}`;
+      return `${PLAN_KEY_PREFIX}:${host}:auctionninja:${storageSafeSegment(route.kind || 'page')}`;
+    }
+
+    const route = resolveHiBidPage(loc);
+    if (route.auctionId) return `${PLAN_KEY_PREFIX}:${host}:auction:${storageSafeSegment(route.auctionId)}`;
+    if (route.kind === 'watchlist-outbid') return `${PLAN_KEY_PREFIX}:${host}:watchlist-outbid`;
+    return `${PLAN_KEY_PREFIX}:${host}:${storageSafeSegment(route.kind || 'page')}`;
+  }
+
+  function getStoredPlanText(loc = (typeof location !== 'undefined' ? location : null)) {
+    try {
+      const key = loc ? getPlanStorageKey(loc) : `${PLAN_KEY_PREFIX}:global`;
+      const stored = GM_getValue(key, null);
+      if (typeof stored === 'string') return stored;
+
+      const migrated = Boolean(GM_getValue(LEGACY_PLAN_MIGRATED_KEY, false));
+      const legacy = migrated ? null : GM_getValue(LEGACY_PLAN_KEY, null);
+      if (typeof legacy === 'string') {
+        GM_setValue(key, legacy);
+        GM_setValue(LEGACY_PLAN_MIGRATED_KEY, true);
+        return legacy;
+      }
+      return defaultPlanText();
+    } catch {
+      return defaultPlanText();
+    }
+  }
+
+  function savePlanText(value, loc = (typeof location !== 'undefined' ? location : null)) {
+    try {
+      const key = loc ? getPlanStorageKey(loc) : `${PLAN_KEY_PREFIX}:global`;
+      GM_setValue(key, value);
+    } catch {
+      // Tampermonkey storage may be unavailable in tests.
+    }
+  }
+
+  function addLotToPlanText(raw, lot) {
+    let existingPlan;
+    try {
+      existingPlan = JSON.parse(raw || '{}');
+    } catch {
+      existingPlan = {};
+    }
+    if (!existingPlan || Array.isArray(existingPlan) || typeof existingPlan !== 'object') existingPlan = {};
+    if (!lot?.lot) return JSON.stringify(existingPlan, null, 2);
+
+    const lotKey = String(lot.lot);
+    const existing = existingPlan[lotKey];
+    const existingMax = typeof existing === 'number' ? existing : existing?.max;
+    const max = Number(existingMax);
+    existingPlan[lotKey] = {
+      max: Number.isFinite(max) && max > 0 ? max : null,
+      title: lot.title || existing?.title || ''
+    };
+
+    const sorted = {};
+    Object.keys(existingPlan).sort((a, b) => String(a).localeCompare(String(b), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    })).forEach(key => {
+      sorted[key] = existingPlan[key];
+    });
+    return JSON.stringify(sorted, null, 2);
+  }
+
+  function planTextFromLoadedLots(raw, lots) {
+    let existingPlan;
+    try {
+      existingPlan = JSON.parse(raw || '{}');
+    } catch {
+      existingPlan = {};
+    }
+
+    if (!existingPlan || Array.isArray(existingPlan) || typeof existingPlan !== 'object') existingPlan = {};
+
+    const nextPlan = {};
+    lots.forEach(lot => {
+      if (!lot?.lot) return;
+      const lotKey = String(lot.lot);
+      const existing = existingPlan[lotKey];
+      const existingMax = typeof existing === 'number' ? existing : existing?.max;
+      const max = Number(existingMax);
+      nextPlan[lotKey] = {
+        max: Number.isFinite(max) && max > 0 ? max : null,
+        title: lot.title || ''
+      };
+    });
+
+    const sorted = {};
+    Object.keys(nextPlan).sort((a, b) => Number(a) - Number(b)).forEach(key => {
+      sorted[key] = nextPlan[key];
+    });
+    return JSON.stringify(sorted, null, 2);
+  }
+
+  function getStoredAutoRefresh() {
+    try {
+      return Boolean(GM_getValue(AUTO_REFRESH_KEY, false));
+    } catch {
+      return false;
+    }
+  }
+
+  function saveAutoRefresh(value) {
+    try {
+      GM_setValue(AUTO_REFRESH_KEY, Boolean(value));
+    } catch {
+      // Tampermonkey storage may be unavailable in tests.
+    }
+  }
+
+  function getStoredMinimized() {
+    try {
+      return Boolean(GM_getValue(MINIMIZED_KEY, true));
+    } catch {
+      return true;
+    }
+  }
+
+  function saveMinimized(value) {
+    try {
+      GM_setValue(MINIMIZED_KEY, Boolean(value));
+    } catch {
+      // Tampermonkey storage may be unavailable in tests.
+    }
+  }
+
+  function getPlan(status) {
+    const raw = document.getElementById('hibid-bid-plan-json')?.value || '{}';
+    try {
+      const plan = parseBidPlan(raw);
+      savePlanText(raw);
+      return plan;
+    } catch (err) {
+      status(`Bad JSON: ${err.message}`);
+      return {};
+    }
+  }
+
+  function hibaIcon(name) {
+    const icons = {
+      chevron: '<path d="m6 9 6 6 6-6"></path>',
+      close: '<path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>',
+      copy: '<rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>',
+      download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M7 10l5 5 5-5"></path><path d="M12 15V3"></path>',
+      file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path>',
+      list: '<path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path>',
+      radio: '<circle cx="12" cy="12" r="2"></circle><path d="M16.24 7.76a6 6 0 0 1 0 8.49"></path><path d="M7.76 16.24a6 6 0 0 1 0-8.49"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path><path d="M4.93 19.07a10 10 0 0 1 0-14.14"></path>',
+      scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M7 12h10"></path>',
+      shield: '<path d="M20 13c0 5-3.5 7.5-7.7 8.8a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.6a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"></path>',
+      stop: '<rect width="14" height="14" x="5" y="5" rx="2"></rect>',
+      zap: '<path d="M4 14a1 1 0 0 1-.8-1.6l9-10A1 1 0 0 1 14 3v7h6a1 1 0 0 1 .8 1.6l-9 10A1 1 0 0 1 10 21v-7z"></path>'
+    };
+    return `<svg class="hiba-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[name] || icons.shield}</svg>`;
+  }
+
+  function helpAttrs(text) {
+    if (!text) return '';
+    const safe = escapeHtml(text);
+    return ` title="${safe}" aria-label="${safe}" data-help="${safe}"`;
+  }
+
+  function hibidPastAuctionDialogStyle() {
+    return `
+      #flipperaddon-hibid-auction-copy-dialog {
+        position: fixed;
+        right: 14px;
+        bottom: 14px;
+        z-index: 2147483646;
+        width: min(370px, calc(100vw - 28px));
+        color: #f8fafc;
+        background: #0b1020;
+        border: 1px solid rgba(148,163,184,.3);
+        border-radius: 12px;
+        box-shadow: 0 16px 45px rgba(0,0,0,.38);
+        font: 13px/1.35 Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+      #flipperaddon-hibid-auction-copy-dialog * { box-sizing: border-box; }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(148,163,184,.18);
+        background: rgba(15,23,42,.92);
+      }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-body { padding: 12px; }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-title { font-weight: 850; }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-meta,
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-status {
+        color: #cbd5e1;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-status { margin-top: 8px; color: #93c5fd; }
+      #flipperaddon-hibid-auction-copy-dialog .flipperaddon-hibid-dialog-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+      #flipperaddon-hibid-auction-copy-dialog button {
+        min-height: 32px;
+        padding: 6px 9px;
+        border: 1px solid rgba(147,197,253,.28);
+        border-radius: 8px;
+        color: #eff6ff;
+        background: #1d4ed8;
+        font: 800 12px/1.2 ui-sans-serif, system-ui, sans-serif;
+        cursor: pointer;
+      }
+      #flipperaddon-hibid-auction-copy-dialog button.secondary { color: #e5e7eb; background: #1f2937; border-color: rgba(148,163,184,.3); }
+      #flipperaddon-hibid-auction-copy-dialog button.danger { background: #991b1b; border-color: rgba(248,113,113,.3); }
+      #flipperaddon-hibid-auction-copy-dialog button.icon { width: 30px; padding: 0; background: rgba(30,41,59,.88); }
+      #flipperaddon-hibid-auction-copy-dialog button[disabled] { opacity: .5; cursor: not-allowed; }
+      .flipperaddon-hibid-account-auction-copy {
+        display: block;
+        width: 100%;
+        min-height: 34px;
+        margin-top: 6px;
+        padding: 7px 10px;
+        border: 1px solid rgba(147,197,253,.35);
+        border-radius: 7px;
+        color: #eff6ff;
+        background: #1d4ed8;
+        font: 800 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+        cursor: pointer;
+      }
+      .flipperaddon-hibid-account-auction-copy:hover { background: #2563eb; }
+      .flipperaddon-hibid-account-auction-copy[disabled] { opacity: .55; cursor: wait; }
+    `;
+  }
+
+  function hibidPastAuctionContextForButton(button) {
+    const key = button?.dataset?.hibidAuctionKey || '';
+    const store = globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_CONTEXTS__;
+    return key && store instanceof Map ? store.get(key) : null;
+  }
+
+  function buildHibidPastAuctionDialogHtml() {
+    return `
+      <div class="flipperaddon-hibid-dialog-head">
+        <strong>Copy HiBid Auction</strong>
+        <button id="flipperaddon-hibid-auction-copy-close" class="icon secondary" type="button" title="Close copy dialog" aria-label="Close copy dialog">X</button>
+      </div>
+      <div class="flipperaddon-hibid-dialog-body">
+        <div id="flipperaddon-hibid-auction-copy-title" class="flipperaddon-hibid-dialog-title"></div>
+        <div id="flipperaddon-hibid-auction-copy-meta" class="flipperaddon-hibid-dialog-meta"></div>
+        <div id="flipperaddon-hibid-auction-copy-status" class="flipperaddon-hibid-dialog-status" role="status" aria-live="polite">Preparing...</div>
+        <div class="flipperaddon-hibid-dialog-actions">
+          <button id="flipperaddon-hibid-auction-copy-json" type="button" disabled>Copy JSON</button>
+          <button id="flipperaddon-hibid-auction-copy-llm" type="button" disabled>Copy LLM Brief</button>
+          <button id="flipperaddon-hibid-auction-copy-stop" class="danger" type="button">Stop</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function ensureHibidPastAuctionDialog() {
+    if (typeof document === 'undefined' || !document.body) return null;
+    let dialog = document.getElementById('flipperaddon-hibid-auction-copy-dialog');
+    if (dialog) return dialog;
+    dialog = document.createElement('div');
+    dialog.id = 'flipperaddon-hibid-auction-copy-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-label', 'Copy selected HiBid auction');
+    dialog.innerHTML = buildHibidPastAuctionDialogHtml();
+    document.body.appendChild(dialog);
+    return dialog;
+  }
+
+  function setHibidPastAuctionDialogStatus(message, tone = 'info') {
+    const status = document.getElementById('flipperaddon-hibid-auction-copy-status');
+    if (!status) return;
+    status.textContent = String(message || '');
+    status.style.color = tone === 'danger' ? '#fecaca' : (tone === 'success' ? '#bbf7d0' : '#93c5fd');
+  }
+
+  async function runHibidPastAuctionCopy(context) {
+    const dialog = ensureHibidPastAuctionDialog();
+    if (!dialog || !context) return;
+    const title = dialog.querySelector('#flipperaddon-hibid-auction-copy-title');
+    const meta = dialog.querySelector('#flipperaddon-hibid-auction-copy-meta');
+    const jsonButton = dialog.querySelector('#flipperaddon-hibid-auction-copy-json');
+    const llmButton = dialog.querySelector('#flipperaddon-hibid-auction-copy-llm');
+    const stopButton = dialog.querySelector('#flipperaddon-hibid-auction-copy-stop');
+    if (title) title.textContent = context.auctionTitle || 'Selected HiBid auction';
+    if (meta) meta.textContent = [context.location, context.dateText].filter(Boolean).join(' | ');
+    if (jsonButton) jsonButton.disabled = true;
+    if (llmButton) llmButton.disabled = true;
+    if (stopButton) stopButton.disabled = false;
+    const previous = globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_RUN__;
+    previous?.controller?.abort?.();
+    if (previous) previous.stop = true;
+    const run = {
+      context,
+      stop: false,
+      controller: typeof AbortController === 'function' ? new AbortController() : null,
+      exportData: null
+    };
+    globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_RUN__ = run;
+    debugEvent('hibid.account-auction.scrape.begin', {
+      pageKind: context.pageKind,
+      auctionId: context.auctionId,
+      auctionTitle: context.auctionTitle,
+      scopeKey: context.scopeKey
+    });
+    setHibidPastAuctionDialogStatus('Collecting selected saved lots...');
+    try {
+      const result = await scrapeHibidAccountAuction(
+        context,
+        message => setHibidPastAuctionDialogStatus(message),
+        () => run.stop,
+        document,
+        { signal: run.controller?.signal }
+      );
+      if (globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_RUN__ !== run) return;
+      run.exportData = result;
+      const audit = result.audit || {};
+      if (!audit.selectedGroupFound) {
+        setHibidPastAuctionDialogStatus('Selected auction lots could not be isolated; nothing was copied.', 'danger');
+      } else if (run.stop || result.stopped) {
+        setHibidPastAuctionDialogStatus(`Stopped after ${result.items.length} selected lot(s).`, 'danger');
+      } else {
+        setHibidPastAuctionDialogStatus(`Ready: ${result.items.length} selected lot(s); ${audit.detailsSucceeded || 0} detail page(s) enriched${audit.detailsFailed ? `, ${audit.detailsFailed} issue(s)` : ''}.`, audit.detailsFailed ? 'info' : 'success');
+      }
+      if (jsonButton) jsonButton.disabled = !audit.selectedGroupFound;
+      if (llmButton) llmButton.disabled = !audit.selectedGroupFound;
+      if (stopButton) stopButton.disabled = true;
+      debugEvent('hibid.account-auction.scrape.complete', {
+        count: result.items?.length || 0,
+        audit
+      });
+    } catch (error) {
+      setHibidPastAuctionDialogStatus(`HiBid auction export failed: ${error?.message || error}`, 'danger');
+      if (stopButton) stopButton.disabled = true;
+      debugEvent('hibid.account-auction.scrape.error', { error: error?.message || String(error) });
+    }
+  }
+
+  async function handleHibidPastAuctionDialogAction(target) {
+    const run = globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_RUN__;
+    if (!run) return;
+    if (target.id === 'flipperaddon-hibid-auction-copy-stop') {
+      run.stop = true;
+      run.controller?.abort?.();
+      setHibidPastAuctionDialogStatus('Stopping selected auction export...', 'danger');
+      debugEvent('hibid.account-auction.scrape.stop');
+      return;
+    }
+    if (!run.exportData || !run.exportData.audit?.selectedGroupFound) return;
+    const isLlm = target.id === 'flipperaddon-hibid-auction-copy-llm';
+    const payload = isLlm
+      ? buildHibidAccountAuctionLlmBrief(run.exportData)
+      : buildHibidAccountAuctionJsonPayload(run.exportData);
+    const copied = await writeClipboard(payload).catch(() => false);
+    setHibidPastAuctionDialogStatus(copied ? `Copied ${isLlm ? 'LLM brief' : 'JSON'} for ${run.exportData.items.length} selected lot(s).` : 'Clipboard failed.', copied ? 'success' : 'danger');
+    debugEvent('hibid.account-auction.copy.result', {
+      mode: isLlm ? 'llm' : 'json',
+      copied,
+      count: run.exportData.items.length,
+      audit: run.exportData.audit
+    });
+  }
+
+  function installHibidPastAuctionActionDelegation() {
+    if (globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_DELEGATION__) return true;
+    if (typeof document === 'undefined' || !document.addEventListener) return false;
+    const handler = event => {
+      const target = event.target?.closest?.('.flipperaddon-hibid-account-auction-copy, #flipperaddon-hibid-auction-copy-json, #flipperaddon-hibid-auction-copy-llm, #flipperaddon-hibid-auction-copy-stop, #flipperaddon-hibid-auction-copy-close');
+      if (!target) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (target.classList?.contains('flipperaddon-hibid-account-auction-copy')) {
+        const context = hibidPastAuctionContextForButton(target);
+        if (context) void runHibidPastAuctionCopy(context);
+        return;
+      }
+      if (target.id === 'flipperaddon-hibid-auction-copy-close') {
+        const run = globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_RUN__;
+        if (run) run.stop = true;
+        run?.controller?.abort?.();
+        document.getElementById('flipperaddon-hibid-auction-copy-dialog')?.remove();
+        return;
+      }
+      void handleHibidPastAuctionDialogAction(target);
+    };
+    document.addEventListener('click', handler, true);
+    globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_DELEGATION__ = { handler };
+    debugEvent('hibid.account-auction.delegation.installed');
+    return true;
+  }
+
+  function mountHibidAccountAuctionActions(root = document) {
+    const route = resolveHiBidPage(typeof location !== 'undefined' ? location : {});
+    if (!isHibidPastAuctionRoute(route) || !root?.querySelectorAll) return 0;
+    installHibidPastAuctionActionDelegation();
+    if (!globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_CONTEXTS__ || !(globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_CONTEXTS__ instanceof Map)) {
+      globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_CONTEXTS__ = new Map();
+    }
+    if (typeof document !== 'undefined' && document.head && !document.getElementById('flipperaddon-hibid-account-auction-styles')) {
+      const style = document.createElement('style');
+      style.id = 'flipperaddon-hibid-account-auction-styles';
+      style.textContent = hibidPastAuctionDialogStyle();
+      document.head.appendChild(style);
+    }
+    const rows = extractHibidPastAuctionRows(root, typeof location !== 'undefined' ? location : null, route.kind);
+    let mounted = 0;
+    rows.forEach((row, index) => {
+      const block = row.__element;
+      const host = block?.querySelector?.('.printer-d-none') || block;
+      if (!host?.appendChild) return;
+      const key = row.scopeKey || `${route.kind}:${index}`;
+      globalThis.__FLIPPERADDON_HIBID_ACCOUNT_AUCTION_CONTEXTS__.set(key, row);
+      const selector = `[data-hibid-auction-key="${hibidEscapeRegex(key)}"]`;
+      if (host.querySelector?.(selector)) return;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.id = `flipperaddon-hibid-account-auction-copy-${index}`;
+      button.className = 'flipperaddon-hibid-account-auction-copy';
+      button.dataset.hibidAuctionKey = key;
+      button.dataset.controlId = 'flipperaddon-hibid-account-auction-copy';
+      button.title = 'Copy the saved lots in this HiBid auction with full lead, category, description, and photo evidence.';
+      button.textContent = 'Copy Auction';
+      host.appendChild(button);
+      mounted += 1;
+    });
+    debugEvent('hibid.account-auction.actions.mounted', { rows: rows.length, mounted });
+    return mounted;
+  }
+
+  function actionButton(id, icon, label, tone = 'primary', extra = '', help = '') {
+    return `<button id="${id}" type="button" class="hiba-btn ${tone}"${helpAttrs(help || label)} ${extra}>${hibaIcon(icon)}<span>${label}</span></button>`;
+  }
+
+  function modeLabelFor(mode) {
+    if (mode === 'fliptracker') return 'FlipTracker';
+    if (mode === 'live') return 'Live';
+    if (mode === 'auctionninja') return 'AuctionNinja';
+    if (mode === 'aar') return 'AAR Auctions';
+    if (mode === 'govdeals') return 'GovDeals';
+    if (mode === 'unsupported') return 'Unsupported';
+    return 'Catalog';
+  }
+
+  function isAjWillnerRoute(route = {}) {
+    return route?.source === 'ajwillner' || route?.host === 'bid.ajwillnerauctions.com';
+  }
+
+  const SITE_SHORTCUTS = Object.freeze(getRouteManifest()
+    .filter(entry => entry.navigation?.group === 'auction')
+    .map(entry => Object.freeze({
+      id: entry.site,
+      label: entry.label,
+      site: entry.site,
+      modeHint: entry.navigation.modeHint,
+      url: entry.navigation.url,
+      help: entry.navigation.help
+    })));
+
+  const SELLING_TOOL_SHORTCUTS = Object.freeze(getRouteManifest()
+    .filter(entry => entry.navigation?.group === 'selling')
+    .flatMap(entry => entry.navigation.workflows.map(workflow => Object.freeze({
+      ...workflow,
+      site: entry.site
+    }))));
+
+  function shortcutIdForHost(hostname = '') {
+    const host = String(hostname || '').toLowerCase();
+    if (host === 'bid.ajwillnerauctions.com') return 'ajwillner';
+    if (isGovDealsHost(host)) return 'govdeals';
+    if (isAarAuctionsHost(host)) return 'aar';
+    if (isAuctionNinjaHost(host)) return 'auctionninja';
+    if (isHiBidHost(host)) return 'hibid';
+    if (host === 'www.ebay.com' || host === 'ebay.com' || host === 'www.facebook.com' || host === 'facebook.com') return 'selling-tools';
+    return '';
+  }
+
+  function getCurrentSiteShortcutId(currentLocationOrMode = null, route = {}) {
+    if (route?.source === 'ajwillner' || route?.host === 'bid.ajwillnerauctions.com') return 'ajwillner';
+    const routeHost = shortcutIdForHost(route?.host || '');
+    if (routeHost) return routeHost;
+
+    const input = currentLocationOrMode || (typeof location !== 'undefined' ? location : null);
+    if (!input) return '';
+
+    if (typeof input === 'string') {
+      const value = input.trim().toLowerCase();
+      if (SITE_SHORTCUTS.some(item => item.id === value || item.site === value) || value === 'selling-tools') return value === 'auctionninja' ? 'auctionninja' : value;
+      if (value === 'catalog' || value === 'live' || value === 'hibid-live') return 'hibid';
+      if (value === 'auction-search' || value === 'followed-items' || value === 'items-won' || value === 'bid-history') return 'auctionninja';
+      if (value === 'aar-auction-list' || value === 'aar-auction-catalog') return 'aar';
+      if (value === 'govdeals-seller' || value === 'govdeals-new-listings' || value === 'govdeals-asset') return 'govdeals';
+      if (/^https?:\/\//i.test(value)) {
+        try {
+          return shortcutIdForHost(new URL(input).hostname);
+        } catch {
+          return '';
+        }
+      }
+      return '';
+    }
+
+    if (input.mode) return getCurrentSiteShortcutId(input.mode, input.route || route);
+    if (input.source === 'ajwillner') return 'ajwillner';
+    const host = input.hostname || input.host || '';
+    if (host) return shortcutIdForHost(host);
+    if (input.href) {
+      try {
+        return shortcutIdForHost(new URL(input.href).hostname);
+      } catch {
+        return '';
+      }
+    }
+    return '';
+  }
+
+  function getSiteShortcuts(currentLocationOrMode = null, route = {}) {
+    const currentId = getCurrentSiteShortcutId(currentLocationOrMode, route);
+    const auctionRows = SITE_SHORTCUTS.map(item => ({
+      id: item.id,
+      label: item.label,
+      site: item.site,
+      modeHint: item.modeHint,
+      url: item.url,
+      help: item.help,
+      current: item.id === currentId
+    }));
+    return auctionRows.concat({
+      id: 'selling-tools',
+      label: 'Selling Tools',
+      site: 'selling-tools',
+      modeHint: 'eBay / Facebook',
+      url: '',
+      help: 'Open eBay and Facebook Marketplace selling workflows.',
+      current: currentId === 'selling-tools',
+      children: SELLING_TOOL_SHORTCUTS.map(item => ({ ...item }))
+    });
+  }
+
+  function getSellingToolShortcuts(currentLocationOrMode = null, route = {}) {
+    const resolved = currentLocationOrMode?.route
+      ? currentLocationOrMode.route
+      : (route?.kind ? route : (currentLocationOrMode && typeof currentLocationOrMode !== 'string' && currentLocationOrMode.kind ? currentLocationOrMode : null));
+    const currentKind = String(resolved?.kind || '').toLowerCase();
+    return SELLING_TOOL_SHORTCUTS.map(item => ({
+      ...item,
+      current: (item.site === 'ebay' && currentKind.includes(`ebay-${item.id.replace(/^ebay-/, '')}`))
+        || (item.id === 'facebook-selling' && currentKind === 'fliptracker-facebook')
+        || (item.id === 'facebook-create' && currentKind.includes('facebook-create'))
+    }));
+  }
+
+  function renderModeTabs(mode, route = {}, busy = false) {
+    const isAjWillner = mode === 'catalog' && isAjWillnerRoute(route);
+    const meta = {
+      catalog: isAjWillner
+        ? { label: 'AJ Willner', icon: 'list', help: 'AJ Willner scraper mode copies virtual auction listings as JSON or an LLM brief.' }
+        : { label: 'HiBid', icon: 'list', help: 'HiBid scraper mode copies catalog or watchlist lots as JSON or an LLM brief.' },
+      live: { label: 'HiBid Live', icon: 'radio', help: 'HiBid live scraper mode expands visible live lots and copies JSON or an LLM brief.' },
+      fliptracker: { label: 'FlipTracker', icon: 'file', help: 'FlipTracker mode exports visible eBay or Facebook selling listings for import/review.' },
+      auctionninja: { label: 'AuctionNinja', icon: 'list', help: 'AuctionNinja mode copies sale catalogs as JSON or a terms-aware LLM brief without touching bid controls.' },
+      aar: { label: 'AAR Auctions', icon: 'list', help: 'AAR Auctions mode copies auction calendars or catalogs as JSON or distance-aware LLM briefs.' },
+      govdeals: { label: 'GovDeals', icon: 'list', help: 'GovDeals mode copies seller pages, nearby listings, or asset details as JSON or distance-aware LLM briefs.' },
+      unsupported: { label: 'Unsupported', icon: 'shield', help: 'This page is not supported by FlipperAddon.' }
+    };
+    const active = meta[mode] || meta.catalog;
+    const shortcuts = getSiteShortcuts(mode, route);
+    const shortcutDisabled = busy ? ' disabled aria-disabled="true"' : '';
+    const shortcutRows = shortcuts.map(item => {
+      if (item.id === 'selling-tools') {
+        const childRows = (item.children || []).map(child => `
+            <button type="button" class="hiba-shortcut hiba-selling-shortcut${child.current ? ' active' : ''}" data-site-shortcut-url="${escapeHtml(child.url)}" data-site-shortcut-id="${escapeHtml(child.id)}"${child.current ? ' aria-current="page"' : ''}${helpAttrs(child.help)}${shortcutDisabled}>
+              <span>${escapeHtmlText(child.label)}</span>
+              <small>${escapeHtmlText(child.modeHint)}</small>
+            </button>
+        `).join('');
+        return `
+          <button id="flipperaddon-selling-tools-toggle" type="button" class="hiba-shortcut${item.current ? ' active' : ''}" aria-expanded="false" aria-controls="flipperaddon-selling-tools-menu"${item.current ? ' aria-current="page"' : ''}${helpAttrs(item.help)}${shortcutDisabled}>
+            <span>${escapeHtmlText(item.label)}</span>
+            <small>${escapeHtmlText(item.modeHint)}</small>
+          </button>
+          <div id="flipperaddon-selling-tools-menu" class="hiba-selling-menu" role="menu" aria-label="Selling tools" hidden>
+            ${childRows}
+          </div>
+        `;
+      }
+      return `
+        <button type="button" class="hiba-shortcut${item.current ? ' active' : ''}" data-site-shortcut-url="${escapeHtml(item.url)}" data-site-shortcut-id="${escapeHtml(item.id)}"${item.current ? ' aria-current="page"' : ''}${helpAttrs(item.help)}${shortcutDisabled}>
+          <span>${escapeHtmlText(item.label)}</span>
+          <small>${escapeHtmlText(item.modeHint)}</small>
+        </button>
+      `;
+    }).join('');
+    return `
+      <div class="hiba-tabs hiba-site-switcher" aria-label="FlipperAddon site switcher">
+        <button id="flipperaddon-site-switcher-toggle" type="button" class="hiba-tab hiba-switcher-toggle active" aria-expanded="false" aria-controls="flipperaddon-site-switcher-menu"${helpAttrs(active.help)}>
+          ${hibaIcon(active.icon)}<span>${active.label}</span>${hibaIcon('chevron')}
+        </button>
+        <div id="flipperaddon-site-switcher-menu" class="hiba-site-menu" role="menu" aria-label="Site shortcuts" hidden>
+          ${shortcutRows}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDebugActions(debugEnabled) {
+    if (!debugEnabled) return '';
+    return `
+      <div class="hiba-actions hiba-debug-actions">
+        ${actionButton('hibid-debug-copy', 'copy', 'Copy Debug', 'secondary', '', 'Copy the in-memory FlipperAddon debug log for troubleshooting.')}
+        ${actionButton('hibid-debug-download', 'download', 'Download Debug', 'secondary', '', 'Download the FlipperAddon debug log as a text file.')}
+        ${actionButton('hibid-debug-clear', 'stop', 'Clear Debug', 'danger', '', 'Clear saved FlipperAddon debug log entries.')}
+      </div>
+      <textarea id="hibid-debug-export" class="hiba-input hiba-debug-export" rows="6" readonly hidden aria-label="FlipperAddon debug log"></textarea>
+    `;
+  }
+
+  function renderResearchSettings() {
+    const settings = getResearchSettings();
+    return `
+      <details class="hiba-details" id="flipperaddon-research-settings">
+        <summary>Research Settings</summary>
+        <label class="hiba-field">
+          <span>Origin / ZIP</span>
+          <input id="flipperaddon-origin-label" data-legacy-id="aar-origin-label" class="hiba-input" type="text" value="${escapeHtml(settings.originLabel)}" title="Shared origin used by AAR and GovDeals distance research instructions." aria-label="Research origin or ZIP">
+        </label>
+        <label class="hiba-field">
+          <span>Radius miles</span>
+          <input id="flipperaddon-radius-miles" data-legacy-id="aar-radius-miles" class="hiba-input" type="number" min="1" step="1" value="${escapeHtml(String(settings.radiusMiles))}" title="Maximum driving/search radius used in AAR and GovDeals LLM briefs." aria-label="Research radius miles">
+        </label>
+        <label class="hiba-field">
+          <span>Sales tax</span>
+          <input id="flipperaddon-sales-tax-rate" class="hiba-input" type="text" value="${escapeHtml(settings.salesTaxRate)}" title="Tax assumption the downstream resale analysis should expose in profit math." aria-label="Sales tax rate">
+        </label>
+        <label class="hiba-field">
+          <span>Vehicle / logistics</span>
+          <input id="flipperaddon-vehicle-profile" class="hiba-input" type="text" value="${escapeHtml(settings.vehicleProfile)}" title="Vehicle and transport constraints for resale recommendations." aria-label="Vehicle profile">
+        </label>
+        <label class="hiba-field">
+          <span>Research notes</span>
+          <textarea id="flipperaddon-research-notes" class="hiba-input" rows="2" title="Extra context included in AAR and GovDeals LLM briefs." aria-label="Research notes">${escapeHtmlText(settings.researchNotes)}</textarea>
+        </label>
+      </details>
+    `;
+  }
+
+  // Keep the old helper name available for callers from earlier builds/tests.
+  function renderAarResearchSettings() {
+    return renderResearchSettings();
+  }
+
+  function renderAarSection(debugEnabled, route = {}) {
+    const isCatalog = route?.kind === 'aar-auction-catalog';
+    const isItem = route?.kind === 'aar-item-detail';
+    return `
+      <section id="aar-auctions-mode" class="hiba-section" data-module="aar" data-page-kind="${escapeHtml(route?.kind || 'aar-auction-list')}">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">AAR Auctions</div>
+            <strong>${isItem ? 'Item Export' : (isCatalog ? 'Catalog Export' : 'Auction Calendar Export')}</strong>
+          </div>
+          <span class="hiba-chip neutral">${isItem ? 'item' : (isCatalog ? 'catalog' : 'calendar')}</span>
+        </div>
+        <div class="hiba-actions">
+          ${isItem
+            ? actionButton('aar-item-copy-llm', 'file', 'Copy Item LLM', 'primary', '', 'Copy this exact AAR item, sale terms, distance research instructions, and item JSON for a desktop LLM.')
+            : (isCatalog
+              ? actionButton('aar-catalog-copy-llm', 'file', 'Copy Catalog LLM', 'primary', '', 'Copy AAR sale terms, distance research instructions, and lot JSON for a desktop LLM.')
+              : actionButton('aar-auctions-copy-llm', 'file', 'Copy Auctions LLM', 'primary', '', 'Copy AAR auction cards with distance research instructions for a desktop LLM.'))}
+          ${isItem
+            ? actionButton('aar-item-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy this exact AAR item detail as normalized JSON.')
+            : (isCatalog
+              ? actionButton('aar-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy the current AAR catalog as normalized JSON.')
+              : actionButton('aar-auctions-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy AAR auction calendar cards as normalized JSON.'))}
+          ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current AAR scrape/export work.')}
+        </div>
+        ${renderResearchSettings()}
+        ${renderDebugActions(debugEnabled)}
+      </section>
+    `;
+  }
+
+  function renderGovDealsSection(debugEnabled, route = {}) {
+    const kind = route?.kind || 'govdeals-new-listings';
+    const isSeller = kind === 'govdeals-seller';
+    const isAsset = kind === 'govdeals-asset';
+    const title = isAsset ? 'Asset Export' : (isSeller ? 'Seller Export' : 'Listings Export');
+    const chip = isAsset ? 'asset' : (isSeller ? 'seller' : 'listings');
+    const llmId = isAsset ? 'govdeals-asset-copy-llm' : (isSeller ? 'govdeals-seller-copy-llm' : 'govdeals-listings-copy-llm');
+    const jsonId = isAsset ? 'govdeals-asset-copy-json' : (isSeller ? 'govdeals-seller-copy-json' : 'govdeals-listings-copy-json');
+    const llmLabel = isAsset ? 'Copy Asset LLM' : (isSeller ? 'Copy Seller LLM' : 'Copy Listings LLM');
+    return `
+      <section id="govdeals-mode" class="hiba-section" data-module="govdeals" data-page-kind="${escapeHtml(kind)}">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">GovDeals</div>
+            <strong>${title}</strong>
+          </div>
+          <span class="hiba-chip neutral">${chip}</span>
+        </div>
+        <div class="hiba-actions">
+          ${actionButton(llmId, 'file', llmLabel, 'primary', '', 'Copy GovDeals listings with resale prompt, distance verification instructions, and normalized JSON for a desktop LLM.')}
+          ${actionButton(jsonId, 'copy', 'Copy JSON', 'secondary', '', 'Copy GovDeals listings as normalized JSON.')}
+          ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current GovDeals scrape/export work.')}
+        </div>
+        ${renderResearchSettings()}
+        ${renderDebugActions(debugEnabled)}
+      </section>
+    `;
+  }
+
+  function renderCatalogSection(debugEnabled, route = {}) {
+    const isAjWillner = isAjWillnerRoute(route);
+    const isPastBids = route?.kind === 'pastbids';
+    const isPastWatchlist = route?.kind === 'pastwatchlist';
+    const isPastAuctionPage = isPastBids || isPastWatchlist;
+    const isWinningBids = route?.kind === 'currentbids-winning';
+    const isOutbidBids = route?.kind === 'currentbids-outbid';
+    const isWatchlist = route?.kind === 'watchlist' || route?.kind === 'watchlist-outbid';
+    const isAccountBids = isWinningBids || isOutbidBids || isWatchlist;
+    const kicker = isAjWillner ? 'AJ Willner' : (isAccountBids ? 'HiBid account' : 'HiBid catalog');
+    const title = isAjWillner
+      ? 'AJ Willner Catalog Export'
+      : (isWinningBids ? 'Winning Bids Export' : (isOutbidBids ? 'Outbid Bids Export' : (isWatchlist ? 'Watchlist Export' : 'Catalog Export')));
+    const chip = isAjWillner ? 'api-first' : (isWinningBids ? 'winning' : (isOutbidBids ? 'outbid' : (isWatchlist ? 'watchlist' : 'scraper')));
+    if (isPastAuctionPage) {
+      const label = isPastBids ? 'Past Bids Auction Export' : 'Past Watchlist Auction Export';
+      return `
+        <section id="hibid-bid-controls" class="hiba-section" data-module="catalog" data-page-kind="${escapeHtml(route.kind)}">
+          <div class="hiba-section-head">
+            <div>
+              <div class="hiba-kicker">HiBid account</div>
+              <strong>${label}</strong>
+            </div>
+            <span class="hiba-chip neutral">account</span>
+          </div>
+          <div class="hiba-meta">Use the blue Copy Auction buttons beside View Catalog to export one selected auction group with its saved lots and detail descriptions.</div>
+          ${renderDebugActions(debugEnabled)}
+        </section>
+      `;
+    }
+    const llmHelp = isAjWillner
+      ? 'Copy the resale-analysis prompt plus scraped AJ Willner listing JSON for a desktop LLM.'
+      : (isAccountBids
+        ? 'Copy the resale-analysis prompt plus visible HiBid account bid lots for a desktop LLM.'
+        : 'Copy the full resale-analysis prompt plus scraped lot JSON for a desktop LLM.');
+    const jsonHelp = isAjWillner
+      ? 'Copy scraped AJ Willner auction listings as JSON for manual use.'
+      : (isAccountBids
+        ? 'Copy visible HiBid account bid lots as JSON for manual use.'
+        : 'Copy scraped HiBid lots as JSON for manual use.');
+    const apiOnlyActions = !isAjWillner && !isAccountBids
+      ? `${actionButton('hibid-catalog-copy-partial', 'copy', 'Copy Verified Partial', 'secondary', 'hidden aria-hidden="true"', 'Copy only API-verified HiBid records after exact coverage fails. The export includes a prominent incomplete-coverage audit.')}
+         ${debugEnabled ? actionButton('hibid-diagnostic-download', 'download', 'Download HiBid Diagnostic', 'secondary', 'hidden aria-hidden="true"', 'Download a sanitized HiBid API coverage bundle without cookies, tokens, or account data.') : ''}`
+      : '';
+    return `
+      <section id="hibid-bid-controls" class="hiba-section" data-module="catalog">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">${kicker}</div>
+            <strong>${title}</strong>
+          </div>
+          <span class="hiba-chip neutral">${chip}</span>
+        </div>
+        <div class="hiba-actions">
+          ${actionButton('hibid-catalog-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', llmHelp)}
+          ${actionButton('hibid-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', jsonHelp)}
+          ${apiOnlyActions}
+          ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current scrape/export work.')}
+        </div>
+        ${renderDebugActions(debugEnabled)}
+      </section>
+    `;
+  }
+
+  function renderLiveSection(debugEnabled) {
+    return `
+      <section id="hibid-live-mode" class="hiba-section" data-module="live">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">HiBid live</div>
+            <strong>Live Export</strong>
+          </div>
+          <span class="hiba-chip neutral">scraper</span>
+        </div>
+        <div class="hiba-actions">
+          ${actionButton('hibid-live-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Expand visible live lots and copy the resale-analysis prompt plus lot JSON.')}
+          ${actionButton('hibid-live-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Expand visible live lots and copy their JSON.')}
+          ${actionButton('hibid-catalog-copy-partial', 'copy', 'Copy Verified Partial', 'secondary', 'hidden aria-hidden="true"', 'Copy only API-verified live lots after exact coverage fails. The export includes a prominent incomplete-coverage audit.')}
+          ${debugEnabled ? actionButton('hibid-diagnostic-download', 'download', 'Download HiBid Diagnostic', 'secondary', 'hidden aria-hidden="true"', 'Download a sanitized HiBid API coverage bundle without cookies, tokens, or account data.') : ''}
+          ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current scrape/export work.')}
+        </div>
+        ${renderDebugActions(debugEnabled)}
+      </section>
+    `;
+  }
+
+  function renderAuctionNinjaSection(debugEnabled, route = {}) {
+    if (route?.kind === 'item-detail') {
+      return `
+        <section id="auctionninja-catalog-mode" class="hiba-section" data-module="auctionninja" data-page-kind="item-detail">
+          <div class="hiba-section-head">
+            <div>
+              <div class="hiba-kicker">AuctionNinja</div>
+              <strong>Item Detail Export</strong>
+            </div>
+            <span class="hiba-chip neutral">single item</span>
+          </div>
+          <div class="hiba-actions">
+            ${actionButton('auctionninja-catalog-copy-llm', 'file', 'Copy Item LLM', 'primary', '', 'Copy this item detail with its description, photos, and resale-analysis instructions.')}
+            ${actionButton('auctionninja-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy this AuctionNinja item as normalized JSON.')}
+          </div>
+          ${renderDebugActions(debugEnabled)}
+        </section>
+      `;
+    }
+
+    if (route?.kind === 'category-search') {
+      return `
+        <section id="auctionninja-category-mode" class="hiba-section" data-module="auctionninja" data-page-kind="category-search">
+          <div class="hiba-section-head">
+            <div>
+              <div class="hiba-kicker">AuctionNinja</div>
+              <strong>Category Item Export</strong>
+            </div>
+            <span class="hiba-chip neutral">items</span>
+          </div>
+          <div class="hiba-actions">
+            ${actionButton('auctionninja-category-copy-llm', 'file', 'Copy Category LLM', 'primary', '', 'Copy category item cards with location filters and resale triage context.')}
+            ${actionButton('auctionninja-category-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy AuctionNinja category item cards as normalized JSON.')}
+            ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop safe category-page loading or export work.')}
+          </div>
+          ${renderDebugActions(debugEnabled)}
+        </section>
+      `;
+    }
+
+    if (route?.kind === 'auction-search') {
+      return `
+        <section id="auctionninja-auctions-mode" class="hiba-section" data-module="auctionninja" data-page-kind="auction-search">
+          <div class="hiba-section-head">
+            <div>
+              <div class="hiba-kicker">AuctionNinja</div>
+              <strong>Auction Search Export</strong>
+            </div>
+            <span class="hiba-chip neutral">sales</span>
+          </div>
+          <div class="hiba-actions">
+            ${actionButton('auctionninja-auctions-copy-llm', 'file', 'Copy Auctions LLM', 'primary', '', 'Copy nearby/search auction rows with whole-sale resale triage context.')}
+            ${actionButton('auctionninja-auctions-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy visible/search auction rows as normalized JSON.')}
+            ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current auction-search export work.')}
+          </div>
+          ${renderDebugActions(debugEnabled)}
+        </section>
+      `;
+    }
+
+    if (route?.kind === 'followed-items' || route?.kind === 'items-won' || route?.kind === 'bid-history') {
+      const isWon = route.kind === 'items-won';
+      const isBidHistory = route.kind === 'bid-history';
+      return `
+        <section id="auctionninja-account-mode" class="hiba-section" data-module="auctionninja" data-page-kind="${escapeHtml(route.kind)}">
+          <div class="hiba-section-head">
+            <div>
+              <div class="hiba-kicker">AuctionNinja</div>
+              <strong>${isWon ? 'Items Won Export' : (isBidHistory ? 'Bid History Export' : 'Followed Items Export')}</strong>
+            </div>
+            <span class="hiba-chip neutral">${isWon ? 'inventory' : (isBidHistory ? 'history' : 'watchlist')}</span>
+          </div>
+          <div class="hiba-actions">
+            ${actionButton('auctionninja-account-copy-llm', 'file', isWon ? 'Copy Won Items LLM' : (isBidHistory ? 'Copy Bid History LLM' : 'Copy Watchlist LLM'), 'primary', '', isWon ? 'Copy won items with resale planning context.' : (isBidHistory ? 'Copy bid history with resale decision-review context.' : 'Copy followed items with resale triage context.'))}
+            ${actionButton('auctionninja-account-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy visible account items as normalized JSON.')}
+            ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop current export work.')}
+          </div>
+          ${renderDebugActions(debugEnabled)}
+        </section>
+      `;
+    }
+
+    return `
+      <section id="auctionninja-catalog-mode" class="hiba-section" data-module="auctionninja">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">AuctionNinja</div>
+            <strong>Sale Catalog Research</strong>
+          </div>
+          <span class="hiba-chip neutral">research only</span>
+        </div>
+        <div class="hiba-actions">
+          ${actionButton('auctionninja-catalog-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Copy the resale-analysis prompt plus AuctionNinja sale terms and lot JSON.')}
+          ${actionButton('auctionninja-catalog-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy the current AuctionNinja sale catalog as normalized JSON.')}
+          ${actionButton('hibid-scraper-stop', 'stop', 'Stop', 'danger', '', 'Stop guarded catalog loading or copy/export work.')}
+        </div>
+        ${renderDebugActions(debugEnabled)}
+      </section>
+    `;
+  }
+
+  function renderEbayBulkSellSection(debugEnabled) {
+    return `
+      <section id="ebay-bulk-sell-export-mode" class="hiba-section" data-module="fliptracker" data-page-kind="fliptracker-ebay-bulk">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">eBay bulk sell</div>
+            <strong>Listing Export</strong>
+          </div>
+          <span class="hiba-chip neutral">JSON / LLM</span>
+        </div>
+        <div class="hiba-actions">
+          ${actionButton('fliptracker-listing-scan', 'scan', 'Scan Listings', 'primary', '', 'Read every visible eBay bulk-sell row, including title and listing fields.')}
+          ${actionButton('ebay-bulk-copy-json', 'copy', 'Copy JSON', 'secondary', '', 'Copy normalized eBay bulk-sell listing data, including titles and row fields.')}
+          ${actionButton('ebay-bulk-copy-llm', 'file', 'Copy LLM Brief', 'primary', '', 'Copy the full resale-analysis prompt and eBay listing data for a desktop LLM.')}
+          ${actionButton('fliptracker-listing-copy', 'copy', 'Copy HTML', 'secondary', '', 'Copy a FlipTracker-compatible HTML export of the eBay rows.')}
+          ${actionButton('fliptracker-listing-download', 'download', 'Download', 'success', '', 'Download the FlipTracker-compatible eBay listing export.')}
+        </div>
+        ${renderDebugActions(debugEnabled)}
+        <div id="fliptracker-listing-status" class="hiba-meta">Waiting to scan the eBay bulk-sell rows.</div>
+      </section>
+    `;
+  }
+
+  function renderFlipTrackerSection(debugEnabled, route = {}) {
+    if (route?.kind === 'fliptracker-ebay-bulk') return renderEbayBulkSellSection(debugEnabled);
+    const ebayLifecycle = String(route?.kind || '').startsWith('fliptracker-ebay-');
+    const facebookCreate = route?.kind === 'fliptracker-facebook-create';
+    const facebookPublished = route?.kind === 'fliptracker-facebook-published';
+    const pageKind = ebayLifecyclePageKind(route);
+    if (facebookCreate || facebookPublished) {
+      return `
+        <section id="fliptracker-listing-export-mode" class="hiba-section" data-module="fliptracker">
+          <div class="hiba-section-head">
+            <div>
+              <div class="hiba-kicker">Facebook Marketplace</div>
+              <strong>${facebookCreate ? 'Listing Form' : 'Listing Detail'}</strong>
+            </div>
+            <span class="hiba-chip neutral">read only</span>
+          </div>
+          <div id="fliptracker-listing-status" class="hiba-meta">FlipperAddon does not change Marketplace listing forms or listing records.</div>
+          ${renderDebugActions(debugEnabled)}
+        </section>
+      `;
+    }
+    const heading = ebayLifecycle
+      ? `eBay ${pageKind === 'transactions' ? 'Transactions' : (pageKind === 'sold' ? 'Sold Orders' : (pageKind === 'ended' ? 'Ended Listings' : 'Active Listings'))}`
+      : 'FlipTracker Active Listing Export';
+    return `
+      <section id="fliptracker-listing-export-mode" class="hiba-section" data-module="fliptracker">
+        <div class="hiba-section-head">
+          <div>
+            <div class="hiba-kicker">${ebayLifecycle ? 'eBay lifecycle' : 'Marketplace listings'}</div>
+            <strong>${heading}</strong>
+          </div>
+          <span class="hiba-chip neutral">${ebayLifecycle ? 'JSON' : 'HTML'}</span>
+        </div>
+        <div class="hiba-actions">
+          ${actionButton('fliptracker-listing-scan', 'scan', ebayLifecycle ? 'Scan Page' : 'Scan Listings', 'primary', '', 'Read the current selling page without changing the account.')}
+          ${actionButton('fliptracker-listing-copy', 'copy', ebayLifecycle ? 'Copy JSON' : 'Copy HTML', 'secondary', '', 'Copy the current FlipTracker export.')}
+          ${actionButton('fliptracker-listing-download', 'download', 'Download', 'success', '', 'Download the current FlipTracker export.')}
+        </div>
+        ${renderDebugActions(debugEnabled)}
+        <div id="fliptracker-listing-status" class="hiba-meta">Waiting to scan.</div>
+      </section>
+    `;
+  }
+
+  function renderActiveSection(mode, debugEnabled, route = {}) {
+    if (mode === 'live') return renderLiveSection(debugEnabled);
+    if (mode === 'fliptracker') return renderFlipTrackerSection(debugEnabled, route);
+    if (mode === 'auctionninja') return renderAuctionNinjaSection(debugEnabled, route);
+    if (mode === 'aar') return renderAarSection(debugEnabled, route);
+    if (mode === 'govdeals') return renderGovDealsSection(debugEnabled, route);
+    return renderCatalogSection(debugEnabled, route);
+  }
+
+  function shouldRebuildPanelForMode(existingMode, nextMode, allowed = true, panelExists = false) {
+    if (!existingMode) return Boolean(panelExists);
+    if (!allowed || nextMode === 'unsupported') return true;
+    return existingMode !== nextMode;
+  }
+
+  function shouldTeardownPanelForRebuild(reason = '') {
+    return /^(mode-change|unsupported|debug-toggle)\b/i.test(String(reason || ''));
+  }
+
+  function shouldPreservePanelDuringManagedNavigation(navigationLock, existingMode, nextMode, allowed = true) {
+    return navigationLock === 'true'
+      && Boolean(existingMode)
+      && allowed
+      && nextMode !== 'unsupported'
+      && existingMode === nextMode;
+  }
+
+  function buildPanelHtml(options = {}) {
+    const mode = options.mode || (typeof location !== 'undefined' ? resolveAssistantMode(location).mode : 'catalog') || 'catalog';
+    const debugEnabled = options.debugEnabled ?? getStoredDebugEnabled();
+    const route = options.route || (typeof location !== 'undefined' ? resolveAssistantMode(location).route : {});
+    const busy = Boolean(options.busy);
+    return `
+      <div class="hiba-drawer" role="dialog" aria-label="${APP_NAME}" data-flipperaddon-mode="${escapeHtml(mode)}">
+        <div class="hiba-shellbar">
+          <button id="hibid-bid-minimize" type="button" class="hiba-launcher" title="Show assistant" aria-label="Show assistant">
+            <span class="hiba-orb"></span>
+            <span class="hiba-title">${APP_NAME}</span>
+            ${hibaIcon('chevron')}
+          </button>
+          <button id="hibid-bid-close" type="button" class="hiba-icon-btn" title="Close assistant" aria-label="Close assistant">${hibaIcon('close')}</button>
+        </div>
+        <div id="hibid-bid-body" class="hiba-body">
+          <div class="hiba-head">
+            <div>
+              <div class="hiba-kicker">by ALOS</div>
+              <strong>${APP_SHORT_NAME} v${SCRIPT_VERSION}</strong>
+            </div>
+            <span class="hiba-chip neutral" id="hiba-session-chip">idle</span>
+          </div>
+          ${renderModeTabs(mode, route, busy)}
+          ${renderActiveSection(mode, debugEnabled, route)}
+          <div id="flipperaddon-partial-export" class="hiba-actions" hidden>
+            ${actionButton('flipperaddon-copy-verified-partial', 'copy', 'Copy Verified Partial', 'secondary', '', 'Copy only the records that were verified, with an audit describing every missing or failed record.')}
+          </div>
+          <div id="flipperaddon-toast" class="hiba-toast" role="status" aria-live="polite"></div>
+        </div>
+      </div>
+      <style>
+        #${PANEL_ID} { position:fixed; right:14px; bottom:14px; z-index:999999; display:flex; flex-direction:column; width:min(356px, calc(100vw - 24px)); max-height:calc(100vh - 28px); color:#f8fafc; font:13px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing:0; color-scheme:dark; }
+        #${PANEL_ID}, #${PANEL_ID} * { box-sizing:border-box; }
+        #${PANEL_ID}.hiba-minimized { width:min(228px, calc(100vw - 24px)); }
+        #${PANEL_ID}.hiba-minimized #hibid-bid-close { display:none; }
+        #${PANEL_ID} .hiba-drawer { display:flex; flex-direction:column; max-height:inherit; overflow:hidden; border:1px solid rgba(148,163,184,.24); border-radius:13px; background:#0b1020; box-shadow:0 16px 45px rgba(0,0,0,.36), 0 2px 10px rgba(15,23,42,.4); }
+        #${PANEL_ID} .hiba-shellbar { display:flex; align-items:stretch; gap:6px; padding:7px; border-bottom:1px solid rgba(148,163,184,.14); background:rgba(15,23,42,.92); }
+        #${PANEL_ID}.hiba-minimized .hiba-shellbar { border-bottom:0; }
+        #${PANEL_ID} .hiba-launcher { flex:1; min-width:0; display:flex; align-items:center; gap:8px; color:#f8fafc; background:transparent; border:0; border-radius:9px; padding:6px 7px; cursor:pointer; text-align:left; }
+        #${PANEL_ID} .hiba-launcher:hover { background:rgba(148,163,184,.12); }
+        #${PANEL_ID} .hiba-title { min-width:0; font-weight:800; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        #${PANEL_ID}.hiba-minimized .hiba-title { overflow:visible; text-overflow:clip; }
+        #${PANEL_ID} .hiba-kicker { color:#94a3b8; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+        #${PANEL_ID} .hiba-orb { width:9px; height:9px; border-radius:999px; background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.14); flex:0 0 auto; }
+        #${PANEL_ID} .hiba-mode-pill, #${PANEL_ID} .hiba-chip { display:inline-flex; align-items:center; min-height:22px; border:1px solid rgba(148,163,184,.24); border-radius:999px; padding:2px 8px; color:#cbd5e1; background:rgba(15,23,42,.78); font-size:11px; font-weight:800; white-space:nowrap; }
+        #${PANEL_ID} .hiba-chip.eligible, #${PANEL_ID} .hiba-chip.success { color:#bbf7d0; background:rgba(22,101,52,.32); border-color:rgba(74,222,128,.34); }
+        #${PANEL_ID} .hiba-chip.skip, #${PANEL_ID} .hiba-chip.danger { color:#fecaca; background:rgba(127,29,29,.34); border-color:rgba(248,113,113,.34); }
+        #${PANEL_ID} .hiba-body { flex:1 1 auto; min-height:0; overflow:auto; padding:10px; }
+        #${PANEL_ID} .hiba-head, #${PANEL_ID} .hiba-section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        #${PANEL_ID} .hiba-head { margin-bottom:10px; }
+        #${PANEL_ID} .hiba-head strong, #${PANEL_ID} .hiba-section-head strong { font-size:14px; }
+        #${PANEL_ID} .hiba-tabs { display:grid; grid-template-columns:1fr; gap:6px; margin:8px 0; padding:3px; border:1px solid rgba(148,163,184,.18); border-radius:11px; background:rgba(2,6,23,.62); }
+        #${PANEL_ID} .hiba-tab { display:flex; align-items:center; justify-content:center; gap:6px; min-width:0; color:#94a3b8; background:transparent; border:0; border-radius:8px; padding:7px 5px; font-weight:800; cursor:pointer; }
+        #${PANEL_ID} .hiba-tab.active { color:#fff; background:#1d4ed8; box-shadow:0 8px 22px rgba(37,99,235,.24); }
+        #${PANEL_ID} .hiba-switcher-toggle { width:100%; justify-content:space-between; padding:7px 9px; }
+        #${PANEL_ID} .hiba-switcher-toggle span { min-width:0; flex:1; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        #${PANEL_ID} .hiba-site-menu[hidden] { display:none !important; }
+        #${PANEL_ID} .hiba-site-menu { display:grid; gap:4px; padding:2px; }
+        #${PANEL_ID} .hiba-selling-menu[hidden] { display:none !important; }
+        #${PANEL_ID} .hiba-selling-menu { display:grid; gap:4px; margin:0 0 2px 12px; padding:5px 0 5px 8px; border-left:2px solid rgba(96,165,250,.28); }
+        #${PANEL_ID} .hiba-selling-shortcut { background:rgba(2,6,23,.76); }
+        #${PANEL_ID} .hiba-shortcut { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px; width:100%; border:1px solid rgba(148,163,184,.16); border-radius:8px; padding:7px 8px; color:#dbeafe; background:rgba(15,23,42,.82); font-weight:850; text-align:left; cursor:pointer; }
+        #${PANEL_ID} .hiba-shortcut:hover { border-color:rgba(96,165,250,.42); background:rgba(30,41,59,.92); }
+        #${PANEL_ID} .hiba-shortcut.active { color:#ecfeff; background:rgba(14,116,144,.36); border-color:rgba(103,232,249,.36); }
+        #${PANEL_ID} .hiba-shortcut[disabled] { opacity:.52; cursor:not-allowed; }
+        #${PANEL_ID} .hiba-shortcut small { min-width:0; color:#93c5fd; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }
+        #${PANEL_ID} .hiba-section { border:1px solid rgba(148,163,184,.16); border-radius:12px; padding:10px; margin-top:9px; background:rgba(15,23,42,.52); }
+        #${PANEL_ID} .hiba-section[style*="display:none"] { margin:0; padding:0; border:0; }
+        #${PANEL_ID} .hiba-details { margin-top:9px; border:1px solid rgba(148,163,184,.16); border-radius:10px; background:rgba(2,6,23,.38); padding:8px 9px; }
+        #${PANEL_ID} .hiba-details summary { cursor:pointer; font-weight:900; color:#e0f2fe; }
+        #${PANEL_ID} .hiba-field { display:grid; gap:4px; margin-top:8px; color:#cbd5e1; font-size:12px; font-weight:800; }
+        #${PANEL_ID} .hiba-input, #${PANEL_ID} .hiba-select { width:100%; min-height:32px; color:#f8fafc; background:#020617; border:1px solid rgba(148,163,184,.26); border-radius:7px; padding:6px 8px; font:12px/1.25 ui-sans-serif, system-ui, sans-serif; }
+        #${PANEL_ID} .hiba-debug-export { min-height:110px; max-height:260px; margin-top:8px; resize:vertical; color:#dbeafe; font:10px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; }
+        #${PANEL_ID} .hiba-field-label { display:block; margin:9px 0 4px; color:#cbd5e1; font-size:11px; font-weight:800; }
+        #${PANEL_ID} .hiba-actions { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:9px; }
+        #${PANEL_ID} .hiba-actions.compact { margin-top:0; justify-content:flex-end; }
+        #${PANEL_ID} .hiba-btn, #${PANEL_ID} .hiba-prepare, #${PANEL_ID} .hiba-icon-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid rgba(147,197,253,.28); border-radius:9px; padding:7px 9px; color:#eff6ff; background:#1d4ed8; font-weight:800; cursor:pointer; min-height:34px; }
+        #${PANEL_ID} .hiba-btn.secondary { background:#1f2937; border-color:rgba(148,163,184,.25); color:#e5e7eb; }
+        #${PANEL_ID} .hiba-btn.success, #${PANEL_ID} .hiba-prepare { background:#15803d; border-color:rgba(74,222,128,.28); }
+        #${PANEL_ID} .hiba-btn.danger { background:#991b1b; border-color:rgba(248,113,113,.28); }
+        #${PANEL_ID} .hiba-btn[disabled], #${PANEL_ID} .hiba-prepare[disabled] { background:#27272a; color:#71717a; border-color:rgba(113,113,122,.28); cursor:not-allowed; }
+        #${PANEL_ID} .hiba-btn[hidden] { display:none !important; }
+        #${PANEL_ID} .hiba-icon-btn { flex:0 0 auto; width:34px; padding:0; background:rgba(30,41,59,.88); border-color:rgba(148,163,184,.24); }
+        #${PANEL_ID} .hiba-icon { width:15px; height:15px; flex:0 0 auto; }
+        #${PANEL_ID} .hiba-plan { width:100%; height:128px; margin-top:9px; resize:vertical; color:#f8fafc; background:#020617; border:1px solid rgba(148,163,184,.26); border-radius:10px; padding:9px; font:12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+        #${PANEL_ID} .hiba-toggle-grid { display:grid; grid-template-columns:1fr; gap:6px; margin-top:8px; }
+        #${PANEL_ID} .hiba-switch { display:flex; align-items:center; justify-content:space-between; gap:8px; color:#cbd5e1; background:rgba(2,6,23,.45); border:1px solid rgba(148,163,184,.15); border-radius:9px; padding:7px 9px; font-weight:700; }
+        #${PANEL_ID} .hiba-switch input { width:16px; height:16px; accent-color:#2563eb; }
+        #${PANEL_ID} .hiba-toast { position:absolute; left:10px; right:10px; bottom:10px; z-index:2; pointer-events:none; opacity:0; transform:translateY(8px); transition:opacity .16s ease, transform .16s ease; border-radius:10px; padding:8px 10px; background:rgba(15,23,42,.96); border:1px solid rgba(96,165,250,.35); color:#eff6ff; font-weight:850; box-shadow:0 12px 28px rgba(0,0,0,.34); }
+        #${PANEL_ID} .hiba-toast.show { opacity:1; transform:translateY(0); }
+        #${PANEL_ID} .hiba-toast.danger { border-color:rgba(248,113,113,.4); color:#fee2e2; }
+        #${PANEL_ID} .hiba-meta { color:#94a3b8; font-size:12px; margin-top:6px; }
+        #${PANEL_ID} .hiba-row { border:1px solid rgba(148,163,184,.16); border-radius:11px; padding:9px; margin-top:8px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; background:rgba(2,6,23,.42); }
+        #${PANEL_ID} .hiba-row strong { color:#f8fafc; }
+        #${PANEL_ID} .hiba-row-actions { display:grid; grid-template-columns:76px 86px 104px; gap:6px; align-items:center; }
+        #${PANEL_ID} .hiba-max-inline { width:100%; min-height:34px; color:#f8fafc; background:#020617; border:1px solid rgba(148,163,184,.28); border-radius:9px; padding:6px 7px; font:12px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
+        #${PANEL_ID} .hiba-add-plan { min-height:34px; border:1px solid rgba(147,197,253,.28); border-radius:9px; color:#eff6ff; background:#1f2937; font-weight:800; cursor:pointer; }
+        #${PANEL_ID} .hiba-status { display:inline-flex; align-items:center; width:max-content; margin-top:5px; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:900; }
+        #${PANEL_ID} .hiba-status.eligible { color:#bbf7d0; background:rgba(22,101,52,.38); }
+        #${PANEL_ID} .hiba-status.skip { color:#fecaca; background:rgba(127,29,29,.34); }
+        #${PANEL_ID} .hiba-live-card { border-radius:10px; padding:9px; background:rgba(2,6,23,.5); border:1px solid rgba(148,163,184,.16); }
+        #${PANEL_ID}.hiba-body-hidden #hibid-bid-body { display:none !important; }
+        #${PANEL_ID} .hiba-busy-only-hidden { display:none !important; }
+        #${PANEL_ID} .hiba-chevron-rotated { transform:rotate(180deg); }
+        @media (max-width:520px) { #${PANEL_ID} { right:8px; bottom:8px; width:min(356px, calc(100vw - 16px)); } #${PANEL_ID}.hiba-minimized { width:min(228px, calc(100vw - 16px)); } #${PANEL_ID} .hiba-row { grid-template-columns:1fr; } #${PANEL_ID} .hiba-row-actions { grid-template-columns:1fr; } }
+      </style>
+    `;
+  }
+
+  function setPanelMinimized(panel, minimized) {
+    const button = panel.querySelector('#hibid-bid-minimize');
+    panel.classList.toggle('hiba-body-hidden', Boolean(minimized));
+    panel.classList.toggle('hiba-minimized', Boolean(minimized));
+    if (button) {
+      button.setAttribute('title', minimized ? 'Show assistant' : 'Minimize assistant');
+      button.setAttribute('aria-label', minimized ? 'Show assistant' : 'Minimize assistant');
+      const chevron = button.querySelector('.hiba-icon');
+      if (chevron) chevron.classList.toggle('hiba-chevron-rotated', Boolean(minimized));
+    }
+    debugEvent('panel.minimized', { minimized: Boolean(minimized) });
+  }
+
+  function setActiveModeTab(panel, mode) {
+    panel.querySelectorAll('[data-mode-tab]').forEach(tab => {
+      tab.classList.toggle('active', tab.dataset.modeTab === mode);
+    });
+  }
+
+  function createPanel(mode = resolveAssistantMode().mode, debugEnabled = getStoredDebugEnabled(), route = resolveAssistantMode().route) {
+    debugEvent('panel.create.begin', { mode, debugEnabled, routeKind: route?.kind || '' });
+    removeLegacyScraperArtifacts('createPanel');
+    const old = document.getElementById(PANEL_ID);
+    if (old) {
+      old.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason: 'create-panel' } }));
+      old.remove();
+    }
+
+    const panel = document.createElement('div');
+    panel.id = PANEL_ID;
+    panel.dataset.flipperaddonMode = mode;
+    panel.dataset.flipperaddonVersion = SCRIPT_VERSION;
+    panel.dataset.flipperaddonHref = typeof location !== 'undefined' ? location.href : '';
+    const panelHtml = buildPanelHtml({ mode, debugEnabled, route });
+    const styleMatch = panelHtml.match(/<style>([\s\S]*?)<\/style>/i);
+    panel.innerHTML = styleMatch ? panelHtml.replace(styleMatch[0], '') : panelHtml;
+    installDebugControlDelegation(panel);
+    if (styleMatch) {
+      if (typeof GM_addStyle === 'function') {
+        GM_addStyle(styleMatch[1]);
+      } else if (document.head || document.documentElement) {
+        const style = document.createElement('style');
+        style.id = 'flipperaddon-panel-styles';
+        style.textContent = styleMatch[1];
+        (document.head || document.documentElement).appendChild(style);
+      }
+    }
+
+    document.body.appendChild(panel);
+    debugEvent('debug.control.binding', {
+      phase: 'after-append',
+      ...getDebugControlBindingState(panel)
+    });
+    setPanelMinimized(panel, true);
+    debugEvent('panel.create.complete', {
+      mode,
+      debugEnabled,
+      panelId: panel.id,
+      panelVersion: panel.dataset.flipperaddonVersion,
+    });
+    return panel;
+  }
+
+  function getScanOptions() {
+    return {
+      requireOutbid: Boolean(document.getElementById('hibid-bid-outbid-only')?.checked)
+    };
+  }
+
+  function scheduleCatalogCopyResume() {
+    if (globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__) return;
+    const tick = () => {
+      globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__ = null;
+      const pending = readSharedCatalogCopyIntent();
+      if (!pending) return;
+      if (Date.now() - Number(pending.at || 0) > 15000) {
+        clearSharedCatalogCopyIntent();
+        debug('catalog copy intent expired before dispatch', { mode: pending.mode });
+        return;
+      }
+      try {
+        const previous = new URL(pending.href || '');
+        if (previous.hostname !== location.hostname || previous.pathname !== location.pathname) {
+          clearSharedCatalogCopyIntent();
+          debug('catalog copy intent discarded after route changed', {
+            from: pending.href,
+            to: location.href
+          });
+          return;
+        }
+      } catch {
+        clearSharedCatalogCopyIntent();
+        return;
+      }
+      const panel = document.getElementById(PANEL_ID);
+      const handler = globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__;
+      let panelHrefMatches = panel?.dataset.flipperaddonHref === location.href;
+      if (!panelHrefMatches && panel?.dataset.flipperaddonMode === 'catalog') {
+        try {
+          const panelUrl = new URL(panel.dataset.flipperaddonHref || '', location.href);
+          panelHrefMatches = panelUrl.hostname === location.hostname && panelUrl.pathname === location.pathname;
+        } catch {
+          panelHrefMatches = false;
+        }
+      }
+      const panelReady = panel
+        && handler?.panel === panel
+        && panel.dataset.flipperaddonVersion === SCRIPT_VERSION
+        && panelHrefMatches
+        && typeof handler.run === 'function';
+      if (panelReady) {
+        const dispatched = globalThis.__FLIPPERADDON_CATALOG_COPY_DISPATCHED__;
+        if (!dispatched || dispatched.at !== pending.at || dispatched.panel !== panel) {
+          globalThis.__FLIPPERADDON_CATALOG_COPY_DISPATCHED__ = { at: pending.at, panel };
+          debug('dispatching pending catalog copy', { mode: pending.mode });
+          handler.run(pending.mode);
+        }
+        return;
+      }
+      globalThis.__FLIPPERADDON_CATALOG_COPY_RESUME_TIMER__ = window.setTimeout(tick, 200);
+    };
+    tick();
+  }
+
+  function init() {
+    const assistantMode = resolveAssistantMode();
+    const activeMode = assistantMode.mode === 'unsupported' ? 'catalog' : assistantMode.mode;
+    const activeRoute = assistantMode.route || {};
+    debugEvent('panel.init.begin', { activeMode, routeKind: activeRoute.kind || '' });
+    const panel = createPanel(activeMode, getStoredDebugEnabled(), activeRoute);
+    if (isHibidPastAuctionRoute(activeRoute)) mountHibidAccountAuctionActions(document);
+    const toastEl = panel.querySelector('#flipperaddon-toast');
+    const liveMode = activeMode === 'live';
+    const listingExportMode = activeMode === 'fliptracker';
+    const ebayBulkSellMode = listingExportMode && activeRoute?.kind === 'fliptracker-ebay-bulk';
+    const ebayLifecycleMode = listingExportMode
+      && String(activeRoute?.kind || '').startsWith('fliptracker-ebay-')
+      && activeRoute?.kind !== 'fliptracker-ebay-bulk';
+    const facebookCrosslistMode = listingExportMode && String(activeRoute?.kind || '').startsWith('fliptracker-facebook-');
+    const facebookCreateMode = activeRoute?.kind === 'fliptracker-facebook-create';
+    const facebookPublishedMode = activeRoute?.kind === 'fliptracker-facebook-published';
+    const facebookSellingMode = activeRoute?.kind === 'fliptracker-facebook';
+    const accountMutationWorkflowsEnabled = false;
+    const auctionNinjaMode = activeMode === 'auctionninja';
+    const aarMode = activeMode === 'aar';
+    const govDealsMode = activeMode === 'govdeals';
+    const auctionNinjaKind = auctionNinjaMode ? (activeRoute?.kind || '') : '';
+    const auctionNinjaAccountMode = auctionNinjaKind === 'followed-items' || auctionNinjaKind === 'items-won' || auctionNinjaKind === 'bid-history';
+    const auctionNinjaAuctionSearchMode = auctionNinjaKind === 'auction-search';
+    const auctionNinjaCategoryMode = auctionNinjaKind === 'category-search';
+    const auctionNinjaItemMode = auctionNinjaKind === 'item-detail';
+    const aarKind = aarMode ? (activeRoute?.kind || '') : '';
+    const govDealsKind = govDealsMode ? (activeRoute?.kind || '') : '';
+    const currentActiveRoute = () => resolveAssistantMode().route || activeRoute || {};
+    const bidControlsEl = panel.querySelector('#hibid-bid-controls');
+    const listingExportModeEl = panel.querySelector('#fliptracker-listing-export-mode');
+    const listingExportStatusEl = panel.querySelector('#fliptracker-listing-status');
+    const listingExportScanButton = panel.querySelector('#fliptracker-listing-scan');
+    const listingExportCopyButton = panel.querySelector('#fliptracker-listing-copy');
+    const listingExportDownloadButton = panel.querySelector('#fliptracker-listing-download');
+    const ebayBulkCopyJsonButton = panel.querySelector('#ebay-bulk-copy-json');
+    const ebayBulkCopyLlmButton = panel.querySelector('#ebay-bulk-copy-llm');
+    const lifecycleSyncPageButton = panel.querySelector('#fliptracker-lifecycle-sync-page');
+    const lifecycleSyncAllButton = panel.querySelector('#fliptracker-lifecycle-sync-all');
+    const lifecycleConnectButton = panel.querySelector('#fliptracker-lifecycle-connect');
+    const crosslistQueueButton = panel.querySelector('#fliptracker-crosslist-queue');
+    const crosslistQueueAllButton = panel.querySelector('#fliptracker-crosslist-queue-all');
+    const crosslistItemSelect = panel.querySelector('#fliptracker-crosslist-item');
+    const crosslistImageModeSelect = panel.querySelector('#fliptracker-crosslist-image-mode');
+    const crosslistPhotoStatus = panel.querySelector('#fliptracker-crosslist-photo-status');
+    const crosslistLocationInput = panel.querySelector('#fliptracker-crosslist-location');
+    const crosslistFillButton = panel.querySelector('#fliptracker-crosslist-fill');
+    const crosslistConfirmPublishedButton = panel.querySelector('#fliptracker-crosslist-confirm-published');
+    const liveCopyJsonButton = panel.querySelector('#hibid-live-copy-json');
+    const liveCopyLlmButton = panel.querySelector('#hibid-live-copy-llm');
+    const catalogCopyJsonButton = panel.querySelector('#hibid-catalog-copy-json');
+    const catalogCopyLlmButton = panel.querySelector('#hibid-catalog-copy-llm');
+    const catalogCopyPartialButton = panel.querySelector('#hibid-catalog-copy-partial');
+    const hibidDiagnosticDownloadButton = panel.querySelector('#hibid-diagnostic-download');
+    const auctionNinjaModeEl = panel.querySelector('[data-module="auctionninja"]');
+    const auctionNinjaCategoryCopyJsonButton = panel.querySelector('#auctionninja-category-copy-json');
+    const auctionNinjaCategoryCopyLlmButton = panel.querySelector('#auctionninja-category-copy-llm');
+    const auctionNinjaCopyJsonButton = panel.querySelector('#auctionninja-catalog-copy-json');
+    const auctionNinjaCopyLlmButton = panel.querySelector('#auctionninja-catalog-copy-llm');
+    const auctionNinjaAccountCopyJsonButton = panel.querySelector('#auctionninja-account-copy-json');
+    const auctionNinjaAccountCopyLlmButton = panel.querySelector('#auctionninja-account-copy-llm');
+    const auctionNinjaAuctionsCopyJsonButton = panel.querySelector('#auctionninja-auctions-copy-json');
+    const auctionNinjaAuctionsCopyLlmButton = panel.querySelector('#auctionninja-auctions-copy-llm');
+    const aarModeEl = panel.querySelector('[data-module="aar"]');
+    const aarAuctionsCopyJsonButton = panel.querySelector('#aar-auctions-copy-json');
+    const aarAuctionsCopyLlmButton = panel.querySelector('#aar-auctions-copy-llm');
+    const aarCatalogCopyJsonButton = panel.querySelector('#aar-catalog-copy-json');
+    const aarCatalogCopyLlmButton = panel.querySelector('#aar-catalog-copy-llm');
+    const aarItemCopyJsonButton = panel.querySelector('#aar-item-copy-json');
+    const aarItemCopyLlmButton = panel.querySelector('#aar-item-copy-llm');
+    const researchOriginInput = panel.querySelector('#flipperaddon-origin-label, #aar-origin-label');
+    const researchRadiusInput = panel.querySelector('#flipperaddon-radius-miles, #aar-radius-miles');
+    const researchTaxInput = panel.querySelector('#flipperaddon-sales-tax-rate');
+    const researchVehicleInput = panel.querySelector('#flipperaddon-vehicle-profile');
+    const researchNotesInput = panel.querySelector('#flipperaddon-research-notes');
+    const govDealsModeEl = panel.querySelector('[data-module="govdeals"]');
+    const govDealsSellerCopyJsonButton = panel.querySelector('#govdeals-seller-copy-json');
+    const govDealsSellerCopyLlmButton = panel.querySelector('#govdeals-seller-copy-llm');
+    const govDealsListingsCopyJsonButton = panel.querySelector('#govdeals-listings-copy-json');
+    const govDealsListingsCopyLlmButton = panel.querySelector('#govdeals-listings-copy-llm');
+    const govDealsAssetCopyJsonButton = panel.querySelector('#govdeals-asset-copy-json');
+    const govDealsAssetCopyLlmButton = panel.querySelector('#govdeals-asset-copy-llm');
+    const scraperStopButton = panel.querySelector('#hibid-scraper-stop');
+    const verifiedPartialWrap = panel.querySelector('#flipperaddon-partial-export');
+    const verifiedPartialButton = panel.querySelector('#flipperaddon-copy-verified-partial');
+    const siteSwitcherToggle = panel.querySelector('#flipperaddon-site-switcher-toggle');
+    const siteSwitcherMenu = panel.querySelector('#flipperaddon-site-switcher-menu');
+    const sellingToolsToggle = panel.querySelector('#flipperaddon-selling-tools-toggle');
+    const sellingToolsMenu = panel.querySelector('#flipperaddon-selling-tools-menu');
+    const state = {
+      stop: false,
+      stale: false,
+      rows: [],
+      busy: false,
+      listingRows: [],
+      lifecycleEnvelope: null,
+      toastTimer: null,
+      abortController: null,
+      partialCatalogResult: null,
+      partialCatalogMode: '',
+      hibidDiagnostic: null,
+      verifiedPartial: null,
+    };
+    const stageVerifiedPartial = (result, coverage, format = 'json', context = {}) => {
+      const rows = result ? primaryScraperRows(result) : [];
+      const eligible = Boolean(
+        result
+        && coverage
+        && rows.length
+        && coverage.complete !== true
+        && coverage.routeMatches !== false
+        && coverage.requestMatches !== false
+        && coverage.accountScopeMatches !== false
+      );
+      state.verifiedPartial = eligible ? { result, coverage, format, context } : null;
+      if (verifiedPartialWrap) verifiedPartialWrap.hidden = !state.verifiedPartial;
+      if (verifiedPartialButton) {
+        const count = state.verifiedPartial ? rows.length : 0;
+        verifiedPartialButton.disabled = !state.verifiedPartial;
+        const label = verifiedPartialButton.querySelector?.('span');
+        if (label) label.textContent = state.verifiedPartial ? `Copy Verified Partial ${count}` : 'Copy Verified Partial';
+      }
+      if (state.verifiedPartial) debugEvent('partial-export.ready', { format, count: rows.length, coverage });
+    };
+    const panelMatchesCatalogPath = () => {
+      if (activeMode !== 'catalog') return false;
+      try {
+        const panelUrl = new URL(panel.dataset.flipperaddonHref || '', location.href);
+        return panelUrl.hostname === location.hostname && panelUrl.pathname === location.pathname;
+      } catch {
+        return false;
+      }
+    };
+    const panelIsCurrent = () => Boolean(
+      !state.stale
+      && document.getElementById(PANEL_ID) === panel
+      && panel.dataset.flipperaddonVersion === SCRIPT_VERSION
+      && (panel.dataset.flipperaddonHref === (typeof location !== 'undefined' ? location.href : '') || panelMatchesCatalogPath())
+    );
+    panel.addEventListener('flipperaddon-panel-teardown', () => {
+      state.stop = true;
+      state.stale = true;
+      state.abortController?.abort?.();
+      clearTimeout(state.toastTimer);
+      debug('panel work invalidated on teardown', { href: panel.dataset.flipperaddonHref || '' });
+      debugEvent('panel.teardown.received', { href: panel.dataset.flipperaddonHref || '' });
+    }, { once: true });
+    const setSiteSwitcherOpen = (open) => {
+      if (!siteSwitcherMenu || !siteSwitcherToggle) return;
+      const nextOpen = Boolean(open) && !state.busy;
+      siteSwitcherMenu.hidden = !nextOpen;
+      siteSwitcherToggle.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+      if (!nextOpen && sellingToolsMenu && sellingToolsToggle) {
+        sellingToolsMenu.hidden = true;
+        sellingToolsToggle.setAttribute('aria-expanded', 'false');
+      }
+      debug('site switcher toggled', { open: nextOpen });
+      debugEvent('ui.site-switcher', { open: nextOpen });
+    };
+    const setSellingToolsOpen = (open) => {
+      if (!sellingToolsMenu || !sellingToolsToggle) return;
+      const nextOpen = Boolean(open) && !state.busy && siteSwitcherMenu?.hidden === false;
+      sellingToolsMenu.hidden = !nextOpen;
+      sellingToolsToggle.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+      debugEvent('ui.selling-tools', { open: nextOpen });
+    };
+    setActiveModeTab(panel, activeMode);
+    const setScrapingBusy = (busy) => {
+      state.busy = Boolean(busy);
+      if (scraperStopButton) scraperStopButton.classList.toggle('hiba-busy-only-hidden', !state.busy);
+      panel.querySelectorAll('[data-site-shortcut-url]').forEach(shortcut => {
+        shortcut.disabled = state.busy;
+        shortcut.setAttribute('aria-disabled', state.busy ? 'true' : 'false');
+      });
+      if (sellingToolsToggle) {
+        sellingToolsToggle.disabled = state.busy;
+        sellingToolsToggle.setAttribute('aria-disabled', state.busy ? 'true' : 'false');
+      }
+      if (state.busy) setSiteSwitcherOpen(false);
+      if (!state.busy) {
+        const chip = panel.querySelector('#hiba-session-chip');
+        if (chip?.textContent === 'busy') chip.textContent = 'idle';
+      }
+      debugEvent('scrape.busy', { busy: state.busy });
+    };
+    setScrapingBusy(false);
+
+    const status = (message) => {
+      const chip = panel.querySelector('#hiba-session-chip');
+      const lower = String(message || '').toLowerCase();
+      const tone = lower.includes('stop') || lower.includes('bad json') || lower.includes('failed') || lower.includes('not found')
+        ? 'danger'
+        : (lower.includes('eligible') || lower.includes('copied') || lower.includes('download') || lower.includes('finished') ? 'success' : 'neutral');
+      if (chip) {
+        chip.className = `hiba-chip ${tone}`;
+        chip.textContent = lower.includes('stop') ? 'paused' : (tone === 'success' ? 'ready' : (state.busy ? 'busy' : 'idle'));
+      }
+      if (toastEl) {
+        clearTimeout(state.toastTimer);
+        toastEl.textContent = String(message || '').replace(/\s+/g, ' ').slice(0, 92);
+        toastEl.className = `hiba-toast show ${tone === 'danger' ? 'danger' : ''}`.trim();
+        state.toastTimer = setTimeout(() => {
+          toastEl.classList.remove('show');
+        }, tone === 'danger' ? 3600 : 2200);
+      }
+      debug('status', message);
+      debugEvent('ui.status', { message: debugText(message, 240), tone, busy: state.busy });
+    };
+    debug('unified drawer mounted', routeDebug());
+    debugEvent('panel.mounted', { mode: activeMode, routeKind: activeRoute.kind || '' });
+
+    const render = (rows) => {
+      state.rows = rows;
+      debug('rows evaluated without preview render', { count: rows.length });
+    };
+
+    const renderListingExport = (rows) => {
+      state.listingRows = rows;
+      if (listingExportStatusEl) listingExportStatusEl.textContent = rows.length
+        ? (ebayBulkSellMode
+          ? `Found ${rows.length} eBay bulk listing row(s).`
+          : 'Found ' + rows.length + ' active listing card(s). Download the export, then scan/import it in FlipTracker.')
+        : (ebayBulkSellMode
+          ? 'No eBay bulk listing rows found. Wait for the grid to load, then scan again.'
+          : 'No active listing cards found. Scroll/load more listings, then scan again.');
+    };
+
+    const renderLifecycleExport = (envelope) => {
+      state.lifecycleEnvelope = envelope;
+      state.listingRows = envelope?.records || [];
+      if (crosslistItemSelect && envelope?.page_kind === 'active') {
+        const previous = crosslistItemSelect.value;
+        crosslistItemSelect.innerHTML = state.listingRows.map((listing, index) => {
+          const itemId = escapeHtml(listing.item_id || listing.itemId || '');
+          const title = escapeHtml(String(listing.title || '').slice(0, 70));
+          const price = Number.isFinite(Number(listing.price)) ? `$${Number(listing.price).toFixed(2)}` : 'no price';
+          return `<option value="${itemId || index}">${title} - ${escapeHtml(price)}</option>`;
+        }).join('');
+        if (previous && Array.from(crosslistItemSelect.options).some(option => option.value === previous)) {
+          crosslistItemSelect.value = previous;
+        }
+      }
+      if (!listingExportStatusEl) return;
+      const completeness = envelope?.completeness || {};
+      listingExportStatusEl.textContent = completeness.complete
+        ? `Ready: ${completeness.parsed_count} ${envelope.page_kind} record(s).`
+        : `Incomplete ${envelope?.page_kind || 'page'} scan: ${completeness.reason || 'no records parsed'}`;
+    };
+
+    const renderAuctionNinjaLots = (rows, context = {}) => {
+      state.rows = rows;
+      debug('auctionninja rows captured without preview render', {
+        count: rows.length,
+        title: context.title || document.title || '',
+        buyerPremium: context.buyerPremium || ''
+      });
+    };
+
+    const renderAarRows = (rows, context = {}) => {
+      state.rows = rows;
+      debug('aar rows captured without preview render', {
+        count: rows.length,
+        title: context.title || document.title || '',
+        pageKind: context.pageKind || aarKind || ''
+      });
+    };
+
+    const renderGovDealsRows = (rows, context = {}) => {
+      state.rows = rows;
+      debug('govdeals rows captured without preview render', {
+        count: rows.length,
+        title: context.title || document.title || '',
+        pageKind: context.pageKind || govDealsKind || ''
+      });
+    };
+
+    const currentListingExportHtml = () => buildFlipTrackerListingsExportHtml(state.listingRows, {
+      pageUrl: location.href,
+      generatedAt: new Date().toISOString()
+    });
+
+    const scanListingsForExport = () => {
+      if (ebayLifecycleMode) {
+        const envelope = scanCurrentEbayLifecycle(currentActiveRoute());
+        renderLifecycleExport(envelope);
+        return envelope.records;
+      }
+      const rows = scanCurrentFlipTrackerListings();
+      renderListingExport(rows);
+      return rows;
+    };
+
+    const collectListingsForExport = async () => {
+      stageVerifiedPartial(null, null);
+      if (facebookSellingMode) {
+        const result = await collectFacebookMarketplaceListings(document, {
+          shouldStop: () => state.stop,
+          onProgress: status
+        });
+        renderListingExport(result.items || []);
+        const readiness = assessExportReadiness(result, 'fliptracker', currentActiveRoute(), { locationLike: location });
+        if (!readiness.ok) stageVerifiedPartial(result, readiness.coverage, 'json', { sourceUrl: location.href });
+        return { rows: result.items || [], result, readiness };
+      }
+      if (ebayLifecycleMode) {
+        const route = currentActiveRoute();
+        const pageKind = ebayLifecyclePageKind(route);
+        const routeFingerprint = genericRouteFingerprint(route, location);
+        const rewind = await rewindEbayLifecycleDomToFirstPage(document, { signal: state.abortController?.signal });
+        if (!rewind.ok) throw new Error(rewind.error || 'Could not reach the first eBay page.');
+        const envelope = await collectPaginatedEbayLifecycleEnvelope(pageKind, location.href, {
+          initialHtml: rewind.html || document.documentElement?.outerHTML || '',
+          signal: state.abortController?.signal,
+          advancePage: ({ signal }) => advanceEbayLifecycleDomPage(document, { signal })
+        });
+        const currentFingerprint = genericRouteFingerprint(currentActiveRoute(), location);
+        envelope.routeFingerprint = routeFingerprint;
+        envelope.coverage = {
+          proofTier: 'pagination-exact',
+          strategy: 'ebay-seller-hub-pagination',
+          routeFingerprint,
+          currentFingerprint,
+          routeMatches: routeFingerprint === currentFingerprint,
+          enumeratedIds: (envelope.records || []).map(row => scraperStableIdentity(row, 'ebay')).filter(Boolean),
+          failedPages: envelope.completeness?.complete === false ? [{ reason: envelope.completeness.reason || 'incomplete' }] : []
+        };
+        renderLifecycleExport(envelope);
+        const readiness = assessExportReadiness(envelope, 'fliptracker', currentActiveRoute(), { locationLike: location });
+        if (!readiness.ok) stageVerifiedPartial(envelope, readiness.coverage, 'json', { sourceUrl: location.href });
+        return { rows: envelope.records || [], result: envelope, readiness };
+      }
+      const rows = scanListingsForExport();
+      const context = ebayBulkSellMode ? getEbayBulkSellContext(location, document) : { source: rows[0]?.source || '', pageKind: 'fliptracker', url: location.href };
+      const expectedTotal = ebayBulkSellMode && context.selectedCount !== null && context.selectedCount !== undefined
+        && Number.isFinite(Number(context.selectedCount)) ? Number(context.selectedCount) : null;
+      const result = {
+        source: ebayBulkSellMode ? 'ebay-bulk-dom' : 'fliptracker-dom',
+        context,
+        items: rows,
+        listings: rows,
+        expectedTotal,
+        incomplete: expectedTotal === null || rows.length !== expectedTotal,
+        routeFingerprint: genericRouteFingerprint(currentActiveRoute(), location),
+        coverage: {
+          proofTier: expectedTotal === null ? 'unproven' : 'pagination-exact',
+          strategy: 'server-rendered-bulk-grid',
+          routeFingerprint: genericRouteFingerprint(currentActiveRoute(), location),
+          routeMatches: true,
+          enumeratedIds: rows.map(row => scraperStableIdentity(row, 'ebay')).filter(Boolean),
+          failedPages: []
+        }
+      };
+      const readiness = assessExportReadiness(result, 'fliptracker', currentActiveRoute(), { locationLike: location });
+      if (!readiness.ok) stageVerifiedPartial(result, readiness.coverage, 'json', { sourceUrl: location.href });
+      return { rows, result, readiness };
+    };
+
+    panel.querySelectorAll('[data-mode-tab]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const mode = tab.dataset.modeTab;
+        const target = mode === 'fliptracker'
+          ? listingExportModeEl
+          : (mode === 'auctionninja'
+            ? auctionNinjaModeEl
+            : (mode === 'aar' ? aarModeEl : (mode === 'govdeals' ? govDealsModeEl : bidControlsEl)));
+        setActiveModeTab(panel, mode);
+        if (target && target.style.display !== 'none') target.scrollIntoView({ block: 'nearest' });
+      });
+    });
+
+    siteSwitcherToggle?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.busy) return;
+      setSiteSwitcherOpen(siteSwitcherMenu?.hidden !== false);
+    });
+    sellingToolsToggle?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.busy) return;
+      setSellingToolsOpen(sellingToolsMenu?.hidden !== false);
+    });
+    panel.querySelectorAll('[data-site-shortcut-url]').forEach(shortcut => {
+      shortcut.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (state.busy || shortcut.disabled) return;
+        const url = shortcut.dataset.siteShortcutUrl || '';
+        if (!url) return;
+        debug('site shortcut navigating', {
+          id: shortcut.dataset.siteShortcutId || '',
+          url
+        });
+        setSiteSwitcherOpen(false);
+        if (shortcut.dataset.siteShortcutId === 'ebay-bulk'
+          && /^\/sh\/lst\/active\/?$/i.test(String(location.pathname || ''))) {
+          const bulkLink = findEbayBulkEditLink(document);
+          if (bulkLink) {
+            bulkLink.click();
+            return;
+          }
+        }
+        window.location.assign(url);
+      });
+    });
+    const closeSiteSwitcherOnOutsideClick = (event) => {
+      if (!siteSwitcherMenu || siteSwitcherMenu.hidden) return;
+      if (!panel.contains(event.target)) setSiteSwitcherOpen(false);
+    };
+    const closeSiteSwitcherOnEscape = (event) => {
+      if (event.key === 'Escape') setSiteSwitcherOpen(false);
+    };
+    document.addEventListener('click', closeSiteSwitcherOnOutsideClick, true);
+    document.addEventListener('keydown', closeSiteSwitcherOnEscape);
+    panel.addEventListener('flipperaddon-panel-teardown', () => {
+      document.removeEventListener('click', closeSiteSwitcherOnOutsideClick, true);
+      document.removeEventListener('keydown', closeSiteSwitcherOnEscape);
+      state.abortController?.abort();
+    }, { once: true });
+
+    if (activeRoute?.kind === 'fliptracker-ebay-active' && String(location.hash || '') === '#flipperaddon-bulk-edit') {
+      let attempts = 0;
+      const openBulkEditor = () => {
+        if (!panelIsCurrent() || state.busy) return;
+        const bulkLink = findEbayBulkEditLink(document);
+        if (bulkLink) {
+          debugEvent('ebay.bulk.navigation', { outcome: 'link-found', attempts });
+          bulkLink.click();
+          return;
+        }
+        attempts += 1;
+        if (attempts < 20) {
+          window.setTimeout(openBulkEditor, 500);
+        } else {
+          debugEvent('ebay.bulk.navigation', { outcome: 'link-not-found', attempts });
+          status('Seller Hub loaded, but eBay did not expose its Edit all listings link.');
+        }
+      };
+      window.setTimeout(openBulkEditor, 300);
+    }
+
+    const pendingCatalogCopy = () => readSharedCatalogCopyIntent();
+    const clearPendingCatalogCopy = () => clearSharedCatalogCopyIntent();
+    const captureCatalogCopyIntent = (event) => {
+      if (activeMode !== 'catalog' || !panel.contains(event.target)) return;
+      const target = event.target?.closest?.('#hibid-catalog-copy-json, #hibid-catalog-copy-llm');
+      if (!target) return;
+      const intent = {
+        mode: target.id.endsWith('-llm') ? 'llm' : 'json',
+        href: typeof location !== 'undefined' ? location.href : '',
+        at: Date.now()
+      };
+      writeSharedCatalogCopyIntent(intent);
+      debug('catalog copy intent captured before possible HiBid remount', {
+        mode: intent.mode,
+        href: intent.href
+      });
+    };
+    document.addEventListener('click', captureCatalogCopyIntent, true);
+    panel.addEventListener('flipperaddon-panel-teardown', () => {
+      document.removeEventListener('click', captureCatalogCopyIntent, true);
+    }, { once: true });
+
+    panel.querySelector('#hibid-bid-minimize').addEventListener('click', () => {
+      const minimized = !panel.classList.contains('hiba-body-hidden');
+      setSiteSwitcherOpen(false);
+      setPanelMinimized(panel, minimized);
+      saveMinimized(minimized);
+      debug('panel minimize toggled', { minimized });
+    });
+    panel.querySelector('#hibid-bid-close').addEventListener('click', () => {
+      panel.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason: 'close' } }));
+      document.dispatchEvent(new CustomEvent('hibid-bid-assistant-close'));
+      panel.remove();
+    });
+    scraperStopButton?.addEventListener('click', () => {
+      state.stop = true;
+      state.abortController?.abort();
+      status('Stopped.');
+      debug('scraper stop requested');
+    });
+    verifiedPartialButton?.addEventListener('click', async () => {
+      const partial = state.verifiedPartial;
+      if (!partial) {
+        status('No verified partial is available. Run the export again.');
+        return;
+      }
+      const activeRoute = currentActiveRoute();
+      const currentFingerprint = genericRouteFingerprint(activeRoute, typeof location !== 'undefined' ? location : null);
+      const startFingerprint = String(partial.coverage?.routeFingerprint || '');
+      let activeRequestMatches = partial.coverage?.requestMatches !== false;
+      let activeRequestFingerprint = String(partial.coverage?.currentRequestFingerprint || partial.coverage?.requestFingerprint || '');
+      if (String(partial.coverage?.site || '').toLowerCase() === 'govdeals' && partial.coverage?.requestFingerprint) {
+        const activeCapture = getGovDealsSearchCapture(activeRoute, typeof location !== 'undefined' ? location : null);
+        activeRequestFingerprint = activeCapture ? govDealsRequestFingerprint(activeCapture.body || {}) : '';
+        activeRequestMatches = Boolean(activeRequestFingerprint && activeRequestFingerprint === partial.coverage.requestFingerprint);
+      }
+      if (partial.coverage?.routeMatches === false
+        || !activeRequestMatches
+        || (startFingerprint && currentFingerprint && startFingerprint !== currentFingerprint)) {
+        debugEvent('partial-export.rejected', {
+          reason: !activeRequestMatches ? 'request-fingerprint-changed' : 'route-fingerprint-changed',
+          startFingerprint,
+          currentFingerprint,
+          requestFingerprint: partial.coverage?.requestFingerprint || '',
+          activeRequestFingerprint
+        });
+        stageVerifiedPartial(null, null);
+        status('Partial copy cancelled because the page or filters changed.');
+        return;
+      }
+      const rows = primaryScraperRows(partial.result);
+      if (!rows.length) {
+        stageVerifiedPartial(null, null);
+        status('No verified records are available to copy.');
+        return;
+      }
+      const payload = buildVerifiedPartialPayload(
+        partial.result,
+        { ...partial.coverage, currentFingerprint, routeMatches: true },
+        partial.format,
+        partial.context
+      );
+      const copied = await writeClipboard(payload).catch(() => false);
+      let downloaded = false;
+      if (!copied) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const ext = partial.format === 'llm' ? 'txt' : 'json';
+        try {
+          downloadTextFile(
+            `flipperaddon-verified-partial-${stamp}.${ext}`,
+            payload,
+            partial.format === 'llm' ? 'text/plain;charset=utf-8' : 'application/json;charset=utf-8'
+          );
+          downloaded = true;
+        } catch (error) {
+          debugEvent('partial-export.download.failure', { error: String(error?.message || error) });
+        }
+      }
+      debugEvent('partial-export.result', {
+        format: partial.format,
+        count: rows.length,
+        expectedTotal: partial.coverage?.expectedTotal ?? null,
+        copied,
+        downloaded
+      });
+      status(copied
+        ? `Copied audited partial ${partial.format === 'llm' ? 'LLM brief' : 'JSON'} for ${rows.length} record(s).`
+        : (downloaded
+          ? `Downloaded audited partial for ${rows.length} record(s).`
+          : 'Partial export built, but copy and download both failed.'));
+    });
+
+    if (listingExportMode) {
+      status(facebookCreateMode
+        ? 'Facebook listing form detected. FlipperAddon remains read only.'
+        : (facebookPublishedMode
+          ? 'Facebook listing detail detected. FlipperAddon remains read only.'
+          : (ebayLifecycleMode ? 'Ready to collect eBay lifecycle facts for FlipTracker.' : 'Ready to export active listings for FlipTracker.')));
+      if (!facebookCrosslistMode) {
+      window.setTimeout(() => {
+        try {
+          scanListingsForExport();
+        } catch (error) {
+          status(`Initial listing scan failed: ${error?.message || error}`);
+        }
+      }, 500);
+      }
+    }
+
+    if (auctionNinjaMode) {
+      if (auctionNinjaAccountMode) {
+        const context = extractAuctionNinjaAccountContext(auctionNinjaKind);
+        const visibleItems = auctionNinjaKind === 'items-won'
+          ? extractAuctionNinjaWonItems()
+          : (auctionNinjaKind === 'bid-history' ? extractAuctionNinjaBidHistoryItems() : extractAuctionNinjaFollowedItems());
+        renderAuctionNinjaLots(visibleItems, context);
+        status(`AuctionNinja ${auctionNinjaKind === 'items-won' ? 'won items' : (auctionNinjaKind === 'bid-history' ? 'bid history' : 'followed items')} ready.`);
+        debug('auctionninja account mode ready', { route: activeRoute, visibleItems: visibleItems.length, context });
+      } else if (auctionNinjaCategoryMode) {
+        const context = extractAuctionNinjaCategoryContext();
+        const visibleItems = extractAuctionNinjaCategoryItems();
+        renderAuctionNinjaLots(visibleItems, context);
+        status(`AuctionNinja category ready. Visible ${visibleItems.length}${context.totalItems ? `/${context.totalItems}` : ''} item(s).`);
+        debug('auctionninja category mode ready', { route: activeRoute, visibleItems: visibleItems.length, context });
+      } else if (auctionNinjaAuctionSearchMode) {
+        const context = extractAuctionNinjaAuctionSearchContext();
+        const visibleSales = extractAuctionNinjaAuctionSearchSales();
+        renderAuctionNinjaLots(visibleSales, context);
+        status(`AuctionNinja auction search ready. Visible ${visibleSales.length}${context.totalSales ? `/${context.totalSales}` : ''} sale(s).`);
+        debug('auctionninja auction-search mode ready', { route: activeRoute, visibleSales: visibleSales.length, context });
+      } else if (auctionNinjaItemMode) {
+        const item = extractAuctionNinjaItemDetail(document, location);
+        renderAuctionNinjaLots(item ? [item] : [], { source: 'AuctionNinja', pageKind: 'item-detail', productId: activeRoute.productId || '', url: location.href });
+        status(item ? 'AuctionNinja item detail ready.' : 'AuctionNinja item detail not found.');
+        debug('auctionninja item mode ready', { route: activeRoute, found: Boolean(item) });
+      } else {
+        const context = extractAuctionNinjaSaleContext();
+        const range = parseAuctionNinjaCatalogRange(textOf(document.body || document.documentElement));
+        const visibleLots = extractAuctionNinjaCatalogLots();
+        renderAuctionNinjaLots(visibleLots, context);
+        status(range
+          ? `AuctionNinja catalog ready. Visible ${visibleLots.length}/${range.total} lot(s).`
+          : `AuctionNinja ${activeRoute?.kind || 'page'} ready.`);
+        debug('auctionninja mode ready', { route: activeRoute, range, visibleLots: visibleLots.length, context });
+      }
+    }
+
+    const saveResearchSettingsFromUi = () => {
+      if (!aarMode && !govDealsMode) return getResearchSettings();
+      const current = getResearchSettings();
+      const settings = saveResearchSettings({
+        originLabel: researchOriginInput?.value || current.originLabel,
+        radiusMiles: researchRadiusInput?.value || current.radiusMiles,
+        salesTaxRate: researchTaxInput?.value || current.salesTaxRate,
+        vehicleProfile: researchVehicleInput?.value || current.vehicleProfile,
+        researchNotes: researchNotesInput?.value || current.researchNotes
+      });
+      debug('shared research settings saved', settings);
+      return settings;
+    };
+    [researchOriginInput, researchRadiusInput, researchTaxInput, researchVehicleInput, researchNotesInput]
+      .filter(Boolean)
+      .forEach(input => input.addEventListener('change', saveResearchSettingsFromUi));
+
+    if (aarMode) {
+      const settings = getResearchSettings();
+      if (aarKind === 'aar-item-detail') {
+        const context = extractAarItemContext(document, location, settings);
+        const visibleItem = extractAarItemDetail(document, location);
+        renderAarRows(visibleItem ? [visibleItem] : [], context);
+        status(`AAR item ready. ${visibleItem ? '1 item detail loaded.' : 'Item detail not found.'}`);
+        debug('aar item mode ready', { route: activeRoute, visibleItems: visibleItem ? 1 : 0, context, settings });
+      } else if (aarKind === 'aar-auction-catalog') {
+        const context = extractAarCatalogContext(document, location, settings);
+        const visibleLots = extractAarCatalogLots(document, location);
+        renderAarRows(visibleLots, context);
+        status(`AAR catalog ready. Visible ${visibleLots.length}${context.expectedTotal ? `/${context.expectedTotal}` : ''} lot(s).`);
+        debug('aar catalog mode ready', { route: activeRoute, visibleLots: visibleLots.length, context, settings });
+      } else {
+        const visibleSales = extractAarAuctionCards(document, location, settings);
+        renderAarRows(visibleSales, { source: 'AAR Auctions', pageKind: 'aar-auction-list', researchSettings: settings });
+        status(`AAR auction calendar ready. Visible ${visibleSales.length} auction(s).`);
+        debug('aar auction-list mode ready', { route: activeRoute, visibleSales: visibleSales.length, settings });
+      }
+    }
+
+    if (govDealsMode) {
+      const refreshGovDealsReadyState = (reason = 'initial') => {
+        if (!document.contains(panel) || state.busy) return;
+        const context = govDealsKind === 'govdeals-seller'
+          ? extractGovDealsSellerContext()
+          : (govDealsKind === 'govdeals-asset'
+            ? { source: 'GovDeals', pageKind: 'govdeals-asset', title: document.title.replace(/\s*\|\s*GovDeals.*$/i, '').trim() || 'GovDeals Asset', url: location.href, generatedAt: new Date().toISOString() }
+            : extractGovDealsSearchContext());
+        const visibleRows = govDealsKind === 'govdeals-asset'
+          ? [extractGovDealsAssetDetail()].filter(item => item.title)
+          : extractGovDealsListings(document, location, govDealsKind || 'govdeals-new-listings');
+        renderGovDealsRows(visibleRows, context);
+        status(`GovDeals ${govDealsKind === 'govdeals-seller' ? 'seller' : (govDealsKind === 'govdeals-asset' ? 'asset' : 'listings')} ready. Visible ${visibleRows.length} item(s).`);
+        debug('govdeals mode ready', { route: activeRoute, visibleRows: visibleRows.length, context, reason });
+      };
+      refreshGovDealsReadyState('initial');
+      [2500, 7000].forEach(delay => {
+        const timer = window.setTimeout(() => refreshGovDealsReadyState(`hydration-${delay}`), delay);
+        panel.addEventListener('flipperaddon-panel-teardown', () => window.clearTimeout(timer), { once: true });
+      });
+    }
+
+    listingExportScanButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      setScrapingBusy(true);
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
+      try {
+        const collected = await collectListingsForExport();
+        status(collected.readiness.ok
+          ? `Verified ${collected.rows.length} ${ebayLifecycleMode ? (state.lifecycleEnvelope?.page_kind || 'eBay') : 'listing'} record(s).`
+          : `Scan incomplete (${collected.readiness.reason}); normal export is blocked.`);
+      } catch (error) {
+        status(`Scan failed: ${error?.message || error}`);
+      } finally {
+        state.abortController = null;
+        setScrapingBusy(false);
+      }
+    });
+    const validateListingRowsForCurrentRoute = (rows) => {
+      const validation = validateScraperExportAgainstRoute({
+        source: 'fliptracker-dom',
+        context: { source: rows[0]?.source || '', pageKind: 'fliptracker', url: location.href },
+        listings: rows
+      }, 'fliptracker', currentActiveRoute());
+      if (!validation.ok) {
+        debug('fliptracker export blocked by route guard', {
+          reason: validation.reason,
+          route: currentActiveRoute(),
+          rowSources: uniqueNonEmpty(rows.map(row => row.source)),
+          count: rows.length
+        });
+        status('Blocked stale FlipTracker export; current page does not match scanned rows.');
+        return false;
+      }
+      return true;
+    };
+
+    listingExportCopyButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      setScrapingBusy(true);
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
+      let collected;
+      try {
+        collected = await collectListingsForExport();
+      } catch (error) {
+        status(`Copy blocked: ${error?.message || error}`);
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (!collected.readiness.ok) {
+        status(`Normal copy blocked (${collected.readiness.reason}); only an audited partial is available.`);
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (ebayLifecycleMode) {
+        if (!canExportEbayLifecycleEnvelope(state.lifecycleEnvelope)) {
+          status(`Nothing to copy: ${state.lifecycleEnvelope?.completeness?.reason || 'no complete snapshot or records'}`);
+          state.abortController = null;
+          setScrapingBusy(false);
+          return;
+        }
+        const safeEnvelope = prepareEbayLifecycleEnvelopeForExport(state.lifecycleEnvelope);
+        const copied = await writeClipboard(JSON.stringify(safeEnvelope, null, 2)).catch(() => false);
+        status(copied ? `Copied ${state.listingRows.length} eBay lifecycle record(s).` : 'Clipboard write failed. Use Download instead.');
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (!state.listingRows.length) {
+        status('Nothing to copy yet. Scroll/load listings and scan again.');
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (!validateListingRowsForCurrentRoute(state.listingRows)) {
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      const copied = await writeClipboard(currentListingExportHtml()).catch(() => false);
+      status(copied ? `Copied FlipTracker export HTML for ${state.listingRows.length} listing(s).` : 'Clipboard write failed. Use Download Export HTML instead.');
+      state.abortController = null;
+      setScrapingBusy(false);
+    });
+    listingExportDownloadButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      setScrapingBusy(true);
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
+      let collected;
+      try {
+        collected = await collectListingsForExport();
+      } catch (error) {
+        status(`Download blocked: ${error?.message || error}`);
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (!collected.readiness.ok) {
+        status(`Normal download blocked (${collected.readiness.reason}); only an audited partial is available.`);
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (ebayLifecycleMode) {
+        if (!canExportEbayLifecycleEnvelope(state.lifecycleEnvelope)) {
+          status(`Nothing to download: ${state.lifecycleEnvelope?.completeness?.reason || 'no complete snapshot or records'}`);
+          state.abortController = null;
+          setScrapingBusy(false);
+          return;
+        }
+        try {
+          const filename = downloadEbayLifecycleEnvelope(state.lifecycleEnvelope);
+          status(`Downloaded ${filename}. Drop it into Flip Tracker Input.`);
+        } catch (error) {
+          status(`Download failed: ${error?.message || error}`);
+        }
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (!state.listingRows.length) {
+        status('Nothing to download yet. Scroll/load listings and scan again.');
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (!validateListingRowsForCurrentRoute(state.listingRows)) {
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      const source = state.listingRows[0]?.source === 'eBay' ? 'ebay' : 'facebook';
+      const filename = `FlipTracker-listings-${source}-${safeTimestamp()}.html`;
+      downloadTextFile(filename, currentListingExportHtml());
+      status(`Downloaded ${filename}. Put it in ImportInbox, then use FlipTracker import.`);
+      state.abortController = null;
+      setScrapingBusy(false);
+    });
+
+    const copyEbayBulkSell = async (kind) => {
+      if (!ebayBulkSellMode || state.busy) return;
+      setScrapingBusy(true);
+      try {
+        const collected = await collectListingsForExport();
+        if (!collected.readiness.ok) {
+          status(`eBay bulk copy blocked (${collected.readiness.reason}); only an audited partial is available.`);
+          return;
+        }
+        if (!state.listingRows.length) {
+          status('No eBay bulk listing rows found.');
+          return;
+        }
+        if (!validateListingRowsForCurrentRoute(state.listingRows)) return;
+        const context = getEbayBulkSellContext(location, document);
+        const safeContext = sanitizeEbayLifecycleValue(context);
+        const safeRows = sanitizeEbayLifecycleValue(state.listingRows);
+        const payload = kind === 'llm'
+          ? buildEbayBulkSellLlmBrief(safeRows, safeContext)
+          : JSON.stringify({ context: safeContext, listings: safeRows }, null, 2);
+        const copied = await writeClipboard(payload).catch(() => false);
+        status(copied
+          ? `Copied eBay ${kind === 'llm' ? 'LLM brief' : 'JSON'} for ${state.listingRows.length} listing(s).`
+          : 'eBay listing copy failed. Use Copy HTML or Download.');
+      } finally {
+        setScrapingBusy(false);
+      }
+    };
+
+    ebayBulkCopyJsonButton?.addEventListener('click', () => copyEbayBulkSell('json'));
+    ebayBulkCopyLlmButton?.addEventListener('click', () => copyEbayBulkSell('llm'));
+
+    lifecycleConnectButton?.addEventListener('click', () => {
+      const current = getFlipTrackerSyncToken();
+      const entered = window.prompt('Paste the Flip Tracker local sync token. It stays in Tampermonkey storage.', current);
+      if (entered === null) return;
+      const saved = saveFlipTrackerSyncToken(entered);
+      status(saved ? 'FlipTracker sync token saved.' : 'Sync token cleared.');
+    });
+
+    crosslistLocationInput?.addEventListener('change', () => {
+      const saved = saveCrosslistLocation(crosslistLocationInput.value);
+      status(saved ? `Facebook location saved: ${saved}.` : 'Facebook location cleared; set it before queuing a draft.');
+    });
+
+    crosslistImageModeSelect?.addEventListener('change', () => {
+      const mode = saveCrosslistImageMode(crosslistImageModeSelect.value);
+      if (crosslistPhotoStatus) {
+        crosslistPhotoStatus.textContent = mode === CROSSLIST_IMAGE_MODE_OPTIMIZED
+          ? 'Experimental: bridge-served 2048px sRGB JPEGs. Review Facebook quality before publishing.'
+          : 'Default: exact verified archive files. Facebook uploads at most 10 photos.';
+      }
+      status(mode === CROSSLIST_IMAGE_MODE_OPTIMIZED
+        ? 'Experimental 2048px Facebook-optimized photos selected.'
+        : 'Verified archived source photos selected.');
+    });
+
+    crosslistQueueButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      const facebookWindow = window.open('about:blank', '_blank');
+      if (!facebookWindow) {
+        status('Facebook draft blocked: allow pop-ups for eBay, then click Create Facebook Draft again.');
+        return;
+      }
+      try {
+        scanListingsForExport();
+      } catch (error) {
+        facebookWindow.close?.();
+        status(`Queue blocked: ${error?.message || error}`);
+        return;
+      }
+      const selectedValue = crosslistItemSelect?.value || '';
+      const listing = state.listingRows.find(row => String(row.item_id || row.itemId || '') === selectedValue)
+        || state.listingRows[Number(selectedValue)]
+        || state.listingRows[0];
+      if (!listing) {
+        facebookWindow.close?.();
+        status('No active eBay listing is selected. Scan the page first.');
+        return;
+      }
+      const locationValue = saveCrosslistLocation(crosslistLocationInput?.value || getCrosslistLocation());
+      if (!locationValue) {
+        facebookWindow.close?.();
+        status('Set the Facebook listing location before queuing.');
+        return;
+      }
+      setScrapingBusy(true);
+      if (crosslistQueueButton) crosslistQueueButton.disabled = true;
+      try {
+        status(`Reading eBay item ${listing.item_id || listing.itemId} and its full-resolution photos...`);
+        const envelope = await enrichEbayListingForCrosslist({
+          ...listing,
+          itemId: listing.item_id || listing.itemId,
+          customLabel: listing.custom_label || listing.customLabel,
+          quantityAvailable: listing.quantity_available ?? listing.quantityAvailable,
+        }, { location: locationValue, imageMode: getCrosslistImageMode() });
+        const missing = crosslistEnvelopeMissingEvidence(envelope);
+        if (missing.length) {
+          facebookWindow.close?.();
+          throw new Error(`eBay evidence is incomplete (${missing.join(', ')}). Nothing was opened on Facebook.`);
+        }
+        const result = await crosslistBridgeRequest('/crosslist/queue', envelope);
+        if (!result.ok) {
+          facebookWindow.close?.();
+          status(`Draft queue failed: ${result.reason || 'unknown bridge error'}.`);
+          return;
+        }
+        const actionText = {
+          created: 'Queued a new Facebook draft.',
+          updated: 'Updated the existing queued Facebook draft.',
+          duplicate: 'Unchanged draft already exists; no duplicate created.',
+          'published-blocked': 'This eBay item is already linked to a published Facebook listing.',
+        }[result.action] || `Draft queue result: ${result.action}.`;
+        facebookWindow.location.href = facebookNextDraftUrl(
+          { origin: 'https://www.facebook.com' },
+          result.record?.item_id || listing.item_id || listing.itemId
+        );
+        status(`${actionText} Facebook opened and will begin filling automatically. Review before publishing.`);
+      } catch (error) {
+        facebookWindow.close?.();
+        status(`Draft queue failed: ${error?.message || error}`);
+      } finally {
+        if (crosslistQueueButton) crosslistQueueButton.disabled = false;
+        setScrapingBusy(false);
+      }
+    });
+
+    crosslistQueueAllButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      const locationValue = saveCrosslistLocation(crosslistLocationInput?.value || getCrosslistLocation());
+      if (!locationValue) {
+        status('Set the Facebook listing location before refreshing the queue.');
+        return;
+      }
+      setScrapingBusy(true);
+      crosslistQueueAllButton.disabled = true;
+      const counts = { created: 0, updated: 0, duplicate: 0, published: 0, failed: 0 };
+      panel.dataset.flipperaddonNavigationLock = 'true';
+      try {
+        status('Collecting every active eBay listing page...');
+        const rewind = await rewindEbayLifecycleDomToFirstPage(document);
+        if (!rewind.ok) throw new Error(rewind.error);
+        const lifecycle = await collectPaginatedEbayLifecycleEnvelope('active', location.href, {
+          initialHtml: rewind.html || document.documentElement?.outerHTML || '',
+          advancePage: ({ signal }) => advanceEbayLifecycleDomPage(document, { signal }),
+        });
+        const listings = (lifecycle.records || []).filter(row => String(row?.item_id || '').match(/^\d{9,15}$/));
+        if (!listings.length) throw new Error('No active eBay listing IDs were collected.');
+        const trackerSync = await crosslistBridgeRequest('/ingest', lifecycle);
+        if (!trackerSync.ok) {
+          debug('active eBay tracker sync failed', { reason: trackerSync.reason || 'bridge rejected lifecycle envelope' });
+        }
+        const refresh = await refreshCrosslistQueueRecords(listings, {
+          location: locationValue,
+          imageMode: getCrosslistImageMode(),
+          concurrency: 3,
+          onProgress: ({ completed, total, listing }) => {
+            status(`Refreshing Facebook drafts ${completed}/${total}: ${listing.title || listing.item_id}`);
+          },
+          onError: failure => debug('cross-list queue refresh failed', failure),
+        });
+        Object.assign(counts, refresh.counts);
+        status(`Tracker ${trackerSync.ok ? 'saved the active-listing snapshot' : 'snapshot needs retry'}; Facebook queue: ${counts.created} new, ${counts.updated} corrected, ${counts.duplicate} unchanged, ${counts.published} published protected, ${counts.failed} failed.`);
+      } catch (error) {
+        status(`Queue refresh failed: ${error?.message || error}`);
+      } finally {
+        delete panel.dataset.flipperaddonNavigationLock;
+        panel.dataset.flipperaddonHref = location.href;
+        crosslistQueueAllButton.disabled = false;
+        setScrapingBusy(false);
+      }
+    });
+
+    const fillNextCrosslistDraft = async (requestedItemId = '', options = {}) => {
+      // Facebook's replaceState route cleanup remounts the panel. A timer from
+      // the retired panel must never survive long enough to claim a second row.
+      if (!panelIsCurrent()) return;
+      if (state.busy) return;
+      if (options.autoSave && !claimFacebookAutoSaveLease()) {
+        status('Another Facebook tab owns the draft batch. This tab will stay idle.');
+        return;
+      }
+      if (options.autoSave) {
+        await new Promise(resolve => globalThis.setTimeout(resolve, 150));
+        if (!facebookAutoSaveLeaseOwned()) {
+          status('Another Facebook tab won the draft-batch lease. This tab will stay idle.');
+          return;
+        }
+      }
+      setScrapingBusy(true);
+      crosslistFillButton.disabled = true;
+      let claimed = null;
+      try {
+        status('Claiming the next queued eBay listing...');
+        const claim = await crosslistBridgeRequest('/crosslist/claim', { item_id: requestedItemId });
+        if (!claim.ok) {
+          status(`Draft claim failed: ${claim.reason || 'unknown bridge error'}.`);
+          return;
+        }
+        claimed = claim.record;
+        if (!claimed) {
+          if (options.autoSave) {
+            setFacebookAutoSaveBatchActive(false);
+            releaseFacebookAutoSaveLease();
+          }
+          status('No queued eBay draft is waiting. Queue one from eBay Active first.');
+          return;
+        }
+        savePendingCrosslist({
+          item_id: claimed.item_id,
+          evidence_hash: claimed.evidence_hash,
+          title: claimed.facebook_draft?.title || claimed.listing?.title || '',
+          started_at: new Date().toISOString(),
+          state: 'Drafting',
+          warnings: [],
+        });
+        const expectedPhotos = Number(claimed.photo_manifest?.expected_count || 0);
+        const uploadPhotos = Number(claimed.photo_manifest?.facebook_upload_count || 0);
+        const claimedMode = normalizeCrosslistImageMode(claimed.image_mode || claimed.facebook_draft?.image_mode);
+        status(`Loading ${uploadPhotos}/${expectedPhotos} verified photo(s) from FlipTracker (${claimedMode === CROSSLIST_IMAGE_MODE_OPTIMIZED ? '2048px experimental' : 'archived source'}) and filling Facebook...`);
+        const result = await fillFacebookMarketplaceDraft(claimed);
+        if (!result.ok) {
+          if (options.autoSave) setFacebookAutoSaveBatchActive(false);
+          await crosslistBridgeRequest('/crosslist/result', {
+            item_id: claimed.item_id,
+            evidence_hash: claimed.evidence_hash,
+            state: 'Failed',
+            error: result.errors.join(' '),
+          });
+          status(`Draft fill stopped: ${result.errors[0] || 'required Facebook fields were not filled'}`);
+          return;
+        }
+        if (options.autoSave) {
+          status(`Saving ${claimed.facebook_draft?.title || claimed.item_id} as a Facebook draft...`);
+          setFacebookPendingDraft({
+            item_id: claimed.item_id,
+            evidence_hash: claimed.evidence_hash,
+            title: claimed.facebook_draft?.title || claimed.listing?.title || '',
+            photo_count: result.photo_count,
+            warnings: result.warnings,
+            saved_at: new Date().toISOString(),
+          });
+          const saveResult = await saveFacebookMarketplaceDraft(document);
+          if (!saveResult.ok) {
+            setFacebookPendingDraft(null);
+            setFacebookAutoSaveBatchActive(false);
+            releaseFacebookAutoSaveLease();
+            await crosslistBridgeRequest('/crosslist/result', {
+              item_id: claimed.item_id,
+              evidence_hash: claimed.evidence_hash,
+              state: 'Failed',
+              error: saveResult.reason,
+            });
+            status(`Batch stopped: ${saveResult.reason}`);
+            return;
+          }
+          status('Facebook accepted Save draft. Waiting for the Selling page to confirm it.');
+          return;
+        }
+        const transition = await crosslistBridgeRequest('/crosslist/result', {
+          item_id: claimed.item_id,
+          evidence_hash: claimed.evidence_hash,
+          state: 'Drafted',
+          reason: result.warnings.join(' '),
+        });
+        if (!transition.ok) {
+          status(`Draft was filled, but its audit state failed: ${transition.reason}. Do not publish until reconnected.`);
+          return;
+        }
+        savePendingCrosslist({
+          item_id: claimed.item_id,
+          evidence_hash: claimed.evidence_hash,
+          title: claimed.facebook_draft?.title || claimed.listing?.title || '',
+          filled_at: new Date().toISOString(),
+          warnings: result.warnings,
+        });
+        status(result.warnings.length
+          ? `Draft ${options.autoSave ? 'saved' : 'filled'} with ${result.photo_count} photo(s). Review ${result.warnings.length} warning(s), then publish manually.`
+          : `Draft ${options.autoSave ? 'saved' : 'filled'} with ${result.photo_count} photo(s). Review it, then publish manually.`);
+      } catch (error) {
+        if (options.autoSave) {
+          setFacebookPendingDraft(null);
+          setFacebookAutoSaveBatchActive(false);
+          releaseFacebookAutoSaveLease();
+        }
+        if (claimed?.item_id) {
+          savePendingCrosslist({
+            item_id: claimed.item_id,
+            evidence_hash: claimed.evidence_hash,
+            title: claimed.facebook_draft?.title || claimed.listing?.title || '',
+            failed_at: new Date().toISOString(),
+            state: 'Failed',
+            error: String(error?.message || error),
+            warnings: [],
+          });
+        }
+        if (claimed?.item_id) {
+          await crosslistBridgeRequest('/crosslist/result', {
+            item_id: claimed.item_id,
+            evidence_hash: claimed.evidence_hash,
+            state: 'Failed',
+            error: String(error?.message || error),
+          }).catch(() => null);
+        }
+        status(`Draft fill failed: ${error?.message || error}`);
+      } finally {
+        crosslistFillButton.disabled = false;
+        setScrapingBusy(false);
+      }
+    };
+
+    const resumeFacebookAutoSaveAfterSave = async () => {
+      if (!panelIsCurrent()) return false;
+      const pending = getFacebookPendingDraft();
+      if (!pending?.item_id || !pending?.evidence_hash) return false;
+      if (!claimFacebookAutoSaveLease()) return false;
+      if (!String(location.pathname || '').startsWith('/marketplace/you/selling')) {
+        status('Facebook accepted Save draft. Opening Selling to verify the server-side draft...');
+        location.href = new URL('/marketplace/you/selling', location.origin).toString();
+        return true;
+      }
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (facebookSavedDraftVisible(document, pending)) break;
+        await new Promise(resolve => globalThis.setTimeout(resolve, 500));
+      }
+      if (!facebookSavedDraftVisible(document, pending)) {
+        setFacebookAutoSaveBatchActive(false);
+        releaseFacebookAutoSaveLease();
+        await crosslistBridgeRequest('/crosslist/result', {
+          item_id: pending.item_id,
+          evidence_hash: pending.evidence_hash,
+          state: 'Failed',
+          error: 'Facebook did not show the saved draft on the Selling page.',
+        }).catch(() => null);
+        setFacebookPendingDraft(null);
+        status('Batch stopped: Facebook did not confirm the saved draft on the Selling page.');
+        return true;
+      }
+      const transition = await crosslistBridgeRequest('/crosslist/result', {
+        item_id: pending.item_id,
+        evidence_hash: pending.evidence_hash,
+        state: 'Drafted',
+        reason: Array.isArray(pending.warnings) ? pending.warnings.join(' ') : '',
+      });
+      if (!transition.ok) {
+        setFacebookAutoSaveBatchActive(false);
+        releaseFacebookAutoSaveLease();
+        status(`Draft was saved, but its audit state failed: ${transition.reason}. Batch stopped.`);
+        return true;
+      }
+      savePendingCrosslist({
+        ...pending,
+        filled_at: new Date().toISOString(),
+        state: 'Drafted',
+      });
+      setFacebookPendingDraft(null);
+      status(`Saved ${pending.title || pending.item_id} with ${pending.photo_count || 0} photo(s). Opening the next queued item...`);
+      globalThis.setTimeout(() => {
+        location.href = facebookNextDraftUrl(location, '', { autoSave: true });
+      }, 1200);
+      return true;
+    };
+
+    crosslistFillButton?.addEventListener('click', async () => {
+      if (facebookDraftHasContent(document)) {
+        const opened = window.open(facebookNextDraftUrl(location), '_blank');
+        status(opened
+          ? 'Opened a fresh Marketplace form. The next queued eBay listing will fill automatically.'
+          : 'Facebook blocked the new tab. Allow pop-ups for Facebook, then try again.');
+        return;
+      }
+      await fillNextCrosslistDraft();
+    });
+
+    if (accountMutationWorkflowsEnabled && facebookAutoSaveResetRequested(location)) {
+      resetFacebookAutoSaveBatch();
+      try {
+        const cleanUrl = new URL(location.href);
+        cleanUrl.searchParams.delete(CROSSLIST_AUTOSAVE_RESET_PARAM);
+        history.replaceState(history.state, '', cleanUrl.toString());
+      } catch (_) {
+        // A clean URL is cosmetic; the reset has already completed.
+      }
+      status('Facebook draft batch state cleared. No listing was published or deleted.');
+    }
+
+    const pendingFacebookAutoSave = getFacebookPendingDraft();
+    if (accountMutationWorkflowsEnabled && pendingFacebookAutoSave?.item_id) {
+      window.setTimeout(() => resumeFacebookAutoSaveAfterSave(), 700);
+    }
+
+    else if (accountMutationWorkflowsEnabled && facebookCreateMode && facebookAutofillRequested(location)) {
+      const requestedItemId = facebookAutofillItemId(location);
+      const autoSave = facebookAutoSaveRequested(location) || facebookAutoSaveBatchActive();
+      if (autoSave) setFacebookAutoSaveBatchActive(true);
+      try {
+        const cleanUrl = new URL(location.href);
+        cleanUrl.searchParams.delete(CROSSLIST_AUTOFILL_PARAM);
+        cleanUrl.searchParams.delete(CROSSLIST_ITEM_PARAM);
+        cleanUrl.searchParams.delete(CROSSLIST_AUTOSAVE_PARAM);
+        history.replaceState(history.state, '', cleanUrl.toString());
+      } catch (_) {
+        // A clean URL is cosmetic; the one-shot fill still proceeds.
+      }
+      window.setTimeout(() => {
+        if (panelIsCurrent() && !state.busy && !facebookDraftHasContent(document)) {
+          fillNextCrosslistDraft(requestedItemId, { autoSave });
+        }
+      }, 1200);
+    }
+
+    else if (accountMutationWorkflowsEnabled && facebookCreateMode && facebookAutoSaveBatchActive()) {
+      window.setTimeout(() => {
+        if (panelIsCurrent() && !state.busy && !facebookDraftHasContent(document)) {
+          fillNextCrosslistDraft('', { autoSave: true });
+        }
+      }, 1200);
+    }
+
+    crosslistConfirmPublishedButton?.addEventListener('click', async () => {
+      const pending = getPendingCrosslist();
+      if (!pending?.item_id || !pending?.evidence_hash) {
+        status('No pending cross-list draft is stored in this browser.');
+        return;
+      }
+      const facebookListingId = String(location.pathname || '').match(/\/marketplace\/item\/(\d+)/i)?.[1] || '';
+      if (!facebookListingId) {
+        status('This page has no Facebook Marketplace listing ID.');
+        return;
+      }
+      const titleWords = normalizedFacebookControlText(pending.title).split(' ').filter(word => word.length >= 4).slice(0, 4);
+      const pageText = normalizedFacebookControlText(`${document.title || ''} ${textOf(document.querySelector('h1') || '')}`);
+      const titleEvidence = titleWords.length > 0 && titleWords.filter(word => pageText.includes(word)).length >= Math.min(2, titleWords.length);
+      if (!titleEvidence) {
+        status('Published-title check failed. Open the listing created from the pending eBay draft before confirming.');
+        return;
+      }
+      if (!window.confirm(`Confirm that this Facebook listing was published from eBay item ${pending.item_id}?\n\n${pending.title}`)) return;
+      const result = await crosslistBridgeRequest('/crosslist/result', {
+        item_id: pending.item_id,
+        evidence_hash: pending.evidence_hash,
+        state: 'Published',
+        facebook_listing_id: facebookListingId,
+        facebook_url: `https://www.facebook.com/marketplace/item/${facebookListingId}/`,
+      });
+      if (!result.ok) {
+        status(`Published link failed: ${result.reason || 'unknown bridge error'}.`);
+        return;
+      }
+      savePendingCrosslist(null);
+      status('Published listing linked. This eBay item is now protected from duplicate drafts.');
+    });
+
+    lifecycleSyncPageButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      setScrapingBusy(true);
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
+      let envelope;
+      try {
+        const route = currentActiveRoute();
+        const pageKind = ebayLifecyclePageKind(route);
+        envelope = pageKind === 'ended'
+          ? await collectPaginatedEbayLifecycleEnvelope(pageKind, location.href, {
+            initialHtml: document.documentElement?.outerHTML || '',
+            signal: state.abortController?.signal,
+          })
+          : scanCurrentEbayLifecycle(route);
+        renderLifecycleExport(envelope);
+      } catch (error) {
+        status(`Sync blocked: ${error?.message || error}`);
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      if (!canExportEbayLifecycleEnvelope(envelope)) {
+        status(`Nothing synced: ${envelope?.completeness?.reason || 'no records parsed'}`);
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      const result = await postEbayLifecycleEnvelope(envelope).catch(error => ({ ok: false, reason: error?.message || 'post-failed' }));
+      if (result.ok) {
+        status(result.duplicate ? 'Already synced; no duplicate created.' : `Synced ${envelope.records.length} ${envelope.page_kind} record(s).`);
+        state.abortController = null;
+        setScrapingBusy(false);
+        return;
+      }
+      try {
+        const filename = downloadEbayLifecycleEnvelope(envelope);
+        status(`Bridge unavailable (${result.reason}); downloaded ${filename}.`);
+      } catch (error) {
+        status(`Sync and fallback download failed: ${error?.message || error}`);
+      } finally {
+        state.abortController = null;
+        setScrapingBusy(false);
+      }
+    });
+
+    lifecycleSyncAllButton?.addEventListener('click', async () => {
+      if (state.busy) return;
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
+      try {
+        const summary = await runEbayLifecycleSyncAll({
+          currentRoute: currentActiveRoute(),
+          setBusy: setScrapingBusy,
+          signal: state.abortController?.signal,
+          isCancelled: () => state.stop,
+        });
+        if (summary.cancelled) {
+          status(`Stopped Sync All after collecting ${summary.envelopes.length} page(s).`);
+        } else if (summary.errors.length) {
+          status(`Sync All finished with ${summary.errors.length} error(s); synced ${summary.synced}, downloaded ${summary.downloaded}.`);
+        } else if (summary.incomplete.length) {
+          status(`Synced ${summary.synced} page(s); open and Sync This Page for: ${summary.incomplete.join(', ')}.`);
+        } else if (summary.downloaded) {
+          status(`Bridge unavailable; downloaded ${summary.downloaded} lifecycle export(s).`);
+        } else {
+          status(`Synced all ${summary.synced} eBay lifecycle page(s).`);
+        }
+      } catch (error) {
+        status(`Sync All failed: ${error?.message || error}`);
+      } finally {
+        state.abortController = null;
+        if (state.busy) setScrapingBusy(false);
+      }
+    });
+
+    const scrapeAuctionNinjaForUi = async (mode) => {
+      if (state.busy) return null;
+      stageVerifiedPartial(null, null);
+      setScrapingBusy(true);
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
+      [
+        auctionNinjaCategoryCopyJsonButton,
+        auctionNinjaCategoryCopyLlmButton,
+        auctionNinjaCopyJsonButton,
+        auctionNinjaCopyLlmButton,
+        auctionNinjaAccountCopyJsonButton,
+        auctionNinjaAccountCopyLlmButton,
+        auctionNinjaAuctionsCopyJsonButton,
+        auctionNinjaAuctionsCopyLlmButton
+      ].forEach(button => {
+        if (button) button.disabled = true;
+      });
+      try {
+        const accountLabel = auctionNinjaKind === 'items-won' ? 'won items' : (auctionNinjaKind === 'bid-history' ? 'bid history' : 'followed items');
+        status(auctionNinjaAccountMode
+          ? (mode === 'llm' ? `Reading AuctionNinja ${accountLabel} for LLM brief...` : `Reading AuctionNinja ${accountLabel}...`)
+          : (auctionNinjaAuctionSearchMode
+            ? (mode === 'llm' ? 'Scraping AuctionNinja auctions for LLM brief...' : 'Scraping AuctionNinja auctions...')
+            : (auctionNinjaItemMode
+              ? (mode === 'llm' ? 'Reading AuctionNinja item for LLM brief...' : 'Reading AuctionNinja item...')
+              : (mode === 'llm' ? 'Scraping AuctionNinja catalog for LLM brief...' : 'Scraping AuctionNinja catalog...'))));
+        const result = auctionNinjaAccountMode
+          ? await scrapeAuctionNinjaAccountItems(auctionNinjaKind, status, () => state.stop)
+          : (auctionNinjaAuctionSearchMode
+            ? await scrapeAuctionNinjaAuctionSearchSales(status, () => state.stop)
+            : (auctionNinjaCategoryMode
+              ? await scrapeAuctionNinjaCategoryItems(status, () => state.stop)
+              : (auctionNinjaItemMode
+                ? await scrapeAuctionNinjaItemDetail(status, () => state.stop)
+                : await scrapeAuctionNinjaCatalogLots(status, () => state.stop))));
+        const readiness = assessExportReadiness(result, 'auctionninja', currentActiveRoute(), { locationLike: location });
+        if (!readiness.ok) {
+          stageVerifiedPartial(result, readiness.coverage, mode, { sourceUrl: location.href });
+          debug('auctionninja export blocked by route guard', {
+            reason: readiness.reason,
+            route: currentActiveRoute(),
+            context: result?.context || null,
+            source: result?.source || 'unknown',
+            coverage: readiness.coverage
+          });
+          status(`Blocked incomplete AuctionNinja export (${readiness.reason}).`);
+          return null;
+        }
+        const rows = result.items || result.lots || [];
+        renderAuctionNinjaLots(rows, result.context);
+        debug('auctionninja scrape summary', {
+          source: result.source || 'unknown',
+          kind: auctionNinjaKind || 'sale-catalog',
+          count: rows.length,
+          expectedTotal: result.expectedTotal,
+          stopReason: result.stopReason || '-'
+        });
+        if (!rows.length && !auctionNinjaAccountMode) {
+          status(`No AuctionNinja ${auctionNinjaAuctionSearchMode ? 'sales' : (auctionNinjaCategoryMode ? 'category items' : 'lots')} found. Enable debug and copy logs if this page has cards.`);
+          return result;
+        }
+        debug('auctionninja ui scrape finished', {
+          mode,
+          count: rows.length,
+          expectedTotal: result.expectedTotal,
+          stopReason: result.stopReason,
+          incomplete: result.incomplete
+        });
+        return result;
+      } finally {
+        setScrapingBusy(false);
+        [
+        auctionNinjaCategoryCopyJsonButton,
+        auctionNinjaCategoryCopyLlmButton,
+        auctionNinjaCopyJsonButton,
+        auctionNinjaCopyLlmButton,
+        auctionNinjaAccountCopyJsonButton,
+        auctionNinjaAccountCopyLlmButton,
+        auctionNinjaAuctionsCopyJsonButton,
+        auctionNinjaAuctionsCopyLlmButton
+        ].forEach(button => {
+          if (button) button.disabled = false;
+        });
+      }
+    };
+
+    auctionNinjaCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAuctionNinjaForUi('json');
+      const lots = result?.items || result?.lots || [];
+      if (!lots.length) return;
+      const payload = JSON.stringify({ context: result.context, lots }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied
+        ? `Copied AuctionNinja JSON for ${lots.length}${result.expectedTotal ? `/${result.expectedTotal}` : ''} lot(s).`
+        : 'AuctionNinja JSON scrape finished, but clipboard failed.');
+    });
+
+    auctionNinjaCategoryCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAuctionNinjaForUi('json');
+      if (!result) return;
+      const items = result.items || [];
+      const payload = JSON.stringify({ context: result.context, items }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied
+        ? `Copied AuctionNinja category JSON for ${items.length} item(s).`
+        : 'AuctionNinja category JSON built, but clipboard failed.');
+    });
+
+    auctionNinjaCategoryCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAuctionNinjaForUi('llm');
+      if (!result) return;
+      const items = result.items || [];
+      const payload = buildAuctionNinjaCategoryLlmBrief(items, result.context);
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied
+        ? `Copied AuctionNinja category LLM brief for ${items.length} item(s).`
+        : 'AuctionNinja category LLM brief built, but clipboard failed.');
+    });
+
+    auctionNinjaCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAuctionNinjaForUi('llm');
+      const lots = result?.items || result?.lots || [];
+      if (!lots.length) return;
+      const payload = buildAuctionNinjaLlmBrief(lots, result.context);
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied
+        ? `Copied AuctionNinja LLM brief for ${lots.length}${result.expectedTotal ? `/${result.expectedTotal}` : ''} lot(s).`
+        : 'AuctionNinja LLM brief built, but clipboard failed.');
+    });
+
+    auctionNinjaAccountCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAuctionNinjaForUi('json');
+      if (!result) return;
+      const items = result.items || [];
+      const payload = JSON.stringify(sanitizeAuctionNinjaAccountExport(result.context, items), null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      const label = auctionNinjaKind === 'items-won' ? 'won items' : (auctionNinjaKind === 'bid-history' ? 'bid history' : 'followed items');
+      status(copied
+        ? `Copied AuctionNinja ${label} JSON for ${items.length} item(s).`
+        : `AuctionNinja ${label} JSON built, but clipboard failed.`);
+    });
+
+    auctionNinjaAccountCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAuctionNinjaForUi('llm');
+      if (!result) return;
+      const items = result.items || [];
+      const payload = auctionNinjaKind === 'items-won'
+        ? buildAuctionNinjaWonItemsLlmBrief(items, result.context)
+        : (auctionNinjaKind === 'bid-history' ? buildAuctionNinjaBidHistoryLlmBrief(items, result.context) : buildAuctionNinjaFollowedItemsLlmBrief(items, result.context));
+      const copied = await writeClipboard(payload).catch(() => false);
+      const label = auctionNinjaKind === 'items-won' ? 'won items' : (auctionNinjaKind === 'bid-history' ? 'bid history' : 'followed items');
+      status(copied
+        ? `Copied AuctionNinja ${label} LLM brief for ${items.length} item(s).`
+        : `AuctionNinja ${label} LLM brief built, but clipboard failed.`);
+    });
+
+    auctionNinjaAuctionsCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAuctionNinjaForUi('json');
+      if (!result) return;
+      const sales = result.items || result.sales || [];
+      const payload = JSON.stringify({ context: result.context, sales }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied
+        ? `Copied AuctionNinja auctions JSON for ${sales.length}${result.expectedTotal ? `/${result.expectedTotal}` : ''} sale(s).`
+        : 'AuctionNinja auctions JSON built, but clipboard failed.');
+    });
+
+    auctionNinjaAuctionsCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAuctionNinjaForUi('llm');
+      if (!result) return;
+      const sales = result.items || result.sales || [];
+      const payload = buildAuctionNinjaAuctionSearchLlmBrief(sales, result.context);
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied
+        ? `Copied AuctionNinja auctions LLM brief for ${sales.length}${result.expectedTotal ? `/${result.expectedTotal}` : ''} sale(s).`
+        : 'AuctionNinja auctions LLM brief built, but clipboard failed.');
+    });
+
+    const scrapeAarForUi = async (mode) => {
+      if (state.busy) return null;
+      stageVerifiedPartial(null, null);
+      setScrapingBusy(true);
+      state.stop = false;
+      [
+        aarAuctionsCopyJsonButton,
+        aarAuctionsCopyLlmButton,
+        aarCatalogCopyJsonButton,
+        aarCatalogCopyLlmButton,
+        aarItemCopyJsonButton,
+        aarItemCopyLlmButton
+      ].forEach(button => {
+        if (button) button.disabled = true;
+      });
+      try {
+        const settings = saveResearchSettingsFromUi();
+        const isCatalog = aarKind === 'aar-auction-catalog';
+        const isItem = aarKind === 'aar-item-detail';
+        status(isItem
+          ? (mode === 'llm' ? 'Reading AAR item detail for LLM brief...' : 'Reading AAR item detail...')
+          : (isCatalog
+            ? (mode === 'llm' ? 'Scraping AAR catalog for LLM brief...' : 'Scraping AAR catalog...')
+            : (mode === 'llm' ? 'Scraping AAR auction calendar for LLM brief...' : 'Scraping AAR auction calendar...')));
+        const result = isItem
+          ? await scrapeAarItemDetail(status, () => state.stop)
+          : (isCatalog
+            ? await scrapeAarCatalogLots(status, () => state.stop)
+            : await scrapeAarAuctionCards(status, () => state.stop));
+        result.context = { ...(result.context || {}), researchSettings: settings };
+        const readiness = assessExportReadiness(result, 'aar', currentActiveRoute(), { locationLike: location });
+        if (!readiness.ok) {
+          stageVerifiedPartial(result, readiness.coverage, mode, { sourceUrl: location.href });
+          debug('aar export blocked by route guard', {
+            reason: readiness.reason,
+            route: currentActiveRoute(),
+            context: result?.context || null,
+            source: result?.source || 'unknown',
+            coverage: readiness.coverage
+          });
+          status(`Blocked incomplete AAR export (${readiness.reason}).`);
+          return null;
+        }
+        const rows = result.lots || result.sales || result.items || [];
+        renderAarRows(rows, result.context);
+        debug('aar ui scrape summary', {
+          mode,
+          kind: aarKind,
+          count: rows.length,
+          expectedTotal: result.expectedTotal,
+          stopReason: result.stopReason || '-'
+        });
+        if (!rows.length) {
+          status(`No AAR ${isItem ? 'item detail' : (isCatalog ? 'lots' : 'auctions')} found. Enable debug and copy logs if this page has rows.`);
+        }
+        return result;
+      } finally {
+        setScrapingBusy(false);
+        [
+          aarAuctionsCopyJsonButton,
+          aarAuctionsCopyLlmButton,
+          aarCatalogCopyJsonButton,
+          aarCatalogCopyLlmButton,
+          aarItemCopyJsonButton,
+          aarItemCopyLlmButton
+        ].forEach(button => {
+          if (button) button.disabled = false;
+        });
+      }
+    };
+
+    aarAuctionsCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('json');
+      if (!result) return;
+      const sales = result.sales || result.items || [];
+      if (!sales.length) return;
+      const payload = JSON.stringify({ context: result.context, sales }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied ? `Copied AAR auctions JSON for ${sales.length} auction(s).` : 'AAR auctions JSON built, but clipboard failed.');
+    });
+
+    aarAuctionsCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('llm');
+      if (!result) return;
+      const sales = result.sales || result.items || [];
+      if (!sales.length) return;
+      const payload = buildAarAuctionListLlmBrief(sales, result.context, getResearchSettings());
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied ? `Copied AAR auctions LLM brief for ${sales.length} auction(s).` : 'AAR auctions LLM brief built, but clipboard failed.');
+    });
+
+    aarCatalogCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('json');
+      if (!result) return;
+      const lots = result.lots || result.items || [];
+      if (!lots.length) return;
+      const payload = JSON.stringify({ context: result.context, lots }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
+      status(copied ? `Copied AAR catalog JSON for ${countText} lot(s).` : 'AAR catalog JSON built, but clipboard failed.');
+    });
+
+    aarCatalogCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('llm');
+      if (!result) return;
+      const lots = result.lots || result.items || [];
+      if (!lots.length) return;
+      const payload = buildAarCatalogLlmBrief(lots, result.context, getResearchSettings());
+      const copied = await writeClipboard(payload).catch(() => false);
+      const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
+      status(copied ? `Copied AAR catalog LLM brief for ${countText} lot(s).` : 'AAR catalog LLM brief built, but clipboard failed.');
+    });
+
+    aarItemCopyJsonButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('json');
+      if (!result) return;
+      const items = result.items || result.lots || [];
+      if (!items.length) return;
+      const payload = JSON.stringify({ context: result.context, items }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied ? 'Copied AAR item JSON for 1 item.' : 'AAR item JSON built, but clipboard failed.');
+    });
+
+    aarItemCopyLlmButton?.addEventListener('click', async () => {
+      const result = await scrapeAarForUi('llm');
+      if (!result) return;
+      const item = (result.items || result.lots || [])[0];
+      if (!item) return;
+      const payload = buildAarItemLlmBrief(item, result.context, getResearchSettings());
+      const copied = await writeClipboard(payload).catch(() => false);
+      status(copied ? 'Copied AAR item LLM brief for 1 item.' : 'AAR item LLM brief built, but clipboard failed.');
+    });
+
+    const govDealsButtons = [
+      govDealsSellerCopyJsonButton,
+      govDealsSellerCopyLlmButton,
+      govDealsListingsCopyJsonButton,
+      govDealsListingsCopyLlmButton,
+      govDealsAssetCopyJsonButton,
+      govDealsAssetCopyLlmButton
+    ];
+
+    const scrapeGovDealsForUi = async (mode) => {
+      if (state.busy) return null;
+      stageVerifiedPartial(null, null);
+      setScrapingBusy(true);
+      state.stop = false;
+      state.abortController = typeof AbortController === 'function' ? new AbortController() : null;
+      govDealsButtons.forEach(button => {
+        if (button) button.disabled = true;
+      });
+      try {
+        const settings = saveResearchSettingsFromUi();
+        const label = govDealsKind === 'govdeals-seller' ? 'seller page' : (govDealsKind === 'govdeals-asset' ? 'asset page' : 'listings page');
+        status(mode === 'llm' ? `Scraping GovDeals ${label} for LLM brief...` : `Scraping GovDeals ${label}...`);
+        const result = await scrapeGovDealsListings(status, () => state.stop, document, {
+          signal: state.abortController?.signal
+        });
+        result.context = { ...(result.context || {}), researchSettings: settings };
+        const readiness = assessExportReadiness(result, 'govdeals', currentActiveRoute(), { locationLike: location });
+        if (!readiness.ok) {
+          stageVerifiedPartial(result, readiness.coverage, mode, { sourceUrl: location.href });
+          debug('govdeals export blocked by route guard', {
+            reason: readiness.reason,
+            route: currentActiveRoute(),
+            context: result?.context || null,
+            source: result?.source || 'unknown',
+            coverage: readiness.coverage
+          });
+          status(`Blocked incomplete GovDeals export (${readiness.reason}).`);
+          return null;
+        }
+        const rows = result.listings || result.items || [];
+        renderGovDealsRows(rows, result.context);
+        debug('govdeals ui scrape summary', {
+          mode,
+          kind: govDealsKind,
+          count: rows.length,
+          expectedTotal: result.expectedTotal,
+          stopReason: result.stopReason || '-'
+        });
+        if (!rows.length) {
+          status('No GovDeals listings found. Enable debug and copy logs if this page has visible assets.');
+        }
+        return result;
+      } finally {
+        state.abortController = null;
+        setScrapingBusy(false);
+        govDealsButtons.forEach(button => {
+          if (button) button.disabled = false;
+        });
+      }
+    };
+
+    const copyGovDeals = async (mode) => {
+      const result = await scrapeGovDealsForUi(mode);
+      if (!result) return;
+      const listings = result.listings || result.items || [];
+      if (!listings.length) return;
+      const payload = mode === 'llm'
+        ? buildGovDealsLlmBrief(listings, result.context, result.context?.researchSettings || getResearchSettings())
+        : JSON.stringify({ context: result.context, listings, audit: result.audit || {} }, null, 2);
+      const copied = await writeClipboard(payload).catch(() => false);
+      const countText = result.expectedTotal ? `${listings.length}/${result.expectedTotal}` : String(listings.length);
+      status(copied
+        ? (mode === 'llm' ? `Copied GovDeals LLM brief for ${countText} listing(s).` : `Copied GovDeals JSON for ${countText} listing(s).`)
+        : `GovDeals ${mode === 'llm' ? 'LLM brief' : 'JSON'} built, but clipboard failed.`);
+    };
+
+    govDealsSellerCopyJsonButton?.addEventListener('click', () => copyGovDeals('json'));
+    govDealsSellerCopyLlmButton?.addEventListener('click', () => copyGovDeals('llm'));
+    govDealsListingsCopyJsonButton?.addEventListener('click', () => copyGovDeals('json'));
+    govDealsListingsCopyLlmButton?.addEventListener('click', () => copyGovDeals('llm'));
+    govDealsAssetCopyJsonButton?.addEventListener('click', () => copyGovDeals('json'));
+    govDealsAssetCopyLlmButton?.addEventListener('click', () => copyGovDeals('llm'));
+
+    const waitForCatalogRouteToSettle = async (mode) => {
+      const selector = mode === 'llm' ? '#hibid-catalog-copy-llm' : '#hibid-catalog-copy-json';
+      const pending = pendingCatalogCopy();
+      if (pending && Date.now() - Number(pending.at || 0) > 10000) clearPendingCatalogCopy();
+      let lastHref = typeof location !== 'undefined' ? location.href : '';
+      let stableSince = Date.now();
+      const deadline = Date.now() + 6000;
+
+      while (Date.now() < deadline && Date.now() - stableSince < 800) {
+        await wait(200);
+        const href = typeof location !== 'undefined' ? location.href : '';
+        if (href !== lastHref) {
+          debug('catalog copy observed HiBid URL normalization', { from: lastHref, to: href });
+          lastHref = href;
+          stableSince = Date.now();
+        }
+      }
+
+      if (panelIsCurrent()) {
+        clearPendingCatalogCopy();
+        return true;
+      }
+
+      // HiBid can normalize filters after the first panel mounts. The new panel
+      // consumes the pending intent after its listeners are ready; keep a direct
+      // fallback for non-user-generated clicks that did not reach the capture hook.
+      await wait(300);
+      const currentPanel = document.getElementById(PANEL_ID);
+      const currentButton = currentPanel?.querySelector(selector);
+      if (currentPanel && currentPanel !== panel && currentButton && !currentButton.disabled) {
+        if (pendingCatalogCopy()) {
+          debug('catalog copy left pending for the remounted HiBid panel', {
+            mode,
+            href: currentPanel.dataset.flipperaddonHref || location.href
+          });
+        } else {
+          debug('catalog copy forwarded after HiBid panel remount', {
+            mode,
+            href: currentPanel.dataset.flipperaddonHref || location.href
+          });
+          currentButton.click();
+        }
+      } else {
+        debug('catalog copy could not forward after HiBid panel remount', {
+          mode,
+          hasCurrentPanel: Boolean(currentPanel),
+          hasCurrentButton: Boolean(currentButton)
+        });
+      }
+      return false;
+    };
+
+    const clearCatalogPartial = () => {
+      state.partialCatalogResult = null;
+      state.partialCatalogMode = '';
+      stageVerifiedPartial(null, null);
+      if (catalogCopyPartialButton) {
+        catalogCopyPartialButton.hidden = true;
+        catalogCopyPartialButton.setAttribute('aria-hidden', 'true');
+        catalogCopyPartialButton.querySelector('span').textContent = 'Copy Verified Partial';
+      }
+    };
+
+    const stageCatalogPartial = (result, mode) => {
+      const lots = result?.items || result?.lots || [];
+      if (!lots.length || result?.coverage?.complete || result?.coverage?.routeMatches === false) {
+        clearCatalogPartial();
+        return false;
+      }
+      const route = currentActiveRoute();
+      if (isAjWillnerRoute(route)) {
+        const currentFingerprint = genericRouteFingerprint(route, typeof location !== 'undefined' ? location : result?.context?.url);
+        const coverage = buildProofTierCoverage(result, 'catalog', route, {
+          site: 'ajwillner',
+          currentFingerprint,
+          locationLike: typeof location !== 'undefined' ? location : result?.context?.url
+        });
+        stageVerifiedPartial(result, coverage, mode, {
+          sourceUrl: typeof location !== 'undefined' ? location.href : (result?.context?.url || ''),
+          site: 'ajwillner'
+        });
+        debugEvent('ajwillner.partial.ready', {
+          mode,
+          count: lots.length,
+          expectedTotal: coverage.expectedTotal,
+          reason: coverage.reason
+        });
+        return Boolean(state.verifiedPartial);
+      }
+      state.partialCatalogResult = result;
+      state.partialCatalogMode = mode;
+      if (catalogCopyPartialButton) {
+        const expected = result.expectedTotal ?? '?';
+        catalogCopyPartialButton.querySelector('span').textContent = `Copy Partial ${mode === 'llm' ? 'LLM' : 'JSON'} ${lots.length}/${expected}`;
+        catalogCopyPartialButton.hidden = false;
+        catalogCopyPartialButton.removeAttribute('aria-hidden');
+      }
+      debugEvent('hibid.partial.ready', {
+        mode,
+        count: lots.length,
+        expectedTotal: result.expectedTotal ?? null,
+        reason: result.coverage?.reason || result.stopReason || ''
+      });
+      return true;
+    };
+
+    const setHibidDiagnostic = (result) => {
+      state.hibidDiagnostic = result ? buildHibidDiagnosticBundle(result) : null;
+      if (!hibidDiagnosticDownloadButton) return;
+      hibidDiagnosticDownloadButton.hidden = !state.hibidDiagnostic;
+      if (state.hibidDiagnostic) hibidDiagnosticDownloadButton.removeAttribute('aria-hidden');
+      else hibidDiagnosticDownloadButton.setAttribute('aria-hidden', 'true');
+    };
+
+    const copyCatalogLots = async (mode) => {
+      if (state.busy) return;
+      if (!await waitForCatalogRouteToSettle(mode)) return;
+      if (state.busy) return;
+      const scrapePathname = typeof location !== 'undefined' ? location.pathname : '';
+      setScrapingBusy(true);
+      // HiBid may normalize the query string or redraw its catalog while the
+      // state/DOM scrape is running. Keep this panel instance alive for that
+      // same-page work so the completed export is not discarded as stale.
+      panel.dataset.flipperaddonNavigationLock = 'true';
+      debug('catalog scrape navigation lock enabled', { mode, scrapePathname });
+      if (catalogCopyJsonButton) catalogCopyJsonButton.disabled = true;
+      if (catalogCopyLlmButton) catalogCopyLlmButton.disabled = true;
+      state.stop = false;
+      clearCatalogPartial();
+      setHibidDiagnostic(null);
+      try {
+        status(mode === 'llm' ? 'Scraping catalog for LLM brief...' : 'Scraping catalog for JSON...');
+        const result = await scrapeCatalogLots(status, () => state.stop);
+        if (typeof location !== 'undefined' && location.pathname !== scrapePathname) {
+          debug('catalog export discarded after catalog path changed', {
+            from: scrapePathname,
+            to: location.pathname
+          });
+          return;
+        }
+        if (!panelIsCurrent()) {
+          debug('catalog export discarded after panel or route changed');
+          return;
+        }
+        if (!result) {
+          status('No catalog lots found. Copy debug log and check route/data source.');
+          return;
+        }
+        if (String(result.source || '').startsWith('hibid-')) setHibidDiagnostic(result);
+        const lots = result.items || result.lots || [];
+        const visibleState = result.visibleState || extractHibidVisiblePageState(document, typeof location !== 'undefined' ? location : null);
+        const activeCatalogRoute = currentActiveRoute();
+        const validation = validateCatalogExportAgainstVisibleState(result, visibleState, activeCatalogRoute);
+        if (!validation.ok) {
+          debug('catalog export blocked by visible-state guard', {
+            reason: validation.reason,
+            source: result.source || 'unknown',
+            count: lots.length,
+            expectedTotal: result.expectedTotal,
+            visibleState,
+            route: activeCatalogRoute
+          });
+          const partialReady = stageCatalogPartial(result, mode);
+          status(partialReady
+            ? `Exact HiBid export incomplete (${lots.length}/${result.expectedTotal ?? '?'}). Verified partial is available.`
+            : `Blocked stale HiBid export: ${describeExportGuardFailure(validation.reason, { count: lots.length, expectedTotal: result.expectedTotal })}`);
+          return;
+        }
+        const routeValidation = validateScraperExportAgainstRoute(result, 'catalog', activeCatalogRoute);
+        if (!routeValidation.ok) {
+          debug('catalog export blocked by route guard', {
+            reason: routeValidation.reason,
+            route: activeCatalogRoute,
+            source: result.source || 'unknown',
+            rowSources: uniqueNonEmpty(lots.map(row => row.source)),
+            count: lots.length,
+            expectedTotal: result.expectedTotal
+          });
+          const partialReady = stageCatalogPartial(result, mode);
+          status(partialReady
+            ? `Exact HiBid export incomplete (${lots.length}/${result.expectedTotal ?? '?'}). Verified partial is available.`
+            : `Blocked stale catalog export: ${describeExportGuardFailure(routeValidation.reason, { count: lots.length, expectedTotal: result.expectedTotal })}`);
+          return;
+        }
+        if (!lots.length) {
+          if (visibleState?.noMatches || (result?.coverage?.complete && Number(result.expectedTotal) === 0)) {
+            if (mode === 'json') {
+              const copiedEmpty = await writeClipboard('[]').catch(() => false);
+              debug('catalog empty filtered JSON copied', {
+                copied: copiedEmpty,
+                source: result.source || 'visible-page-state',
+                visibleState
+              });
+              status(copiedEmpty ? 'Copied JSON for 0 lot(s). Current filters have no matches.' : 'No lots match current filters, and clipboard failed.');
+              return;
+            }
+            debug('catalog empty filtered LLM copy skipped', {
+              source: result.source || 'visible-page-state',
+              visibleState
+            });
+            status('No lots match current filters.');
+            return;
+          }
+          status('No catalog lots found. Copy debug log and check route/data source.');
+          return;
+        }
+        const payload = mode === 'llm'
+          ? buildLlmAuctionBrief(lots, { ...catalogAuctionContext(), ...(result.context || {}) })
+          : JSON.stringify(lots, null, 2);
+        if (!panelIsCurrent()) {
+          debug('catalog clipboard write skipped after panel or route changed');
+          return;
+        }
+        const copied = await writeClipboard(payload).catch(() => false);
+        const countText = result.expectedTotal ? `${lots.length}/${result.expectedTotal}` : String(lots.length);
+        let downloaded = false;
+        if (!copied) {
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const sourceSlug = isAjWillnerRoute(activeCatalogRoute) ? 'ajwillner' : 'catalog';
+          const ext = mode === 'llm' ? 'txt' : 'json';
+          const mime = mode === 'llm' ? 'text/plain;charset=utf-8' : 'application/json;charset=utf-8';
+          try {
+            downloadTextFile(`flipperaddon-${sourceSlug}-${stamp}.${ext}`, payload, mime);
+            downloaded = true;
+          } catch (error) {
+            debug('catalog download fallback failed', { error: String(error?.message || error) });
+          }
+        }
+        debug('catalog scrape summary', {
+          source: result.source || 'unknown',
+          count: lots.length,
+          expectedTotal: result.expectedTotal
+        });
+        status(copied
+          ? (mode === 'llm' ? `Copied LLM brief for ${countText} lot(s).` : `Copied JSON for ${countText} lot(s).`)
+          : (downloaded ? `Scraped ${countText} lot(s); clipboard failed, downloaded ${mode === 'llm' ? 'brief' : 'JSON'}.` : `Scraped ${countText} lot(s), but clipboard failed. Copy debug log.`));
+        debug('catalog lots copied', {
+          mode,
+          count: lots.length,
+          expectedTotal: result.expectedTotal,
+          source: result.source,
+          copied,
+          downloaded,
+          stopped: result.stopped
+        });
+      } finally {
+        if (panel.dataset.flipperaddonNavigationLock === 'true') {
+          delete panel.dataset.flipperaddonNavigationLock;
+          debug('catalog scrape navigation lock released', { mode });
+        }
+        setScrapingBusy(false);
+        if (catalogCopyJsonButton) catalogCopyJsonButton.disabled = false;
+        if (catalogCopyLlmButton) catalogCopyLlmButton.disabled = false;
+      }
+    };
+
+    catalogCopyPartialButton?.addEventListener('click', async () => {
+      const result = state.partialCatalogResult;
+      const mode = state.partialCatalogMode || 'json';
+      if (!result || result.coverage?.complete || result.coverage?.routeMatches === false) {
+        clearCatalogPartial();
+        status('Verified partial is no longer available. Run the scrape again.');
+        return;
+      }
+      const activeRoute = currentActiveRoute();
+      const currentFingerprint = getHibidRouteFingerprint(activeRoute, location.href);
+      if (currentFingerprint !== result.routeFingerprint) {
+        debugEvent('hibid.partial.rejected', {
+          reason: 'route-fingerprint-changed',
+          startFingerprint: result.routeFingerprint,
+          currentFingerprint
+        });
+        clearCatalogPartial();
+        status('Partial copy cancelled because the HiBid page or filters changed.');
+        return;
+      }
+      const lots = result.items || result.lots || [];
+      const context = activeRoute?.kind === 'live' ? liveAuctionContext() : catalogAuctionContext();
+      const payload = buildHibidPartialExportPayload(result, mode, context);
+      const copied = await writeClipboard(payload).catch(() => false);
+      let downloaded = false;
+      if (!copied) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const ext = mode === 'llm' ? 'txt' : 'json';
+        try {
+          downloadTextFile(`flipperaddon-hibid-partial-${stamp}.${ext}`, payload, mode === 'llm' ? 'text/plain;charset=utf-8' : 'application/json;charset=utf-8');
+          downloaded = true;
+        } catch (error) {
+          debugEvent('hibid.partial.download.failure', { error: hibidApiErrorText(error) });
+        }
+      }
+      debugEvent('hibid.partial.result', {
+        mode,
+        count: lots.length,
+        expectedTotal: result.expectedTotal ?? null,
+        copied,
+        downloaded
+      });
+      status(copied
+        ? `Copied verified partial ${mode === 'llm' ? 'LLM' : 'JSON'} (${lots.length}/${result.expectedTotal ?? '?'}).`
+        : (downloaded ? `Downloaded verified partial (${lots.length}/${result.expectedTotal ?? '?'}).` : 'Partial export built, but copy and download failed.'));
+    });
+
+    hibidDiagnosticDownloadButton?.addEventListener('click', () => {
+      if (!state.hibidDiagnostic) {
+        status('Run a HiBid API scrape before downloading diagnostics.');
+        return;
+      }
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const payload = JSON.stringify(state.hibidDiagnostic, null, 2);
+      try {
+        downloadTextFile(`flipperaddon-hibid-diagnostic-${stamp}.json`, payload, 'application/json;charset=utf-8');
+        debugEvent('hibid.diagnostic.download', {
+          bytes: payload.length,
+          expectedTotal: state.hibidDiagnostic.expectedTotal,
+          copiedCount: state.hibidDiagnostic.copiedCount
+        });
+        status('Downloaded sanitized HiBid diagnostic.');
+      } catch (error) {
+        debugEvent('hibid.diagnostic.download.failure', { error: hibidApiErrorText(error) });
+        status('HiBid diagnostic download failed.');
+      }
+    });
+
+    globalThis.__FLIPPERADDON_CATALOG_COPY_HANDLER__ = {
+      panel,
+      run: (copyMode) => copyCatalogLots(copyMode)
+    };
+    if (activeMode === 'catalog') scheduleCatalogCopyResume();
+
+    if (liveMode) {
+      saveAutoRefresh(false);
+      status('Ready to copy live lots.');
+    }
+    const copyLiveLots = async (mode) => {
+      if (state.busy) return;
+      setScrapingBusy(true);
+      if (liveCopyJsonButton) liveCopyJsonButton.disabled = true;
+      if (liveCopyLlmButton) liveCopyLlmButton.disabled = true;
+      state.stop = false;
+      clearCatalogPartial();
+      setHibidDiagnostic(null);
+      try {
+        status('Loading all open live lots from HiBid API...');
+        const liveRoute = currentActiveRoute();
+        const apiResult = await scrapeHibidApiCatalog(status, () => state.stop, document, {
+          route: liveRoute
+        }).catch(error => {
+          debugEvent('hibid.api.live.error', { error: hibidApiErrorText(error) });
+          return null;
+        });
+        if (apiResult) setHibidDiagnostic(apiResult);
+        if (!apiResult?.coverage?.complete) {
+          const partialReady = stageCatalogPartial(apiResult, mode);
+          debugEvent('hibid.api.live.rejected', {
+            reason: apiResult?.coverage?.reason || 'api-unavailable',
+            count: apiResult?.items?.length || 0,
+            expectedTotal: apiResult?.expectedTotal ?? null,
+            partialReady
+          });
+          status(partialReady
+            ? `Exact live export incomplete (${apiResult.items.length}/${apiResult.expectedTotal ?? '?'}). Verified partial is available.`
+            : 'HiBid live API did not reach exact coverage. No data was copied.');
+          return;
+        }
+        const expanded = {
+          ...apiResult,
+          lots: apiResult.items,
+          expectedOpenLots: apiResult.expectedTotal,
+          loadMoreClicks: 0,
+          scrolls: 0
+        };
+        debugEvent('hibid.api.live.source', {
+          source: expanded.source || '',
+          apiComplete: true,
+          apiReason: apiResult.coverage.reason || '',
+          count: expanded.lots?.length || 0,
+          expected: expanded.expectedOpenLots ?? expanded.expectedTotal ?? null
+        });
+        if (!panelIsCurrent()) {
+          debug('live export discarded after panel or route changed');
+          return;
+        }
+        const validation = validateScraperExportAgainstRoute(expanded, 'live', currentActiveRoute());
+        if (!validation.ok) {
+          debug('live export blocked by route guard', {
+            reason: validation.reason,
+            route: currentActiveRoute(),
+            source: expanded.source || 'unknown',
+            count: expanded.lots?.length || 0,
+            expectedOpenLots: expanded.expectedOpenLots || null
+          });
+          status('Blocked stale live export; current page does not match copied lots.');
+          return;
+        }
+        const lots = expanded.lots;
+        if (!lots.length) {
+          status('No live lots found to copy yet.');
+          return;
+        }
+        const context = liveAuctionContext();
+        const payload = mode === 'llm' ? buildLlmAuctionBrief(lots, context) : JSON.stringify(lots, null, 2);
+        if (!panelIsCurrent()) {
+          debug('live clipboard write skipped after panel or route changed');
+          return;
+        }
+        const copied = await writeClipboard(payload).catch(() => false);
+        const countText = expanded.expectedOpenLots ? `${lots.length}/${expanded.expectedOpenLots}` : String(lots.length);
+        if (copied) {
+          status(mode === 'llm'
+            ? `Copied LLM brief for ${countText} live lot(s). Open More clicks: ${expanded.loadMoreClicks}.`
+            : `Copied JSON for ${countText} live lot(s). Open More clicks: ${expanded.loadMoreClicks}.`);
+        } else {
+          status('Clipboard write failed. Check browser permissions.');
+        }
+        debug('live lots copied', {
+          mode,
+          lots: lots.length,
+          expectedOpenLots: expanded.expectedOpenLots,
+          loadMoreClicks: expanded.loadMoreClicks,
+          scrolls: expanded.scrolls,
+          copied
+        });
+      } finally {
+        setScrapingBusy(false);
+        if (liveCopyJsonButton) liveCopyJsonButton.disabled = false;
+        if (liveCopyLlmButton) liveCopyLlmButton.disabled = false;
+      }
+    };
+    liveCopyJsonButton?.addEventListener('click', () => copyLiveLots('json'));
+    liveCopyLlmButton?.addEventListener('click', () => copyLiveLots('llm'));
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function escapeHtmlText(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  if (!globalThis.__HIBID_BID_ASSISTANT_TEST__) {
+    debug('boot', { version: SCRIPT_VERSION, ...routeDebug() });
+
+    let panelClosed = false;
+    let lastMountedHref = location.href;
+
+    // HiBid can replace the panel in the same navigation turn that it
+    // normalizes catalog filters. Capture the user's copy intent above the
+    // panel lifecycle so a newly mounted panel can resume it reliably.
+    const installGlobalCatalogCopyCapture = () => {
+      if (globalThis.__FLIPPERADDON_CATALOG_COPY_CAPTURE_INSTALLED__) return;
+      const capture = (event) => {
+        const target = event.target?.closest?.('#hibid-catalog-copy-json, #hibid-catalog-copy-llm');
+        const owner = target?.closest?.(`#${PANEL_ID}`);
+        if (!target || !owner || owner.dataset.flipperaddonMode !== 'catalog') return;
+        const intent = {
+          mode: target.id.endsWith('-llm') ? 'llm' : 'json',
+          href: typeof location !== 'undefined' ? location.href : '',
+          at: Date.now()
+        };
+        writeSharedCatalogCopyIntent(intent);
+        debug('catalog copy intent captured at document boundary', {
+          mode: intent.mode,
+          href: intent.href
+        });
+        scheduleCatalogCopyResume();
+      };
+      const eventDocuments = new Set([document]);
+      try {
+        if (typeof unsafeWindow !== 'undefined' && unsafeWindow.document) {
+          eventDocuments.add(unsafeWindow.document);
+        }
+      } catch {
+        // The page document may be unavailable in a restricted sandbox.
+      }
+      eventDocuments.forEach(eventDocument => eventDocument.addEventListener('click', capture, true));
+      globalThis.__FLIPPERADDON_CATALOG_COPY_CAPTURE_INSTALLED__ = true;
+      debug('document catalog copy capture installed', { documents: eventDocuments.size });
+    };
+
+    const installDebugExportCapture = () => {
+      if (globalThis.__FLIPPERADDON_DEBUG_EXPORT_CAPTURE_INSTALLED__ || !document?.addEventListener) return;
+      document.addEventListener('click', (event) => {
+        const target = event.target?.closest?.('#hibid-debug-copy, #hibid-debug-download');
+        if (!target) return;
+        debug('document capture saw debug export click', {
+          id: target.id,
+          version: target.closest?.(`#${PANEL_ID}`)?.dataset?.flipperaddonVersion || '',
+          defaultPrevented: event.defaultPrevented
+        });
+      }, true);
+      globalThis.__FLIPPERADDON_DEBUG_EXPORT_CAPTURE_INSTALLED__ = true;
+      debug('document debug export capture installed');
+    };
+
+    installGlobalCatalogCopyCapture();
+    installDebugExportCapture();
+
+    const teardownPanel = (reason = 'remount') => {
+      const existing = document.getElementById(PANEL_ID);
+      if (!existing) return false;
+      debugEvent('panel.teardown.begin', { reason, existingMode: existing.dataset?.flipperaddonMode || '' });
+      existing.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason } }));
+      if (shouldTeardownPanelForRebuild(reason)) {
+        document.dispatchEvent(new CustomEvent('flipperaddon-panel-teardown', { detail: { reason } }));
+      }
+      existing.remove();
+      debug('panel removed for remount', { reason });
+      debugEvent('panel.teardown.complete', { reason });
+      return true;
+    };
+
+    const ensureMounted = (reason = 'unspecified') => {
+      const modeInfo = resolveAssistantMode();
+      const allowed = shouldInitOnLocation();
+      debug('ensureMounted', { reason, allowed, mode: modeInfo.mode, ...routeDebug() });
+      debugEvent('mount.ensure', { reason, allowed, mode: modeInfo.mode, routeKind: modeInfo.route?.kind || '' });
+      if (!document.body) return false;
+      if (isHibidPastAuctionRoute(modeInfo.route)) mountHibidAccountAuctionActions(document);
+      const existingPanel = document.getElementById(PANEL_ID);
+      const existingMode = existingPanel?.dataset?.flipperaddonMode || existingPanel?.querySelector?.('.hiba-drawer')?.dataset?.flipperaddonMode || '';
+      const existingVersion = existingPanel?.dataset?.flipperaddonVersion || '';
+      const existingHref = existingPanel?.dataset?.flipperaddonHref || '';
+      const preserveManagedNavigation = shouldPreservePanelDuringManagedNavigation(
+        existingPanel?.dataset?.flipperaddonNavigationLock || '',
+        existingMode,
+        modeInfo.mode,
+        allowed
+      );
+      if (!allowed) {
+        teardownPanel(`unsupported:${reason}`);
+        debugEvent('mount.blocked', { reason, mode: modeInfo.mode, routeKind: modeInfo.route?.kind || '' });
+        return false;
+      }
+      if (existingPanel && existingVersion && existingVersion !== SCRIPT_VERSION) {
+        teardownPanel(`version-change:${existingVersion}:${SCRIPT_VERSION}:${reason}`);
+      } else if (existingPanel && existingHref && existingHref !== location.href && !preserveManagedNavigation) {
+        teardownPanel(`route-change:${reason}`);
+      } else if (shouldRebuildPanelForMode(existingMode, modeInfo.mode, allowed, Boolean(existingPanel))) {
+        teardownPanel(`mode-change:${existingMode || 'none'}:${modeInfo.mode}:${reason}`);
+      }
+      if (existingPanel && preserveManagedNavigation) {
+        existingPanel.dataset.flipperaddonHref = location.href;
+      }
+      if (location.href !== lastMountedHref) {
+        panelClosed = false;
+        lastMountedHref = location.href;
+        debug('panel close state reset after URL change', { reason, href: lastMountedHref });
+      }
+      if (/^menu\b/i.test(reason)) panelClosed = false;
+      if (panelClosed) {
+        removeLegacyScraperArtifacts(reason);
+        debug('ensureMounted skipped: panel closed for current page', { reason });
+        debugEvent('mount.skipped.closed', { reason });
+        return false;
+      }
+      removeLegacyScraperArtifacts(reason);
+      if (document.getElementById(PANEL_ID)) {
+        debugEvent('mount.already-present', { reason });
+        return true;
+      }
+      return initializePanelSafely(reason, modeInfo);
+    };
+
+    const initializePanelSafely = (reason, modeInfo = resolveAssistantMode()) => {
+      const initStartedAt = debugNow();
+      try {
+        init();
+        debugEvent('mount.completed', {
+          reason,
+          mode: modeInfo.mode,
+          durationMs: Math.round((debugNow() - initStartedAt) * 100) / 100
+        });
+        return true;
+      } catch (error) {
+        const errorText = debugText(error?.message || error, 280);
+        debugEvent('panel.init.error', {
+          phase: 'initializePanelSafely:init',
+          reason,
+          mode: modeInfo.mode,
+          routeKind: modeInfo.route?.kind || '',
+          durationMs: Math.round((debugNow() - initStartedAt) * 100) / 100,
+          error: errorText,
+          stack: debugText(error?.stack || '', 500)
+        });
+        const failedPanel = document.getElementById(PANEL_ID);
+        if (failedPanel) {
+          failedPanel.dataset.flipperaddonInitError = 'true';
+          showDebugPanelMessage(failedPanel, `Panel initialization failed: ${errorText}`, 'danger');
+        }
+        return false;
+      }
+    };
+
+    const mountWhenReady = (reason) => {
+      if (document.body) ensureMounted(reason);
+      else document.addEventListener('DOMContentLoaded', () => ensureMounted(`${reason}:domcontentloaded`), { once: true });
+    };
+
+    const registerMenuCommands = () => {
+      const register = typeof GM_registerMenuCommand === 'function'
+        ? GM_registerMenuCommand
+        : (typeof GM !== 'undefined' && typeof GM.registerMenuCommand === 'function'
+          ? GM.registerMenuCommand.bind(GM)
+          : null);
+      if (typeof register !== 'function') {
+        debug('menu commands unavailable');
+        return;
+      }
+      const registerCommand = (name, callback) => {
+        try {
+          return register(name, callback);
+        } catch (error) {
+          debug('menu command registration failed', { name, error: error?.message || String(error) });
+          return null;
+        }
+      };
+      registerCommand(MENU_COMMANDS[0], () => {
+        debugEvent('menu.command', { command: MENU_COMMANDS[0] });
+        ensureMounted('menu remount');
+      });
+      registerCommand(getDebugMenuLabel(), async () => {
+        const enabled = !getStoredDebugEnabled();
+        saveDebugEnabled(enabled);
+        if (enabled) {
+          installDebugInstrumentation();
+          debugEvent('debug.mode.changed', { enabled, source: 'menu' });
+        }
+        const panel = document.getElementById(PANEL_ID);
+        if (panel) {
+          teardownPanel('debug-toggle');
+          initializePanelSafely('debug-toggle');
+        } else {
+          ensureMounted('menu toggle debug');
+        }
+        try {
+          console.info(DEBUG_PREFIX, `Debug mode ${enabled ? 'enabled' : 'disabled'}`);
+        } catch {
+          // Console logging is best-effort.
+        }
+      });
+      registerCommand(MENU_COMMANDS[2], async () => {
+        debugEvent('menu.command', { command: MENU_COMMANDS[2] });
+        ensureMounted('menu copy debug');
+        const downloadRequested = downloadDebugLog();
+        const copied = await copyDebugLog();
+        const downloaded = downloadRequested || (!copied && downloadDebugLog());
+        const revealed = !copied && revealDebugExportField(document.getElementById(PANEL_ID));
+        debug('menu copy debug result', { copied, downloadRequested, downloaded, revealed, entries: getDebugLog().length });
+      });
+      registerCommand(MENU_COMMANDS[3], () => {
+        debugEvent('menu.command', { command: MENU_COMMANDS[3] });
+        clearDebugLog();
+        debug('debug log cleared from menu');
+      });
+      registerCommand(MENU_COMMANDS[4], () => {
+        debugEvent('menu.command', { command: MENU_COMMANDS[4] });
+        ensureMounted('menu copy lots');
+        document.getElementById('hibid-catalog-copy-json')?.click();
+      });
+      registerCommand(MENU_COMMANDS[5], () => {
+        debugEvent('menu.command', { command: MENU_COMMANDS[5] });
+        const entered = window.prompt('Paste the Flip Tracker local sync token. It stays in Tampermonkey storage.', getFlipTrackerSyncToken());
+        if (entered !== null) saveFlipTrackerSyncToken(entered);
+      });
+      debug('menu commands registered', MENU_COMMANDS);
+    };
+
+    debugEvent('lifecycle.boot', { version: SCRIPT_VERSION });
+    installDebugInstrumentation();
+    mountWhenReady('boot');
+    registerMenuCommands();
+    document.addEventListener('hibid-bid-assistant-close', () => {
+      panelClosed = true;
+      debug('panel closed for current page');
+      debugEvent('panel.closed', { source: 'panel-event' });
+    });
+    setTimeout(() => ensureMounted('timeout 1s'), 1000);
+    setTimeout(() => ensureMounted('timeout 3s'), 3000);
+    if ('onurlchange' in window) {
+      window.addEventListener('urlchange', () => {
+        debugEvent('route.urlchange');
+        ensureMounted('urlchange');
+      });
+    }
+    ['pushState', 'replaceState'].forEach(method => {
+      const original = window.history?.[method];
+      if (typeof original !== 'function') return;
+      window.history[method] = function (...args) {
+        debugEvent('route.history.begin', { method, argumentCount: args.length });
+        const result = original.apply(this, args);
+        debugEvent('route.history.complete', { method, href: debugHref(location.href) });
+        window.setTimeout(() => ensureMounted(`history:${method}`), 0);
+        return result;
+      };
+    });
+    window.addEventListener('load', () => {
+      debugEvent('lifecycle.ensure-on-load');
+      ensureMounted('window load');
+    });
+    window.addEventListener('popstate', () => {
+      debugEvent('route.ensure-on-popstate');
+      ensureMounted('popstate');
+    });
+    window.addEventListener('hashchange', () => {
+      debugEvent('route.ensure-on-hashchange');
+      ensureMounted('hashchange');
+    });
+    if (document.documentElement) {
+      new MutationObserver(() => ensureMounted('mutation')).observe(document.documentElement, {
+        childList: true,
+        subtree: true
+      });
+    }
+  }
+})();

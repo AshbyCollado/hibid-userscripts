@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "site": "ajwillner",
+  "capturedAt": "2026-08-18",
+  "discovery": "Chrome DevTools Protocol Network",
+  "rawCaptureCommitted": false,
+  "redacted": [
+    "authorization",
+    "cookie",
+    "token",
+    "contact fields",
+    "account data"
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/auctions/{auctionId}",
+      "queryKeys": [
+        "page",
+        "include_items_data",
+        "include_documents"
+      ],
+      "observedValues": {
+        "page": "active",
+        "include_items_data": false,
+        "include_documents": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/items/search",
+      "queryKeys": [
+        "auction_id",
+        "query",
+        "category",
+        "sub_category",
+        "page",
+        "per_page",
+        "exact_category_match"
+      ],
+      "pageSize": 200
+    }
+  ],
+  "unfilteredCoverage": {
+    "expected": 868,
+    "pageCounts": [
+      200,
+      200,
+      200,
+      200,
+      68
+    ],
+    "collected": 868,
+    "uniqueStableIds": 868,
+    "duplicateStableIds": 0,
+    "wrongAuctionRecords": 0,
+    "recordsWithDescriptions": 868,
+    "recordsWithImages": 868,
+    "totalImages": 4052
+  },
+  "filteredCoverage": {
+    "filter": "sanitized query token",
+    "expected": 26,
+    "collected": 26,
+    "uniqueStableIds": 26,
+    "nonmatchingRecords": 0
+  },
+  "representativeRecords": [
+    {
+      "position": "first",
+      "stableId": "redacted-item-first",
+      "descriptionLength": 748,
+      "imageCount": 4
+    },
+    {
+      "position": "middle",
+      "stableId": "redacted-item-middle",
+      "descriptionLength": 745,
+      "imageCount": 3
+    },
+    {
+      "position": "last",
+      "stableId": "redacted-item-last",
+      "descriptionLength": 23,
+      "imageCount": 3
+    }
+  ]
+}

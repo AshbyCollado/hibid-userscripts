@@ -1,99 +1,176 @@
-# FlipperAddon by ALOS
+# Flippah by ALOS
 
-Hosted Tampermonkey userscript for resale scraping/export workflows across HiBid, GovDeals, AAR Auctions, AuctionNinja, eBay selling pages, and Facebook Marketplace selling pages.
+Flippah is a read-only browser extension for HiBid research. It preserves the
+true-cost calculator, eBay Sold research links, watchlist, notes, and alerts
+from the working `v0.1.0` extension while adding exact, auditable catalog
+exports and automatic Amazon.com deal intelligence.
 
-## Install
+The extension is built from one TypeScript source tree into separate Chrome and
+Waterfox packages. HiBid scraping is available from the toolbar popup; the
+in-page calculator remains limited to individual lot pages.
 
-Open the unified addon URL in a browser with Tampermonkey enabled:
+## Repository layout
 
-https://raw.githubusercontent.com/AshbyCollado/hibid-userscripts/main/hibid-bid-assistant.user.js
+- `src/` - maintainable extension source
+- `tests/` - unit and integration coverage
+- `dist/chrome/` - generated Chrome package
+- `dist/waterfox/` - generated Waterfox package
+- `reference-build/flippah-v0.1.0/` - supplied working extension baseline
+- `assets/icons/` - Flippah by ALOS brand icon source and generated browser sizes
+- `legacy/tampermonkey/` - previous userscript implementation and fixtures
+- `vendor/hibid-enhancer-suite/` - MIT license and revision attribution for the
+  parsing and retail-matching logic adapted into Flippah
+- `vendor/hoverzoom/` - upstream MIT license for the full-size HiBid image URL
+  behavior adapted into Flippah
 
-Tampermonkey updates use that same raw GitHub URL through the script metadata. Install from the raw URL, not a one-off copied file, so future version bumps can update.
+## US deal intelligence
 
-## Active Modules
+Flippah `v0.3.24` adds title-authoritative product identity with structured
+description enrichment and condition parsing, Amazon.com retail evidence,
+manual eBay Sold verification, saved resale estimates, mixed-lot and quantity
+review gates, and compact Current Bids/Watchlist verdicts. Catalog annotations
+are additive: Flippah does not hide, move, fade, shrink, relabel, or replace
+HiBid-owned content or controls. Genuine CAD lots remain CAD and receive no USD
+comparison.
 
-`FlipperAddon by ALOS` is the single active hosted script. It starts minimized in the bottom-right corner and shows only the module for the page you are actually on:
+Amazon lookups port the donor's catalog transport through browser-context
+Amazon.com HTML requests in batches of six, 350 ms between network batches,
+per-lot failure isolation, in-flight joining, and a 12-hour evidence cache. No
+Amazon tabs or helper windows are opened. HiBid's own Retail/MSRP/Estimate is retained as an
+explicitly labeled provisional fallback when live Amazon evidence is missing;
+it is never presented as a verified Amazon price. eBay remains
+user-directed: Flippah opens an exact Sold and Completed search, then uses the
+resale estimate the user saves in the lot panel. Only normalized Amazon
+evidence returns to HiBid; raw provider HTML is never stored or sent to HiBid.
 
-- HiBid catalog/category/watchlist/current-bids pages: copy JSON and resale LLM brief, including OUTBID watchlist and WINNING/OUTBID current bids.
-- HiBid livecatalog pages: expand/copy live lot JSON and resale LLM brief.
-- AuctionNinja sale catalog pages: copy sale terms plus lot JSON or resale LLM brief.
-- AuctionNinja followed-items, items-won, and bid-history pages: copy account item JSON or page-specific LLM briefs for watchlist triage, won-item inventory planning, or bid-history review.
-- AuctionNinja auction search / nearby sales pages: copy whole-auction JSON or an LLM brief that ranks sales before drilling into lots.
-- AAR Auctions calendar and catalog pages: copy auction cards or catalog lots as JSON, or copy an LLM brief with persisted origin/radius distance-verification instructions.
-- GovDeals seller, search/new-listings filter, and asset pages: copy visible listings/assets as JSON, or copy a resale LLM brief with shared origin/radius and URL zipcode/miles context.
-- eBay/Facebook selling pages: FlipTracker active listing copy/download export.
+The `v0.3.24` matcher normalizes retail unit aliases, understands compact
+quantity notation such as `6x12oz`, requires package-count and volume evidence,
+and uses Amazon result-link slugs when the visible result title omits a brand.
+Its provider-cache epoch prevents older incomplete search snapshots from
+silently surviving these matching upgrades.
 
-The older `hibid-lot-catalog-scraper.user.js` remains in the repo for legacy reference/tests, but normal use should install only `hibid-bid-assistant.user.js`.
+The product extraction, condition assessment, matching, cache behavior, and
+verdict ideas are adapted from Diego Magalhaes's MIT-licensed
+[hibid-enhancer-suite](https://github.com/dgomesbr/hibid-enhancer-suite), revision
+`976913421c3fd23b48cc8ca4cde78cb9528f97d3`. Flippah ports maintained logic to
+TypeScript and intentionally excludes the donor's page-rewrite behavior.
 
-## LLM Brief
+## Watchlist reliability
 
-Copy LLM Brief includes the full auction-resale coordinator prompt plus enriched lot JSON. The prompt tells the model to prioritize eBay sold/completed comps, calculate profit after buyer premium, tax, eBay fees, promoted listing friction, travel, shipping, and sedan-fit risk.
+Flippah `v0.3.7` reads `/account/watchlist` through its dedicated account-page
+DOM parser. HiBid requires private buyer authorization for `WatchListSearch`,
+so personalized data is never requested from an extension-origin GraphQL call.
+If the displayed total and stable lot count drift while a lot closes, Flippah
+uses HiBid's safe Refresh control and retries the snapshot before validation.
+Account tokens and account identity are never read or copied into diagnostics.
 
-AAR and GovDeals LLM briefs also include a `Distance Agent` instruction. The default shared research setting is `Edison, NJ 08817` with a `100` mile radius. GovDeals search/new-listings exports also preserve URL filters such as `categoryName=Consumer Electronics`, `zipcode=07008`, and `miles=25`.
+Catalog deal indicators mount outside HiBid's clipped lot-title container, so
+their Amazon/eBay status dots remain visible. Flippah excludes its own
+annotations from copied lot text, preserves watchlist auction grouping, and
+keeps all-in math focused on hammer, buyer premium, and sales tax. Shipping,
+Auction Terms, and Fee Evidence inputs/sections are not part of the panel.
 
-## Debug
+Research queries retain the complete identifying title after removing only
+auction noise. Model-less products keep differentiating specifications such as
+`4K`, `Smart`, `WiFi`, and `BT`; model punctuation such as `TX-SR304` and
+`NT-USB+` is preserved. The legacy calculator and modern intelligence layer are
+locked to the same query corpus in tests.
 
-Debug UI and console/log capture are hidden until enabled from the Tampermonkey menu command:
+Retail matching uses a reusable product fingerprint rather than per-lot fixes.
+It removes bounded inventory/lot prefixes, normalizes brand families, requires
+the primary product kind, distinguishes accessories from real bundles, and
+fails closed on conflicting capacity, volume, package count, color, material,
+product family, mode count, platform, resolution, size, memory type,
+frequency, refresh rate, storage type, network standard, voltage, wattage,
+battery capacity, lens range, edition, or model-series evidence. Every checked
+candidate has explainable match/rejection evidence in the normalized background
+result. Sponsored, used, open-box, and renewed Amazon offers cannot supply the
+new-retail value. Underidentified source lots also fail closed: a model-free
+title needs a credible brand, a recognized product kind, and at least one hard
+attribute before Flippah will display an automatic retail price. Descriptive
+hyphenated prose such as `anti-fog` cannot be promoted to a model code; this
+prevents accessory prose from creating false exact-product matches.
 
-`Toggle FlipperAddon Debug Mode`
-
-When enabled, the drawer exposes copy/clear debug controls. Logs use the `[FlipperAddon]` prefix.
-
-## FlipTracker Active Listing Export
-
-Open an active selling page:
-
-- `https://www.ebay.com/sh/lst/active`
-- `https://www.facebook.com/marketplace/you/selling`
-
-Workflow:
-
-1. Scroll/load the listings you want included.
-2. Open FlipperAddon.
-3. Click `Scan Listings`.
-4. Click `Download`.
-5. Put the downloaded `FlipTracker-listings-*.html` file into `C:\Users\ashby\Documents\MarketplaceScraper\ImportInbox`.
-6. In FlipTracker, run the import/review flow.
-
-## eBay to Facebook Marketplace Drafts
-
-This workflow keeps eBay as the listing source and fills one reviewable Facebook Marketplace draft. FlipperAddon never clicks Publish.
-
-One-time connection:
-
-1. Open `FlipTracker.xlsm` from the MarketplaceScraper project folder and enable macros.
-2. On `Import Review`, click `Start eBay Sync`, then `Copy Sync Token`.
-3. On a supported eBay or Facebook page, open FlipperAddon, click `Connect`, and paste the token. The token stays in Tampermonkey storage and the bridge listens only on `127.0.0.1:8468`.
-
-Create a draft:
-
-1. Open `https://www.ebay.com/mys/active` or `https://www.ebay.com/sh/lst/active` and load the active listings you need.
-2. Open FlipperAddon and click `Scan Page`.
-3. Choose the eBay listing under `Facebook draft source`, verify the Facebook location, and click `Queue Facebook Draft`.
-4. Review the confirmation. FlipperAddon enriches the listing from its public eBay item page before queueing it.
-5. Open `https://www.facebook.com/marketplace/create/item`.
-6. Open FlipperAddon and click `Fill Next eBay Draft`.
-7. Review the title, whole-dollar price, description, category, condition, location, and photos. Continue through Facebook and click Publish yourself only when the listing is correct.
-8. After Facebook opens the new Marketplace item page, open FlipperAddon and click `Confirm Published`. This stores the Facebook listing ID and prevents that eBay item from being queued again.
-
-Duplicate and recovery rules:
-
-- One durable queue record exists per eBay item ID.
-- Requeueing unchanged eBay evidence is a no-op.
-- Changed eBay evidence updates the existing unpublished queue record.
-- A confirmed Published record cannot be queued again unless it is explicitly reset in the local queue.
-- A failed form fill stays visible as Failed; queue the eBay item again after correcting the cause.
-- If `Connect` reports a bridge error, reopen FlipTracker and use `Start eBay Sync`, then copy and save the token again.
-- Do not confirm Published from an unrelated Facebook item page; FlipperAddon checks both the Marketplace listing ID and title evidence.
-
-## Scraper-First UI
-
-FlipperAddon starts as a small bottom-right pill. Opening it shows only the current page's export actions. Copy buttons do not render lot previews in the drawer; they copy the payload and show a short toast. The Stop button appears while a scrape/export is running.
-
-## Tests
+## Commands
 
 ```powershell
-node --check .\hibid-bid-assistant.user.js
-node --check .\hibid-lot-catalog-scraper.user.js
+npm install
 npm test
+npm run build
+npm run install:chrome -- --target "C:\\Users\\ashby\\Documents\\lotlens-local"
 ```
+
+Load the stable install directory, such as `C:\\Users\\ashby\\Documents\\lotlens-local`,
+through Chrome's extensions page. Do not load `dist/chrome` as the persistent
+installed copy: each build replaces `dist`, which can leave Chrome pointing at
+files that briefly do not exist. `dist/waterfox` remains the generated Waterfox
+development package.
+
+## Current release gate
+
+A source build is not a finished release. After every build that changes the
+extension, update the stable installed Chrome copy, confirm the popup shows the
+intended version, run real HiBid exports, and parse the copied JSON.
+For pages with an authoritative API total, `expectedCount`, item count, and
+unique `eventItemId` count must match before the release is accepted.
+
+Waterfox output is built from the same source, but Waterfox browser acceptance
+is deferred until the Chrome product is stable.
+
+Generated unpacked builds are written to `dist/chrome` and `dist/waterfox`.
+Release archives must be created explicitly after browser acceptance.
+
+Flippah processes HiBid page and API data locally. It does not transmit or
+sell browsing, auction, watchlist, or research data. Diagnostics are sanitized
+and remain local unless the user chooses to share them.
+Flippah `v0.3.25` parses Amazon search responses as a real HTML tree in the
+background worker. Nested Amazon result nodes can no longer cross-wire one
+variant's title with another variant's price; the retail cache epoch is bumped
+so every catalog is re-evaluated under the corrected parser.
+
+## v0.3.51 final beta hardening
+
+- The release package includes only the reference stylesheet required by the
+  preserved lot calculator. Unused reference JavaScript and unnecessary web
+  accessible resources are no longer shipped.
+- The dormant Amazon helper-window implementation was removed. Amazon research
+  continues through the direct background provider and cannot open hidden
+  research windows or tabs.
+- Watchlist CSV fields that could be interpreted as spreadsheet formulas are
+  neutralized before download.
+- Popup clipboard, diagnostic, CSV-download, and options-storage failures now
+  produce visible errors instead of failing silently.
+- Synced numeric and text settings are normalized and bounded before entering
+  fee math or persistent state.
+- The Chrome and Waterfox builds pass the complete automated suite. Browser
+  installation and a live Chrome smoke test remain mandatory before packaging.
+
+## v0.4.0 research quality loop
+
+- Hovering a canonical HiBid lot photo opens a transient full-resolution
+  preview without moving, replacing, or intercepting HiBid controls. The
+  behavior can be disabled in Options.
+- Every verified JSON and AI export includes field-level fidelity for stable
+  identity, title, URL, description, photos, category, pricing, and status/time.
+  Copy confirmation reports description and photo coverage immediately.
+- Individual lot panels include a collapsed, optional resale-outcome recorder.
+  Actual all-in cost, sold price, selling costs, and sales channel stay in local
+  extension storage. Flippah calculates realized profit and the difference from
+  the original saved resale estimate; outcomes can be exported as CSV from the
+  Watchlist tab.
+- Source inspirations and exclusions are documented in
+  `docs/OPEN_SOURCE_INSPIRATION.md`.
+
+## v0.4.1 watch redraw repair
+
+- Restores cached Amazon, eBay, and all-in annotations after HiBid redraws a
+  tile when Watch or Unwatch is clicked.
+- Does not repeat retail searches when the lot ID and cached analysis are
+  unchanged.
+
+## v0.4.2 evidence and condition clarity
+
+- Auctioneer estimates, claimed retail/MSRP values, and recommended bids no
+  longer influence Amazon matching, price indicators, or deal verdicts.
+- Catalog and account annotations show a compact condition pill derived from
+  the structured description, with full evidence available on hover.

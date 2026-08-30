@@ -1,0 +1,39 @@
+{
+   "action": {
+      "default_icon": {
+         "16": "icons/icon-16.png",
+         "32": "icons/icon-32.png"
+      },
+      "default_popup": "src/popup/index.html",
+      "default_title": "Flippah watchlist"
+   },
+   "background": {
+      "service_worker": "service-worker-loader.js",
+      "type": "module"
+   },
+   "content_scripts": [ {
+      "css": [ "assets/index-uNBN1arP.css" ],
+      "js": [ "assets/index.ts-loader-6JygO5xL.js" ],
+      "matches": [ "https://hibid.com/*", "https://*.hibid.com/*" ],
+      "run_at": "document_idle"
+   } ],
+   "description": "Flippah — See the real all-in cost (buyer's premium + tax + shipping), eBay sold comps, and profit estimates on every HiBid lot.",
+   "host_permissions": [ "https://hibid.com/*", "https://*.hibid.com/*" ],
+   "icons": {
+      "128": "icons/icon-128.png",
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+   },
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvwZEOyE490bRlXLtqtnHW4/PY1zcH3ypaNQDMec+hVC/OqRQUaqHfTDgpd0HoVEo9mAcV7lwBQ8dLWwRCjlimUSSDi7Tcnewfvrr32JgortaJjRhxJTF+XCHtO71ck4H4sfT6NL2s41oJKSC1uyEOh1MX43rFhVnnb0Z0Ok5dROy5zLH2XFRkmcPWXOBAB/13NcxJd9ivrlsu175T8dShviXYrCR+lffM1px1jKIFRkrleltTYUThiGVLKBqQnKWGvrAVaGCmose4nCHhGIpLKrh7ArlcH+unO0ay5vj/EX97AkDwovG+6FOzi4a9F5OIXwpsaoe17V0tqiGtEaXywIDAQAB",
+   "manifest_version": 3,
+   "name": "Flippah — true cost & comps for HiBid auctions",
+   "options_page": "src/options/index.html",
+   "permissions": [ "storage", "alarms", "notifications" ],
+   "version": "0.1.0",
+   "web_accessible_resources": [ {
+      "matches": [ "https://*.hibid.com/*", "https://hibid.com/*" ],
+      "resources": [ "assets/parseLotPage-B-8HdUYU.js", "assets/taxRates-B3rE_xel.js", "assets/entitlements-4vw6oR9a.js", "assets/money-ip6lU9wJ.js", "assets/messages-BaGaHwRB.js", "assets/index.ts-BuCXDImd.js" ],
+      "use_dynamic_url": false
+   } ]
+}
