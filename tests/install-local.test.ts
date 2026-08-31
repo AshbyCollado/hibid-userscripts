@@ -56,3 +56,30 @@ test('local install atomically replaces stale build output with the exact curren
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('local install preserves the prior target when source validation fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'flippah-install-local-failure-'));
+  try {
+    const source = path.join(root, 'dist', 'chrome');
+    const target = path.join(root, 'installed-extension');
+    await mkdir(source, { recursive: true });
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(source, 'current.js'), 'incomplete source\n');
+    await writeFile(path.join(target, 'manifest.json'), '{"manifest_version":3,"version":"1.0.0"}\n');
+    await writeFile(path.join(target, 'working.js'), 'prior working bytes\n');
+
+    assert.throws(() => execFileSync(process.execPath, [installer, '--target', target], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: 'pipe'
+    }));
+
+    assert.deepEqual(await fileInventory(target), ['manifest.json', 'working.js']);
+    assert.equal(await readFile(path.join(target, 'working.js'), 'utf8'), 'prior working bytes\n');
+    const siblings = await readdir(root);
+    assert.equal(siblings.some((entry) => entry.includes('.flippah-staging-')), false);
+    assert.equal(siblings.some((entry) => entry.includes('.flippah-backup-')), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
