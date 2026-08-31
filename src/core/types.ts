@@ -4,6 +4,7 @@ export type HiBidRouteKind =
   | 'search'
   | 'lot'
   | 'watchlist'
+  | 'currentbids'
   | 'currentbids-winning'
   | 'currentbids-outbid'
   | 'pastbids'
@@ -269,7 +270,7 @@ export interface PageContext {
   analysis: DealAnalysisSummary;
 }
 
-export type DealAnalysisPhase = 'idle' | 'scanning' | 'retail' | 'complete' | 'cancelled' | 'error' | 'unsupported-currency';
+export type DealAnalysisPhase = 'idle' | 'scanning' | 'restoring' | 'retail' | 'complete' | 'cancelled' | 'error' | 'unsupported-currency';
 
 export interface DealAnalysisSummary {
   phase: DealAnalysisPhase;

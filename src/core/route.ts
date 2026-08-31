@@ -58,7 +58,14 @@ export function resolveHiBidRoute(locationLike: LocationLike | URL | string): Hi
         reason: undefined
       };
     }
-    return { ...unsupported, statePrefix, reason: 'current bids requires WINNING or OUTBID status' };
+    return {
+      ...unsupported,
+      supported: true,
+      kind: 'currentbids',
+      statePrefix,
+      currentBidStatus: null,
+      reason: undefined,
+    };
   }
   if (account === 'pastbidsm' || account === 'pastwatchlist') {
     return {

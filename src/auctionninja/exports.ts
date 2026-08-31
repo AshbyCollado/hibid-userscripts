@@ -1,5 +1,6 @@
 import type { FlippahSettings } from '../core/settings.js';
 import type { ScrapeJobSummary } from '../core/types.js';
+import { buildHomeLabElectronicsBrief } from '../intelligence/ai-analysis-brief.js';
 import {
   buildProductResearchQuery,
   buildRetailLinks,
@@ -420,6 +421,9 @@ export function buildAuctionNinjaLlmBrief(payload: AuctionNinjaExportPayload, se
   const profile = payload.context.researchProfile || buildResaleResearchProfile(settings);
   const promptPayload = structuredClone(payload) as AuctionNinjaExportPayload;
   delete (promptPayload.context as Partial<AuctionNinjaExportPayload['context']>).researchProfile;
+  if (settings.aiAnalysisMode === 'home-lab-electronics') {
+    return buildHomeLabElectronicsBrief('AuctionNinja', promptPayload, settings);
+  }
   return `# Flippah AuctionNinja Evidence-First Resale Analysis
 
 ## ROLE AND OUTCOME

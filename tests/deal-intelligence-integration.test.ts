@@ -3,7 +3,8 @@ import test from 'node:test';
 import { readFile, readdir } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
-import { canReuseRetailEvidence, mutationAffectedLotIds, reserveTileAnnotationSpace, shouldRenderProvisionalDealAnnotations, visibleLotIdSignature } from '../src/content/deal-intelligence.js';
+import { applyTileAnnotation, canReuseRetailEvidence, canReuseStoredLotIdentity, isFreshStoredRetailEvidence, localLotRetailEvidenceStorageKey, localRetailEvidenceStorageKey, LOCAL_LOT_RETAIL_EVIDENCE_PREFIX, LOCAL_RETAIL_EVIDENCE_PREFIX, mutationAffectedLotIds, reserveTileAnnotationSpace, shouldRenderProvisionalDealAnnotations, visibleLotIdSignature, visibleLotRetailSignature } from '../src/content/deal-intelligence.js';
+import { assessCondition, calculateUsAllIn, computeRetailIndicators, detectMixedLot, extractProductIdentity } from '../src/intelligence/us-deal-intelligence.js';
 import {
   DEV_RELOAD_PENDING_MAX_AGE_MS,
   shouldConsumePendingPageRefresh,
@@ -14,7 +15,9 @@ import {
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
-  assert.equal(chrome.version, '0.5.19');
+  const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+  assert.equal(chrome.version, pkg.version);
+  assert.equal(waterfox.version, pkg.version);
   assert.ok(chrome.host_permissions.includes('https://www.amazon.com/*'));
   assert.ok(chrome.host_permissions.includes('https://*.auctionninja.com/*'));
   assert.equal(chrome.host_permissions.includes('https://www.ebay.com/*'), false);
@@ -95,8 +98,8 @@ test('new live cards reserve the complete evidence row before hydration', () => 
     const strip = dom.window.document.querySelector<HTMLElement>('[data-flippah-retail-for="188"]')!;
     assert.ok(strip);
     assert.equal(strip.getAttribute('aria-busy'), 'true');
-    assert.equal(strip.getAttribute('aria-label'), 'Checking product prices');
-    assert.match(strip.textContent || '', /Checking prices/);
+    assert.equal(strip.getAttribute('aria-label'), 'Restoring saved product prices');
+    assert.match(strip.textContent || '', /Restoring prices/);
     assert.equal(strip.dataset.flippahRenderSignature, 'pending');
     assert.equal(dom.window.document.querySelectorAll('[data-flippah-retail-for="188"]').length, 1);
     assert.equal(reserveTileAnnotationSpace('188'), true);
@@ -131,32 +134,153 @@ test('live redraws retain conclusive Amazon evidence but retry transient failure
   assert.match(source, /record\.state\.queryOverride === previous\.state\.queryOverride/);
 });
 
-test('list and live-account rows wait for hydration and cached evidence before their first annotation paint', async () => {
+test('local retail evidence is identity-fingerprinted, epoch-aware, and expires closed', () => {
+  const identity = extractProductIdentity('Vicks Sinus Steam Inhaler');
+  const key = localRetailEvidenceStorageKey(identity);
+  assert.ok(key.startsWith(LOCAL_RETAIL_EVIDENCE_PREFIX));
+  assert.match(key, /amazon-us:9:/);
+  assert.equal(localLotRetailEvidenceStorageKey('192'), `${LOCAL_LOT_RETAIL_EVIDENCE_PREFIX}192`);
+  const entry = {
+    expiresAt: 2_000,
+    result: { status: 'matched', query: identity.query, match: null, candidates: [], fetchedAt: 1, cached: false, message: 'saved' },
+  } as any;
+  assert.equal(isFreshStoredRetailEvidence(entry, 1_999), true);
+  assert.equal(isFreshStoredRetailEvidence(entry, 2_000), false);
+  assert.equal(isFreshStoredRetailEvidence({ ...entry, result: { ...entry.result, status: 'network_error' } }, 1_000), false);
+});
+
+test('per-lot fast evidence invalidates when the visible product identity changes', () => {
+  const lot = { id: '192', lot: '192', lead: 'Vicks Sinus Steam Inhaler', title: 'Vicks Sinus Steam Inhaler' };
+  const signature = visibleLotRetailSignature(lot as any);
+  assert.equal(signature, visibleLotRetailSignature({ ...lot, lead: '  VICKS   SINUS steam inhaler  ' } as any));
+  assert.notEqual(signature, visibleLotRetailSignature({ ...lot, lead: 'Vicks Personal Steam Inhaler' } as any));
+  assert.notEqual(signature, visibleLotRetailSignature({ ...lot, id: '193' } as any));
+  const evidence = {
+    expiresAt: 2_000,
+    identityKey: 'identity',
+    lotSignature: signature,
+    identity: extractProductIdentity(lot.lead),
+    result: { status: 'matched', query: lot.lead, match: null, candidates: [], fetchedAt: 1, cached: false, message: 'saved' },
+  } as any;
+  assert.equal(canReuseStoredLotIdentity(lot as any, evidence, 1_999), true);
+  assert.equal(canReuseStoredLotIdentity({ ...lot, lead: 'Changed product' } as any, evidence, 1_999), false);
+  assert.equal(canReuseStoredLotIdentity(lot as any, evidence, 2_000), false);
+});
+
+test('list and live-account rows paint saved evidence before hydration and defer uncached evidence', async () => {
   assert.equal(shouldRenderProvisionalDealAnnotations({ kind: 'lot' }), true);
-  for (const kind of ['catalog', 'livecatalog', 'search', 'watchlist', 'currentbids-winning', 'currentbids-outbid']) {
+  for (const kind of ['catalog', 'livecatalog', 'search', 'watchlist', 'currentbids', 'currentbids-winning', 'currentbids-outbid']) {
     assert.equal(shouldRenderProvisionalDealAnnotations({ kind } as any), false, kind);
   }
 
   const source = await readFile('src/content/deal-intelligence.ts', 'utf8');
-  assert.match(source, /if \(shouldRenderProvisionalDealAnnotations\(route\)\) applyTileAnnotation\(record, route\)/);
+  assert.match(source, /if \(shouldRenderProvisionalDealAnnotations\(route\) \|\| hasSavedEvidence\) applyTileAnnotation\(record, route\)/);
+  assert.match(source, /else reserveTileAnnotationSpace\(record\.lot\.id\)/);
+  const combinedStorage = source.indexOf('const initialStorage = await readInitialAnalysisStorage(lots, prefetchedStorage)');
+  const quickRestore = source.indexOf('localQuickRestored = this.restorePrefetchedLotEvidence(quickRecords, initialStorage.lotEvidence)');
+  const fastRestore = source.indexOf('localQuickRestored = this.restorePrefetchedLotEvidence(fastRecords, initialStorage.lotEvidence)');
+  const quickPaint = source.indexOf('fastRecords.forEach(paintQuickRecord)');
+  const backgroundRestore = source.indexOf('const backgroundRestore = await this.restoreCachedEvidence(quickRecords)');
+  const hydration = source.indexOf('const hydrated = await hydrateHibidLots');
+  assert.equal(quickRestore, -1);
+  assert.ok(combinedStorage > 0 && combinedStorage < fastRestore && fastRestore < quickPaint && quickPaint < backgroundRestore && backgroundRestore < hydration);
+  assert.match(source, /flippahFirstVisibleLotsAt/);
+  assert.match(source, /flippahLocalPricesPaintedAt/);
+  assert.match(source, /flippahLocalPricesPaintedCount/);
+  assert.match(source, /this\.initialStorageSnapshot = localGet\(null\)/);
+  assert.match(source, /restoreLocalCachedEvidence\(quickRecords, initialStorage\.raw\)/);
+  assert.match(source, /buildAnalysisRecords\(fastLots, stored, auctionPremiums, outcomes, settings, fastIdentities\)/);
+  assert.match(source, /if \(canReuseStoredLotIdentity\(lot, evidence\)\) fastIdentities\.set\(lot\.id, evidence\.identity\)/);
+  assert.match(source, /await new Promise<void>\(\(resolve\) => window\.setTimeout\(resolve, 0\)\)/);
+  assert.match(source, /lotSignature: visibleLotRetailSignature\(record\.lot\)/);
+  assert.match(source, /identity: copyProductIdentity\(record\.identity\)/);
   const preliminaryRestore = source.indexOf('await this.restoreCachedEvidence(preliminary)');
   const preliminaryPaint = source.indexOf('preliminary.forEach(repaint)');
   assert.ok(preliminaryRestore > 0 && preliminaryRestore < preliminaryPaint);
 });
 
+test('same-ID live tile replacement restores cached evidence and recalculates current all-in math', () => {
+  const dom = new JSDOM('<app-lot-tile id="lot-192"><div class="lot-lead-heading">Vicks Sinus Steam Inhaler</div><div class="lot-tile-content"></div><button>Bid 21.00 USD</button></app-lot-tile>', { url: 'https://hibid.com/account/watchlist' });
+  const previous = {
+    document: (globalThis as any).document,
+    CSS: (globalThis as any).CSS,
+    HTMLAnchorElement: (globalThis as any).HTMLAnchorElement,
+  };
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).CSS = { escape: (value: string) => value };
+  (globalThis as any).HTMLAnchorElement = dom.window.HTMLAnchorElement;
+  try {
+    const identity = extractProductIdentity('Vicks Sinus Steam Inhaler');
+    const allIn = calculateUsAllIn({ hammer: 21, buyerPremiumPct: 15, salesTaxPct: 0 });
+    const indicators = computeRetailIndicators(allIn, { amazon: 42.98, ebay: null });
+    const record: any = {
+      lot: { id: '192', status: 'OPEN', rawText: 'OPEN', nextBid: 21 },
+      identity,
+      condition: assessCondition('Condition: New'),
+      mixed: detectMixedLot('Vicks Sinus Steam Inhaler'),
+      allIn,
+      amazon: {
+        status: 'matched', query: identity.query, fetchedAt: 1, cached: true, message: 'cached', candidates: [],
+        match: { score: 100, candidate: { asin: 'B0TEST192', title: 'Vicks Sinus Steam Inhaler', price: 42.98, used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0TEST192' } },
+      },
+      amazonIndicator: indicators.amazon,
+      ebayIndicator: indicators.ebay,
+      state: { confirmedQuantity: 1, resaleEstimate: null, maxBid: null, amazonOverrideAsin: null },
+      currency: 'USD', needsQuantity: false, ebayNet: null, premiumPct: 15, outcome: null,
+    };
+    assert.equal(applyTileAnnotation(record, { kind: 'watchlist' } as any), true);
+    const firstStrip = dom.window.document.querySelector<HTMLElement>('[data-flippah-retail-for="192"]')!;
+    assert.match(firstStrip.textContent || '', /Amazon \$42\.98/);
+    assert.equal(firstStrip.dataset.flippahAmazonSource, 'cache');
+    assert.match(dom.window.document.querySelector('button')?.textContent || '', /All-in \$24\.15/);
+
+    const replacement = dom.window.document.createElement('app-lot-tile');
+    replacement.id = 'lot-192';
+    replacement.innerHTML = '<div class="lot-lead-heading">Vicks Sinus Steam Inhaler</div><div class="lot-tile-content"></div><button>Bid 25.00 USD</button>';
+    dom.window.document.querySelector('app-lot-tile')!.replaceWith(replacement);
+    record.allIn = calculateUsAllIn({ hammer: 25, buyerPremiumPct: 15, salesTaxPct: 0 });
+    record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: 42.98 }).amazon;
+    assert.equal(applyTileAnnotation(record, { kind: 'watchlist' } as any), true);
+    assert.equal(dom.window.document.querySelectorAll('[data-flippah-retail-for="192"]').length, 1);
+    const replacementStrip = replacement.querySelector<HTMLElement>('[data-flippah-retail-for="192"]')!;
+    assert.match(replacementStrip.textContent || '', /Amazon \$42\.98/);
+    assert.equal(replacementStrip.dataset.flippahAmazonSource, 'cache');
+    assert.match(replacement.querySelector('button')?.textContent || '', /All-in \$28\.75/);
+  } finally {
+    if (previous.document === undefined) delete (globalThis as any).document; else (globalThis as any).document = previous.document;
+    if (previous.CSS === undefined) delete (globalThis as any).CSS; else (globalThis as any).CSS = previous.CSS;
+    if (previous.HTMLAnchorElement === undefined) delete (globalThis as any).HTMLAnchorElement; else (globalThis as any).HTMLAnchorElement = previous.HTMLAnchorElement;
+  }
+});
+
 test('personalized watchlist exports use the account DOM and never extension-origin GraphQL', async () => {
   const content = await readFile('src/content/index.ts', 'utf8');
-  assert.match(content, /\['watchlist', 'currentbids-winning'/);
+  assert.match(content, /\['watchlist', 'currentbids', 'currentbids-winning'/);
   assert.match(content, /Watchlist changed during capture; refreshing snapshot/);
   assert.doesNotMatch(content, /abortableRuntime\('flippah:network\.account-watchlist'/);
 });
 
 test('retail transport returns normalized lookups and never exposes raw HTML or cache writes to content', async () => {
   const background = await readFile('src/background/index.ts', 'utf8');
+  const content = await readFile('src/content/deal-intelligence.ts', 'utf8');
   const policy = await readFile('src/intelligence/retail-policy.ts', 'utf8');
   assert.match(background, /flippah:retail\.lookup/);
   assert.match(background, /flippah:retail\.peek/);
   assert.match(background, /lookupAmazonCached/);
+  assert.match(background, /lookupAmazonCachedBatch/);
+  assert.match(background, /getRetailCacheMany/);
+  assert.match(background, /putRetailCacheMany/);
+  assert.match(background, /retailIdentityCacheKey\(identity, RETAIL_MATCHING_EPOCH\)/);
+  assert.match(background, /return lookupAmazonCachedBatch\(identities\.map/);
+  assert.doesNotMatch(background, /return Promise\.all\(identities\.map\(\(identity\) => lookupAmazonCached/);
+  const nowLookup = background.match(/async function lookupAmazonNow[\s\S]*?\n}\n\nasync function lookupAmazonCachedBatch/)?.[0] || '';
+  assert.ok(nowLookup.indexOf('getRetailCache<RetailLookupResult>(identityKey)') < nowLookup.indexOf('providerSnapshot(query)'));
+  assert.match(content, /restoreLocalCachedEvidence\(quickRecords, initialStorage\.raw\)/);
+  assert.match(content, /readInitialAnalysisStorage\(lots, prefetchedStorage\)/);
+  assert.match(content, /restorePrefetchedLotEvidence\(fastRecords, initialStorage\.lotEvidence\)/);
+  assert.match(content, /LOCAL_RETAIL_EVIDENCE_PREFIX/);
+  assert.match(content, /LOCAL_LOT_RETAIL_EVIDENCE_PREFIX/);
+  assert.match(content, /localRemove\(Object\.keys\(stored\)\.filter/);
   assert.doesNotMatch(background, /flippah:retail\.amazon-search|flippah:retail\.cache\.get|flippah:retail\.cache\.set/);
   assert.match(background, /fetch\(url\.href/);
   assert.match(background, /AMAZON_BODY_LIMIT/);
@@ -218,7 +342,9 @@ test('scraper keeps simple price-check controls below its export actions', async
   const popup = await readFile('src/popup/index.ts', 'utf8');
   const options = await readFile('src/options/index.ts', 'utf8');
   assert.match(popup, /Price research/);
-  assert.match(popup, /return 'Checking prices'/);
+  assert.match(popup, /return 'Restoring saved prices'/);
+  assert.match(popup, /return 'Reading auction lots'/);
+  assert.match(popup, /return 'Searching Amazon'/);
   assert.doesNotMatch(popup, /Amazon \$\{analysis\.amazonAnalyzed\}/);
   assert.doesNotMatch(popup, /eBay \$\{analysis\.ebayAnalyzed\}/);
   assert.match(popup, />Check again</);
@@ -228,6 +354,10 @@ test('scraper keeps simple price-check controls below its export actions', async
   assert.ok(popup.indexOf('id="copy-llm"') < popup.indexOf('${analysisHtml}'));
   assert.doesNotMatch(popup, /analysis-counts|Amazon matches|US Deal Intelligence/);
   assert.match(options, /Automatically research Amazon\.com on supported HiBid pages/);
+  assert.match(options, /Analysis goal/);
+  assert.match(options, /Home lab \/ personal electronics/);
+  assert.match(options, /Personal AI priorities/);
+  assert.match(options, /compatibility, condition, completeness, power, noise, security support/);
   assert.match(options, /Target profit per item \(\$\)/);
   assert.match(options, /Default buyer premium \(%\)/);
   assert.match(options, /Sold comps requested per lead/);

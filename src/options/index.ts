@@ -35,12 +35,25 @@ async function init(): Promise<void> {
     ['cash', 'Cash'],
     ['check', 'Check'],
   ].map(([value, label]) => `<option value="${value}" ${settings.auctionPaymentMethod === value ? 'selected' : ''}>${label}</option>`).join('');
+  const analysisModeOptions = [
+    ['resale', 'Resale / flipping'],
+    ['home-lab-electronics', 'Home lab / personal electronics'],
+  ].map(([value, label]) => `<option value="${value}" ${settings.aiAnalysisMode === value ? 'selected' : ''}>${label}</option>`).join('');
   const markup = `
     <header class="header">
       <div class="brand">Flippah by ALOS</div>
       <div class="subtitle">True cost, resale research, watchlist, and verified HiBid export settings.</div>
     </header>
     <form id="settings-form">
+      <section class="section">
+        <h2>AI brief</h2>
+        <p class="hint">Choose what Copy for AI should optimize for. This changes the analysis prompt without changing scraping, pricing research, or auction controls.</p>
+        <div class="grid">
+          <label>Analysis goal<select name="aiAnalysisMode">${analysisModeOptions}</select></label>
+        </div>
+        <label style="margin-top:14px">Personal AI priorities<textarea name="customInstructions" placeholder="Example: Prioritize quiet, low-power Proxmox hosts, 10GbE networking, rack depth under 20 inches, and equipment with available security updates.">${escapeHtml(settings.customInstructions)}</textarea></label>
+        <p class="hint">Home-lab mode evaluates electronics for compatibility, condition, completeness, power, noise, security support, and personal-use value instead of flip profit.</p>
+      </section>
       <section class="section">
         <h2>Purchase costs</h2>
         <p class="hint">These values are inserted into every copied AI brief. Auction-specific terms take priority over fallbacks.</p>
@@ -60,7 +73,7 @@ async function init(): Promise<void> {
         <p><label class="check"><input name="taxExempt" type="checkbox" ${settings.taxExempt ? 'checked' : ''}>My auction purchases are tax exempt</label></p>
       </section>
       <section class="section">
-        <h2>AI resale brief</h2>
+        <h2>Resale planning</h2>
         <p class="hint">Flippah gives the AI your economics and a Sold/Completed search link for every lot. Saved lot query corrections, quantities, resale hypotheses, maximum bids, and auction premium corrections are included automatically with their source. The AI must verify visible sold evidence before assigning resale value.</p>
         <div class="grid">
           <label>Pickup origin / city<input name="originLabel" value="${escapeHtml(settings.originLabel)}" placeholder="Example: Carteret, NJ"></label>
@@ -73,7 +86,6 @@ async function init(): Promise<void> {
           <label>Preferred resale channels<input name="resaleChannels" value="${escapeHtml(settings.resaleChannels)}" placeholder="eBay, local pickup, Facebook Marketplace"></label>
           <label>Vehicle / pickup capability<input name="transportDescription" value="${escapeHtml(settings.transportDescription)}" placeholder="Vehicle size, trailer, lifting help, stairs limits"></label>
         </div>
-        <label style="margin-top:14px">Additional AI instructions<textarea name="customInstructions" placeholder="Categories, brands, risk limits, or other personal rules">${escapeHtml(settings.customInstructions)}</textarea></label>
       </section>
       <section class="section">
         <h2>US deal intelligence</h2>
@@ -110,6 +122,7 @@ async function init(): Promise<void> {
     const checkbox = (name: string) => Boolean(document.querySelector<HTMLInputElement>(`[name="${name}"]`)?.checked);
     const number = (name: string) => { const value = String(form.get(name) || '').trim(); return value ? Number(value) : null; };
     const next = normalizeSettings({
+      aiAnalysisMode: String(form.get('aiAnalysisMode') || ''),
       stateCode: String(form.get('stateCode') || '') || null,
       taxPctOverride: number('taxPctOverride'), taxOnPremium: checkbox('taxOnPremium'), taxExempt: checkbox('taxExempt'),
       defaultBuyerPremiumPct: number('defaultBuyerPremiumPct'), auctionPaymentMethod: String(form.get('auctionPaymentMethod') || ''),

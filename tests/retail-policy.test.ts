@@ -15,7 +15,7 @@ test('retail cache keys are provider, country, epoch, and identity aware', () =>
   const identity = extractProductIdentity('Onkyo TX-SR304 Multi-Channel AV Receiver');
   assert.match(retailIdentityCacheKey(identity, 4), /^amazon-us:4:/);
   assert.notEqual(retailIdentityCacheKey(identity, 4), retailIdentityCacheKey(identity, 5));
-  assert.equal(retailProviderCacheKey('  Sony   PS5 Console '), 'amazon-us:provider-v13:sony ps5 console');
+  assert.equal(retailProviderCacheKey('  Sony   PS5 Console '), 'amazon-us:provider-v16:sony ps5 console');
   assert.equal(retailProviderCacheKey(identity.query), retailProviderCacheKey(identity.query));
 });
 

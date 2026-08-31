@@ -1,4 +1,5 @@
 import { getSyncStorage, runtimeMessage } from '../core/browser.js';
+import { RETAIL_MATCHING_EPOCH } from '../core/retail-db.js';
 import { effectiveTaxPct, normalizeSettings, type FlippahSettings } from '../core/settings.js';
 import { calculateDealOutcome, normalizeDealOutcome, outcomeStorageKey, type DealOutcome, type OutcomeChannel } from '../core/outcomes.js';
 import { routeFingerprint } from '../core/route.js';
@@ -6,6 +7,7 @@ import type { DealAnalysisSummary, HiBidLotRecord, HiBidRoute, HiBidTransport } 
 import { hydrateHibidLots, mergeHibidVisibleWithHydrated } from '../hibid/api.js';
 import { extractHiBidVisibleLots, extractHibidLotDetail, extractHibidTileEventItemId } from '../hibid/dom.js';
 import { runProviderQueue } from '../intelligence/provider-queue.js';
+import { retailCacheTtl, retailIdentityCacheKey } from '../intelligence/retail-policy.js';
 import {
   auctionStateKey,
   lotStateKey as stateKey,
@@ -23,9 +25,9 @@ import {
 const STYLE_ID = 'flippah-deal-intelligence-style';
 const LOT_TILE_SELECTOR = 'app-lot-tile[id^="lot-"], [data-event-item-id], .bid-status-border[id^="lot-"]';
 const FLIPPAH_OWNED_SELECTOR = '[data-flippah-owned="true"]';
-const SUPPORTED = new Set(['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid']);
+const SUPPORTED = new Set(['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids', 'currentbids-winning', 'currentbids-outbid']);
 
-interface RetailLookupResult {
+export interface RetailLookupResult {
   status: 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'parse_error' | 'low_confidence';
   query: string;
   match: AmazonCandidateMatch | null;
@@ -60,7 +62,76 @@ interface RetainedRetailEvidence {
   result: RetailLookupResult;
 }
 
+export interface StoredRetailEvidence {
+  expiresAt: number;
+  result: RetailLookupResult;
+}
+
+export interface StoredLotRetailEvidence extends StoredRetailEvidence {
+  identityKey: string;
+  lotSignature?: string;
+  identity?: ProductIdentity;
+}
+
 const REUSABLE_RETAIL_STATUSES = new Set<RetailLookupResult['status']>(['matched', 'no_match', 'low_confidence']);
+export const LOCAL_RETAIL_EVIDENCE_PREFIX = 'flippah:retail-evidence:';
+export const LOCAL_LOT_RETAIL_EVIDENCE_PREFIX = 'flippah:lot-retail-evidence:';
+
+export function localRetailEvidenceStorageKey(identity: ProductIdentity): string {
+  return `${LOCAL_RETAIL_EVIDENCE_PREFIX}${retailIdentityCacheKey(identity, RETAIL_MATCHING_EPOCH)}`;
+}
+
+export function localLotRetailEvidenceStorageKey(lotId: string): string {
+  return `${LOCAL_LOT_RETAIL_EVIDENCE_PREFIX}${lotId}`;
+}
+
+export function visibleLotRetailSignature(lot: Pick<HiBidLotRecord, 'id' | 'lead' | 'title'>): string {
+  const clean = (value: unknown) => String(value || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US');
+  const productTitle = buildProductResearchQuery(lot.lead || lot.title) || clean(lot.lead || lot.title);
+  return [lot.id, productTitle].map(clean).join('\u001f');
+}
+
+export function isFreshStoredRetailEvidence(value: unknown, now = Date.now()): value is StoredRetailEvidence {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Partial<StoredRetailEvidence>;
+  return Number.isFinite(entry.expiresAt)
+    && Number(entry.expiresAt) > now
+    && Boolean(entry.result && REUSABLE_RETAIL_STATUSES.has(entry.result.status));
+}
+
+export function canReuseStoredLotIdentity(
+  lot: Pick<HiBidLotRecord, 'id' | 'lead' | 'title'>,
+  evidence: StoredLotRetailEvidence | null | undefined,
+  now = Date.now(),
+): evidence is StoredLotRetailEvidence & { identity: ProductIdentity; lotSignature: string } {
+  return Boolean(evidence?.identity
+    && evidence.lotSignature === visibleLotRetailSignature(lot)
+    && isFreshStoredRetailEvidence(evidence, now));
+}
+
+function copyRetailLookupResult(result: RetailLookupResult, cached = result.cached): RetailLookupResult {
+  return {
+    ...result,
+    cached,
+    candidates: result.candidates.map((candidate) => ({ ...candidate })),
+    match: result.match ? { ...result.match, candidate: { ...result.match.candidate } } : null,
+    candidateAudit: result.candidateAudit?.map((entry) => ({
+      ...entry,
+      rejectionReasons: [...entry.rejectionReasons],
+      matchedEvidence: [...entry.matchedEvidence],
+    })),
+  };
+}
+
+function copyProductIdentity(identity: ProductIdentity): ProductIdentity {
+  return {
+    ...identity,
+    capacities: [...identity.capacities],
+    tokens: [...identity.tokens],
+    discriminators: Object.fromEntries(Object.entries(identity.discriminators)
+      .map(([key, values]) => [key, [...values]])) as unknown as ProductIdentity['discriminators'],
+  };
+}
 
 export function shouldRenderProvisionalDealAnnotations(route: Pick<HiBidRoute, 'kind'>): boolean {
   // List and account pages are hydrated immediately after the DOM pass. Painting
@@ -88,7 +159,7 @@ function emptySummary(): DealAnalysisSummary {
   };
 }
 
-function localGet(keys: string | string[]): Promise<Record<string, any>> {
+function localGet(keys: string | string[] | null): Promise<Record<string, any>> {
   return new Promise((resolve, reject) => chrome.storage.local.get(keys, (value) => {
     const error = chrome.runtime.lastError;
     if (error) reject(new Error(error.message)); else resolve(value);
@@ -102,16 +173,11 @@ function localSet(value: Record<string, unknown>): Promise<void> {
   }));
 }
 
-async function readStoredLots(ids: string[]): Promise<Map<string, StoredLotState>> {
-  const keys = ids.map(stateKey);
-  const raw = keys.length ? await localGet([...keys, 'watchlist']) : {};
-  const watchlist = raw.watchlist && typeof raw.watchlist === 'object' ? raw.watchlist : {};
-  return new Map(ids.map((id) => {
-    const stored = normalizeStored(raw[stateKey(id)]);
-    const watched = watchlist[id];
-    if (stored.resaleEstimate === null && Number.isFinite(Number(watched?.resaleCents))) stored.resaleEstimate = Number(watched.resaleCents) / 100;
-    if (stored.maxBid === null && Number.isFinite(Number(watched?.maxBidCents))) stored.maxBid = Number(watched.maxBidCents) / 100;
-    return [id, stored];
+function localRemove(keys: string[]): Promise<void> {
+  if (!keys.length) return Promise.resolve();
+  return new Promise((resolve, reject) => chrome.storage.local.remove(keys, () => {
+    const error = chrome.runtime.lastError;
+    if (error) reject(new Error(error.message)); else resolve();
   }));
 }
 
@@ -121,12 +187,6 @@ async function saveStoredLot(id: string, patch: Partial<StoredLotState>): Promis
   const next = { ...current, ...patch, updatedAt: Date.now() };
   await localSet({ [key]: next });
   return next;
-}
-
-async function readStoredOutcomes(ids: string[]): Promise<Map<string, DealOutcome | null>> {
-  const keys = ids.map(outcomeStorageKey);
-  const raw = keys.length ? await localGet(keys) : {};
-  return new Map(ids.map((id) => [id, normalizeDealOutcome(raw[outcomeStorageKey(id)])]));
 }
 
 async function saveStoredOutcome(outcome: DealOutcome): Promise<void> {
@@ -147,6 +207,48 @@ async function readAuctionPremiums(ids: string[]): Promise<Map<string, number>> 
     const value = Number(raw[auctionStateKey(id)]?.premiumPct);
     return Number.isFinite(value) && value >= 0 && value <= 30 ? [[id, value] as const] : [];
   }));
+}
+
+interface InitialAnalysisStorage {
+  storedLots: Map<string, StoredLotState>;
+  outcomes: Map<string, DealOutcome | null>;
+  auctionPremiums: Map<string, number>;
+  lotEvidence: Map<string, StoredLotRetailEvidence>;
+  raw: Record<string, any>;
+}
+
+async function readInitialAnalysisStorage(
+  lots: HiBidLotRecord[],
+  prefetchedRaw?: Record<string, any>,
+): Promise<InitialAnalysisStorage> {
+  const ids = [...new Set(lots.map((lot) => lot.id).filter(Boolean))];
+  const auctionIds = [...new Set(lots.map((lot) => lot.auctionId).filter(Boolean))];
+  const keys = [
+    ...ids.map(stateKey),
+    ...ids.map(outcomeStorageKey),
+    ...ids.map(localLotRetailEvidenceStorageKey),
+    ...auctionIds.map(auctionStateKey),
+    'watchlist',
+  ];
+  const raw = prefetchedRaw ?? (keys.length ? await localGet(keys) : {});
+  const watchlist = raw.watchlist && typeof raw.watchlist === 'object' ? raw.watchlist : {};
+  const storedLots = new Map(ids.map((id) => {
+    const stored = normalizeStored(raw[stateKey(id)]);
+    const watched = watchlist[id];
+    if (stored.resaleEstimate === null && Number.isFinite(Number(watched?.resaleCents))) stored.resaleEstimate = Number(watched.resaleCents) / 100;
+    if (stored.maxBid === null && Number.isFinite(Number(watched?.maxBidCents))) stored.maxBid = Number(watched.maxBidCents) / 100;
+    return [id, stored] as const;
+  }));
+  const outcomes = new Map(ids.map((id) => [id, normalizeDealOutcome(raw[outcomeStorageKey(id)])] as const));
+  const auctionPremiums = new Map(auctionIds.flatMap((id) => {
+    const value = Number(raw[auctionStateKey(id)]?.premiumPct);
+    return Number.isFinite(value) && value >= 0 && value <= 30 ? [[id, value] as const] : [];
+  }));
+  const lotEvidence = new Map(ids.flatMap((id) => {
+    const value = raw[localLotRetailEvidenceStorageKey(id)];
+    return value && typeof value === 'object' ? [[id, value as StoredLotRetailEvidence] as const] : [];
+  }));
+  return { storedLots, outcomes, auctionPremiums, lotEvidence, raw };
 }
 
 async function saveAuctionPremium(id: string, premiumPct: number): Promise<void> {
@@ -295,16 +397,16 @@ export function reserveTileAnnotationSpace(id: string): boolean {
   if (strip.dataset.flippahRenderSignature) return true;
   strip.dataset.flippahRenderSignature = 'pending';
   strip.setAttribute('aria-busy', 'true');
-  strip.setAttribute('aria-label', 'Checking product prices');
+  strip.setAttribute('aria-label', 'Restoring saved product prices');
   const loading = document.createElement('span'); loading.className = 'flippah-deal-loading';
   const spinner = document.createElement('span'); spinner.className = 'flippah-deal-loading-spinner'; spinner.setAttribute('aria-hidden', 'true');
-  const label = document.createElement('span'); label.textContent = 'Checking prices';
+  const label = document.createElement('span'); label.textContent = 'Restoring prices';
   loading.append(spinner, label);
   strip.replaceChildren(loading);
   return true;
 }
 
-function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean {
+export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean {
   const target = ensureTileAnnotationStrip(record.lot.id);
   if (!target) return false;
   const { tile, strip } = target;
@@ -326,7 +428,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean
       : record.needsQuantity
         ? 'Amazon: qty review'
         : amazonPrice !== null
-          ? `Amazon ${formatUsd(amazonPrice)}`
+          ? `Amazon ${formatUsd(amazonPrice)}${record.amazon?.match?.candidate.used ? ' used' : ''}${record.amazon?.match?.referenceKind === 'equivalent' ? ' equiv' : ''}`
           : 'Amazon';
   const ebayLabel = ebayPrice === null ? 'eBay' : `eBay ${formatUsd(ebayPrice)}${record.state.resaleEstimate !== null ? ' saved' : ''}`;
   const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-')) && record.allIn
@@ -346,6 +448,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean
     record.allIn?.total ?? null,
     verdict?.kind || '',
   ]);
+  strip.dataset.flippahAmazonSource = record.amazon ? (record.amazon.cached ? 'cache' : 'network') : 'none';
   if (strip.dataset.flippahRenderSignature === renderSignature) return true;
   strip.dataset.flippahRenderSignature = renderSignature;
   strip.removeAttribute('aria-busy');
@@ -377,7 +480,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean
     const retailTitle = amazonSpecialTitle || (amazonPrice !== null
       ? buildRetailIndicatorTooltip({
           providerName: 'Amazon', indicator: record.amazonIndicator, allIn: record.allIn?.total,
-          marketPrice: amazonPrice, evidenceSource: record.amazon?.match?.candidate.title || 'verified Amazon.com match'
+          marketPrice: amazonPrice, evidenceSource: `${record.amazon?.match?.candidate.title || 'verified Amazon.com match'}${record.amazon?.match?.candidate.used ? ' (used/renewed fallback)' : ''}${record.amazon?.match?.referenceKind === 'equivalent' ? (record.identity.kind === 'graphics-card' ? ' (same GPU model; different board partner)' : ' (near-equivalent model reference)') : ''}`
         })
       : 'Amazon comparison needs manual review.');
     add(amazonLabel, record.amazonIndicator.cls, retailTitle, links.amazon);
@@ -503,7 +606,7 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
         ? reviewValue('Qty review', 'Confirm how many complete units are included before using a retail comparison.')
         : amazonPrice === null
           ? searchValue('amazon')
-          : pricedValue('Amazon', amazonPrice, record.amazonIndicator, record.amazon?.match?.candidate.title || 'verified Amazon.com match');
+          : pricedValue('Amazon', amazonPrice, record.amazonIndicator, `${record.amazon?.match?.candidate.title || 'verified Amazon.com match'}${record.amazon?.match?.candidate.used ? ' (used/renewed fallback)' : ''}${record.amazon?.match?.referenceKind === 'equivalent' ? ' (same GPU model; different board partner)' : ''}`);
   retail.append(element('span', '', `Amazon.com${record.state.confirmedQuantity && record.state.confirmedQuantity > 1 ? ` x${record.state.confirmedQuantity}` : ''}`), amazonValue);
   section.append(retail);
   const ebayRetail = element('div', 'flippah-retail-row');
@@ -624,15 +727,19 @@ function buildAnalysisRecords(
   stored: Map<string, StoredLotState>,
   auctionPremiums: Map<string, number>,
   outcomes: Map<string, DealOutcome | null>,
-  settings: FlippahSettings
+  settings: FlippahSettings,
+  prefetchedIdentities?: Map<string, ProductIdentity>,
 ): AnalysisRecord[] {
   const taxPct = effectiveTaxPct(settings);
   return lots.map((lot) => {
     const state = stored.get(lot.id) || normalizeStored(null);
-    const identity = extractProductIdentity({
-      title: lot.lead || lot.title,
-      description: lot.description,
-    });
+    const savedIdentity = prefetchedIdentities?.get(lot.id);
+    const identity = savedIdentity
+      ? copyProductIdentity(savedIdentity)
+      : extractProductIdentity({
+          title: lot.lead || lot.title,
+          description: lot.description,
+        });
     if (state.queryOverride) {
       const normalizedOverride = buildProductResearchQuery(state.queryOverride);
       if (normalizedOverride) {
@@ -679,6 +786,7 @@ export class DealIntelligenceController {
   private records = new Map<string, AnalysisRecord>();
   private retailEvidence = new Map<string, RetainedRetailEvidence>();
   private visibleLotSignature = '';
+  private initialStorageSnapshot: Promise<Record<string, any> | null> | null = null;
 
   constructor(
     private readonly getRoute: () => HiBidRoute,
@@ -688,7 +796,10 @@ export class DealIntelligenceController {
 
   summary(): DealAnalysisSummary { return { ...this.summaryValue }; }
 
-  start(): void { this.schedule(250); }
+  start(): void {
+    this.initialStorageSnapshot = localGet(null).catch(() => null);
+    this.schedule(250);
+  }
 
   handleMutations(mutations: MutationRecord[]): void {
     const route = this.getRoute();
@@ -734,7 +845,13 @@ export class DealIntelligenceController {
   }
 
   async clearCache(): Promise<void> {
-    await runtimeMessage('flippah:retail.cache.clear', {}); this.records.clear(); this.retailEvidence.clear(); void this.run();
+    const stored = await localGet(null);
+    await Promise.all([
+      runtimeMessage('flippah:retail.cache.clear', {}),
+      localRemove(Object.keys(stored).filter((key) => key.startsWith(LOCAL_RETAIL_EVIDENCE_PREFIX)
+        || key.startsWith(LOCAL_LOT_RETAIL_EVIDENCE_PREFIX))),
+    ]);
+    this.records.clear(); this.retailEvidence.clear(); void this.run();
   }
 
   async rerun(): Promise<void> { this.records.clear(); this.retailEvidence.clear(); void this.run(); }
@@ -761,35 +878,116 @@ export class DealIntelligenceController {
     return record;
   }
 
-  private async restoreCachedEvidence(records: AnalysisRecord[]): Promise<void> {
+  private applyRestoredEvidence(record: AnalysisRecord, incoming: RetailLookupResult): boolean {
+    if (!REUSABLE_RETAIL_STATUSES.has(incoming.status)) return false;
+    const result = copyRetailLookupResult(incoming, true);
+    if (record.state.amazonOverrideAsin) {
+      const candidate = result.candidates.find((item) => item.asin === record.state.amazonOverrideAsin);
+      if (candidate) {
+        result.match = { candidate, score: 100 };
+        result.status = 'matched';
+        result.message = `Manual Amazon match: ${candidate.title}`;
+      }
+    }
+    this.retailEvidence.set(record.lot.id, {
+      query: record.identity.query,
+      amazonOverrideAsin: String(record.state.amazonOverrideAsin || ''),
+      result,
+    });
+    record.amazon = result;
+    record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: amazonMarketValue(record) }).amazon;
+    return true;
+  }
+
+  private async persistLocalEvidence(entries: Array<{ record: AnalysisRecord; result: RetailLookupResult }>): Promise<void> {
+    const values: Record<string, StoredRetailEvidence | StoredLotRetailEvidence> = {};
+    const now = Date.now();
+    entries.forEach(({ record, result }) => {
+      if (!REUSABLE_RETAIL_STATUSES.has(result.status)) return;
+      const ttl = retailCacheTtl(result.status === 'matched' || result.status === 'low_confidence' ? 'matched' : 'no_results');
+      const identityKey = localRetailEvidenceStorageKey(record.identity);
+      const stored: StoredRetailEvidence = {
+        expiresAt: now + ttl,
+        result: copyRetailLookupResult(result, false),
+      };
+      values[identityKey] = stored;
+      values[localLotRetailEvidenceStorageKey(record.lot.id)] = {
+        ...stored,
+        identityKey,
+        lotSignature: visibleLotRetailSignature(record.lot),
+        identity: copyProductIdentity(record.identity),
+      };
+    });
+    if (Object.keys(values).length) await localSet(values);
+  }
+
+  private restorePrefetchedLotEvidence(records: AnalysisRecord[], stored: Map<string, StoredLotRetailEvidence>): number {
+    let restored = 0;
+    records.forEach((record) => {
+      const entry = stored.get(record.lot.id);
+      if (!entry
+        || !entry.identity
+        || entry.identity.query !== record.identity.query
+        || !isFreshStoredRetailEvidence(entry)) return;
+      if (this.applyRestoredEvidence(record, entry.result)) restored += 1;
+    });
+    return restored;
+  }
+
+  private async restoreLocalCachedEvidence(
+    records: AnalysisRecord[],
+    prefetchedRaw?: Record<string, any>,
+  ): Promise<number> {
     const pending = records.filter((record) => record.currency !== 'CAD'
       && !record.mixed.mixed
       && !record.needsQuantity
       && Boolean(record.identity.query)
       && !canReuseRetailEvidence(this.retailEvidence.get(record.lot.id), record.identity.query, record.state.amazonOverrideAsin));
-    if (!pending.length) return;
+    if (!pending.length) return 0;
+    const keys = pending.map((record) => localRetailEvidenceStorageKey(record.identity));
+    const stored = prefetchedRaw ?? await localGet(keys);
+    const expired: string[] = [];
+    const migrated: Array<{ record: AnalysisRecord; result: RetailLookupResult }> = [];
+    let restored = 0;
+    pending.forEach((record, index) => {
+      const key = keys[index]!;
+      const entry = stored[key];
+      if (!isFreshStoredRetailEvidence(entry)) {
+        if (entry) expired.push(key);
+        return;
+      }
+      if (this.applyRestoredEvidence(record, entry.result)) {
+        migrated.push({ record, result: entry.result });
+        restored += 1;
+      }
+    });
+    void localRemove(expired).catch(() => undefined);
+    void this.persistLocalEvidence(migrated).catch(() => undefined);
+    return restored;
+  }
+
+  private async restoreCachedEvidence(records: AnalysisRecord[]): Promise<{ requested: number; restored: number }> {
+    const pending = records.filter((record) => record.currency !== 'CAD'
+      && !record.mixed.mixed
+      && !record.needsQuantity
+      && Boolean(record.identity.query)
+      && !canReuseRetailEvidence(this.retailEvidence.get(record.lot.id), record.identity.query, record.state.amazonOverrideAsin));
+    if (!pending.length) return { requested: 0, restored: 0 };
     const cached = await runtimeMessage<Array<RetailLookupResult | null>>('flippah:retail.peek', {
       identities: pending.map((record) => record.identity),
     });
+    let restored = 0;
+    const localEntries: Array<{ record: AnalysisRecord; result: RetailLookupResult }> = [];
     pending.forEach((record, index) => {
       const result = cached[index];
       if (!result || !REUSABLE_RETAIL_STATUSES.has(result.status)) return;
-      if (record.state.amazonOverrideAsin) {
-        const candidate = result.candidates.find((item) => item.asin === record.state.amazonOverrideAsin);
-        if (candidate) {
-          result.match = { candidate, score: 100 };
-          result.status = 'matched';
-          result.message = `Manual Amazon match: ${candidate.title}`;
-        }
+      if (this.applyRestoredEvidence(record, result)) {
+        localEntries.push({ record, result });
+        restored += 1;
       }
-      this.retailEvidence.set(record.lot.id, {
-        query: record.identity.query,
-        amazonOverrideAsin: String(record.state.amazonOverrideAsin || ''),
-        result,
-      });
-      record.amazon = result;
-      record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: amazonMarketValue(record) }).amazon;
     });
+    void this.persistLocalEvidence(localEntries).catch(() => undefined);
+    return { requested: pending.length, restored };
   }
 
   private schedule(delay: number): void {
@@ -828,27 +1026,112 @@ export class DealIntelligenceController {
     try {
       const settings = normalizeSettings(await getSyncStorage());
       let lots = route.kind === 'lot' ? [extractHibidLotDetail(document, location.href)].filter((item): item is HiBidLotRecord => Boolean(item)) : extractHiBidVisibleLots(document, route, location.href);
+      if (lots.length && !document.documentElement.dataset.flippahFirstVisibleLotsAt) {
+        document.documentElement.dataset.flippahFirstVisibleLotsAt = performance.now().toFixed(1);
+      }
       this.visibleLotSignature = lots.map((lot) => lot.id).filter(Boolean).sort().join('|');
-      const stored = await readStoredLots(lots.map((lot) => lot.id));
-      const outcomes = await readStoredOutcomes(lots.map((lot) => lot.id));
-      let auctionPremiums = await readAuctionPremiums(lots.map((lot) => lot.auctionId));
-      const quickRecords = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings)
-        .map((record) => this.retainKnownEvidence(record, previousRecords.get(record.lot.id)));
-      if (settings.amazonAutoLookup) await this.restoreCachedEvidence(quickRecords);
-      if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
-      this.records = new Map(quickRecords.map((record) => [record.lot.id, record]));
-      quickRecords.forEach((record) => {
-        if (shouldRenderProvisionalDealAnnotations(route)) applyTileAnnotation(record, route);
+      const initialStorageStartedAt = performance.now();
+      let prefetchedStorage: Record<string, any> | undefined;
+      if (lots.length && this.initialStorageSnapshot) {
+        prefetchedStorage = (await this.initialStorageSnapshot) || undefined;
+        this.initialStorageSnapshot = null;
+      }
+      const initialStorage = await readInitialAnalysisStorage(lots, prefetchedStorage);
+      document.documentElement.dataset.flippahInitialStorageMs = (performance.now() - initialStorageStartedAt).toFixed(1);
+      const stored = initialStorage.storedLots;
+      const outcomes = initialStorage.outcomes;
+      let auctionPremiums = initialStorage.auctionPremiums;
+      let quickRestore = { requested: 0, restored: 0 };
+      let localQuickRestored = 0;
+      if (settings.amazonAutoLookup) {
+        this.update({
+          phase: 'restoring',
+          total: lots.length,
+          analyzed: 0,
+          amazonAnalyzed: 0,
+          message: 'Restoring saved prices',
+        });
+      }
+      const paintQuickRecord = (record: AnalysisRecord) => {
+        const hasSavedEvidence = canReuseRetailEvidence(
+          this.retailEvidence.get(record.lot.id),
+          record.identity.query,
+          record.state.amazonOverrideAsin,
+        );
+        if (shouldRenderProvisionalDealAnnotations(route) || hasSavedEvidence) applyTileAnnotation(record, route);
+        else reserveTileAnnotationSpace(record.lot.id);
         if (route.kind === 'lot') {
           const rerun = () => this.schedule(0);
           if (!renderLotPanel(record, rerun)) window.setTimeout(() => renderLotPanel(record, rerun), 500);
         }
+      };
+      const fastIdentities = new Map<string, ProductIdentity>();
+      if (settings.amazonAutoLookup) {
+        lots.forEach((lot) => {
+          const evidence = initialStorage.lotEvidence.get(lot.id);
+          if (canReuseStoredLotIdentity(lot, evidence)) fastIdentities.set(lot.id, evidence.identity);
+        });
+      }
+      const fastLotIds = new Set(fastIdentities.keys());
+      const fastLots = lots.filter((lot) => fastLotIds.has(lot.id));
+      const remainingLots = lots.filter((lot) => !fastLotIds.has(lot.id));
+      const quickBuildStartedAt = performance.now();
+      const fastBuildStartedAt = performance.now();
+      const fastRecords = buildAnalysisRecords(fastLots, stored, auctionPremiums, outcomes, settings, fastIdentities)
+        .map((record) => this.retainKnownEvidence(record, previousRecords.get(record.lot.id)));
+      document.documentElement.dataset.flippahFastBuildMs = (performance.now() - fastBuildStartedAt).toFixed(1);
+      if (settings.amazonAutoLookup) {
+        localQuickRestored = this.restorePrefetchedLotEvidence(fastRecords, initialStorage.lotEvidence);
+        quickRestore.restored = localQuickRestored;
+      }
+      if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
+      this.records = new Map(fastRecords.map((record) => [record.lot.id, record]));
+      fastRecords.forEach(paintQuickRecord);
+      if (localQuickRestored > 0 && !document.documentElement.dataset.flippahLocalPricesPaintedAt) {
+        document.documentElement.dataset.flippahLocalPricesPaintedAt = performance.now().toFixed(1);
+        document.documentElement.dataset.flippahLocalPricesPaintedCount = String(localQuickRestored);
+      }
+      if (localQuickRestored > 0 && remainingLots.length) await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
+      const remainingRecords = buildAnalysisRecords(remainingLots, stored, auctionPremiums, outcomes, settings)
+        .map((record) => this.retainKnownEvidence(record, previousRecords.get(record.lot.id)));
+      const byId = new Map([...fastRecords, ...remainingRecords].map((record) => [record.lot.id, record]));
+      const quickRecords = lots.flatMap((lot) => {
+        const record = byId.get(lot.id);
+        return record ? [record] : [];
       });
+      document.documentElement.dataset.flippahQuickBuildMs = (performance.now() - quickBuildStartedAt).toFixed(1);
+      this.records = new Map(quickRecords.map((record) => [record.lot.id, record]));
+      remainingRecords.forEach(paintQuickRecord);
+      if (settings.amazonAutoLookup) {
+        const identityRestore = await this.restoreLocalCachedEvidence(quickRecords, initialStorage.raw);
+        quickRestore.restored += identityRestore;
+        if (identityRestore) {
+          quickRecords.forEach(paintQuickRecord);
+          if (!document.documentElement.dataset.flippahLocalPricesPaintedAt) {
+            document.documentElement.dataset.flippahLocalPricesPaintedAt = performance.now().toFixed(1);
+            document.documentElement.dataset.flippahLocalPricesPaintedCount = String(identityRestore);
+          }
+        }
+        const backgroundRestore = await this.restoreCachedEvidence(quickRecords);
+        quickRestore = {
+          requested: backgroundRestore.requested,
+          restored: quickRestore.restored + backgroundRestore.restored,
+        };
+        if (backgroundRestore.restored) quickRecords.forEach(paintQuickRecord);
+      }
+      if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
       this.update({
+        phase: 'scanning',
         total: quickRecords.length,
+        analyzed: quickRestore.restored,
+        amazonAnalyzed: quickRestore.restored,
+        retailMatched: quickRecords.filter((record) => amazonMarketValue(record) !== null).length,
         mixedLots: quickRecords.filter((item) => item.mixed.mixed).length,
         quantityReview: quickRecords.filter((item) => item.needsQuantity).length,
-        message: quickRecords.length ? `Calculated all-in for ${quickRecords.length} visible lot${quickRecords.length === 1 ? '' : 's'}` : 'No visible lots to analyze'
+        message: quickRecords.length
+          ? `${quickRestore.restored} saved price${quickRestore.restored === 1 ? '' : 's'} restored; reading complete lot details`
+          : 'No visible lots to analyze'
       });
       if (lots.length) {
         try {
@@ -869,7 +1152,22 @@ export class DealIntelligenceController {
       const preliminary = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings)
         .map((record) => this.retainKnownEvidence(record, quickById.get(record.lot.id)));
       const stillCurrent = () => generation === this.generation && fingerprint === routeFingerprint(this.getRoute(), location.href);
-      if (settings.amazonAutoLookup) await this.restoreCachedEvidence(preliminary);
+      if (settings.amazonAutoLookup) {
+        await this.restoreLocalCachedEvidence(preliminary);
+        const pendingRestore = preliminary.filter((record) => record.currency !== 'CAD'
+          && !record.mixed.mixed
+          && !record.needsQuantity
+          && Boolean(record.identity.query)
+          && !canReuseRetailEvidence(this.retailEvidence.get(record.lot.id), record.identity.query, record.state.amazonOverrideAsin));
+        if (pendingRestore.length) {
+          this.update({
+            phase: 'restoring',
+            total: preliminary.length,
+            message: `Restoring saved prices for ${pendingRestore.length} updated lot${pendingRestore.length === 1 ? '' : 's'}`,
+          });
+          await this.restoreCachedEvidence(preliminary);
+        }
+      }
       if (!stillCurrent()) return;
       this.records = new Map(preliminary.map((record) => [record.lot.id, record]));
       const repaint = (record: AnalysisRecord) => {
@@ -886,6 +1184,7 @@ export class DealIntelligenceController {
       const skipped = preliminary.length - researchable.length;
       let amazonAnalyzed = settings.amazonAutoLookup ? skipped + retained : preliminary.length;
       const amazonMatchedIds = new Set(preliminary.filter((record) => amazonMarketValue(record) !== null && record.amazon?.status === 'matched').map((record) => record.lot.id));
+      const needsNetworkResearch = settings.amazonAutoLookup && eligible.length > 0;
       const updateProgress = () => {
         this.update({
           analyzed: amazonAnalyzed,
@@ -899,16 +1198,21 @@ export class DealIntelligenceController {
       this.update({
         total: preliminary.length,
         analyzed: amazonAnalyzed,
-        retailMatched: 0,
-        retailUnmatched: preliminary.length,
+        retailMatched: amazonMatchedIds.size,
+        retailUnmatched: Math.max(0, preliminary.length - amazonMatchedIds.size),
         amazonAnalyzed,
         amazonMatched: 0,
         mixedLots: preliminary.filter((item) => item.mixed.mixed).length,
         quantityReview: preliminary.filter((item) => item.needsQuantity).length,
-        phase: settings.amazonAutoLookup ? 'retail' : 'complete',
-        message: settings.amazonAutoLookup ? 'Starting paced Amazon checks' : 'Automatic price checks are off',
+        phase: needsNetworkResearch ? 'retail' : 'complete',
+        message: needsNetworkResearch
+          ? `Searching Amazon for ${eligible.length} uncached lot${eligible.length === 1 ? '' : 's'}`
+          : settings.amazonAutoLookup
+            ? `${retained} saved price result${retained === 1 ? '' : 's'} restored`
+            : 'Automatic price checks are off',
       });
-      if (settings.amazonAutoLookup) {
+      if (needsNetworkResearch) {
+        const localEvidenceWrites: Array<{ record: AnalysisRecord; result: RetailLookupResult }> = [];
         const queueResult = await runProviderQueue({
             items: eligible,
             shouldContinue: stillCurrent,
@@ -922,6 +1226,7 @@ export class DealIntelligenceController {
             },
             onProgress: ({ item: record, result }) => {
               if (!stillCurrent()) return;
+              const providerResult = copyRetailLookupResult(result);
               if (record.state.amazonOverrideAsin) {
                 const candidate = result.candidates.find((item) => item.asin === record.state.amazonOverrideAsin);
                 if (candidate) {
@@ -937,6 +1242,7 @@ export class DealIntelligenceController {
                   amazonOverrideAsin: String(record.state.amazonOverrideAsin || ''),
                   result,
                 });
+                localEvidenceWrites.push({ record, result: providerResult });
               }
               const price = amazonMarketValue(record);
               record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price }).amazon;
@@ -946,6 +1252,7 @@ export class DealIntelligenceController {
               updateProgress();
             },
           });
+        await this.persistLocalEvidence(localEvidenceWrites);
         if (queueResult.stoppedResult && stillCurrent()) {
           this.update({
             phase: 'error',

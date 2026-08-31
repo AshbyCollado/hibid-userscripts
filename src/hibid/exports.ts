@@ -1,5 +1,6 @@
 import { effectiveTaxPct, type FlippahSettings } from '../core/settings.js';
 import type { HiBidLotRecord, PageContext, ScrapeJobSummary } from '../core/types.js';
+import { buildHomeLabElectronicsBrief } from '../intelligence/ai-analysis-brief.js';
 import { buildProductResearchQuery, buildRetailLinks, detectMixedLot } from '../intelligence/us-deal-intelligence.js';
 import {
   emptyHibidSavedResearchSnapshot,
@@ -9,6 +10,7 @@ import { auditHibidRecordFidelity, type HibidFidelityAudit } from './fidelity.js
 
 export interface ResaleResearchProfile {
   schemaVersion: 2;
+  analysisMode: FlippahSettings['aiAnalysisMode'];
   origin: {
     configured: boolean;
     label: string | null;
@@ -104,6 +106,7 @@ export function buildResaleResearchProfile(settings: FlippahSettings): ResaleRes
   const originConfigured = Boolean(settings.originLabel || settings.originZip);
   return {
     schemaVersion: 2,
+    analysisMode: settings.aiAnalysisMode,
     origin: {
       configured: originConfigured,
       label: settings.originLabel || null,
@@ -221,6 +224,9 @@ export function buildHibidLlmBrief(payload: HiBidExportPayload, settings: Flippa
   delete promptContext.originZip;
   delete promptContext.radiusMiles;
   const promptPayload = { ...payload, context: promptContext };
+  if (settings.aiAnalysisMode === 'home-lab-electronics') {
+    return buildHomeLabElectronicsBrief('HiBid', promptPayload, settings);
+  }
   return `# Flippah Evidence-First Resale Analysis
 
 ## ROLE AND OUTCOME

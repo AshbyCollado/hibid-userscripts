@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseAmazonDocumentCandidates } from '../src/intelligence/amazon-document-parser.js';
+import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '../src/intelligence/amazon-document-parser.js';
+import { extractProductIdentity, matchAmazonCandidates } from '../src/intelligence/us-deal-intelligence.js';
 
 test('Amazon document prices ignore ratings and installment-only amounts', () => {
   const candidates = parseAmazonDocumentCandidates(`
@@ -111,4 +112,62 @@ test('parts-only offers are ineligible and a shared financing wrapper cannot out
 
   assert.equal(candidates.find(({ asin }) => asin === 'B000000501')?.used, true);
   assert.equal(candidates.find(({ asin }) => asin === 'B000000502')?.price, 179.99);
+});
+
+test('Amazon split brand headings are recombined with their product title link', () => {
+  const candidates = parseAmazonDocumentCandidates(`
+    <div data-asin="B08DXKBY6N" data-component-type="s-search-result">
+      <h2 class="a-size-mini s-line-clamp-1"><span>Epson</span></h2>
+      <div data-cy="title-recipe">
+        <a class="a-link-normal a-text-normal" href="/Epson-Workforce-WF-7840/dp/B08DXKBY6N">
+          <span>Workforce Pro WF-7840 Wireless All-in-One Wide-Format Inkjet Printer</span>
+        </a>
+      </div>
+      <a class="a-link-normal a-text-normal" href="/Epson-Workforce-WF-7840/dp/B08DXKBY6N">
+        <span class="a-price"><span class="a-offscreen">$249.99</span></span>
+      </a>
+    </div>
+  `);
+  const candidate = candidates[0];
+  assert.equal(candidate?.title, 'Epson Workforce Pro WF-7840 Wireless All-in-One Wide-Format Inkjet Printer');
+  assert.equal(candidate?.price, 249.99);
+  assert.equal(matchAmazonCandidates(candidates, extractProductIdentity('LIKE NEW EPSON WORKFORCE WF-7840'))?.candidate.asin, 'B08DXKBY6N');
+});
+
+test('Amazon detail enrichment recovers tightly scoped new and used buy-box prices', () => {
+  const source = {
+    asin: 'B0DETAIL01', title: 'PlayStation 5 Pro Console', matchText: 'PlayStation 5 Pro Console',
+    price: null, used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0DETAIL01'
+  };
+  const fresh = enrichAmazonCandidateFromDetail(source, `
+    <span id="productTitle">PlayStation 5 Pro Console</span>
+    <div id="corePriceDisplay_desktop_feature_div">
+      <span class="a-price"><span class="a-offscreen">$749.99</span></span>
+    </div>
+    <div><span class="a-text-price"><span class="a-offscreen">$899.99</span></span></div>
+  `);
+  assert.equal(fresh.price, 749.99);
+  assert.equal(fresh.used, false);
+
+  const used = enrichAmazonCandidateFromDetail(source, `
+    <span id="productTitle">PlayStation 5 Pro Console</span>
+    <div id="usedOnlyBuybox">Buy Used: <span class="offer-price">$612.34</span></div>
+    <div id="corePriceDisplay_desktop_feature_div">
+      <span class="a-price"><span class="a-offscreen">$612.34</span></span>
+    </div>
+  `);
+  assert.equal(used.price, 612.34);
+  assert.equal(used.used, true);
+});
+
+test('Amazon detail enrichment ignores unrelated carousel and list prices', () => {
+  const candidate = enrichAmazonCandidateFromDetail({
+    asin: 'B0DETAIL02', title: 'Exact Product', price: null, used: false, sponsored: false,
+    url: 'https://www.amazon.com/dp/B0DETAIL02'
+  }, `
+    <span id="productTitle">Exact Product</span>
+    <div id="customers-who-viewed"><span class="a-price"><span class="a-offscreen">$19.99</span></span></div>
+    <div id="corePriceDisplay_desktop_feature_div"><span class="a-text-price"><span class="a-offscreen">$499.99</span></span></div>
+  `);
+  assert.equal(candidate.price, null);
 });

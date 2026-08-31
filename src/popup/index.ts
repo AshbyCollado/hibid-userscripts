@@ -90,7 +90,7 @@ function routeLabel(): string {
   if (!context?.route.supported) return 'Unsupported page';
   const labels: Record<string, string> = {
     catalog: 'Auction catalog', livecatalog: 'Live catalog', search: 'Lot search', lot: 'Single lot',
-    watchlist: 'Watchlist', 'currentbids-winning': 'Winning bids', 'currentbids-outbid': 'Outbid bids',
+    watchlist: 'Watchlist', currentbids: 'Current bids', 'currentbids-winning': 'Winning bids', 'currentbids-outbid': 'Outbid bids',
     pastbids: 'Past bids', pastwatchlist: 'Past watchlist',
     'sale-catalog': 'AuctionNinja sale', 'category-search': 'AuctionNinja category',
     'item-detail': 'AuctionNinja item', 'followed-items': 'AuctionNinja followed items',
@@ -117,9 +117,9 @@ function scrapeStatusText(current: number, count: number | null | undefined): st
 }
 
 function analysisStatusText(analysis: PageContext['analysis']): string {
-  if (analysis.phase === 'scanning' || analysis.phase === 'retail') {
-    return 'Checking prices';
-  }
+  if (analysis.phase === 'restoring') return 'Restoring saved prices';
+  if (analysis.phase === 'scanning') return 'Reading auction lots';
+  if (analysis.phase === 'retail') return 'Searching Amazon';
   if (analysis.phase === 'complete') {
     if (analysis.mixedLots || analysis.quantityReview) return 'Prices ready; some lots need review';
     return analysis.retailMatched ? 'Prices ready' : 'No verified prices found';
@@ -140,8 +140,8 @@ function currentHtml(): string {
   const complete = jobMatchesSelection() && job?.phase === 'completed';
   const analysis = context.analysis;
   const analysisPercent = analysis.total > 0 ? Math.min(100, Math.round(analysis.analyzed / analysis.total * 100)) : 0;
-  const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid', 'sale-catalog', 'category-search', 'item-detail', 'followed-items', 'items-won', 'bid-history'].includes(context.route.kind)
-    ? `<div class="analysis"><div class="analysis-head"><strong>Price research</strong><span>${escapeHtml(analysisStatusText(analysis))}</span></div>${analysis.phase === 'scanning' || analysis.phase === 'retail' ? `<div class="progress"><i style="width:${analysisPercent}%"></i></div>` : ''}<div class="actions compact"><button id="rerun-analysis" class="button" ${analysis.phase === 'scanning' || analysis.phase === 'retail' ? 'disabled' : ''}>Check again</button><button id="clear-retail-cache" class="button">Clear saved prices</button></div></div>`
+  const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids', 'currentbids-winning', 'currentbids-outbid', 'sale-catalog', 'category-search', 'item-detail', 'followed-items', 'items-won', 'bid-history'].includes(context.route.kind)
+    ? `<div class="analysis"><div class="analysis-head"><strong>Price research</strong><span>${escapeHtml(analysisStatusText(analysis))}</span></div>${analysis.phase === 'scanning' || analysis.phase === 'restoring' || analysis.phase === 'retail' ? `<div class="progress"><i style="width:${analysisPercent}%"></i></div>` : ''}<div class="actions compact"><button id="rerun-analysis" class="button" ${analysis.phase === 'scanning' || analysis.phase === 'restoring' || analysis.phase === 'retail' ? 'disabled' : ''}>Check again</button><button id="clear-retail-cache" class="button">Clear saved prices</button></div></div>`
     : '';
   const booksHtml = context.route.kind === 'lot' && /(^|\.)hibid\.com$/i.test(new URL(context.url).hostname)
     ? `<div class="book-tools"><div class="analysis-head"><strong>Books</strong><span>Complete photo handoff</span></div><p class="section-copy">Send this lot and every seller photo to the local book analyzer.</p><div class="actions compact"><button id="analyze-books" class="button" ${bookHandoffBusy ? 'disabled' : ''}>${bookHandoffBusy ? 'Sending photos…' : 'Analyze this lot'}</button></div><div class="section-status ${bookHandoffFailed ? 'failed' : ''}" role="status" aria-live="${bookHandoffFailed ? 'assertive' : 'polite'}">${escapeHtml(bookHandoffStatus)}</div></div>`

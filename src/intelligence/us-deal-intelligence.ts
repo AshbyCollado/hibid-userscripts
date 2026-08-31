@@ -137,6 +137,7 @@ export interface AmazonCandidate {
 export interface AmazonCandidateMatch {
   candidate: AmazonCandidate;
   score: number;
+  referenceKind?: 'exact' | 'equivalent';
 }
 
 export type AmazonMatch = AmazonCandidateMatch;
@@ -172,6 +173,7 @@ export function extractLotQuantityFromTitle(title: string | null | undefined): n
     || source.match(/^\s*(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+.+\b[a-z]{3,}s\b/i);
   if (wordMatch) return wordValues[wordMatch[1]!.toLocaleLowerCase('en-US')] ?? null;
   const match = source.match(/\b(?:lot|group|set)\s+of\s+(\d{1,4})\b/i)
+    || source.match(/\b(?:count|ct)\s+(?:of\s+)?(\d{1,4})\b/i)
     || source.match(/^\s*\(?\s*(\d{1,4})\s*\)?\s*[x×]\s+/i)
     || source.match(/\b(?:qty|quantity)\s*[:#-]?\s*(\d{1,4})\b/i)
     || source.match(/\b(\d{1,4})\s+(?:units?|items?|pieces?|pcs)\b/i)
@@ -273,7 +275,7 @@ const GENERIC_MODEL_RE = /^(?:n\/?a|none|null|nil|unknown|unspecified|various|as
 const CONDITION_PARTS_RE = /\b(for\s*parts|parts\s*only|salvage|broken|not\s*working|non[\s-]*functional|defective|scrap|damaged\s*beyond)\b/i;
 const CONDITION_GOOD_RE = /\b(brand\s*new|new|sealed|excellent|like\s*new|mint|open\s*box|good|very\s*good)\b/i;
 const POSITIVE_RE = /\b(tested\s*(?:and\s*)?working|works?\s*(?:great|well|fine|perfectly)|fully\s*functional|brand\s*new|sealed|new\s*in\s*box|nib\b)/i;
-const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|cord|charger|adapter|mount|holder|stand|arm|topper|strap|band|belt|bumper|shell|film|dock|lanyard|clip|controller|game|spray|cloth|cloths|pads?|wipes?|filters?|valves?|sensor\s*wires?|disc\s+drive|remote(?:\s+control)?|bowl|jar|lid|blade|baffle|shield|backplate|back\s*plate|build\s*plate|magnetic\s+plate|pei\s+(?:sheet|plate)|flexi(?:ble)?\s+steel(?:\s+sheet)?|chisels?|drill\s+bits?|bit\s+sets?|faceplate|wall\s*plate|trim\s*kit|bracket|standoffs?|screws?|screw\s*kit|thermal\s*pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert|lamps?|bulbs?|footswitch(?:es)?|foot\s+switch(?:es)?|pedals?|cartridges?|probes?|camera\s+heads?|pizza\s+pan|baking\s+pan|crumb\s+tray|replacement\s+tray|plant\s+food|descal(?:er|ing)\s+tablets?|cleaning\s+tablets?|photo\s+prop|display\s+decoration)s?\b/i;
+const ACCESSORY_NOUN_RE = /\b(case|cover|sleeve|skin|pouch|protector|tips|eartips|cable|cord|charger|adapter|mount|holder|stand|arm|topper|strap|band|belt|bumper|shell|film|dock|lanyard|clip|controller|game|spray|cloth|cloths|pads?|wipes?|filters?|valves?|sensor\s*wires?|disc\s+drive|remote(?:\s+control)?|bowl|cups?|jar|lid|blade|hopper|bellows?|air\s+blower|baffle|shield|backplate|back\s*plate|build\s*plate|magnetic\s+plate|pei\s+(?:sheet|plate)|flexi(?:ble)?\s+steel(?:\s+sheet)?|chisels?|drill\s+bits?|bit\s+sets?|faceplate|wall\s*plate|trim\s+kit|bracket|standoffs?|screws?|screw\s*kit|thermal\s+pad|riser|extender|gasket|grommet|spacer|shroud|bezel|decal|sticker|manual|module|chip|header|jumper|ribbon|harness|insert|lamps?|bulbs?|footswitch(?:es)?|foot\s+switch(?:es)?|pedals?|inks?|toners?|cartridges?|probes?|camera\s+heads?|pizza\s+pan|baking\s+pan|crumb\s+tray|replacement\s+tray|plant\s+food|descal(?:er|ing)\s+tablets?|cleaning\s+tablets?|photo\s+prop|display\s+decoration)s?\b/i;
 const ACCESSORY_MARKER_RE = /\b(compatible\s+with|replacement\s+for|replacement\s+parts?\s+only|designed\s+for|made\s+for|for\s+use\s+with|fits?\s+for|fits\s+(?:the\s+)?[A-Z0-9])/i;
 const FOR_PRODUCT_VERBS = 'compatible\\s+with|replacement\\s+(?:part\\s+)?for|designed\\s+for|made\\s+for|for\\s+use\\s+with|fits|suitable\\s+for|upgrade\\s+for';
 const TITLE_PREFIX_RE = /^\s*(?:\(?\s*(?:open\s*box|openbox|refurbished|refurb|renewed|used|pre[\s-]?owned)[^-|:]*\)?\s*[-|:]\s*)+/i;
@@ -300,7 +302,7 @@ const PRODUCT_KIND_PATTERNS: Array<[ProductKind, RegExp]> = [
   ['phone', /\b(?:smartphones?|cell\s+phones?|iphones?|phones?)\b/i],
   ['speaker', /\b(?:speakers?|soundbars?)\b/i],
   ['camera', /\b(?:cameras?|camcorders?)\b/i],
-  ['printer', /\b(?:printers?|scanners?)\b/i],
+  ['printer', /\b(?:printers?|scanners?)\b|\b(?:epson\s+workforce|hp\s+(?:envy|deskjet|officejet))\s+[a-z]*-?\d/i],
   ['keyboard', /\bkeyboards?\b/i],
   ['mouse', /\b(?:computer\s+)?mice\b|\bmouse\b/i],
   ['router', /\b(?:routers?|mesh\s+systems?)\b/i],
@@ -363,6 +365,7 @@ const BRAND_FAMILIES: ReadonlyArray<readonly [string, RegExp]> = [
   ['logitech', /\blogitech\b/i],
   ['kitchenaid', /\bkitchen\s*aid\b/i],
   ['breville', /\bbreville\b/i],
+  ['bose', /\bbose\b/i],
   ['keurig', /\bkeurig\b/i],
   ['oster', /\boster\b/i],
   ['bissell', /\bbissell\b/i],
@@ -511,6 +514,9 @@ export function extractProductDiscriminators(value: string | null | undefined): 
   const explicitSeriesSignatures = [
     ...collect(/\barctis\s+nova\s+(\d+)(?:[xp])?\b/gi, (match) => `arctis-nova:${match[1]}`),
     ...collect(/\barctis\s+nova\s+(pro)\b/gi, (match) => `arctis-nova:${match[1]}`),
+    ...collect(/\bgen(?:eration)?\s*(\d{1,2})\b/gi, (match) => `generation:${Number(match[1])}`),
+    ...collect(/\b(\d{1,2})(?:st|nd|rd|th)?\s+gen(?:eration)?\b/gi, (match) => `generation:${Number(match[1])}`),
+    ...collect(/\b([a-z]\d{1,3})\s+(ultra|tiny|tower)\s+(?:workstations?|desktops?|pcs?)\b/gi, (match) => `workstation:${String(match[1]).toLowerCase()}:${String(match[2]).toLowerCase()}`),
   ];
   const packageCounts = [
     ...collect(/\b(\d{1,4})[\s-]*(?:pack|pk|count|ct|pcs?|pieces?)\b/gi, (match) => String(Number(match[1]))),
@@ -631,6 +637,9 @@ function matchesProductDiscriminators(candidateTitle: string, product: ProductId
     }
     matchedCount += (expected[group].length - absent.length) * (group === 'platformVariants' || group === 'seriesSignatures' ? 2 : 1);
   }
+  if (!expected.packageCounts.length && actual.packageCounts.some((value) => Number(value) > 1)) {
+    conflicts.push(`packageCounts:1!=${actual.packageCounts.join(',')}`);
+  }
   const exclusiveFamilies = [
     ['kickball', 'football', 'soccer-ball', 'bounce-ball', 'other-ball'],
     ['vase', 'planter'],
@@ -732,7 +741,7 @@ function stripResearchPrefixes(value: string): string {
     /^\s*(?:qty|quantity)\s*[:#]?\s*\d{1,4}\s*[-:|]?\s+/i,
     /^\s*(?:retail|msrp|est\.?\s*retail(?:\s*price)?|value)\s*[:\-]?\s*\$?\s*[\d,]+(?:\.\d+)?\s*(?:[-:|]\s*)?/i,
     /^\s*\$(?!\s*\d+\s*\/)\s*[\d,]+(?:\.\d+)?\s*(?:[-:|]\s*)?/i,
-    /^\s*\(?\s*(?:open\s*box|refurbished|refurb|renewed|pre[\s-]?owned|used|brand\s+new|new\s+in\s+box)\s*\)?(?:\s*[-:|]\s*|\s+)/i,
+    /^\s*\(?\s*(?:open\s*box|refurbished|refurb|renewed|pre[\s-]?owned|used|like\s+new|brand\s+new|factory\s+sealed|new\s+in\s+box)\s*\)?(?:\s*[-:|]\s*|\s+)/i,
   ];
   for (let pass = 0; pass < 8; pass += 1) {
     const previous = output;
@@ -1113,8 +1122,17 @@ export function detectProductKind(value: string | null | undefined): ProductKind
   const source = normalise(value);
   if (/\b(?:vital\s+signs?|patient)\s+monitors?\b/i.test(source)) return null;
   if (/\bfood\s+processors?\b/i.test(source)) return null;
+  // "All-in-one" describes both desktop computers and printers. The explicit
+  // printer noun wins so an inkjet cannot be classified as a desktop PC.
+  if (/\b(?:printers?|scanners?)\b/i.test(source)) return 'printer';
   if (/^\s*(?:nintendo\s+)?switch(?:\s+oled)?\b/i.test(source)
     && !/\b(?:case|cover|game|replacement|screen\s+protector)\b/i.test(source)) return 'game-console';
+  // A complete desktop routinely advertises RAM, storage, and a CPU in the
+  // same title. Those component words must not turn the whole PC into a memory
+  // module or processor before the desktop rule gets a chance to run.
+  if (/\b(?:desktop\s+(?:computers?|pcs?|systems?)|mini\s+(?:desktop\s+)?pcs?|micro\s+(?:desktop\s+)?pcs?|small\s+form\s+factor\s+(?:computers?|pcs?)|all[\s-]in[\s-]ones?|computer\s+towers?|gaming\s+pcs?)\b/i.test(source)) {
+    return 'desktop';
+  }
   return PRODUCT_KIND_PATTERNS.find(([, pattern]) => pattern.test(source))?.[0] ?? null;
 }
 
@@ -1377,9 +1395,11 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   const rawTokens = tokeniseIdentity(name);
   const tokens = rawTokens.filter((token) => !NOISE_WORDS.has(token.toLowerCase()) && !/^\$?[\d.,]+$/.test(token));
   const compoundBrand = knownLeadingBrand(name);
-  const titleBrand = compoundBrand || tokens.find((token) => !GENERIC_BRAND_RE.test(token)
+  const firstTitleToken = tokens[0] || '';
+  const firstTokenIsMaterial = MATERIAL_WORDS.some(([, pattern]) => pattern.test(firstTitleToken));
+  const titleBrand = compoundBrand || (firstTokenIsMaterial ? '' : tokens.find((token) => !GENERIC_BRAND_RE.test(token)
     && !/^(?:case|group|lot|pair|set)$/i.test(token)
-    && !/^\d/.test(token)) || tokens[0] || '';
+    && !/^\d/.test(token)) || '');
   const statedBrandAppearsInTitle = statedBrand && new RegExp(`\\b${escapeRegExp(statedBrand)}\\b`, 'i').test(name);
   const measurementLedName = /^\s*\d+(?:\.\d+)?\s*(?:[x×]\s*\d|(?:in(?:ch(?:es)?)?|ft|feet|foot|mm|cm)\b)/i.test(name);
   const brand = statedBrand && (!titleBrand || titleBrand.length < 2 || GENERIC_BRAND_RE.test(titleBrand) || statedBrandAppearsInTitle || measurementLedName)
@@ -1432,7 +1452,10 @@ export function extractProductIdentity(recordOrTitle: LotAnalysisRecord | string
   if (discriminators.gpuModels.includes('nvidia:rtx:4070:ti-super') && !/\brtx\s*4070\s*ti\s+super\b/i.test(query)) {
     query = query.replace(/\brtx\s*4070\s*ti\b/i, (value) => `${value} super`);
   }
-  if (model || discriminators.gpuModels.length || discriminators.cpuModels.length) discriminators.seriesSignatures = [];
+  if (model || discriminators.gpuModels.length || discriminators.cpuModels.length) {
+    discriminators.seriesSignatures = discriminators.seriesSignatures
+      .filter((value) => /^(?:generation|workstation):/.test(value));
+  }
   const identity: ProductIdentity = { name, query: query.trim(), brand, model: model || null, model2, kind: detectProductKind(name), capacities, discriminators, tokens: tokens.slice(0, 12) };
   if (record?.statedRetail != null && Number.isFinite(record.statedRetail) && record.statedRetail > 0) identity.statedRetail = record.statedRetail;
   return identity;
@@ -1477,7 +1500,7 @@ export function detectMixedLot(title: string | null | undefined, description = '
   const descriptionText = normalise(description);
   const reasons: string[] = [];
   const checks: Array<[string, RegExp, string]> = [
-    ['title', /\b(?:group|assorted|various|mixed|collection|contents)\b/i, 'group or mixed-lot wording'],
+    ['title', /\b(?:group|assorted|ass['’]?t|various|collection|contents)\b|\bmixed\b(?!\s+(?:signal|reality)\b)/i, 'group or mixed-lot wording'],
     ['title', /\b(?:bundle|lot)\s+of\s+(?:different|assorted|mixed|various)\b/i, 'mixed bundle wording'],
     ['title', /\bwith\s+(?:components?|contents?|assorted\s+items?|mixed\s+items?|equipment)\b/i, 'explicit component or contents wording'],
     ['title', /\b(?:amp|amplifier|receiver)\b\s*,\s*[^,;]{0,60}\b(?:tuner|turntable|cd\s+player|cassette\s+player)\b/i, 'separate audio components'],
@@ -1485,6 +1508,18 @@ export function detectMixedLot(title: string | null | undefined, description = '
     ['description', /\blot\s+of\s*\(?\s*(?:[2-9]|\d{2,})\s*\)?\s+consisting\s+of\b/i, 'description identifies multiple lot components'],
   ];
   for (const [source, pattern, reason] of checks) if (pattern.test(source === 'title' ? titleText : descriptionText)) reasons.push(reason);
+  const titleBrandFamilies = [...new Set(BRAND_FAMILIES
+    .filter(([, pattern]) => pattern.test(titleText))
+    .map(([family]) => family))];
+  if (titleBrandFamilies.length > 1 && /(?:&|\band\b|\bwith\b|\bplus\b)/i.test(titleText)) {
+    reasons.push('multiple branded products');
+  }
+  const isBookShelving = /\b(?:book\s*shel(?:f|ves)|bookshel(?:f|ves))\b/i.test(titleText);
+  if (!isBookShelving && (/^(?:books?)$/i.test(titleText.trim())
+    || /\bbooks\s*$/i.test(titleText)
+    || /^books\s+(?:in\s+reference\s+to|and\s+shelving)\b/i.test(titleText))) {
+    reasons.push('multiple books require title-by-title review');
+  }
   const parsed = parseStructuredDescription(description);
   const componentSource = [titleText, parsed.freeText].filter(Boolean).join('\n');
   const components = [...new Set(componentSource
@@ -1743,7 +1778,8 @@ function sourceIsAccessoryProduct(product: ProductIdentity): boolean {
   const connector = /(?:(?:\bwith|\bincludes?|\bincluding|\bbundled\s+with|\bplus)\b|\bw\s*\/)[^,;]{0,40}$/i;
   if (connector.test(before)) return false;
   const kindIndex = primaryKindIndex(product.name, product.kind);
-  if (kindIndex >= 0 && kindIndex < noun.index && connector.test(before.slice(kindIndex))) return false;
+  const primaryProductConnector = /(?:(?:\band|\bwith|\bincludes?|\bincluding|\bbundled\s+with|\bplus)\b|\bw\s*\/)[^,;]{0,40}$/i;
+  if (kindIndex >= 0 && kindIndex < noun.index && primaryProductConnector.test(before.slice(kindIndex))) return false;
   return true;
 }
 
@@ -1765,7 +1801,8 @@ export function isAccessoryListing(title: string | null | undefined, product: Pr
   const primaryBundle = candidateKind === product.kind
     && kindIndex >= 0
     && kindIndex < noun.index
-    && /\b(?:with|includes?|including|bundle(?:d)?\s+with)\b/i.test(candidateTitle.slice(kindIndex, noun.index));
+    && (noun.index - kindIndex > 24
+      || /\b(?:with|includes?|including|bundle(?:d)?\s+with)\b/i.test(candidateTitle.slice(kindIndex, noun.index)));
   const identityTokens = new Set([
     product.brand,
     product.model,
@@ -1778,12 +1815,13 @@ export function isAccessoryListing(title: string | null | undefined, product: Pr
     && marker.index < noun.index
     && exactModel
     && sourceDescriptors.filter((token) => beforeMarkerTokens.has(token)).length >= 2);
-  const strictComponent = /^(?:batter(?:y|ies)|build\s*plate|magnetic\s*plate|pei\s+(?:sheet|plate)|flexi(?:ble)?\s+steel|lamps?|bulbs?|footswitch(?:es)?|foot\s+switch(?:es)?|pedals?|cartridges?|probes?|camera\s+heads?)/i.test(noun[0]);
+  const strictComponent = /^(?:batter(?:y|ies)|cables?|cords?|chargers?|adapters?|build\s*plate|magnetic\s*plate|pei\s+(?:sheet|plate)|flexi(?:ble)?\s+steel|lamps?|bulbs?|footswitch(?:es)?|foot\s+switch(?:es)?|pedals?|inks?|toners?|cartridges?|probes?|camera\s+heads?)/i.test(noun[0]);
   if (/\b(?:replacement|spare)\s+batter(?:y|ies)\b/i.test(candidateTitle)) return true;
   if (strictComponent
     && !primaryBundle
     && !platformAccessoryMention
     && !/(?:\bwith|\bw\s*\/|\bincludes?|\bincluding|\bbundle)\s*$/i.test(beforeNoun)) return true;
+  if (primaryBundle) return false;
   const identity = [product.brand, product.model, product.model2].filter(Boolean).map((value) => escapeRegExp(String(value)).replace(/[-\s]/g, '[-\\s]?')).join('|');
   if (identity) {
     const forProduct = new RegExp(`\\b(?:${FOR_PRODUCT_VERBS})\\s+(?:the\\s+)?[^,;.]{0,40}?(?:${identity})`, 'i');
@@ -1921,20 +1959,92 @@ export function scoreRetailCandidate(title: string | null | undefined, product: 
 
 export function matchAmazonCandidates(candidates: AmazonCandidate[], product: ProductIdentity): AmazonCandidateMatch | null {
   const scored = candidates
-    .filter((candidate) => !candidate.sponsored && !candidate.used && candidate.price != null && candidate.price > 0)
+    .filter((candidate) => !candidate.sponsored && candidate.price != null && candidate.price > 0)
     .map((candidate) => {
       const evaluation = evaluateAmazonCandidateEvidence(candidate, product);
       return { candidate, score: evaluation.accepted ? Math.max(evaluation.score, scoreRetailCandidate(candidate.title, product)) : 0 };
     })
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score);
-  if (!scored.length) return null;
-  const top = scored[0]?.score ?? 0;
-  // Price breaks ties between equally specific listings. A cheaper candidate
-  // that omits source attributes (for example, the required color) must not
-  // outrank a complete exact-attribute result merely because it is plausible.
-  const band = scored.filter((entry) => entry.score >= top - 0.25);
-  return [...band].sort((left, right) => (left.candidate.price ?? Infinity) - (right.candidate.price ?? Infinity))[0] ?? null;
+  if (scored.length) {
+    const top = scored[0]?.score ?? 0;
+    // Price breaks ties between equally specific listings. A cheaper candidate
+    // that omits source attributes (for example, the required color) must not
+    // outrank a complete exact-attribute result merely because it is plausible.
+    const band = scored.filter((entry) => entry.score >= top - 0.25);
+    // Match the donor's useful fallback without weakening identity checks:
+    // prefer new offers inside the strongest relevance band, but retain a
+    // clearly marked used/renewed offer when no equally specific new offer is
+    // available.
+    const newOffers = band.filter((entry) => !entry.candidate.used);
+    const pool = newOffers.length ? newOffers : band;
+    const match = [...pool].sort((left, right) => (left.candidate.price ?? Infinity) - (right.candidate.price ?? Infinity))[0];
+    if (!match) return null;
+    const candidateAddsModel = !product.model
+      && extractStrictIdentitySignatures(match.candidate.matchText || match.candidate.title).modelCodes.length > 0;
+    return { ...match, referenceKind: candidateAddsModel ? 'equivalent' : 'exact' };
+  }
+
+  // HP's trailing "e" printer variants are the subscription-enabled sibling
+  // of the same numbered Envy/DeskJet/OfficeJet hardware. Amazon frequently
+  // has no featured offer for the exact e ASIN while the base-number sibling
+  // is in stock. Keep this fallback narrow and label it as equivalent.
+  const compactModel = String(product.model || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const hpPrinterBase = productBrandFamily(product) === 'hewlett-packard'
+    && /\b(?:envy|deskjet|officejet)\b/i.test(product.name)
+    ? compactModel.match(/^(\d{3,6})e$/)?.[1] || ''
+    : '';
+  if (hpPrinterBase) {
+    const equivalents = candidates.filter((candidate) => {
+      if (candidate.sponsored || candidate.price == null || candidate.price <= 0) return false;
+      if (canonicalBrandFamily(candidate.title) !== 'hewlett-packard') return false;
+      if (detectProductKind(candidate.title) !== 'printer' || isAccessoryListing(candidate.title, product)) return false;
+      if (!modelMatches(candidate.title, hpPrinterBase) || modelMatches(candidate.title, compactModel)) return false;
+      return /\b(?:envy|deskjet|officejet)\b/i.test(candidate.title);
+    });
+    if (equivalents.length) {
+      const newEquivalents = equivalents.filter((candidate) => !candidate.used);
+      const candidate = [...(newEquivalents.length ? newEquivalents : equivalents)]
+        .sort((left, right) => (left.price ?? Infinity) - (right.price ?? Infinity))[0];
+      if (candidate) return { candidate, score: 3, referenceKind: 'equivalent' };
+    }
+  }
+
+  // Board-partner names are not the GPU itself. When a lot identifies only a
+  // standardized GPU and VRAM (for example ZOTAC RTX 4060 8GB), a different
+  // board partner with the exact same base GPU is a useful new-retail reference.
+  // Keep this fallback narrow: manufacturer part numbers, Ti/Super conflicts,
+  // laptop GPUs, missing VRAM, and non-card products remain ineligible.
+  const sourceGpu = product.discriminators.gpuModels;
+  if (!buildAmazonFallbackQuery(product)) return null;
+  const equivalents = candidates.filter((candidate) => {
+    if (candidate.sponsored || candidate.price == null || candidate.price <= 0) return false;
+    if (/\b(?:laptop|notebook|mobile)\b/i.test(candidate.title)) return false;
+    if (detectProductKind(candidate.title) !== 'graphics-card' || isAccessoryListing(candidate.title, product)) return false;
+    const candidateAttributes = extractProductDiscriminators(candidate.title);
+    if (candidateAttributes.gpuModels.length !== 1 || candidateAttributes.gpuModels[0] !== sourceGpu[0]) return false;
+    return product.discriminators.capacities.every((capacity) => candidateAttributes.capacities.includes(capacity));
+  });
+  if (!equivalents.length) return null;
+  const newEquivalents = equivalents.filter((candidate) => !candidate.used);
+  const candidate = [...(newEquivalents.length ? newEquivalents : equivalents)]
+    .sort((left, right) => (left.price ?? Infinity) - (right.price ?? Infinity))[0];
+  return candidate ? { candidate, score: 3, referenceKind: 'equivalent' } : null;
+}
+
+/** A second Amazon query for standardized GPUs whose board-partner search is sparse. */
+export function buildAmazonFallbackQuery(product: ProductIdentity): string | null {
+  const normalizedModel = String(product.model || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const standardizedModel = !normalizedModel
+    || /^(?:rtx|gtx)\d{3,4}(?:tisuper|ti|super)?$|^rx\d{3,4}(?:xtx|xt)?$/.test(normalizedModel);
+  const sourceGpu = product.discriminators.gpuModels;
+  if (product.kind !== 'graphics-card' || sourceGpu.length !== 1 || !standardizedModel) return null;
+  const [vendor, family, number, variant] = sourceGpu[0]!.split(':');
+  if (!family || !number) return null;
+  const prefix = vendor === 'amd' ? 'radeon' : 'geforce';
+  const variantText = variant && variant !== 'base' ? ` ${variant.replace(/-/g, ' ')}` : '';
+  const capacity = product.discriminators.capacities[0] ? ` ${product.discriminators.capacities[0]}` : '';
+  return `${prefix} ${family} ${number}${variantText}${capacity} graphics card`.replace(/\s+/g, ' ').trim();
 }
 
 export interface AmazonMatchOverride {

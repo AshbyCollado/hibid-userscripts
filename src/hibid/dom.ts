@@ -332,7 +332,7 @@ export function extractAccountLots(
     const container = groupContainer(root, selectedGroup);
     return container ? extractHiBidVisibleLots(container, route, locationLike) : [];
   }
-  if (route.kind === 'watchlist' || route.kind === 'currentbids-winning' || route.kind === 'currentbids-outbid') {
+  if (route.kind === 'watchlist' || route.kind === 'currentbids' || route.kind === 'currentbids-winning' || route.kind === 'currentbids-outbid') {
     const groups = extractPastAuctionGroups(root, locationLike);
     if (groups.length) {
       const grouped: HiBidLotRecord[] = [];

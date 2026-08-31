@@ -115,7 +115,7 @@ export function retailProviderCacheKey(query: string): string {
   // This epoch describes the parsed Amazon search-card payload, not the
   // identity matcher. Matcher improvements must re-evaluate cached candidates
   // instead of forcing an entire catalog or watchlist back through Amazon.
-  return `amazon-us:provider-v13:${query.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')}`;
+  return `amazon-us:provider-v16:${query.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')}`;
 }
 
 export function retailCacheTtl(status: string): number {

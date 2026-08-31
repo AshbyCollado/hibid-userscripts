@@ -29,7 +29,7 @@ export function isToolbarActivityUpdate(value: unknown): value is ToolbarActivit
 }
 
 export function isAnalysisActivityPhase(phase: string): boolean {
-  return phase === 'scanning' || phase === 'retail';
+  return phase === 'scanning' || phase === 'restoring' || phase === 'retail';
 }
 
 export function isScrapeActivityPhase(phase: string): boolean {
@@ -42,7 +42,11 @@ export function toolbarActivityPresentation(state: ToolbarActivityState, endingS
     const progress = activity.total !== null && activity.total > 0
       ? ` (${Math.max(0, activity.current || 0)}/${activity.total})`
       : '';
-    const action = activity.kind === 'scrape' ? 'scraping' : 'researching prices';
+    const action = activity.kind === 'scrape'
+      ? 'scraping'
+      : activity.phase === 'restoring'
+        ? 'restoring saved prices'
+        : 'researching prices';
     return {
       badgeText: '↻',
       badgeColor: activity.kind === 'scrape' ? '#2563eb' : '#159447',

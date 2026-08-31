@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_SETTINGS } from '../src/core/settings.js';
+import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
 import type { ScrapeJobSummary } from '../src/core/types.js';
 import { buildAuctionNinjaExportPayload, buildAuctionNinjaLlmBrief } from '../src/auctionninja/exports.js';
 import { auctionNinjaRouteFingerprint, resolveAuctionNinjaPage } from '../src/auctionninja/route.js';
@@ -69,6 +69,20 @@ test('LLM export states the evidence, mixed-lot, workbook, provenance, and no-mu
     assert.match(brief, new RegExp(phrase, 'i'));
   }
   assert.doesNotMatch(brief, /opaque-secret|owner@example\.invalid/i);
+});
+
+test('AuctionNinja Copy for AI honors the home-lab electronics profile', () => {
+  const settings = normalizeSettings({
+    aiAnalysisMode: 'home-lab-electronics',
+    customInstructions: 'Prefer managed switches with quiet fans and current firmware.',
+  });
+  const payload = buildAuctionNinjaExportPayload(context(), job(), [lot()], settings);
+  const brief = buildAuctionNinjaLlmBrief(payload, settings);
+  assert.match(brief, /^# Flippah Home Lab and Personal Electronics Analysis/);
+  assert.match(brief, /verified AuctionNinja records/);
+  assert.match(brief, /managed switches with quiet fans and current firmware/);
+  assert.match(brief, /direct, visible, completed eBay Sold evidence/i);
+  assert.doesNotMatch(brief, /Act as an auction resale research coordinator/);
 });
 
 test('refuses incomplete, drifted, mismatched, duplicate, and out-of-scope exports', () => {

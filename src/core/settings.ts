@@ -1,4 +1,5 @@
 export interface ResearchSettings {
+  aiAnalysisMode: 'resale' | 'home-lab-electronics';
   originLabel: string;
   originZip: string;
   radiusMiles: number;
@@ -35,6 +36,7 @@ export interface FlippahSettings extends ResearchSettings {
 }
 
 export const DEFAULT_RESEARCH_SETTINGS: ResearchSettings = {
+  aiAnalysisMode: 'resale',
   originLabel: '',
   originZip: '',
   radiusMiles: 100,
@@ -105,6 +107,7 @@ export function normalizeSettings(value: unknown): FlippahSettings {
   const bulkyItemProfitUsd = finite(source.bulkyItemProfitUsd);
   const paymentMethod = typeof source.auctionPaymentMethod === 'string' ? source.auctionPaymentMethod.trim().toLowerCase() : '';
   return {
+    aiAnalysisMode: source.aiAnalysisMode === 'home-lab-electronics' ? 'home-lab-electronics' : 'resale',
     stateCode: stateCode && Object.hasOwn(US_STATE_TAX_RATES, stateCode) ? stateCode : null,
     taxPctOverride: taxPctOverride === null ? null : clamp(taxPctOverride, 0, 20),
     taxOnPremium: typeof source.taxOnPremium === 'boolean' ? source.taxOnPremium : true,

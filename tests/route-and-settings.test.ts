@@ -17,6 +17,7 @@ test('resolves every supported HiBid route without confusing category IDs for au
     ['https://hibid.com/newjersey/lot/123/example', 'lot'],
     ['https://hibid.com/account/watchlist', 'watchlist'],
     ['https://hibid.com/newjersey/account/watchlist', 'watchlist'],
+    ['https://hibid.com/account/currentbids', 'currentbids'],
     ['https://hibid.com/account/currentbids?status=WINNING', 'currentbids-winning'],
     ['https://hibid.com/account/currentbids?status=OUTBID', 'currentbids-outbid'],
     ['https://hibid.com/account/pastbidsm', 'pastbids'],
@@ -70,16 +71,19 @@ test('state portal context extracts only numeric portal children', () => {
 });
 
 test('settings preserve calculator keys and add durable research defaults', () => {
+  assert.equal(DEFAULT_SETTINGS.aiAnalysisMode, 'resale');
   assert.equal(DEFAULT_SETTINGS.originZip, '');
   assert.equal(DEFAULT_SETTINGS.originLabel, '');
   assert.equal(DEFAULT_SETTINGS.fullSizeImageHover, true);
   const settings = normalizeSettings({
+    aiAnalysisMode: 'home-lab-electronics',
     taxExempt: true, taxOnPremium: false, originZip: '07008', radiusMiles: 50,
     targetProfitUsd: 73, minimumRoiPct: 44, defaultBuyerPremiumPct: 12,
     soldCompTarget: 7, auctionPaymentMethod: 'cash', resaleChannels: 'eBay, local pickup',
     transportDescription: 'Compact SUV; no stairs', customInstructions: 'Be strict.'
   });
   assert.equal(settings.taxExempt, true);
+  assert.equal(settings.aiAnalysisMode, 'home-lab-electronics');
   assert.equal(settings.taxOnPremium, false);
   assert.equal(settings.originZip, '07008');
   assert.equal(settings.radiusMiles, 50);
@@ -92,6 +96,7 @@ test('settings preserve calculator keys and add durable research defaults', () =
   assert.equal(settings.transportDescription, 'Compact SUV; no stairs');
   assert.equal(settings.customInstructions, 'Be strict.');
   assert.equal(normalizeSettings({ fullSizeImageHover: false }).fullSizeImageHover, false);
+  assert.equal(normalizeSettings({ aiAnalysisMode: 'anything-else' }).aiAnalysisMode, 'resale');
 });
 
 test('blank nullable numeric settings remain unset instead of becoming zero', () => {

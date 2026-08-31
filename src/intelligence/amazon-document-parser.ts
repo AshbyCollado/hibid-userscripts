@@ -191,9 +191,26 @@ function parseResult(node: Element, asin: string): AmazonCandidate | null {
   const titleNodes = own.filter((item) => item.tagName === 'h2'
     || attribute(item, 'data-cy') === 'title-recipe'
     || hasClass(item, 's-title-instructions-style'));
+  const productTitleLinks = own.filter((item) => item.tagName === 'a'
+    && hasClass(item, 'a-text-normal')
+    && new RegExp(`/(?:dp|gp/product)/${asin}(?:[/?#]|$)`, 'i').test(attribute(item, 'href'))
+    && !descendants(item, asin).some((child) => hasClass(child, 'a-price'))
+    && !/^\s*(?:US\s*)?\$/i.test(normalizedText(item)));
+  const compactHeading = titleNodes
+    .map((item) => normalizedText(item))
+    .find((value) => value.split(/\s+/).length <= 3) || '';
+  const linkedTitle = productTitleLinks
+    .map((item) => normalizedText(item))
+    .find((value) => value.split(/\s+/).length >= 3) || '';
+  const splitTitle = compactHeading && linkedTitle
+    && !linkedTitle.toLowerCase().startsWith(compactHeading.toLowerCase())
+    ? `${compactHeading} ${linkedTitle}`
+    : linkedTitle;
   const titleEvidence = [
+    splitTitle,
     image ? attribute(image, 'alt') : '',
     ...titleNodes.map((item) => textContent(item).replace(/\s+/g, ' ').trim()),
+    ...productTitleLinks.map((item) => normalizedText(item)),
   ];
   const title = selectAmazonCandidateTitle(titleEvidence)
     || textContent(node).replace(/\s+/g, ' ').trim();
@@ -262,7 +279,33 @@ function elementById(root: Node, id: string): Element | null {
   return null;
 }
 
-/** Add detail-page identity evidence while preserving the search result's market price. */
+function detailOffer(candidate: AmazonCandidate, document: Node): { price: number; used: boolean } | null {
+  const usedRoots = ['usedOnlyBuybox', 'used_buybox_desktop']
+    .map((id) => elementById(document, id))
+    .filter((node): node is Element => Boolean(node));
+  for (const root of usedRoots) {
+    const price = parseCardPrice([root, ...descendants(root, candidate.asin)], candidate.asin)
+      ?? currencyPrice(normalizedText(root));
+    if (price != null) return { price, used: true };
+  }
+
+  const newRoots = [
+    'corePrice_feature_div', 'corePriceDisplay_desktop_feature_div', 'apex_desktop',
+    'desktop_qualifiedBuyBox', 'newAccordionRow', 'price_inside_buybox',
+    'priceblock_ourprice', 'priceblock_dealprice'
+  ].map((id) => elementById(document, id)).filter((node): node is Element => Boolean(node));
+  for (const root of newRoots) {
+    if (/\bBuy\s+Used\b/i.test(normalizedText(root))) continue;
+    const price = parseCardPrice([root, ...descendants(root, candidate.asin)], candidate.asin)
+      ?? (/^(?:price_inside_buybox|priceblock_ourprice|priceblock_dealprice)$/i.test(attribute(root, 'id'))
+        ? currencyPrice(normalizedText(root))
+        : null);
+    if (price != null) return { price, used: candidate.used };
+  }
+  return null;
+}
+
+/** Add detail-page identity and a tightly scoped current buy-box offer. */
 export function enrichAmazonCandidateFromDetail(candidate: AmazonCandidate, html: string | null | undefined): AmazonCandidate {
   const document = parse(String(html || ''));
   const title = textContent(elementById(document, 'productTitle') || document).replace(/\s+/g, ' ').trim();
@@ -277,11 +320,13 @@ export function enrichAmazonCandidateFromDetail(candidate: AmazonCandidate, html
     .map((node) => textContent(node).replace(/\s+/g, ' ').trim())
     .filter(Boolean)
     .join(' ');
+  const offer = detailOffer(candidate, document);
   return {
     ...candidate,
     title,
     matchText: `${title} ${evidence}`.replace(/\s+/g, ' ').trim().slice(0, 4_000),
-    used: candidate.used || EXPLICIT_USED_RE.test(`${title} ${evidence}`),
+    price: candidate.price ?? offer?.price ?? null,
+    used: candidate.used || Boolean(offer?.used) || EXPLICIT_USED_RE.test(`${title} ${evidence}`),
     detailEnriched: true,
   };
 }

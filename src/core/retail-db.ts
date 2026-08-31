@@ -2,7 +2,7 @@ const DB_NAME = 'flippah-retail';
 const DB_VERSION = 1;
 const STORE = 'quotes';
 
-export const RETAIL_MATCHING_EPOCH = 8;
+export const RETAIL_MATCHING_EPOCH = 9;
 
 export interface RetailCacheEntry<T = unknown> {
   key: string;
@@ -41,6 +41,20 @@ export async function getRetailCache<T>(key: string, now = Date.now()): Promise<
   }
 }
 
+export async function getRetailCacheMany<T>(keys: readonly string[], now = Date.now()): Promise<Map<string, T>> {
+  const unique = [...new Set(keys.filter(Boolean))];
+  if (!unique.length) return new Map();
+  const db = await openRetailDb();
+  try {
+    const store = db.transaction(STORE, 'readonly').objectStore(STORE);
+    const requests = unique.map((key) => requestResult(store.get(key)) as Promise<RetailCacheEntry<T> | undefined>);
+    const entries = await Promise.all(requests);
+    return new Map(entries.flatMap((entry) => entry && entry.expiresAt > now ? [[entry.key, entry.value] as const] : []));
+  } finally {
+    db.close();
+  }
+}
+
 export async function findRetailCacheByQuery<T extends { query?: string; candidates?: unknown[]; match?: unknown }>(query: string, now = Date.now()): Promise<T | null> {
   const target = query.replace(/\s+/g, ' ').trim().toLowerCase();
   if (!target) return null;
@@ -68,6 +82,29 @@ export async function putRetailCache<T>(key: string, value: T, ttlMs: number, no
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error || new Error('Retail cache write failed'));
       transaction.onabort = () => reject(transaction.error || new Error('Retail cache write aborted'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+export async function putRetailCacheMany<T>(entries: readonly { key: string; value: T; ttlMs: number }[], now = Date.now()): Promise<void> {
+  const valid = entries.filter((entry) => entry.key && Number.isFinite(entry.ttlMs) && entry.ttlMs > 0);
+  if (!valid.length) return;
+  const db = await openRetailDb();
+  try {
+    const transaction = db.transaction(STORE, 'readwrite');
+    const store = transaction.objectStore(STORE);
+    valid.forEach((entry) => store.put({
+      key: entry.key,
+      value: entry.value,
+      savedAt: now,
+      expiresAt: now + entry.ttlMs,
+    } satisfies RetailCacheEntry<T>));
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Retail cache batch write failed'));
+      transaction.onabort = () => reject(transaction.error || new Error('Retail cache batch write aborted'));
     });
   } finally {
     db.close();

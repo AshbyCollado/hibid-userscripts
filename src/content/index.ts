@@ -226,7 +226,7 @@ async function runJob(route: HiBidRoute): Promise<void> {
       const lot = extractHibidLotDetail(document, location.href);
       items = lot ? [lot] : [];
       coverage = validateHibidApiCoverage({ enumeratedIds: lot ? [lot.id] : [], hydratedItems: items, expectedTotal: 1, startFingerprint, endFingerprint: routeFingerprint(resolveHiBidRoute(location.href), location.href) });
-    } else if (['watchlist', 'currentbids-winning', 'currentbids-outbid', 'pastbids', 'pastwatchlist'].includes(route.kind)) {
+    } else if (['watchlist', 'currentbids', 'currentbids-winning', 'currentbids-outbid', 'pastbids', 'pastwatchlist'].includes(route.kind)) {
       await saveJob({ phase: 'enumerating', message: 'Reading saved HiBid lots' });
       let account = await readAccountPages(route, signal);
       if (route.kind === 'watchlist') {

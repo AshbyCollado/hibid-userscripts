@@ -8,10 +8,12 @@ import {
   buildRetailIndicatorTooltip,
   buildRetailLinks,
   buildRetailSearchPresentation,
+  buildAmazonFallbackQuery,
   canAmazonDetailEnrichmentResolve,
   calculateAllInCost,
   chooseAmazonMatch,
   detectComparisonCurrency,
+  detectProductKind,
   detectMixedLot,
   explainHibidStatus,
   evaluateAmazonCandidateEvidence,
@@ -966,6 +968,50 @@ test('Amazon matching keeps bundled accessories from disabling primary-product g
   const replacementPack = evaluateRetailCandidate('DeWalt DCD791 Replacement Battery Pack', batteryPoweredTool);
   assert.equal(replacementPack.accepted, false);
   assert.match(replacementPack.rejectionReasons.join(' '), /accessory-or-component/);
+});
+
+test('Amazon matching uses a relevant used offer only when the strongest band has no new offer', () => {
+  const identity = extractProductIdentity('PlayStation 5 Pro Console');
+  const used = {
+    asin: 'B0USEDPS5P', title: 'PlayStation 5 Pro with 2TB SSD Console (Renewed)', price: 699.99,
+    used: true, sponsored: false, url: 'https://www.amazon.com/dp/B0USEDPS5P'
+  };
+  assert.equal(matchAmazonCandidates([used], identity)?.candidate.asin, used.asin);
+
+  const fresh = {
+    asin: 'B0NEWPS5PR', title: 'PlayStation 5 Pro with 2TB SSD Console', price: 749.99,
+    used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0NEWPS5PR'
+  };
+  assert.equal(matchAmazonCandidates([used, fresh], identity)?.candidate.asin, fresh.asin);
+});
+
+test('complete desktop systems outrank incidental RAM, storage, and CPU specifications', () => {
+  assert.equal(detectProductKind('Dell OptiPlex 3070 Desktop PC Intel i5 16GB RAM 500GB SSD'), 'desktop');
+  assert.equal(detectProductKind('Dell OptiPlex 7060 Micro PC Intel i7 32GB DDR4 1TB SSD'), 'desktop');
+  assert.equal(detectProductKind('Crucial 32GB DDR4 Desktop Memory Kit'), 'memory');
+
+  const identity = extractProductIdentity('Dell OptiPlex Compact Desktop');
+  const candidate = 'Dell OptiPlex 3070 Micro PC Intel i5-9500 16GB RAM 500GB SSD Mini Desktop Computer';
+  assert.equal(evaluateRetailCandidate(candidate, identity).accepted, true);
+});
+
+test('standardized GPU fallback accepts only the exact chip and VRAM across board partners', () => {
+  const identity = extractProductIdentity('ZOTAC GeForce RTX 4060 8GB Graphics Card');
+  assert.equal(buildAmazonFallbackQuery(identity), 'geforce rtx 4060 8gb graphics card');
+  const match = matchAmazonCandidates([
+    { asin: 'B0RTX50600', title: 'ZOTAC GeForce RTX 5060 8GB Graphics Card', price: 399, used: false, sponsored: false, url: '' },
+    { asin: 'B0RTX406TI', title: 'ZOTAC GeForce RTX 4060 Ti 8GB Graphics Card', price: 449, used: false, sponsored: false, url: '' },
+    { asin: 'B0RTX40608', title: 'Gigabyte GeForce RTX 4060 8GB Graphics Card', price: 479, used: false, sponsored: false, url: '' },
+  ], identity);
+  assert.equal(match?.candidate.asin, 'B0RTX40608');
+  assert.equal(match?.referenceKind, 'equivalent');
+
+  const partNumbered = extractProductIdentity('ZOTAC GeForce RTX 4060 8GB ZT-D40600H-10M Graphics Card');
+  assert.equal(buildAmazonFallbackQuery(partNumbered), null);
+  assert.equal(matchAmazonCandidates([{
+    asin: 'B0RTX40608', title: 'Gigabyte GeForce RTX 4060 8GB Graphics Card', price: 479,
+    used: false, sponsored: false, url: ''
+  }], partNumbered), null);
 });
 
 test('Amazon detail enrichment accepts only failures that richer item evidence can resolve', () => {
