@@ -333,11 +333,14 @@ function researchLinks(query: string): { amazon: string; ebay: string; camel: st
 }
 
 function tileFor(id: string): Element | null {
-  const escaped = CSS.escape(id);
-  const match = document.querySelector(`app-lot-tile#lot-${escaped}, app-lot-tile[data-event-item-id="${escaped}"], [data-event-item-id="${escaped}"], .bid-status-border#lot-${escaped}`);
-  const tile = match?.matches('app-lot-tile') ? match : match?.closest('app-lot-tile');
-  if (tile) return tile;
-  return match?.matches('.bid-status-border') ? match : null;
+  const candidates = new Set<Element>();
+  document.querySelectorAll('app-lot-tile, .bid-status-border[id^="lot-"], [data-event-item-id]').forEach((element) => {
+    const tile = element.matches('app-lot-tile')
+      ? element
+      : element.closest('app-lot-tile') || (element.matches('.bid-status-border') ? element : element.closest('.bid-status-border'));
+    if (tile) candidates.add(tile);
+  });
+  return [...candidates].find((tile) => extractHibidTileEventItemId(tile) === id) || null;
 }
 
 function tileAnnotationStyles(): string {
@@ -385,6 +388,16 @@ function ensureTileAnnotationStrip(id: string, route?: Pick<HiBidRoute, 'kind'>)
   if (route?.kind === 'lot') return null;
   const tile = tileFor(id);
   if (!tile) return null;
+  const existingHosts = [...tile.querySelectorAll<HTMLElement>(`[${TILE_ANNOTATION_HOST_ATTRIBUTE}]`)];
+  let retainedCurrentHost = false;
+  for (const host of existingHosts) {
+    const isCurrent = host.dataset.flippahRetailHostFor === id;
+    if (isCurrent && !retainedCurrentHost) {
+      retainedCurrentHost = true;
+      continue;
+    }
+    host.remove();
+  }
   let strip = annotationStrip(tile, id);
   if (strip) return { tile, strip };
   const mount = tileAnnotationMount(tile);

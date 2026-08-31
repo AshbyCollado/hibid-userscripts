@@ -123,6 +123,52 @@ test('new live cards reserve the complete evidence row before hydration', () => 
   }
 });
 
+test('recycled slot IDs cannot route one physical lot evidence row onto another', () => {
+  const dom = new JSDOM(`
+    <app-lot-tile id="lot-10"><a href="/lot/188/physical-lot-188"></a><div class="lot-tile-content"></div></app-lot-tile>
+    <app-lot-tile id="lot-11"><a href="/lot/10/physical-lot-10"></a><div class="lot-tile-content"></div></app-lot-tile>
+  `);
+  const previousDocument = (globalThis as any).document;
+  const previousCss = (globalThis as any).CSS;
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).CSS = { escape: (value: string) => value };
+  try {
+    assert.equal(reserveTileAnnotationSpace('10', { kind: 'livecatalog' } as any), true);
+    assert.equal(dom.window.document.querySelector('#lot-10 [data-flippah-retail-host-for]'), null);
+    assert.equal(dom.window.document.querySelector('#lot-11 [data-flippah-retail-host-for="10"]')?.parentElement?.className, 'lot-tile-content');
+  } finally {
+    if (previousDocument === undefined) delete (globalThis as any).document;
+    else (globalThis as any).document = previousDocument;
+    if (previousCss === undefined) delete (globalThis as any).CSS;
+    else (globalThis as any).CSS = previousCss;
+  }
+});
+
+test('in-place virtual tile recycling removes the prior physical lot evidence row', () => {
+  const dom = new JSDOM(`
+    <app-lot-tile id="lot-0"><a href="/lot/188/first-lot"></a><div class="lot-tile-content"></div></app-lot-tile>
+  `);
+  const previousDocument = (globalThis as any).document;
+  const previousCss = (globalThis as any).CSS;
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).CSS = { escape: (value: string) => value };
+  try {
+    const tile = dom.window.document.querySelector('app-lot-tile')!;
+    assert.equal(reserveTileAnnotationSpace('188', { kind: 'livecatalog' } as any), true);
+    assert.match(shadowStrip(tile, '188').textContent || '', /Restoring prices/);
+    tile.querySelector('a')?.setAttribute('href', '/lot/244/recycled-lot');
+    assert.equal(reserveTileAnnotationSpace('244', { kind: 'livecatalog' } as any), true);
+    assert.equal(tile.querySelectorAll('[data-flippah-retail-host-for]').length, 1);
+    assert.equal(tile.querySelector('[data-flippah-retail-host-for="188"]'), null);
+    assert.match(shadowStrip(tile, '244').textContent || '', /Restoring prices/);
+  } finally {
+    if (previousDocument === undefined) delete (globalThis as any).document;
+    else (globalThis as any).document = previousDocument;
+    if (previousCss === undefined) delete (globalThis as any).CSS;
+    else (globalThis as any).CSS = previousCss;
+  }
+});
+
 test('lot-detail annotations never enter the native breadcrumb or content tree', () => {
   const dom = new JSDOM(`
     <nav id="breadcrumbs"><a href="/lot/34/set-cash-drawer"><span>SET CASH DRAWER W/ KEY &amp; EPSON PRINTER</span></a></nav>
