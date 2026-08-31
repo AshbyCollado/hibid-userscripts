@@ -12,6 +12,14 @@ import {
   shouldReloadExtension,
 } from '../src/background/dev-auto-reload.js';
 
+function shadowStrip(root: ParentNode, id: string): HTMLElement {
+  const host = root.querySelector<HTMLElement>(`[data-flippah-retail-host-for="${id}"]`);
+  assert.ok(host?.shadowRoot, `missing isolated annotation host for lot ${id}`);
+  const strip = host.shadowRoot.querySelector<HTMLElement>('.flippah-deal-strip');
+  assert.ok(strip, `missing isolated annotation strip for lot ${id}`);
+  return strip;
+}
+
 test('Chrome and Waterfox use direct background Amazon transport without opening helper tabs', async () => {
   const chrome = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
   const waterfox = JSON.parse(await readFile('dist/waterfox/manifest.json', 'utf8'));
@@ -88,22 +96,80 @@ test('same-ID native watch redraws request annotation repair without reacting to
 });
 
 test('new live cards reserve the complete evidence row before hydration', () => {
-  const dom = new JSDOM('<app-lot-tile id="lot-188"><div class="lot-lead-heading">Gemmy Nativity</div><div class="lot-tile-content"></div></app-lot-tile>');
+  const dom = new JSDOM('<app-lot-tile id="lot-0"><div data-event-item-id="188"><div class="lot-lead-heading">Gemmy Nativity</div><div class="lot-tile-content"></div></div></app-lot-tile>');
   const previousDocument = (globalThis as any).document;
   const previousCss = (globalThis as any).CSS;
   (globalThis as any).document = dom.window.document;
   (globalThis as any).CSS = { escape: (value: string) => value };
   try {
-    assert.equal(reserveTileAnnotationSpace('188'), true);
-    const strip = dom.window.document.querySelector<HTMLElement>('[data-flippah-retail-for="188"]')!;
-    assert.ok(strip);
+    const tile = dom.window.document.querySelector('app-lot-tile')!;
+    const nativeChildren = [...tile.children];
+    assert.equal(reserveTileAnnotationSpace('188', { kind: 'livecatalog' } as any), true);
+    assert.deepEqual([...tile.children], nativeChildren);
+    const strip = shadowStrip(tile, '188');
     assert.equal(strip.getAttribute('aria-busy'), 'true');
     assert.equal(strip.getAttribute('aria-label'), 'Restoring saved product prices');
     assert.match(strip.textContent || '', /Restoring prices/);
     assert.equal(strip.dataset.flippahRenderSignature, 'pending');
-    assert.equal(dom.window.document.querySelectorAll('[data-flippah-retail-for="188"]').length, 1);
-    assert.equal(reserveTileAnnotationSpace('188'), true);
-    assert.equal(dom.window.document.querySelectorAll('[data-flippah-retail-for="188"]').length, 1);
+    assert.equal(tile.querySelectorAll('[data-flippah-retail-host-for="188"]').length, 1);
+    assert.equal(reserveTileAnnotationSpace('188', { kind: 'livecatalog' } as any), true);
+    assert.equal(tile.querySelectorAll('[data-flippah-retail-host-for="188"]').length, 1);
+    assert.equal(dom.window.document.querySelector('style'), null);
+  } finally {
+    if (previousDocument === undefined) delete (globalThis as any).document;
+    else (globalThis as any).document = previousDocument;
+    if (previousCss === undefined) delete (globalThis as any).CSS;
+    else (globalThis as any).CSS = previousCss;
+  }
+});
+
+test('lot-detail annotations never enter the native breadcrumb or content tree', () => {
+  const dom = new JSDOM(`
+    <nav id="breadcrumbs"><a href="/lot/34/set-cash-drawer"><span>SET CASH DRAWER W/ KEY &amp; EPSON PRINTER</span></a></nav>
+    <main><h1>Lot # : 34 - SET CASH DRAWER W/ KEY &amp; EPSON PRINTER</h1><section id="gallery">Native gallery</section></main>
+  `, { url: 'https://hibid.com/lot/34/set-cash-drawer' });
+  const previousDocument = (globalThis as any).document;
+  const previousCss = (globalThis as any).CSS;
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).CSS = { escape: (value: string) => value };
+  try {
+    const breadcrumb = dom.window.document.querySelector('#breadcrumbs')!;
+    const main = dom.window.document.querySelector('main')!;
+    const breadcrumbHtml = breadcrumb.innerHTML;
+    const mainHtml = main.innerHTML;
+    assert.equal(reserveTileAnnotationSpace('34', { kind: 'lot' } as any), false);
+    assert.equal(breadcrumb.innerHTML, breadcrumbHtml);
+    assert.equal(main.innerHTML, mainHtml);
+    assert.equal(dom.window.document.querySelector('[data-flippah-retail-host-for]'), null);
+  } finally {
+    if (previousDocument === undefined) delete (globalThis as any).document;
+    else (globalThis as any).document = previousDocument;
+    if (previousCss === undefined) delete (globalThis as any).CSS;
+    else (globalThis as any).CSS = previousCss;
+  }
+});
+
+test('account-card annotations preserve native grid children and mount only inside its content body', () => {
+  const dom = new JSDOM(`
+    <article id="lot-311743157" class="bid-status-border current-bids-card">
+      <header id="native-heading">Lot 26 | LEVOIT Core300-P Air Purifier</header>
+      <div id="native-body" class="current-bids-card-content"><span>Current Bid: 14.00 USD</span><span>9 Bids</span></div>
+      <footer id="native-actions"><button>Unwatch</button><button>Notes</button></footer>
+    </article>
+  `, { url: 'https://hibid.com/account/watchlist' });
+  const previousDocument = (globalThis as any).document;
+  const previousCss = (globalThis as any).CSS;
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).CSS = { escape: (value: string) => value };
+  try {
+    const card = dom.window.document.querySelector('article')!;
+    const nativeChildren = [...card.children];
+    assert.equal(reserveTileAnnotationSpace('311743157', { kind: 'watchlist' } as any), true);
+    assert.deepEqual([...card.children], nativeChildren);
+    assert.equal(card.querySelector('#native-body')?.firstElementChild?.getAttribute('data-flippah-retail-host-for'), '311743157');
+    assert.match(shadowStrip(card, '311743157').textContent || '', /Restoring prices/);
+    assert.equal(card.querySelector('#native-heading')?.textContent, 'Lot 26 | LEVOIT Core300-P Air Purifier');
+    assert.equal(card.querySelector('#native-actions')?.textContent?.replace(/\s+/g, ''), 'UnwatchNotes');
   } finally {
     if (previousDocument === undefined) delete (globalThis as any).document;
     else (globalThis as any).document = previousDocument;
@@ -125,8 +191,8 @@ test('live redraws retain conclusive Amazon evidence but retry transient failure
 
   const source = await readFile('src/content/deal-intelligence.ts', 'utf8');
   assert.match(source, /min-height:52px/);
-  assert.match(source, /affectedIds\.filter\(\(id\) => !this\.records\.has\(id\)\)\.forEach\(reserveTileAnnotationSpace\)/);
-  assert.match(source, /if \(!strip\) \{[\s\S]*applyTileAnnotation\(record, route\)/);
+  assert.match(source, /affectedIds\.filter\(\(id\) => !this\.records\.has\(id\)\)\.forEach\(\(id\) => reserveTileAnnotationSpace\(id, route\)\)/);
+  assert.match(source, /if \(strip\) return;[\s\S]*applyTileAnnotation\(record, route\)/);
   assert.match(source, /flippahRenderSignature/);
   assert.match(source, /retailEvidence = new Map/);
   const locationHandler = source.match(/handleLocationChange\(\): void \{[\s\S]*?\n  \}/)?.[0] || '';
@@ -168,14 +234,13 @@ test('per-lot fast evidence invalidates when the visible product identity change
 });
 
 test('list and live-account rows paint saved evidence before hydration and defer uncached evidence', async () => {
-  assert.equal(shouldRenderProvisionalDealAnnotations({ kind: 'lot' }), true);
-  for (const kind of ['catalog', 'livecatalog', 'search', 'watchlist', 'currentbids', 'currentbids-winning', 'currentbids-outbid']) {
+  for (const kind of ['lot', 'catalog', 'livecatalog', 'search', 'watchlist', 'currentbids', 'currentbids-winning', 'currentbids-outbid']) {
     assert.equal(shouldRenderProvisionalDealAnnotations({ kind } as any), false, kind);
   }
 
   const source = await readFile('src/content/deal-intelligence.ts', 'utf8');
-  assert.match(source, /if \(shouldRenderProvisionalDealAnnotations\(route\) \|\| hasSavedEvidence\) applyTileAnnotation\(record, route\)/);
-  assert.match(source, /else reserveTileAnnotationSpace\(record\.lot\.id\)/);
+  assert.match(source, /if \(route\.kind !== 'lot'\) \{[\s\S]*if \(shouldRenderProvisionalDealAnnotations\(route\) \|\| hasSavedEvidence\) applyTileAnnotation\(record, route\)/);
+  assert.match(source, /else reserveTileAnnotationSpace\(record\.lot\.id, route\)/);
   const combinedStorage = source.indexOf('const initialStorage = await readInitialAnalysisStorage(lots, prefetchedStorage)');
   const quickRestore = source.indexOf('localQuickRestored = this.restorePrefetchedLotEvidence(quickRecords, initialStorage.lotEvidence)');
   const fastRestore = source.indexOf('localQuickRestored = this.restorePrefetchedLotEvidence(fastRecords, initialStorage.lotEvidence)');
@@ -229,10 +294,11 @@ test('same-ID live tile replacement restores cached evidence and recalculates cu
       currency: 'USD', needsQuantity: false, ebayNet: null, premiumPct: 15, outcome: null,
     };
     assert.equal(applyTileAnnotation(record, { kind: 'watchlist' } as any), true);
-    const firstStrip = dom.window.document.querySelector<HTMLElement>('[data-flippah-retail-for="192"]')!;
+    const firstStrip = shadowStrip(dom.window.document, '192');
     assert.match(firstStrip.textContent || '', /Amazon \$42\.98/);
     assert.equal(firstStrip.dataset.flippahAmazonSource, 'cache');
-    assert.match(dom.window.document.querySelector('button')?.textContent || '', /All-in \$24\.15/);
+    assert.match(firstStrip.textContent || '', /All-in \$24\.15/);
+    assert.equal(dom.window.document.querySelector('button')?.textContent, 'Bid 21.00 USD');
 
     const replacement = dom.window.document.createElement('app-lot-tile');
     replacement.id = 'lot-192';
@@ -241,11 +307,12 @@ test('same-ID live tile replacement restores cached evidence and recalculates cu
     record.allIn = calculateUsAllIn({ hammer: 25, buyerPremiumPct: 15, salesTaxPct: 0 });
     record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: 42.98 }).amazon;
     assert.equal(applyTileAnnotation(record, { kind: 'watchlist' } as any), true);
-    assert.equal(dom.window.document.querySelectorAll('[data-flippah-retail-for="192"]').length, 1);
-    const replacementStrip = replacement.querySelector<HTMLElement>('[data-flippah-retail-for="192"]')!;
+    assert.equal(dom.window.document.querySelectorAll('[data-flippah-retail-host-for="192"]').length, 1);
+    const replacementStrip = shadowStrip(replacement, '192');
     assert.match(replacementStrip.textContent || '', /Amazon \$42\.98/);
     assert.equal(replacementStrip.dataset.flippahAmazonSource, 'cache');
-    assert.match(replacement.querySelector('button')?.textContent || '', /All-in \$28\.75/);
+    assert.match(replacementStrip.textContent || '', /All-in \$28\.75/);
+    assert.equal(replacement.querySelector('button')?.textContent, 'Bid 25.00 USD');
   } finally {
     if (previous.document === undefined) delete (globalThis as any).document; else (globalThis as any).document = previous.document;
     if (previous.CSS === undefined) delete (globalThis as any).CSS; else (globalThis as any).CSS = previous.CSS;
@@ -273,7 +340,7 @@ test('retail transport returns normalized lookups and never exposes raw HTML or 
   assert.match(background, /retailIdentityCacheKey\(identity, RETAIL_MATCHING_EPOCH\)/);
   assert.match(background, /return lookupAmazonCachedBatch\(identities\.map/);
   assert.doesNotMatch(background, /return Promise\.all\(identities\.map\(\(identity\) => lookupAmazonCached/);
-  const nowLookup = background.match(/async function lookupAmazonNow[\s\S]*?\n}\n\nasync function lookupAmazonCachedBatch/)?.[0] || '';
+  const nowLookup = background.match(/async function lookupAmazonNow[\s\S]*?\r?\n}\r?\n\r?\nasync function lookupAmazonCachedBatch/)?.[0] || '';
   assert.ok(nowLookup.indexOf('getRetailCache<RetailLookupResult>(identityKey)') < nowLookup.indexOf('providerSnapshot(query)'));
   assert.match(content, /restoreLocalCachedEvidence\(quickRecords, initialStorage\.raw\)/);
   assert.match(content, /readInitialAnalysisStorage\(lots, prefetchedStorage\)/);
@@ -297,7 +364,7 @@ test('retail transport returns normalized lookups and never exposes raw HTML or 
 test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid layout', async () => {
   const content = await readFile('src/content/deal-intelligence.ts', 'utf8');
   const intelligence = await readFile('src/intelligence/us-deal-intelligence.ts', 'utf8');
-  assert.match(content, /data-flippah-retail-for/);
+  assert.match(content, /data-flippah-retail-host-for/);
   assert.match(content, /flippah-deal-dot/);
   assert.match(content, /flippah-deal-pill\.search/);
   assert.match(content, /flippah-search-pill/);
@@ -308,8 +375,11 @@ test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid 
   assert.match(content, /condition condition-\$\{condition\.tone\}/);
   assert.match(content, /explainHibidStatus/);
   assert.doesNotMatch(content, /Amazon: --|eBay: --/);
-  assert.match(content, /content\.insertAdjacentElement\('beforebegin', strip\)/);
-  assert.match(content, /return strip\.isConnected \? \{ tile, strip \} : null/);
+  assert.match(content, /host\.attachShadow\(\{ mode: 'open' \}\)/);
+  assert.match(content, /mount\.prepend\(host\)/);
+  assert.match(content, /if \(route\?\.kind === 'lot'\) return null/);
+  assert.doesNotMatch(content, /a\[href\*="\/lot\/\$\{escaped\}\//);
+  assert.doesNotMatch(content, /insertAdjacentElement\('beforebegin', strip\)|document\.documentElement\.append\(style\)/);
   assert.match(content, /tileFor\(id\)/);
   assert.match(content, /links\.amazon/);
   assert.match(content, /links\.ebay/);
@@ -320,7 +390,7 @@ test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid 
   assert.match(content, /pill\.target = '_blank'/);
   assert.match(content, /focus-visible/);
   assert.doesNotMatch(content, /\.innerHTML\s*=/);
-  assert.doesNotMatch(content, /\.remove\(\)|style\.display\s*=|style\.opacity\s*=|replaceWith\(|outerHTML\s*=/);
+  assert.doesNotMatch(content, /style\.display\s*=|style\.opacity\s*=|replaceWith\(|outerHTML\s*=/);
   assert.doesNotMatch(content, /querySelectorAll\([^)]*\)\.forEach\([^)]*hidden/);
   assert.match(content, /Condition warning:/);
   assert.match(content, /Mixed\/group lot:/);

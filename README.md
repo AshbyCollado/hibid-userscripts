@@ -408,3 +408,14 @@ so every catalog is re-evaluated under the corrected parser.
   50/50/4 pages and correctly withheld its mixed-variant median, retained the
   Onkyo 2/3 result as insufficient, and verified six clean SteelSeries sales at
   a $90.00 median.
+
+## v0.5.41 HiBid layout isolation
+
+- Lot-grid evidence mounts only inside a verified HiBid content body, leaving
+  every native card/grid direct child in its original order.
+- The Amazon, eBay, condition, and all-in row is isolated in its own Shadow DOM;
+  no deal-intelligence CSS selector can match a HiBid-owned element.
+- Lot-detail pages use only the existing Shadow DOM calculator section. The
+  extension no longer treats a breadcrumb or title link as a tile fallback.
+- All-in evidence stays in the extension row and no longer adds a child to the
+  native Bid control.
