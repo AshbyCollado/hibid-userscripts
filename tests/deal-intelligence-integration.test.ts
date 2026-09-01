@@ -72,9 +72,13 @@ test('HiBid redraws with the same stable lot IDs do not look like a new catalog'
   const first = new JSDOM('<app-lot-tile id="lot-30"></app-lot-tile><app-lot-tile id="lot-10"></app-lot-tile>');
   const redraw = new JSDOM('<section><app-lot-tile id="lot-10"></app-lot-tile><app-lot-tile id="lot-30"></app-lot-tile></section>');
   const changed = new JSDOM('<app-lot-tile id="lot-10"></app-lot-tile><app-lot-tile id="lot-40"></app-lot-tile>');
+  const account = new JSDOM('<article id="lot-0" class="bid-status-border"><a href="/lot/88/account-lot"></a></article>');
+  const standalone = new JSDOM('<article data-event-item-id="99"><div class="lot-card-content"></div></article>');
   assert.equal(visibleLotIdSignature(first.window.document), '10|30');
   assert.equal(visibleLotIdSignature(redraw.window.document), '10|30');
   assert.equal(visibleLotIdSignature(changed.window.document), '10|40');
+  assert.equal(visibleLotIdSignature(account.window.document), '88');
+  assert.equal(visibleLotIdSignature(standalone.window.document), '99');
 });
 
 test('same-ID native watch redraws request annotation repair without reacting to Flippah itself', () => {
@@ -152,14 +156,62 @@ test('in-place virtual tile recycling removes only the prior extension-owned hos
   (globalThis as any).CSS = { escape: (value: string) => value };
   try {
     const tile = dom.window.document.querySelector('app-lot-tile')!;
+    const observer = new dom.window.MutationObserver(() => undefined);
+    observer.observe(tile, { attributes: true, attributeFilter: ['id', 'href', 'data-event-item-id'], subtree: true });
     assert.equal(reserveTileAnnotationSpace('188', { kind: 'livecatalog' } as any), true);
     assert.match(shadowStrip(tile, '188').textContent || '', /Checking prices/);
     tile.querySelector('a')?.setAttribute('href', '/lot/244/recycled-lot');
+    const identityChanges = observer.takeRecords() as unknown as MutationRecord[];
+    assert.deepEqual(mutationAffectedLotIds(identityChanges), ['244']);
     assert.equal(reserveTileAnnotationSpace('244', { kind: 'livecatalog' } as any), true);
     assert.equal(tile.querySelectorAll('[data-flippah-retail-host-for]').length, 1);
     assert.equal(tile.querySelector('[data-flippah-retail-host-for="188"]'), null);
     assert.match(shadowStrip(tile, '244').textContent || '', /Checking prices/);
     assert.equal(tile.querySelector('#native')?.textContent, 'Native');
+    observer.disconnect();
+  } finally {
+    if (previousDocument === undefined) delete (globalThis as any).document;
+    else (globalThis as any).document = previousDocument;
+    if (previousCss === undefined) delete (globalThis as any).CSS;
+    else (globalThis as any).CSS = previousCss;
+  }
+});
+
+test('standalone event-item cards mount only through a verified content body', () => {
+  const dom = new JSDOM('<article data-event-item-id="730"><header>Standalone lot</header><div class="lot-card-content"><span id="native">Current bid $5</span></div></article>');
+  const previousDocument = (globalThis as any).document;
+  const previousCss = (globalThis as any).CSS;
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).CSS = { escape: (value: string) => value };
+  try {
+    assert.equal(reserveTileAnnotationSpace('730', { kind: 'catalog' } as any), true);
+    const card = dom.window.document.querySelector('article')!;
+    assert.equal(card.querySelector('.lot-card-content')?.firstElementChild?.getAttribute('data-flippah-retail-host-for'), '730');
+    assert.match(shadowStrip(card, '730').textContent || '', /Checking prices/);
+    assert.equal(card.querySelector('#native')?.textContent, 'Current bid $5');
+  } finally {
+    if (previousDocument === undefined) delete (globalThis as any).document;
+    else (globalThis as any).document = previousDocument;
+    if (previousCss === undefined) delete (globalThis as any).CSS;
+    else (globalThis as any).CSS = previousCss;
+  }
+});
+
+test('recycled-card cleanup never removes a foreign host-shaped node', () => {
+  const dom = new JSDOM(`
+    <app-lot-tile id="lot-0"><a href="/lot/244/current-lot"></a><div class="lot-tile-content">
+      <div id="foreign" data-flippah-retail-host-for="188">Foreign native content</div>
+    </div></app-lot-tile>
+  `);
+  const previousDocument = (globalThis as any).document;
+  const previousCss = (globalThis as any).CSS;
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).CSS = { escape: (value: string) => value };
+  try {
+    assert.equal(reserveTileAnnotationSpace('244', { kind: 'livecatalog' } as any), true);
+    const tile = dom.window.document.querySelector('app-lot-tile')!;
+    assert.equal(tile.querySelector('#foreign')?.textContent, 'Foreign native content');
+    assert.equal(tile.querySelectorAll('[data-flippah-owned="true"][data-flippah-retail-host-for="244"]').length, 1);
   } finally {
     if (previousDocument === undefined) delete (globalThis as any).document;
     else (globalThis as any).document = previousDocument;
@@ -326,6 +378,7 @@ test('retail transport returns normalized lookups and never exposes raw HTML or 
 
 test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid layout', async () => {
   const content = await readFile('src/content/deal-intelligence.ts', 'utf8');
+  const page = await readFile('src/content/index.ts', 'utf8');
   const intelligence = await readFile('src/intelligence/us-deal-intelligence.ts', 'utf8');
   assert.match(content, /data-flippah-retail-host-for/);
   assert.match(content, /flippah-deal-dot/);
@@ -341,6 +394,7 @@ test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid 
   assert.match(content, /host\.attachShadow\(\{ mode: 'open' \}\)/);
   assert.match(content, /mount\.prepend\(host\)/);
   assert.match(content, /if \(route\?\.kind === 'lot'\) return null/);
+  assert.match(content, /\[\$\{TILE_ANNOTATION_HOST_ATTRIBUTE\}\]\[data-flippah-owned="true"\]/);
   assert.doesNotMatch(content, /a\[href\*="\/lot\/\$\{escaped\}\//);
   assert.doesNotMatch(content, /insertAdjacentElement\('beforebegin', strip\)|document\.documentElement\.append\(style\)/);
   assert.match(content, /tileFor\(id\)/);
@@ -355,6 +409,8 @@ test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid 
   assert.doesNotMatch(content, /\.innerHTML\s*=/);
   assert.doesNotMatch(content, /style\.display\s*=|style\.opacity\s*=|replaceWith\(|outerHTML\s*=/);
   assert.doesNotMatch(content, /querySelectorAll\([^)]*\)\.forEach\([^)]*hidden/);
+  assert.match(page, /attributes: true/);
+  assert.match(page, /attributeFilter: \['id', 'href', 'data-event-item-id'\]/);
   assert.match(content, /Condition warning:/);
   assert.match(content, /Mixed\/group lot:/);
   assert.match(content, /CAD - no USD comparison/);

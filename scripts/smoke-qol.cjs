@@ -12,7 +12,7 @@ const fixtureUrl = 'https://hibid.com/lot/317882346/magcubic-4k-smart-projector-
 const watchlistUrl = 'https://hibid.com/account/watchlist';
 fs.mkdirSync(artifacts, { recursive: true });
 
-const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</title><meta property="og:image" content="https://media.sandhills.com/img.axd?id=7012043483&wid=&p=&ext=&w=0&h=0&sz=Max&checksum=abc&h=200&w=200"></head><body>
+const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</title><meta property="og:image" content="https://media.sandhills.com/img.axd?id=7012043483&wid=&p=&ext=&w=0&h=0&sz=Max&checksum=abc&h=200&w=200"><style>body{margin:0;font:16px system-ui;color:#17201c}main{max-width:1180px;margin:auto;padding:24px}#lot-information{border-collapse:collapse}th,td{padding:5px 8px;text-align:left}.lot-images{margin-top:16px}.native-bid-panel{position:fixed;right:24px;top:80px;width:280px;padding:18px;border:1px solid #ccd5cf;border-radius:12px;background:#fff}</style></head><body>
   <main>
     <h1>MAGCUBIC 4K Smart Projector, WiFi BT</h1>
     <table id="lot-information">
@@ -26,14 +26,19 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
       <tr><th>Missing Parts?</th><td>No</td></tr>
     </table>
     <div class="lot-images"><img id="fixture-lot-photo" width="128" height="128" src="https://media.sandhills.com/img.axd?id=7012043483&wid=&p=&ext=&w=0&h=0&sz=Max&checksum=abc&h=200&w=200" alt="MAGCUBIC projector"></div>
-    <div>High Bid: 20.00 USD</div><div>Bid 22.00 USD</div><div>OPEN</div>
-    <app-lot-tile id="lot-317882346" data-fixture-watch-tile>
-      <div class="lot-lead-heading">MAGCUBIC 4K Smart Projector, WiFi BT</div>
-      <div class="lot-tile-content"><button class="native-watch">Watch</button></div>
-      <button>Bid 22.00 USD</button>
-    </app-lot-tile>
+    <section class="native-bid-panel"><div>High Bid: 20.00 USD</div><button>Bid 22.00 USD</button><div>OPEN</div></section>
   </main>
 </body></html>`;
+
+const watchlistFixture = `<!doctype html><html><head><title>HiBid Watch List</title><style>
+  *{box-sizing:border-box}body{margin:0;background:#f3f5f4;font:15px system-ui;color:#17201c}.watch-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;max-width:1180px;margin:auto;padding:28px}.current-bids-card{display:grid;grid-template-rows:auto 1fr auto;min-width:0;min-height:260px;border:1px solid #cbd5cf;border-radius:12px;background:#fff;overflow:hidden}.native-heading{padding:14px 16px;border-bottom:1px solid #e3e9e5;font-weight:800}.current-bids-card-content{display:grid;align-content:start;gap:9px;min-width:0;padding:12px 16px}.native-metadata{display:flex;flex-wrap:wrap;gap:8px}.native-actions{display:flex;gap:8px;padding:12px 16px;border-top:1px solid #e3e9e5}.native-actions button{min-height:34px}
+</style></head><body><main class="watch-grid">
+  <article id="lot-0" class="bid-status-border current-bids-card" data-fixture-watch-tile>
+    <header class="native-heading">Lot 291 | MAGCUBIC 4K Smart Projector, WiFi BT</header>
+    <div class="current-bids-card-content"><a href="/lot/317882346/magcubic-4k-smart-projector">MAGCUBIC 4K Smart Projector, WiFi BT</a><div class="native-metadata"><span>Current Bid: 20.00 USD</span><span>Bid 22.00 USD</span><span>OPEN</span></div></div>
+    <footer class="native-actions"><button>Unwatch</button><button>Notes</button><button>Bid 22.00 USD</button></footer>
+  </article>
+</main></body></html>`;
 
 (async () => {
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -57,7 +62,7 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
       ? route.fulfill({ status: 200, contentType: 'text/html', body: fixture })
       : route.continue());
     await page.route(watchlistUrl, (route) => route.request().resourceType() === 'document'
-      ? route.fulfill({ status: 200, contentType: 'text/html', body: fixture })
+      ? route.fulfill({ status: 200, contentType: 'text/html', body: watchlistFixture })
       : route.continue());
     await page.route('https://media.sandhills.com/img.axd*', (route) => route.fulfill({
       status: 200,
@@ -113,10 +118,25 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
     await page.waitForFunction(() => Boolean(
       document.querySelector('[data-fixture-watch-tile] [data-flippah-retail-host-for="317882346"]')?.shadowRoot?.querySelector('.flippah-deal-strip'),
     ), { timeout: 15_000 });
+    await page.evaluate(() => document.querySelector('[data-fixture-watch-tile] a[href*="/lot/"]')?.setAttribute('href', '/lot/317882347/recycled-slot'));
+    await page.waitForFunction(() => Boolean(
+      document.querySelector('[data-fixture-watch-tile] [data-flippah-retail-host-for="317882347"]')
+      && !document.querySelector('[data-fixture-watch-tile] [data-flippah-retail-host-for="317882346"]'),
+    ), { timeout: 15_000 });
+    await page.waitForFunction(() => {
+      const host = document.querySelector('[data-fixture-watch-tile] [data-flippah-retail-host-for="317882347"]');
+      const strip = host?.shadowRoot?.querySelector('.flippah-deal-strip');
+      return Boolean(strip && strip.getAttribute('aria-busy') === null && /Amazon/.test(strip.textContent || '') && /eBay/.test(strip.textContent || ''));
+    }, { timeout: 15_000 });
+    await page.evaluate(() => document.querySelector('[data-fixture-watch-tile] a[href*="/lot/"]')?.setAttribute('href', '/lot/317882346/magcubic-4k-smart-projector'));
+    await page.waitForFunction(() => Boolean(
+      document.querySelector('[data-fixture-watch-tile] [data-flippah-retail-host-for="317882346"]')
+      && !document.querySelector('[data-fixture-watch-tile] [data-flippah-retail-host-for="317882347"]'),
+    ), { timeout: 15_000 });
     await page.evaluate(() => {
       const tile = document.querySelector('[data-fixture-watch-tile]');
       if (!tile) throw new Error('Fixture watch tile missing');
-      tile.innerHTML = '<div class="lot-lead-heading">MAGCUBIC 4K Smart Projector, WiFi BT</div><div class="lot-tile-content"><button class="native-watch">Unwatch</button></div><button>Bid 22.00 USD</button>';
+      tile.innerHTML = '<header class="native-heading">Lot 291 | MAGCUBIC 4K Smart Projector, WiFi BT</header><div class="current-bids-card-content"><a href="/lot/317882346/magcubic-4k-smart-projector">MAGCUBIC 4K Smart Projector, WiFi BT</a><div class="native-metadata"><span>Current Bid: 20.00 USD</span><span>Bid 22.00 USD</span><span>OPEN</span></div></div><footer class="native-actions"><button>Unwatch</button><button>Notes</button><button>Bid 22.00 USD</button></footer>';
     });
     await page.waitForTimeout(2_000);
     console.log('[watch redraw state]', await page.evaluate(() => {
@@ -142,10 +162,48 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
         && !/Retail\s+\$9,?999/.test(text)
         && !/MAGCUBIC 4K Smart Projector/.test(text));
     }, { timeout: 15_000 });
+    const watchLayout = await page.evaluate(() => {
+      const card = document.querySelector('[data-fixture-watch-tile]');
+      const body = card?.querySelector('.current-bids-card-content');
+      const heading = card?.querySelector('.native-heading');
+      const actions = card?.querySelector('.native-actions');
+      const host = card?.querySelector('[data-flippah-retail-host-for="317882346"]');
+      const hostRect = host?.getBoundingClientRect();
+      const bodyRect = body?.getBoundingClientRect();
+      const headingRect = heading?.getBoundingClientRect();
+      const actionsRect = actions?.getBoundingClientRect();
+      const overlaps = (a, b) => Boolean(a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top);
+      return {
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+        cardDisplay: card ? getComputedStyle(card).display : '',
+        hostInsideBody: Boolean(hostRect && bodyRect && hostRect.left >= bodyRect.left && hostRect.right <= bodyRect.right && hostRect.top >= bodyRect.top && hostRect.bottom <= bodyRect.bottom),
+        overlapsHeading: overlaps(hostRect, headingRect),
+        overlapsActions: overlaps(hostRect, actionsRect),
+        nativeActions: [...(actions?.querySelectorAll('button') || [])].map((button) => button.textContent?.trim()),
+        hostCount: card?.querySelectorAll('[data-flippah-retail-host-for]').length || 0,
+      };
+    });
+    if (watchLayout.overflow > 1 || watchLayout.cardDisplay !== 'grid' || !watchLayout.hostInsideBody || watchLayout.overlapsHeading || watchLayout.overlapsActions || watchLayout.hostCount !== 1 || watchLayout.nativeActions.join('|') !== 'Unwatch|Notes|Bid 22.00 USD') {
+      throw new Error(`Watch-list layout isolation failed: ${JSON.stringify(watchLayout)}`);
+    }
+    console.log('[watch layout metrics]', watchLayout);
     await fixtureTile.screenshot({ path: path.join(artifacts, 'watch-redraw-restored.png') });
 
     await page.goto(fixtureUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
     await page.waitForFunction((version) => document.documentElement.dataset.flippahContentVersion === version, expectedVersion);
+    const detailLayout = await page.evaluate(() => {
+      const gallery = document.querySelector('.lot-images')?.getBoundingClientRect();
+      const bidPanel = document.querySelector('.native-bid-panel')?.getBoundingClientRect();
+      return {
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+        galleryVisible: Boolean(gallery && gallery.width > 0 && gallery.height > 0),
+        bidPanelVisible: Boolean(bidPanel && bidPanel.width > 0 && bidPanel.height > 0),
+        nativeAnnotationHosts: document.querySelectorAll('[data-flippah-retail-host-for]').length,
+      };
+    });
+    if (detailLayout.overflow > 1 || !detailLayout.galleryVisible || !detailLayout.bidPanelVisible || detailLayout.nativeAnnotationHosts !== 0) {
+      throw new Error(`Lot-detail layout isolation failed: ${JSON.stringify(detailLayout)}`);
+    }
     await page.bringToFront();
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup/index.html`);

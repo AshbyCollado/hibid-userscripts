@@ -407,7 +407,12 @@ new MutationObserver((mutations) => {
   handleLocationChange();
   auctionHandoff.update();
   dealIntelligence.handleMutations(mutations);
-}).observe(document.documentElement, { childList: true, subtree: true });
+}).observe(document.documentElement, {
+  attributes: true,
+  attributeFilter: ['id', 'href', 'data-event-item-id'],
+  childList: true,
+  subtree: true,
+});
 window.addEventListener('popstate', handleLocationChange);
 window.addEventListener('hashchange', handleLocationChange);
 window.setInterval(handleLocationChange, 500);

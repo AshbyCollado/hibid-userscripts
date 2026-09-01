@@ -172,9 +172,9 @@ function safeExternalUrl(url: string): string {
 }
 
 export function visibleLotIdSignature(root: ParentNode): string {
-  return [...root.querySelectorAll<HTMLElement>('app-lot-tile[id^="lot-"]')]
+  return [...new Set([...root.querySelectorAll<HTMLElement>(LOT_TILE_SELECTOR)]
     .map(extractHibidTileEventItemId)
-    .filter(Boolean)
+    .filter(Boolean))]
     .sort()
     .join('|');
 }
@@ -207,7 +207,7 @@ export function mutationAffectedLotIds(mutations: readonly MutationRecord[]): st
   for (const mutation of mutations) {
     const target = elementForNode(mutation.target);
     if (target?.closest(FLIPPAH_OWNED_SELECTOR)) continue;
-    let hasNativeChange = false;
+    let hasNativeChange = mutation.type === 'attributes';
     for (const node of [...mutation.addedNodes, ...mutation.removedNodes]) {
       const element = elementForNode(node);
       if (!element) {
@@ -235,7 +235,9 @@ function tileFor(id: string): Element | null {
   document.querySelectorAll('app-lot-tile, .bid-status-border[id^="lot-"], [data-event-item-id]').forEach((element) => {
     const tile = element.matches('app-lot-tile')
       ? element
-      : element.closest('app-lot-tile') || (element.matches('.bid-status-border') ? element : element.closest('.bid-status-border'));
+      : element.closest('app-lot-tile')
+        || (element.matches('.bid-status-border') ? element : element.closest('.bid-status-border'))
+        || (element.matches('[data-event-item-id]') ? element : element.closest('[data-event-item-id]'));
     if (tile) candidates.add(tile);
   });
   return [...candidates].find((tile) => extractHibidTileEventItemId(tile) === id) || null;
@@ -273,12 +275,12 @@ function ebayMarketValue(record: AnalysisRecord): number | null {
 }
 
 function tileAnnotationMount(tile: Element): Element | null {
-  if (!tile.matches('app-lot-tile, .bid-status-border')) return null;
+  if (!tile.matches('app-lot-tile, .bid-status-border, [data-event-item-id]')) return null;
   return tile.querySelector('.lot-tile-content, .current-bids-card-content, .lot-card-content');
 }
 
 function annotationStrip(tile: Element, id: string): HTMLElement | null {
-  const host = tile.querySelector<HTMLElement>(`[${TILE_ANNOTATION_HOST_ATTRIBUTE}="${CSS.escape(id)}"]`);
+  const host = tile.querySelector<HTMLElement>(`[${TILE_ANNOTATION_HOST_ATTRIBUTE}="${CSS.escape(id)}"][data-flippah-owned="true"]`);
   return host?.shadowRoot?.querySelector<HTMLElement>('.flippah-deal-strip') || null;
 }
 
@@ -286,7 +288,7 @@ function ensureTileAnnotationStrip(id: string, route?: Pick<HiBidRoute, 'kind'>)
   if (route?.kind === 'lot') return null;
   const tile = tileFor(id);
   if (!tile) return null;
-  const existingHosts = [...tile.querySelectorAll<HTMLElement>(`[${TILE_ANNOTATION_HOST_ATTRIBUTE}]`)];
+  const existingHosts = [...tile.querySelectorAll<HTMLElement>(`[${TILE_ANNOTATION_HOST_ATTRIBUTE}][data-flippah-owned="true"]`)];
   let retainedCurrentHost = false;
   for (const host of existingHosts) {
     const isCurrent = host.dataset.flippahRetailHostFor === id;
