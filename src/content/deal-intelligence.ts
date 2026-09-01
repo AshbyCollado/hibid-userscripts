@@ -20,9 +20,9 @@ import {
   type ProductIdentity, type RetailCandidateEvaluation, type RetailIndicator, type UsAllInResult
 } from '../intelligence/us-deal-intelligence.js';
 
-const STYLE_ID = 'flippah-deal-intelligence-style';
 const LOT_TILE_SELECTOR = 'app-lot-tile[id^="lot-"], [data-event-item-id], .bid-status-border[id^="lot-"]';
 const FLIPPAH_OWNED_SELECTOR = '[data-flippah-owned="true"]';
+const TILE_ANNOTATION_HOST_ATTRIBUTE = 'data-flippah-retail-host-for';
 const SUPPORTED = new Set(['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid']);
 
 interface RetailLookupResult {
@@ -63,10 +63,9 @@ interface RetainedRetailEvidence {
 const REUSABLE_RETAIL_STATUSES = new Set<RetailLookupResult['status']>(['matched', 'no_match', 'low_confidence']);
 
 export function shouldRenderProvisionalDealAnnotations(route: Pick<HiBidRoute, 'kind'>): boolean {
-  // List and account pages are hydrated immediately after the DOM pass. Painting
-  // their incomplete identity first makes a verified price flash into a search
-  // pill while HiBid replaces live rows.
-  return route.kind === 'lot';
+  // List and account pages wait for hydrated evidence. Lot-detail pages render
+  // only inside Flippah's existing Shadow DOM panel and never annotate HiBid DOM.
+  return false;
 }
 
 export function canReuseRetailEvidence(
@@ -232,26 +231,30 @@ function researchLinks(query: string): { amazon: string; ebay: string; camel: st
 }
 
 function tileFor(id: string): Element | null {
-  const escaped = CSS.escape(id);
-  const match = document.querySelector(`#lot-${escaped}, [data-event-item-id="${escaped}"], .bid-status-border#lot-${escaped}, a[href*="/lot/${escaped}/"]`);
-  return match?.closest('app-lot-tile') || match;
+  const candidates = new Set<Element>();
+  document.querySelectorAll('app-lot-tile, .bid-status-border[id^="lot-"], [data-event-item-id]').forEach((element) => {
+    const tile = element.matches('app-lot-tile')
+      ? element
+      : element.closest('app-lot-tile') || (element.matches('.bid-status-border') ? element : element.closest('.bid-status-border'));
+    if (tile) candidates.add(tile);
+  });
+  return [...candidates].find((tile) => extractHibidTileEventItemId(tile) === id) || null;
 }
 
-function installPageStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const style = document.createElement('style');
-  style.id = STYLE_ID;
-  style.textContent = `
-    .flippah-deal-strip{display:flex;align-items:center;align-content:center;justify-content:center;flex-wrap:wrap;gap:6px 10px;min-height:52px;box-sizing:border-box;margin:5px 0;padding:3px 5px;font:700 11px/1.2 system-ui,sans-serif;letter-spacing:0}
+function tileAnnotationStyles(): string {
+  return `
+    :host{all:initial;display:block;max-width:100%;contain:content}
+    *{box-sizing:border-box}
+    .flippah-deal-strip{display:flex;align-items:center;align-content:center;justify-content:center;flex-wrap:wrap;gap:6px 10px;min-height:52px;margin:5px 0;padding:3px 5px;font:700 11px/1.2 system-ui,sans-serif;letter-spacing:0}
     .flippah-deal-pill{display:inline-flex;align-items:center;gap:5px;min-height:20px;color:#475569;white-space:nowrap}
     a.flippah-deal-pill{text-decoration:none;cursor:pointer}a.flippah-deal-pill:hover{text-decoration:underline}a.flippah-deal-pill:focus-visible{outline:2px solid #2563eb;outline-offset:2px;text-decoration:none}
     .flippah-deal-dot{display:inline-block;width:9px;height:9px;border:1px solid #64748b;border-radius:50%;background:#94a3b8;flex:0 0 9px}
     .flippah-deal-pill.green .flippah-deal-dot{border-color:#3f6212;background:#65a30d}.flippah-deal-pill.yellow .flippah-deal-dot{border-color:#854d0e;background:#eab308}
     .flippah-deal-pill.orange .flippah-deal-dot{border-color:#9a3412;background:#f97316}.flippah-deal-pill.red .flippah-deal-dot{border-color:#991b1b;background:#dc2626}
-    .flippah-deal-pill.black .flippah-deal-dot{border-color:#111827;background:#111827}.flippah-allin{display:block;margin-top:2px;font:700 10px/1.15 system-ui,sans-serif;letter-spacing:0}
+    .flippah-deal-pill.black .flippah-deal-dot{border-color:#111827;background:#111827}
     .flippah-deal-pill.search{min-height:22px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;box-shadow:0 1px 1px rgba(15,23,42,.08);font-size:11px}
     .flippah-deal-pill.search.amazon{border-color:#f59e0b;color:#111827;font-family:Arial,sans-serif;font-weight:800}.flippah-deal-pill.search.ebay{border-color:#93c5fd;color:#3665f3;font-family:Arial,sans-serif;font-weight:800}
-    .flippah-deal-pill.condition{min-height:20px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-weight:800}
+    .flippah-deal-pill.condition,.flippah-deal-pill.allin{min-height:20px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-weight:800}
     .flippah-deal-pill.condition-good{border-color:#86efac;background:#f0fdf4;color:#166534}.flippah-deal-pill.condition-warning{border-color:#fcd34d;background:#fffbeb;color:#92400e}
     .flippah-deal-pill.condition-danger{border-color:#fca5a5;background:#fef2f2;color:#991b1b}.flippah-deal-pill.condition-unknown{color:#64748b}
     .flippah-deal-loading{display:inline-flex;align-items:center;gap:7px;min-height:22px;color:#64748b;font-weight:700}
@@ -259,7 +262,6 @@ function installPageStyles(): void {
     @keyframes flippah-deal-spin{to{transform:rotate(360deg)}}
     @media (prefers-reduced-motion:reduce){.flippah-deal-loading-spinner{animation:none;border-top-color:#cbd5e1;background:#2563eb}}
   `;
-  document.documentElement.append(style);
 }
 
 function amazonMarketValue(record: AnalysisRecord): number | null {
@@ -270,26 +272,54 @@ function ebayMarketValue(record: AnalysisRecord): number | null {
   return record.state.resaleEstimate;
 }
 
-function ensureTileAnnotationStrip(id: string): { tile: Element; strip: HTMLElement } | null {
-  const tile = tileFor(id);
-  if (!tile) return null;
-  installPageStyles();
-  let strip = tile.querySelector<HTMLElement>(`:scope .flippah-deal-strip[data-flippah-retail-for="${CSS.escape(id)}"]`);
-  if (!strip) {
-    strip = document.createElement('div'); strip.className = 'flippah-deal-strip'; strip.dataset.flippahRetailFor = id; strip.dataset.flippahOwned = 'true';
-    const content = tile.querySelector('.lot-tile-content');
-    const heading = tile.querySelector('.lot-lead-heading');
-    const bidControl = [...tile.querySelectorAll<HTMLElement>('button,a')].find((element) => /^\s*Bid\s+\$?\s*[\d,.]+/i.test(element.textContent || ''));
-    if (content) content.insertAdjacentElement('beforebegin', strip);
-    else if (heading) heading.insertAdjacentElement('afterend', strip);
-    else if (bidControl) bidControl.insertAdjacentElement('beforebegin', strip);
-    else tile.append(strip);
-  }
-  return strip.isConnected ? { tile, strip } : null;
+function tileAnnotationMount(tile: Element): Element | null {
+  if (!tile.matches('app-lot-tile, .bid-status-border')) return null;
+  return tile.querySelector('.lot-tile-content, .current-bids-card-content, .lot-card-content');
 }
 
-export function reserveTileAnnotationSpace(id: string): boolean {
-  const target = ensureTileAnnotationStrip(id);
+function annotationStrip(tile: Element, id: string): HTMLElement | null {
+  const host = tile.querySelector<HTMLElement>(`[${TILE_ANNOTATION_HOST_ATTRIBUTE}="${CSS.escape(id)}"]`);
+  return host?.shadowRoot?.querySelector<HTMLElement>('.flippah-deal-strip') || null;
+}
+
+function ensureTileAnnotationStrip(id: string, route?: Pick<HiBidRoute, 'kind'>): { tile: Element; strip: HTMLElement } | null {
+  if (route?.kind === 'lot') return null;
+  const tile = tileFor(id);
+  if (!tile) return null;
+  const existingHosts = [...tile.querySelectorAll<HTMLElement>(`[${TILE_ANNOTATION_HOST_ATTRIBUTE}]`)];
+  let retainedCurrentHost = false;
+  for (const host of existingHosts) {
+    const isCurrent = host.dataset.flippahRetailHostFor === id;
+    if (isCurrent && !retainedCurrentHost) {
+      retainedCurrentHost = true;
+      continue;
+    }
+    host.remove();
+  }
+  let strip = annotationStrip(tile, id);
+  if (strip) return { tile, strip };
+  const mount = tileAnnotationMount(tile);
+  if (!mount) return null;
+  const host = document.createElement('div');
+  host.dataset.flippahRetailHostFor = id;
+  host.dataset.flippahOwned = 'true';
+  const root = host.attachShadow({ mode: 'open' });
+  const style = document.createElement('style');
+  style.textContent = tileAnnotationStyles();
+  strip = document.createElement('div');
+  strip.className = 'flippah-deal-strip';
+  strip.dataset.flippahRetailFor = id;
+  root.append(style, strip);
+  mount.prepend(host);
+  if (!host.isConnected) {
+    host.remove();
+    return null;
+  }
+  return { tile, strip };
+}
+
+export function reserveTileAnnotationSpace(id: string, route?: Pick<HiBidRoute, 'kind'>): boolean {
+  const target = ensureTileAnnotationStrip(id, route);
   if (!target) return false;
   const { strip } = target;
   if (strip.dataset.flippahRenderSignature) return true;
@@ -304,17 +334,10 @@ export function reserveTileAnnotationSpace(id: string): boolean {
   return true;
 }
 
-function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean {
-  const target = ensureTileAnnotationStrip(record.lot.id);
+export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean {
+  const target = ensureTileAnnotationStrip(record.lot.id, route);
   if (!target) return false;
-  const { tile, strip } = target;
-  const bidControl = [...tile.querySelectorAll<HTMLElement>('button,a')].find((element) => /^\s*Bid\s+\$?\s*[\d,.]+/i.test(element.textContent || ''));
-  if (bidControl && record.allIn) {
-    let allIn = bidControl.querySelector<HTMLElement>(':scope > .flippah-allin');
-    if (!allIn) { allIn = document.createElement('span'); allIn.className = 'flippah-allin'; allIn.dataset.flippahOwned = 'true'; bidControl.append(allIn); }
-    allIn.textContent = `All-in ${formatUsd(record.allIn.total)}`;
-    allIn.title = 'Current/next bid plus buyer premium and estimated US sales tax';
-  }
+  const { strip } = target;
   const amazonPrice = amazonMarketValue(record);
   const ebayPrice = ebayMarketValue(record);
   const condition = buildConditionPresentation(record.condition);
@@ -330,7 +353,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean
           : 'Amazon';
   const ebayLabel = ebayPrice === null ? 'eBay' : `eBay ${formatUsd(ebayPrice)}${record.state.resaleEstimate !== null ? ' saved' : ''}`;
   const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-')) && record.allIn
-    ? computeAccountVerdict({ status: record.lot.status || record.lot.rawText, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice })
+    ? computeAccountVerdict({ status: record.lot.status, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice })
     : null;
   const renderSignature = JSON.stringify([
     record.identity.query,
@@ -393,6 +416,7 @@ function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean
     add(ebayLabel, record.ebayIndicator.cls, ebayTitle, links.ebay);
   }
   add(condition.label, `condition condition-${condition.tone}`, condition.title, '', false);
+  if (record.allIn) add(`All-in ${formatUsd(record.allIn.total)}`, 'allin', 'Current or next bid plus buyer premium and estimated US sales tax.', '', false);
   if (verdict) add(verdict.label, verdict.cls, `${explainHibidStatus(record.lot.status)} Flippah: ${verdict.advice}`);
   return true;
 }
@@ -697,13 +721,13 @@ export class DealIntelligenceController {
     const cachedIds = affectedIds.filter((id) => this.records.has(id));
     cachedIds.forEach((id) => {
       const tile = tileFor(id);
-      const strip = tile?.querySelector<HTMLElement>(`:scope .flippah-deal-strip[data-flippah-retail-for="${CSS.escape(id)}"]`);
+      const strip = tile ? annotationStrip(tile, id) : null;
       if (strip) return;
       const record = this.records.get(id);
       if (record) applyTileAnnotation(record, route);
     });
-    if (!shouldRenderProvisionalDealAnnotations(route)) {
-      affectedIds.filter((id) => !this.records.has(id)).forEach(reserveTileAnnotationSpace);
+    if (route.kind !== 'lot' && !shouldRenderProvisionalDealAnnotations(route)) {
+      affectedIds.filter((id) => !this.records.has(id)).forEach((id) => reserveTileAnnotationSpace(id, route));
     }
     if (cachedIds.length) this.scheduleAnnotationRepair(cachedIds);
     const hasLotPanelMount = mutations.some((mutation) => [...mutation.addedNodes].some((node) => {

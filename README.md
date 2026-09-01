@@ -425,3 +425,14 @@ v0.4.8 after its layout and status behavior were redesigned.
   50/50/4 pages and correctly withheld its mixed-variant median, retained the
   Onkyo 2/3 result as insufficient, and verified six clean SteelSeries sales at
   a $90.00 median.
+
+## v0.5.42 HiBid layout isolation and hardened auction handoff
+
+- Preserves the hardened v0.5.19 one-click Flippah auction-lot handoff while
+  isolating every list-card annotation inside an extension-owned Shadow DOM.
+- Refuses to annotate native lot-detail DOM, mounts list evidence only inside
+  verified card-content containers, and never changes HiBid bid controls.
+- Resolves a card by its extracted physical event-item identity and removes
+  only stale extension-owned hosts when HiBid recycles a virtual card slot.
+- The atomic local installer retains the prior installed extension if a staged
+  replacement fails, preventing a partial or stale unpacked Chrome tree.

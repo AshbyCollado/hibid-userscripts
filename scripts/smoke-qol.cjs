@@ -9,6 +9,7 @@ const expectedVersion = String(require(path.join(root, 'package.json')).version)
 const artifacts = path.join(root, 'artifacts', 'acceptance', `v${expectedVersion}`);
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flippah-qol-'));
 const fixtureUrl = 'https://hibid.com/lot/317882346/magcubic-4k-smart-projector--wifi-bt';
+const watchlistUrl = 'https://hibid.com/account/watchlist';
 fs.mkdirSync(artifacts, { recursive: true });
 
 const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</title><meta property="og:image" content="https://media.sandhills.com/img.axd?id=7012043483&wid=&p=&ext=&w=0&h=0&sz=Max&checksum=abc&h=200&w=200"></head><body>
@@ -53,6 +54,9 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
     page.on('pageerror', (error) => console.error('[fixture pageerror]', error.message));
     page.on('console', (message) => { if (message.type() === 'error') console.error('[fixture console]', message.text()); });
     await page.route(fixtureUrl, (route) => route.request().resourceType() === 'document'
+      ? route.fulfill({ status: 200, contentType: 'text/html', body: fixture })
+      : route.continue());
+    await page.route(watchlistUrl, (route) => route.request().resourceType() === 'document'
       ? route.fulfill({ status: 200, contentType: 'text/html', body: fixture })
       : route.continue());
     await page.route('https://media.sandhills.com/img.axd*', (route) => route.fulfill({
@@ -103,20 +107,45 @@ const fixture = `<!doctype html><html><head><title>Magcubic 4K Smart Projector</
     await outcome.getByText('Resale outcome saved', { exact: true }).waitFor({ timeout: 10_000 });
     await page.screenshot({ path: path.join(artifacts, 'outcome-saved.png'), fullPage: false });
 
+    await page.goto(watchlistUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await page.waitForFunction((version) => document.documentElement.dataset.flippahContentVersion === version, expectedVersion);
     const fixtureTile = page.locator('[data-fixture-watch-tile]');
-    await fixtureTile.locator('.flippah-deal-strip').waitFor({ timeout: 15_000 });
+    await page.waitForFunction(() => Boolean(
+      document.querySelector('[data-fixture-watch-tile] [data-flippah-retail-host-for="317882346"]')?.shadowRoot?.querySelector('.flippah-deal-strip'),
+    ), { timeout: 15_000 });
     await page.evaluate(() => {
       const tile = document.querySelector('[data-fixture-watch-tile]');
       if (!tile) throw new Error('Fixture watch tile missing');
       tile.innerHTML = '<div class="lot-lead-heading">MAGCUBIC 4K Smart Projector, WiFi BT</div><div class="lot-tile-content"><button class="native-watch">Unwatch</button></div><button>Bid 22.00 USD</button>';
     });
+    await page.waitForTimeout(2_000);
+    console.log('[watch redraw state]', await page.evaluate(() => {
+      const tile = document.querySelector('[data-fixture-watch-tile]');
+      const host = tile?.querySelector('[data-flippah-retail-host-for]');
+      const strip = host?.shadowRoot?.querySelector('.flippah-deal-strip');
+      return {
+        tileText: tile?.textContent?.replace(/\s+/g, ' ').trim(),
+        hostFor: host?.getAttribute('data-flippah-retail-host-for'),
+        stripText: strip?.textContent?.replace(/\s+/g, ' ').trim(),
+        stripBusy: strip?.getAttribute('aria-busy'),
+      };
+    }));
     await page.waitForFunction(() => {
-      const strip = document.querySelector('[data-fixture-watch-tile] .flippah-deal-strip');
+      const host = document.querySelector('[data-fixture-watch-tile] [data-flippah-retail-host-for="317882346"]');
+      const strip = host?.shadowRoot?.querySelector('.flippah-deal-strip');
       const text = strip?.textContent || '';
-      return Boolean(strip && /Amazon/.test(text) && /eBay/.test(text) && /New/.test(text) && !/Retail\s+\$9,?999/.test(text));
+      return Boolean(strip
+        && /Amazon/.test(text)
+        && /eBay/.test(text)
+        && /Condition/.test(text)
+        && /All-in/.test(text)
+        && !/Retail\s+\$9,?999/.test(text)
+        && !/MAGCUBIC 4K Smart Projector/.test(text));
     }, { timeout: 15_000 });
     await fixtureTile.screenshot({ path: path.join(artifacts, 'watch-redraw-restored.png') });
 
+    await page.goto(fixtureUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await page.waitForFunction((version) => document.documentElement.dataset.flippahContentVersion === version, expectedVersion);
     await page.bringToFront();
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup/index.html`);
