@@ -430,13 +430,14 @@ test('manifest validation fails closed with domain errors for malformed nested r
   });
 });
 
-test('book analysis stays visible on the lot page while the toolbar remains an additional route', () => {
+test('book analysis is exposed by the toolbar without mounting page-level handoff UI', () => {
   const popup = readFileSync('src/popup/index.ts', 'utf8');
   const content = readFileSync('src/content/index.ts', 'utf8');
   assert.match(popup, /class="book-tools"/);
   assert.match(popup, /id="analyze-books"/);
   assert.match(popup, /context\.route\.kind === 'lot'/);
   assert.match(content, /flippah:auction\.handoff\.start/);
-  assert.match(content, /installHibidAuctionHandoffAction/);
+  assert.doesNotMatch(content, /installHibidAuctionHandoffAction/);
+  assert.doesNotMatch(content, /Analyze books in Flippah|flippah-auction-handoff/);
   assert.equal(existsSync('src/content/auction-handoff-action.ts'), true);
 });

@@ -16,6 +16,9 @@ implemented.
   diagnostics, watch refreshes, alarms, and notifications.
 - `src/popup/` opens on `Watchlist`; the right-side `Scraper` tab provides export controls and the preserved
   `Watchlist` tab.
+- Book-lot handoff is exposed only from `Scraper` -> `Books` -> `Analyze this lot` in the toolbar popup.
+  The content runtime owns the bounded message handler but never mounts a page-level button, card, style,
+  or other handoff UI into HiBid's document.
 - `src/options/` stores calculator, seller economics, research origin/radius,
   transport capability, resale goals/channels, custom instructions, and opt-in
   debug settings.
