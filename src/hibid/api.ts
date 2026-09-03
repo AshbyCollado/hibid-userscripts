@@ -13,6 +13,7 @@ import { parseStructuredDescription } from '../intelligence/us-deal-intelligence
 export const HIBID_SEARCH_ENDPOINT = 'https://hibid-api.io/sr/main/v1/search/lot';
 export const HIBID_GRAPHQL_ENDPOINT = 'https://hibid.com/graphql';
 export const HIBID_LOT_SEARCH_OPERATION = 'FlippahLotSearch';
+export const HIBID_LOT_DETAILS_OPERATION = 'GetLotDetails';
 export const HIBID_WATCHLIST_SEARCH_OPERATION = 'FlippahWatchListSearch';
 export const HIBID_PAGE_SIZE = 100;
 export const HIBID_CONCURRENCY = 3;
@@ -85,6 +86,72 @@ export const HIBID_LOT_SEARCH_QUERY = `
     }
   }
 `;
+
+// HiBid's canonical lot page uses the exact-item detail resolver even after a
+// closed lot falls out of lotSearch. Keep this document intentionally bounded
+// to fields required by HibidLotHandoffV1 and never count the request as a view.
+export const HIBID_LOT_DETAILS_QUERY = `
+  query GetLotDetails($lotId: ID!, $countAsView: Boolean = false) {
+    lot(input: $lotId, countAsView: $countAsView) {
+      accessability
+      lot {
+        id itemId lotNumber lead description estimate quantity saleOrder
+        ringNumber shippingOffered pictureCount
+        featuredPicture { description fullSizeLocation hdThumbnailLocation thumbnailLocation width height }
+        pictures { description fullSizeLocation hdThumbnailLocation thumbnailLocation width height }
+        category { id categoryName fullCategory description uRLPath }
+        lotState {
+          bidCount highBid minBid isArchived isClosed isLive isNotYetLive
+          priceRealized priceRealizedMessage productStatus status
+        }
+        auction {
+          id eventName description buyerPremium buyerPremiumRate eventAddress
+          eventCity eventState eventZip eventDateBegin eventDateEnd eventDateInfo
+          checkoutDateInfo previewDateInfo currencyAbbreviation lotCount
+          shippingAndPickupInfo paymentInfo termsAndConditions biddingNotice
+          auctioneer { id name address city state postalCode country }
+        }
+      }
+    }
+  }
+`;
+
+export interface HiBidLotDetailsVariables {
+  lotId: string;
+  countAsView: false;
+}
+
+export function buildHibidLotDetailsVariables(eventItemId: string): HiBidLotDetailsVariables {
+  if (!/^[1-9]\d*$/.test(eventItemId) || !Number.isSafeInteger(Number(eventItemId))) {
+    throw new Error('Invalid HiBid exact-item ID');
+  }
+  return { lotId: eventItemId, countAsView: false };
+}
+
+export function hibidHydrationQuery(body: unknown): string {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Malformed HiBid hydration request');
+  const request = body as Record<string, unknown>;
+  if (!request.variables || typeof request.variables !== 'object' || Array.isArray(request.variables)) throw new Error('Malformed HiBid hydration request');
+  const variables = request.variables as Record<string, unknown>;
+  const operation = String(request.operationName || '');
+  if (operation === HIBID_LOT_DETAILS_OPERATION) {
+    const keys = Object.keys(variables).sort();
+    const lotId = String(variables.lotId || '');
+    if (
+      keys.join(',') !== 'countAsView,lotId'
+      || variables.countAsView !== false
+      || !/^[1-9]\d*$/.test(lotId)
+      || !Number.isSafeInteger(Number(lotId))
+    ) throw new Error('Invalid HiBid exact-item detail variables');
+    return HIBID_LOT_DETAILS_QUERY;
+  }
+  if (operation !== HIBID_LOT_SEARCH_OPERATION) throw new Error('Unknown HiBid GraphQL operation');
+  const ids = variables.eventItemIds;
+  if (ids !== null && (!Array.isArray(ids) || ids.length > 100 || ids.some((id) => !Number.isInteger(id)))) {
+    throw new Error('Invalid HiBid event item IDs');
+  }
+  return HIBID_LOT_SEARCH_QUERY;
+}
 
 export const HIBID_WATCHLIST_SEARCH_QUERY = `
   query FlippahWatchListSearch(

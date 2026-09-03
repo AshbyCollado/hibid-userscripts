@@ -209,7 +209,7 @@ test('content flow reserves the PWA before exact GraphQL hydration, then hands o
     searchLots: async () => { throw new Error('unused'); },
     hydrateLots: async () => {
       events.push('hydrate');
-      return { data: { lotSearch: { pagedResults: { results: [rawLot()] } } } };
+      return { data: { lot: { accessability: 'ACCESSIBLE', lot: rawLot() } } };
     },
   };
   const dom = new JSDOM('<title>Books</title><body>Book lot</body>', { url: sourceUrl });
@@ -262,7 +262,7 @@ test('a challenge appearing after hydration cancels the reservation without rela
     hydrateLots: async () => {
       dom.window.document.title = 'Just a moment...';
       dom.window.document.body.textContent = 'Verify you are human';
-      return { data: { lotSearch: { pagedResults: { results: [rawLot()] } } } };
+      return { data: { lot: { accessability: 'ACCESSIBLE', lot: rawLot() } } };
     },
   };
   await assert.rejects(
@@ -285,7 +285,7 @@ test('a challenge appearing immediately before handoff cancels without sending t
   await assert.rejects(
     runHibidAuctionHandoff(dom.window.document, {
       searchLots: async () => { throw new Error('search is not used'); },
-      hydrateLots: async () => ({ data: { lotSearch: { pagedResults: { results: [rawLot()] } } } }),
+      hydrateLots: async () => ({ data: { lot: { accessability: 'ACCESSIBLE', lot: rawLot() } } }),
     }, {
       send: async <T>(type: string) => {
         messages.push(type);

@@ -1,4 +1,4 @@
-import { HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, buildHibidGraphqlVariables } from './api.js';
+import { HIBID_LOT_DETAILS_OPERATION, HIBID_LOT_DETAILS_QUERY, buildHibidLotDetailsVariables } from './api.js';
 import { resolveHiBidRoute, toUrl } from '../core/route.js';
 import type {
   HiBidTransport,
@@ -39,6 +39,10 @@ function descriptionText(value: unknown): string {
     .replace(/&amp;/gi, '&')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function joinedDescription(...values: unknown[]): string {
+  return values.map(descriptionText).filter(Boolean).join('\n\n');
 }
 
 function allowedPictureUrl(value: string): boolean {
@@ -414,8 +418,8 @@ export function buildHibidLotHandoffV1(
       location,
       buyer_premium_raw: buyerPremiumRaw,
       buyer_premium_variants: premiumVariants(auction.buyerPremium, auction.buyerPremiumRate),
-      auction_terms: descriptionText(auction.description),
-      checkout_terms: descriptionText(auction.checkoutDateInfo),
+      auction_terms: joinedDescription(auction.termsAndConditions, auction.biddingNotice, auction.shippingAndPickupInfo, auction.description),
+      checkout_terms: joinedDescription(auction.paymentInfo, auction.checkoutDateInfo),
       preview_terms: descriptionText(auction.previewDateInfo),
     },
     expected_picture_count: expected,
@@ -443,17 +447,19 @@ export async function hydrateHibidLotHandoff(
   const route = resolveHiBidRoute(sourceUrl);
   if (!route.supported || route.kind !== 'lot') throw new Error('Flippah auction handoff is available only on an individual HiBid lot');
   const id = eventItemIdFromHibidLotUrl(sourceUrl);
-  const variables = buildHibidGraphqlVariables(route, sourceUrl, 1, { pageSize: 1, eventItemIds: [id] });
+  const variables = buildHibidLotDetailsVariables(id);
   const attempts = Math.max(1, Math.min(3, options.retries ?? 3));
   let lastError: unknown = new Error('HiBid exact-item hydration failed');
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (options.signal?.aborted) throw new Error('HiBid lot handoff cancelled');
     try {
-      const json = await transport.hydrateLots({ operationName: HIBID_LOT_SEARCH_OPERATION, variables, query: HIBID_LOT_SEARCH_QUERY }, { signal: options.signal });
-      const results = (json as any)?.data?.lotSearch?.pagedResults?.results;
-      if (!Array.isArray(results) || results.length !== 1) throw new Error(`HiBid exact-item hydration returned ${Array.isArray(results) ? results.length : 0} records for one requested lot`);
+      const json = await transport.hydrateLots({ operationName: HIBID_LOT_DETAILS_OPERATION, variables, query: HIBID_LOT_DETAILS_QUERY }, { signal: options.signal });
+      const wrapper = (json as any)?.data?.lot;
+      if (wrapper?.accessability !== 'ACCESSIBLE') throw new Error('HiBid exact-item detail is not accessible');
+      const result = wrapper.lot;
+      if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('HiBid exact-item detail hydration returned no requested lot');
       return buildHibidLotHandoffV1(
-        results[0],
+        result,
         sourceUrl,
         options.observedAt,
         options.initiatedAt,
@@ -461,7 +467,7 @@ export async function hydrateHibidLotHandoff(
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
-      if (!/physical-picture reconciliation|returned 0 records|network|fetch|http 5\d\d/i.test(message)) throw error;
+      if (!/physical-picture reconciliation|returned no requested lot|network|fetch|http 5\d\d/i.test(message)) throw error;
     }
   }
   throw lastError;

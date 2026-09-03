@@ -5,7 +5,7 @@
 | `catalog` | `/catalog/:auctionId`, state-prefixed catalog routes | HiBid GraphQL pages |
 | `livecatalog` | `/livecatalog/:auctionId` | HiBid GraphQL pages |
 | `search` | `/lots`, `/lots/...`, state-prefixed `/lots/...` | Search API IDs, GraphQL hydration |
-| `lot` | `/lot/:eventItemId/...` | Canonical DOM plus optional GraphQL enrichment |
+| `lot` | `/lot/:eventItemId/...` | Canonical DOM plus exact `GetLotDetails(lotId, countAsView:false)` GraphQL hydration |
 | `watchlist` | `/account/watchlist` | Canonical personalized DOM |
 | `currentbids-winning` | `/account/currentbids?status=WINNING` | Canonical personalized DOM |
 | `currentbids-outbid` | `/account/currentbids?status=OUTBID` | Canonical personalized DOM |

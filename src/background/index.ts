@@ -1,4 +1,4 @@
-import { HIBID_GRAPHQL_ENDPOINT, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, HIBID_SEARCH_ENDPOINT } from '../hibid/api.js';
+import { HIBID_GRAPHQL_ENDPOINT, HIBID_SEARCH_ENDPOINT, hibidHydrationQuery } from '../hibid/api.js';
 import { failure, isEnvelope, payloadBytes, success, type MessageEnvelope } from '../core/messages.js';
 import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, putRecordBatch } from '../core/job-db.js';
 import { collectStoredOutcomes } from '../core/outcomes.js';
@@ -415,15 +415,6 @@ function validateSearchBody(body: any): void {
   if (!Number.isInteger(body.options.size) || body.options.size < 1 || body.options.size > 100) throw new Error('Invalid HiBid search size');
 }
 
-function validateHydrationBody(body: any): void {
-  if (!body || typeof body !== 'object' || !body.variables || typeof body.variables !== 'object') throw new Error('Malformed HiBid hydration request');
-  if (String(body.operationName || '') !== HIBID_LOT_SEARCH_OPERATION) throw new Error('Unknown HiBid GraphQL operation');
-  const ids = body.variables.eventItemIds;
-  if (ids !== null && (!Array.isArray(ids) || ids.length > 100 || ids.some((id: unknown) => !Number.isInteger(id)))) {
-    throw new Error('Invalid HiBid event item IDs');
-  }
-}
-
 async function postJson(url: string, body: unknown, credentials: RequestCredentials): Promise<unknown> {
   if (payloadBytes(body) > MAX_REQUEST_BYTES) throw new Error('HiBid request is too large');
   const controller = new AbortController();
@@ -494,10 +485,10 @@ async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.Me
     case 'flippah:network.hydrate': {
       ensureHiBidSender(sender);
       const incoming = (message.payload as any)?.body;
-      validateHydrationBody(incoming);
+      const query = hibidHydrationQuery(incoming);
       const senderUrl = new URL(sender.url || sender.tab?.url || HIBID_GRAPHQL_ENDPOINT);
       const endpoint = new URL('/graphql', senderUrl.origin).href;
-      return postJson(endpoint, { ...incoming, query: HIBID_LOT_SEARCH_QUERY }, 'include');
+      return postJson(endpoint, { ...incoming, query }, 'include');
     }
     case 'flippah:retail.lookup':
       ensureResearchPageSender(sender);

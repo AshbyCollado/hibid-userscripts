@@ -57,6 +57,10 @@ function rawLot(count = 9, patch: Record<string, unknown> = {}) {
       eventState: 'NJ',
       eventZip: '08817',
       description: 'Pickup by appointment',
+      termsAndConditions: 'Auction terms apply',
+      biddingNotice: 'Soft close',
+      shippingAndPickupInfo: 'Shipping is available',
+      paymentInfo: 'Visa accepted',
       checkoutDateInfo: 'Pay after the sale',
       previewDateInfo: 'Preview Tuesday',
     },
@@ -100,15 +104,15 @@ test('live HiBid zero-dimension sentinels remain explicitly unknown for host-sid
   validateHibidLotHandoffV1(manifest);
 });
 
-test('the lazy ninth photo comes from exact GraphQL hydration rather than the eight-photo DOM', async () => {
+test('the lazy ninth photo comes from exact GetLotDetails hydration rather than the eight-photo DOM', async () => {
   const dom = new JSDOM('<main>' + Array.from({ length: 8 }, (_, index) => `<img src="thumb-${index}.jpg">`).join('') + '</main>', { url: sourceUrl });
   assert.equal(dom.window.document.images.length, 8);
   const transport: HiBidTransport = {
     searchLots: async () => { throw new Error('search is not used'); },
     hydrateLots: async (body: any) => {
-      assert.deepEqual(body.variables.eventItemIds, [317135308]);
-      assert.equal(body.variables.pageLength, 1);
-      return { data: { lotSearch: { pagedResults: { results: [rawLot(9)] } } } };
+      assert.equal(body.operationName, 'GetLotDetails');
+      assert.deepEqual(body.variables, { lotId: '317135308', countAsView: false });
+      return { data: { lot: { accessability: 'ACCESSIBLE', lot: rawLot(9) } } };
     },
   };
   const manifest = await hydrateHibidLotHandoff(transport, sourceUrl, {
@@ -134,13 +138,41 @@ test('a transient eight-of-nine GraphQL snapshot is retried without duplicating 
     hydrateLots: async () => {
       calls += 1;
       const lot = calls === 1 ? rawLot(9, { pictures: rawLot(8).pictures }) : rawLot(9);
-      return { data: { lotSearch: { pagedResults: { results: [lot] } } } };
+      return { data: { lot: { accessability: 'ACCESSIBLE', lot } } };
     },
   };
   const manifest = await hydrateHibidLotHandoff(transport, sourceUrl);
   assert.equal(calls, 2);
   assert.equal(manifest.pictures.length, 9);
   assert.equal(manifest.fidelity.duplicate_url_count, 0);
+});
+
+test('a missing exact detail lot is retried without falling back to catalog search', async () => {
+  const operations: string[] = [];
+  const transport: HiBidTransport = {
+    searchLots: async () => { throw new Error('search is not used'); },
+    hydrateLots: async (body: any) => {
+      operations.push(body.operationName);
+      return operations.length === 1
+        ? { data: { lot: { accessability: 'ACCESSIBLE', lot: null } } }
+        : { data: { lot: { accessability: 'ACCESSIBLE', lot: rawLot(2) } } };
+    },
+  };
+  const manifest = await hydrateHibidLotHandoff(transport, sourceUrl, { retries: 2 });
+  assert.deepEqual(operations, ['GetLotDetails', 'GetLotDetails']);
+  assert.equal(manifest.pictures.length, 2);
+});
+
+test('an inaccessible exact detail wrapper fails closed without retrying', async () => {
+  let calls = 0;
+  await assert.rejects(hydrateHibidLotHandoff({
+    searchLots: async () => { throw new Error('search is not used'); },
+    hydrateLots: async () => {
+      calls += 1;
+      return { data: { lot: { accessability: 'DENIED', lot: rawLot(1) } } };
+    },
+  }, sourceUrl), /not accessible/i);
+  assert.equal(calls, 1);
 });
 
 test('featuredPicture is added only when GraphQL pictures excludes it', () => {
@@ -185,6 +217,8 @@ test('manifest retains economics and premium variants but excludes private accou
   assert.equal(manifest.lot.next_bid_cents, 1500);
   assert.deepEqual(manifest.lot.buyer_premium_variants.map((item) => item.rate_basis_points), [1000, 1300]);
   assert.deepEqual(manifest.lot.buyer_premium_variants.map((item) => item.payment_method), ['cash', 'credit']);
+  assert.match(manifest.lot.auction_terms, /Auction terms apply[\s\S]*Soft close[\s\S]*Shipping is available/);
+  assert.match(manifest.lot.checkout_terms, /Visa accepted[\s\S]*Pay after the sale/);
   const json = JSON.stringify(manifest);
   assert.doesNotMatch(json, /never transmit me|buyerHighBid|watchNotes|authorization|cookie/i);
 });

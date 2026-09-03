@@ -2,11 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { HiBidTransport } from '../src/core/types.js';
 import { resolveHiBidRoute } from '../src/core/route.js';
-import { buildHibidSearchRequest, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, HIBID_WATCHLIST_SEARCH_OPERATION, HIBID_WATCHLIST_SEARCH_QUERY, mergeHibidVisibleWithHydrated, normalizeHibidLot, scrapeHibidApiCatalog, scrapeHibidWatchlist, validateHibidApiCoverage } from '../src/hibid/api.js';
+import { buildHibidLotDetailsVariables, buildHibidSearchRequest, hibidHydrationQuery, HIBID_LOT_DETAILS_OPERATION, HIBID_LOT_DETAILS_QUERY, HIBID_LOT_SEARCH_OPERATION, HIBID_LOT_SEARCH_QUERY, HIBID_WATCHLIST_SEARCH_OPERATION, HIBID_WATCHLIST_SEARCH_QUERY, mergeHibidVisibleWithHydrated, normalizeHibidLot, scrapeHibidApiCatalog, scrapeHibidWatchlist, validateHibidApiCoverage } from '../src/hibid/api.js';
 
 test('GraphQL operation name matches the operation declared by the query', () => {
   assert.match(HIBID_LOT_SEARCH_QUERY, new RegExp(`\\bquery\\s+${HIBID_LOT_SEARCH_OPERATION}\\b`));
+  assert.match(HIBID_LOT_DETAILS_QUERY, new RegExp(`\\bquery\\s+${HIBID_LOT_DETAILS_OPERATION}\\b`));
   assert.match(HIBID_WATCHLIST_SEARCH_QUERY, new RegExp(`\\bquery\\s+${HIBID_WATCHLIST_SEARCH_OPERATION}\\b`));
+});
+
+test('exact lot detail hydration is identity-bound, view-neutral, and operation allowlisted', () => {
+  const variables = buildHibidLotDetailsVariables('317135307');
+  assert.deepEqual(variables, { lotId: '317135307', countAsView: false });
+  assert.equal(hibidHydrationQuery({ operationName: HIBID_LOT_DETAILS_OPERATION, variables, query: 'attacker supplied' }), HIBID_LOT_DETAILS_QUERY);
+  assert.throws(() => buildHibidLotDetailsVariables('0317135307'), /invalid/i);
+  assert.throws(() => hibidHydrationQuery({ operationName: HIBID_LOT_DETAILS_OPERATION, variables: { ...variables, countAsView: true } }), /variables/i);
+  assert.throws(() => hibidHydrationQuery({ operationName: HIBID_LOT_DETAILS_OPERATION, variables: { ...variables, extra: 1 } }), /variables/i);
+  assert.throws(() => hibidHydrationQuery({ operationName: 'ArbitraryQuery', variables: {} }), /unknown/i);
 });
 
 test('closed lots prefer a nonzero realized price over HiBid highBid zero', () => {
