@@ -118,7 +118,7 @@ for (const target of targets) {
 
   const manifest = structuredClone(commonManifest);
   if (target === 'chrome') {
-    manifest.key = referenceManifest.key;
+    if (!storeBuild) manifest.key = referenceManifest.key;
     manifest.background = { service_worker: 'background.js', type: 'module' };
   } else {
     manifest.background = { scripts: ['background.js'] };

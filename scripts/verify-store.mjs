@@ -11,6 +11,7 @@ const background = await readFile(path.join(outdir, 'background.js'), 'utf8');
 assert.equal(manifest.manifest_version, 3);
 assert.equal(manifest.version, packageJson.version);
 assert.equal(manifest.name, 'Flippah by ALOS');
+assert.equal(Object.hasOwn(manifest, 'key'), false, 'Chrome Web Store package must not include an unpacked-extension key');
 assert.equal(manifest.permissions.includes('activeTab'), false, 'Store package must not request unused activeTab access');
 assert.equal(manifest.permissions.includes('storage'), true);
 assert.equal(manifest.permissions.includes('tabs'), true);

@@ -1,5 +1,9 @@
 # Chrome Web Store Submission
 
+**Store item ID:** `kfpfojddcfgglgbanijddljiaplifhga`
+
+**Initial release:** Flippah `v0.5.45`
+
 ## Listing
 
 **Name:** Flippah by ALOS
@@ -70,3 +74,9 @@ Help auction shoppers research and export listings on HiBid and AuctionNinja by 
 5. The extension never performs bids, purchases, watchlist mutations, checkout, or account changes.
 
 No paid account or reviewer credentials are required for public-page testing. Personalized account pages are optional and use the reviewer's own existing site session.
+
+## Updates
+
+Chrome automatically updates Store-installed copies after an approved release is published. For each release, increment `package.json` and the generated manifest version, run `npm test` and `npm run package:store`, complete the live Chrome acceptance check, and upload the new Store ZIP to this same item.
+
+After the first release is approved, the Chrome Web Store API v2 can automate upload and publication from CI using scoped credentials and the item ID above. Store credentials must remain in repository secrets and must never be committed.
