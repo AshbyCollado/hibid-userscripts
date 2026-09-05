@@ -29,12 +29,16 @@ import {
   type AuctionPendingReservationV1,
 } from '../core/auction-pending-tab.js';
 
+declare const __FLIPPAH_ENABLE_UNPACKED_AUTO_RELOAD__: boolean;
+
 const MAX_REQUEST_BYTES = 180_000;
 const MAX_RECORD_BATCH = 100;
 const AMAZON_BODY_LIMIT = 5_000_000;
 const amazonInflight = new Map<string, Promise<RetailProviderSnapshot>>();
 let amazonProviderTail: Promise<void> = Promise.resolve();
-const unpackedAutoReload = installUnpackedAutoReload();
+const unpackedAutoReload = __FLIPPAH_ENABLE_UNPACKED_AUTO_RELOAD__
+  ? installUnpackedAutoReload()
+  : null;
 const toolbarActivityByTab = new Map<number, ToolbarActivityState>();
 let endingSoonBadgeCount = 0;
 
@@ -666,7 +670,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === DEV_RELOAD_ALARM) {
+  if (__FLIPPAH_ENABLE_UNPACKED_AUTO_RELOAD__ && alarm.name === DEV_RELOAD_ALARM && unpackedAutoReload) {
     void unpackedAutoReload.check();
   } else if (alarm.name.startsWith(FLIPPAH_AUCTION_PENDING_ALARM_PREFIX)) {
     const nonce = alarm.name.slice(FLIPPAH_AUCTION_PENDING_ALARM_PREFIX.length);

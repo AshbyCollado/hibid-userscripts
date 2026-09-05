@@ -6,9 +6,9 @@ from the working `v0.1.0` extension while adding exact, auditable catalog
 exports and automatic Amazon.com deal intelligence.
 
 The extension is built from one TypeScript source tree into separate Chrome and
-Waterfox packages. HiBid and AuctionNinja scraping are available from the toolbar popup;
-individual HiBid lot pages also expose the compact, in-page `Analyze books in
-Flippah` action and the existing calculator.
+Waterfox packages. HiBid and AuctionNinja scraping, including the optional book
+handoff, is available from the toolbar popup. Individual HiBid lot pages retain
+the existing calculator without adding a separate book-analysis overlay.
 
 Copied AI briefs use the seller's saved research profile rather than a bundled
 location or vehicle assumption. The profile includes tax treatment, buyer
@@ -121,6 +121,8 @@ prevents accessory prose from creating false exact-product matches.
 npm install
 npm test
 npm run build
+npm run verify:store
+npm run package:store
 npm run install:chrome -- --target "C:\\Users\\ashby\\Documents\\lotlens-local"
 ```
 
@@ -142,7 +144,11 @@ Waterfox output is built from the same source, but Waterfox browser acceptance
 is deferred until the Chrome product is stable.
 
 Generated unpacked builds are written to `dist/chrome` and `dist/waterfox`.
-Release archives must be created explicitly after browser acceptance.
+The Chrome Web Store build disables unpacked-development auto-reload behavior
+and is validated and archived through `npm run package:store`. Submission copy,
+permission justifications, reviewer instructions, and required media are listed
+in [`docs/chrome-web-store-submission.md`](docs/chrome-web-store-submission.md).
+See [`PRIVACY.md`](PRIVACY.md) for the public privacy policy.
 
 Flippah processes HiBid page and API data locally. It does not transmit or
 sell browsing, auction, watchlist, or research data. Diagnostics are sanitized

@@ -8,6 +8,7 @@ const reference = path.join(root, 'reference-build', 'flippah-v0.1.0');
 const targets = ['chrome', 'waterfox'];
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const version = String(packageJson.version);
+const storeBuild = process.argv.includes('--store');
 
 await rm(path.join(root, 'dist'), { recursive: true, force: true });
 
@@ -22,7 +23,7 @@ const commonManifest = {
   description: 'Auction research, true-cost analysis, watchlists, and verified HiBid and AuctionNinja exports for smarter flips.',
   author: 'ALOS',
   homepage_url: 'https://github.com/AshbyCollado/hibid-userscripts',
-  permissions: ['storage', 'alarms', 'tabs', 'activeTab', 'downloads', 'clipboardWrite'],
+  permissions: ['storage', 'alarms', 'tabs', 'downloads', 'clipboardWrite'],
   host_permissions: ['https://hibid.com/*', 'https://*.hibid.com/*', 'https://hibid-api.io/*', 'https://auctionninja.com/*', 'https://*.auctionninja.com/*', 'https://www.amazon.com/*', 'http://127.0.0.1/*'],
   action: {
     default_icon: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' },
@@ -81,6 +82,9 @@ for (const target of targets) {
     sourcemap: false,
     minify: false,
     legalComments: 'none',
+    define: {
+      __FLIPPAH_ENABLE_UNPACKED_AUTO_RELOAD__: JSON.stringify(!storeBuild),
+    },
     logLevel: 'warning'
   });
 
@@ -134,4 +138,4 @@ for (const target of targets) {
   await writeFile(path.join(outdir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 }
 
-console.log(`Built Flippah v${version} for Chrome and Waterfox.`);
+console.log(`Built Flippah v${version} for Chrome and Waterfox (${storeBuild ? 'store' : 'development'} channel).`);
