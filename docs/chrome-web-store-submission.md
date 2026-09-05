@@ -57,7 +57,7 @@ Help auction shoppers research and export listings on HiBid and AuctionNinja by 
 
 **Data transfer:** Direct requests to HiBid, AuctionNinja, and Amazon.com for the disclosed research features; an eBay page opens only after a user clicks its link; optional loopback transfer occurs only after a user action. No data is sent to the developer.
 
-**Privacy policy URL:** https://github.com/AshbyCollado/hibid-userscripts/blob/main/PRIVACY.md
+**Privacy policy URL:** https://github.com/AshbyCollado/hibid-userscripts/blob/chrome-web-store/PRIVACY.md
 
 **Support URL:** https://github.com/AshbyCollado/hibid-userscripts/issues
 
