@@ -57,7 +57,19 @@ Help auction shoppers research and export listings on HiBid and AuctionNinja by 
 
 **Remote code:** No.
 
+**Remote code justification:** No remote code is used. Every JavaScript module executed by Flippah is bundled inside the submitted extension package. Responses retrieved from supported auction and retail websites are handled only as data and are never evaluated or executed as code.
+
 **Data handled:** Website content, limited web activity on supported auction and research sites, and user-provided settings or research notes.
+
+Select these dashboard data categories conservatively:
+
+- Financial and payment information: user-entered acquisition, fee, resale, and outcome values.
+- Authentication information: the optional local Flippah application's pairing token, stored and used only on the same device.
+- Location: optional state, ZIP, and research-radius settings.
+- Web history: URLs for supported auction pages the user explicitly researches or saves.
+- Website content: listing text, images, prices, terms, status, and links required for research and exports.
+
+Leave personally identifiable information, health information, personal communications, and user activity unchecked. Certify all three limited-use statements.
 
 **Data transfer:** Direct requests to HiBid, AuctionNinja, and Amazon.com for the disclosed research features; an eBay page opens only after a user clicks its link; optional loopback transfer occurs only after a user action. No data is sent to the developer.
 
@@ -67,11 +79,9 @@ Help auction shoppers research and export listings on HiBid and AuctionNinja by 
 
 ## Reviewer Test Instructions
 
-1. Open any public HiBid catalog or lot page, or any public AuctionNinja sale page.
-2. Confirm that Flippah adds compact Amazon/eBay/condition research controls without replacing the site's native bid or watch controls.
-3. Open the Flippah toolbar popup. The Watchlist tab opens first; the Scraper tab can export the supported current page.
-4. On a HiBid lot, open the popup's Book analysis section. The optional local-app handoff remains disabled until the user pairs a localhost application in Options.
-5. The extension never performs bids, purchases, watchlist mutations, checkout, or account changes.
+Use this text in the dashboard's 500-character field:
+
+> No credentials are required. On a public HiBid lot or catalog, verify compact Amazon, eBay Sold, and condition controls appear without replacing auction controls. Open the toolbar popup: Watchlist is first; Scraper exports the current page as JSON or an AI brief. On a public AuctionNinja sale, verify the same additive research controls and export. The optional localhost book handoff stays disabled unless paired in Options. Flippah never bids, buys, watches, or changes account data.
 
 No paid account or reviewer credentials are required for public-page testing. Personalized account pages are optional and use the reviewer's own existing site session.
 
