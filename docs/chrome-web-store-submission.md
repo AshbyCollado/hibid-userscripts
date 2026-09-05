@@ -4,6 +4,16 @@
 
 **Initial release:** Flippah `v0.5.45`
 
+**Submitted for review:** September 4, 2026
+
+**Dashboard status:** Pending review
+
+**Publication mode:** Publish automatically after passing review
+
+**Submitted package:** `flippah-by-alos-0.5.45-chrome-web-store.zip`
+
+**Package SHA-256:** `DD2BE2B8DC2459E91A65D0C5D6B5D90104332505AB9F391519A885D2EED1DB41`
+
 ## Listing
 
 **Name:** Flippah by ALOS
