@@ -12,7 +12,7 @@ The button never runs on a timer and never reloads Flippah during an active auct
 
 ## One-Time Store API Setup
 
-1. Wait until the initial Store submission has been approved and published.
+1. Configure API access while the initial submission is pending; wait for approval before uploading its replacement.
 2. Enable the Chrome Web Store API in a Google Cloud project.
 3. Create one service account for Flippah releases.
 4. Add that service-account email under the Chrome Web Store Developer Dashboard account settings.
@@ -30,6 +30,12 @@ The button never runs on a timer and never reloads Flippah during an active auct
 This file contains identifiers, not an access token or private key. The release command obtains a short-lived access token from `gcloud` and never prints it. Do not create or commit a service-account JSON key.
 
 ## Prepare Locally
+
+Check authentication and current Store state without building or uploading:
+
+```powershell
+npm run release:chrome -- --status
+```
 
 After the release version has been updated and committed:
 
@@ -59,3 +65,11 @@ The publisher performs these gates in order:
 8. Record the resulting Store state and package SHA-256 in `artifacts/chrome-web-store`.
 
 Changes to permissions, host access, privacy behavior, screenshots, or listing text must still be reviewed in the Developer Dashboard before submission.
+
+## Verified local setup
+
+On 2026-09-05, Google Cloud CLI and the keyless publisher setup were completed on
+the owner's computer. The `--status` command authenticated through service-account
+impersonation and returned this item's v0.5.45 `PENDING_REVIEW` state. The API
+connection is verified; a v0.5.46 upload and Store-installed update remain pending.
+No GitHub Actions workflow or service-account private key is required.

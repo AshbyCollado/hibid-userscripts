@@ -68,7 +68,7 @@ export function assertStoreCanAcceptVersion(status, nextVersion) {
 async function responseJson(response, operation) {
   const text = await response.text();
   let body = {};
-  try { body = text ? JSON.parse(text) : {}; } catch { body = {}; }
+  try { body = text ? JSON.parse(text) : {}; } catch { throw new Error(`${operation} returned invalid JSON`); }
   if (!response.ok) {
     const message = String(body?.error?.message || body?.message || `${operation} failed with HTTP ${response.status}`).slice(0, 500);
     throw new Error(message);
@@ -87,6 +87,7 @@ export async function fetchStoreStatus(fetchImpl, urls, accessToken) {
   return responseJson(await fetchImpl(urls.status, {
     method: 'GET',
     headers: apiHeaders(accessToken),
+    signal: AbortSignal.timeout(30_000),
   }), 'Chrome Web Store status request');
 }
 
@@ -95,6 +96,7 @@ export async function uploadStorePackage(fetchImpl, urls, accessToken, archive) 
     method: 'POST',
     headers: { ...apiHeaders(accessToken), 'content-type': 'application/zip' },
     body: archive,
+    signal: AbortSignal.timeout(120_000),
   }), 'Chrome Web Store package upload');
 }
 
@@ -125,6 +127,7 @@ export async function submitStorePackage(fetchImpl, urls, accessToken) {
   const result = await responseJson(await fetchImpl(urls.publish, {
     method: 'POST',
     headers: apiHeaders(accessToken, true),
+    signal: AbortSignal.timeout(30_000),
     body: JSON.stringify({
       publishType: 'DEFAULT_PUBLISH',
       skipReview: false,
@@ -151,14 +154,29 @@ async function loadLocalConfig(environment = process.env) {
   };
 }
 
+export function gcloudInvocation(args, platform = process.platform, environment = process.env) {
+  if (platform !== 'win32') return { command: 'gcloud', args, env: environment };
+  return {
+    command: 'powershell.exe',
+    args: ['-NoProfile', '-NonInteractive', '-Command',
+      '$ErrorActionPreference = "Stop"; $a = @(ConvertFrom-Json $env:FLIPPAH_GCLOUD_ARGS); $exe = Join-Path $env:LOCALAPPDATA "Google\\Cloud SDK\\google-cloud-sdk\\bin\\gcloud.cmd"; if (!(Test-Path -LiteralPath $exe)) { $exe = (Get-Command gcloud.cmd -ErrorAction Stop).Source }; & $exe @a; exit $LASTEXITCODE'],
+    env: { ...environment, FLIPPAH_GCLOUD_ARGS: JSON.stringify(args) },
+  };
+}
+
 async function gcloudAccessToken(serviceAccountEmail) {
   if (!serviceAccountEmail) throw new Error(`Set serviceAccountEmail in ${configPath()} before publishing`);
-  const command = process.platform === 'win32' ? 'gcloud.cmd' : 'gcloud';
-  const { stdout } = await execFileAsync(command, [
+  const invocation = gcloudInvocation([
     'auth', 'print-access-token',
     `--impersonate-service-account=${serviceAccountEmail}`,
     `--scopes=${CHROME_WEB_STORE_SCOPE}`,
-  ], { windowsHide: true, maxBuffer: 1024 * 1024 });
+  ]);
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(invocation.command, invocation.args, {
+      env: invocation.env, windowsHide: true, timeout: 60_000, maxBuffer: 1024 * 1024,
+    }));
+  } catch { throw new Error('Google authentication failed. Check gcloud login and service-account impersonation access.'); }
   const token = stdout.trim();
   if (!token) throw new Error('gcloud did not return a Chrome Web Store access token');
   return token;
@@ -189,9 +207,13 @@ async function assertCleanWorktree() {
 }
 
 function parseArguments(argv) {
+  const unknown = argv.find((arg) => arg.startsWith('--') && !['--publish', '--status'].includes(arg));
+  if (unknown) throw new Error(`Unknown release option: ${unknown}`);
   const publish = argv.includes('--publish');
+  const statusOnly = argv.includes('--status');
+  if (publish && statusOnly) throw new Error('Use --status or --publish, not both');
   const requestedVersion = argv.find((arg) => !arg.startsWith('--')) || '';
-  return { publish, requestedVersion };
+  return { publish, statusOnly, requestedVersion };
 }
 
 async function writeReceipt(version, archivePath, archive, payload) {
@@ -211,7 +233,19 @@ async function writeReceipt(version, archivePath, archive, payload) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  const { publish, requestedVersion } = parseArguments(argv);
+  const { publish, statusOnly, requestedVersion } = parseArguments(argv);
+  if (statusOnly) {
+    const config = await loadLocalConfig();
+    const urls = chromeWebStoreUrls(config.publisherId, config.extensionId);
+    const status = await fetchStoreStatus(fetch, urls, await accessToken(config));
+    console.log(JSON.stringify({
+      extensionId: config.extensionId,
+      published: status.publishedItemRevisionStatus,
+      submitted: status.submittedItemRevisionStatus,
+      uploadState: status.lastAsyncUploadState,
+    }, null, 2));
+    return status;
+  }
   const root = process.cwd();
   const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const version = String(packageJson.version || '');

@@ -23,9 +23,10 @@ and validated payload. Page-world messages are treated as untrusted input.
 
 ## Auction-lot handoff boundary
 
-An individual HiBid lot page may initiate one owner-directed transfer to the
-paired local Flippah host. The content script mounts the accessible action and
-detects route drift or challenge pages. The background runtime hydrates the
+The popup's Scraper/Books section may initiate one owner-directed transfer of
+the active HiBid lot to the paired local Flippah host. The content script handles
+messages and detects route drift or challenge pages, without mounting a book
+action on the auction page. The background runtime hydrates the
 exact GraphQL `eventItemId`, constructs `HibidLotHandoffV1`, validates it, and
 posts it to the configured loopback relay with a separate pairing token.
 

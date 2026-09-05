@@ -1,5 +1,23 @@
 # Flippah living brain
 
+## Local Store publisher verified 2026-09-05
+
+- v0.5.46 release tooling lives on `codex/chrome-store-local-release-0.5.46`.
+- Google Cloud CLI is installed; Store API and IAM Credentials API are enabled.
+- A dedicated `flippah-store-publisher` service account is linked to the existing
+  Store publisher. Local access uses short-lived impersonation, with no JSON key.
+- `%LOCALAPPDATA%/Flippah/chrome-web-store.json` contains identifiers only.
+- `npm run release:chrome -- --status` was verified against the live API and
+  returned the correct extension, v0.5.45, PENDING_REVIEW. No v0.5.46 upload was made.
+- `npm run release:chrome` tests and prepares locally; append `-- --publish` to
+  upload and submit when no review is active. GitHub Actions is not required.
+- Tracked `.githooks` add pre-commit whitespace and pre-push full-test gates.
+  Activate using `git config core.hooksPath .githooks` after checkout.
+- Review fixed Windows gcloud spawning and added API timeouts and malformed-JSON
+  rejection. Unpacked no-update responses do not prove Store delivery; receipts
+  contain checksums, not signatures. Store approval and installed-update proof
+  remain separate from local testing.
+
 ## Product boundary
 
 Flippah is the maintained replacement for the Tampermonkey userscript. The

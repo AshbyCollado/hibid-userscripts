@@ -4,6 +4,8 @@ import {
   assertStoreCanAcceptVersion,
   chromeWebStoreUrls,
   compareChromeVersions,
+  fetchStoreStatus,
+  gcloudInvocation,
   submitStorePackage,
   uploadStorePackage,
   waitForStoreUpload,
@@ -15,6 +17,24 @@ function jsonResponse(value: unknown, status = 200): Response {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+test('Windows gcloud launcher passes arguments as data', () => {
+  const args = ['auth', 'print-access-token', '--impersonate-service-account=release@example.iam.gserviceaccount.com'];
+  const invocation = gcloudInvocation(args, 'win32', { LOCALAPPDATA: 'C:\\Users\\Example Name\\AppData\\Local' });
+  assert.equal(invocation.command, 'powershell.exe');
+  assert.deepEqual(JSON.parse(invocation.env.FLIPPAH_GCLOUD_ARGS), args);
+  assert.ok(!invocation.args.join(' ').includes('release@example'));
+  assert.equal(gcloudInvocation(args, 'linux', {}).command, 'gcloud');
+});
+
+test('Store requests have timeouts and malformed success responses fail closed', async () => {
+  let signal: AbortSignal | null | undefined;
+  await assert.rejects(fetchStoreStatus(async (_url, init) => {
+    signal = init?.signal;
+    return new Response('<html>Service unavailable</html>', { status: 200 });
+  }, chromeWebStoreUrls('publisher', 'item'), 'test-token'), /invalid JSON/);
+  assert.ok(signal instanceof AbortSignal);
+});
 
 test('builds Chrome Web Store v2 URLs for the existing item', () => {
   const urls = chromeWebStoreUrls('publisher-1', 'item-1');
