@@ -1,4 +1,4 @@
-import { activeTab, getLocalStorage, getSyncStorage, runtimeMessage, tabMessage } from '../core/browser.js';
+import { activeTab, getLocalStorage, getSyncStorage, runtimeMessage, setLocalStorage, tabMessage } from '../core/browser.js';
 import { buildCsv } from '../core/csv.js';
 import { getDiagnostic, getJobForFingerprint, getRecords } from '../core/job-db.js';
 import { normalizeSettings } from '../core/settings.js';
@@ -10,8 +10,20 @@ import { buildHibidExportPayload, buildHibidLlmBrief } from '../hibid/exports.js
 import { buildHibidSavedResearchSnapshot, hibidSavedResearchStorageKeys } from '../intelligence/deal-storage.js';
 import { buildAuctionNinjaExportPayload, buildAuctionNinjaLlmBrief, type AuctionNinjaExportContext, type AuctionNinjaExportRecord } from '../auctionninja/exports.js';
 import { resolveAuctionNinjaPage } from '../auctionninja/route.js';
+import {
+  UPDATE_STATE_STORAGE_KEY,
+  failedUpdateState,
+  idleUpdateState,
+  normalizeStoredUpdateState,
+  runtimeResultUpdateState,
+  checkingUpdateState,
+  unsupportedUpdateState,
+  type ExtensionUpdateState,
+  type RuntimeUpdateCheckResultLike,
+} from '../core/update-check.js';
 
 const app = document.querySelector<HTMLElement>('#app')!;
+const currentVersion = chrome.runtime.getManifest().version;
 let currentTabId: number | null = null;
 let context: PageContext | null = null;
 let job: ScrapeJobSummary | null = null;
@@ -25,6 +37,7 @@ let countdownTimer: number | null = null;
 let bookHandoffBusy = false;
 let bookHandoffStatus = 'Ready to send every seller photo';
 let bookHandoffFailed = false;
+let updateCheckState: ExtensionUpdateState = idleUpdateState(currentVersion);
 
 function legacyMessage<T>(message: unknown): Promise<T> {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, (response: T) => {
@@ -156,7 +169,11 @@ function debugHtml(): string {
 }
 
 function shell(body: string): string {
-  return `<div class="shell"><header class="topbar"><span class="brand">Flippah by ALOS</span><span class="version">v${escapeHtml(chrome.runtime.getManifest().version)}</span><button id="settings" class="icon-button" title="Open Flippah settings" aria-label="Open settings">⚙</button></header><nav class="tabs" aria-label="Flippah sections"><button class="tab" data-tab="watchlist" aria-selected="${selectedTab === 'watchlist'}">Watchlist</button><button class="tab" data-tab="current" aria-selected="${selectedTab === 'current'}">Scraper</button></nav>${body}</div>`;
+  const checking = updateCheckState.phase === 'checking';
+  const updateStatus = updateCheckState.phase === 'idle'
+    ? ''
+    : `<div class="update-status ${escapeHtml(updateCheckState.phase)}" role="status" aria-live="polite">${escapeHtml(updateCheckState.message)}</div>`;
+  return `<div class="shell"><header class="topbar"><span class="brand">Flippah by ALOS</span><span class="version">v${escapeHtml(currentVersion)}</span><button id="check-updates" class="icon-button update-button ${checking ? 'checking' : ''}" title="Check Chrome Web Store for a Flippah update" aria-label="Check for Flippah updates" ${checking ? 'disabled' : ''}>↻</button><button id="settings" class="icon-button" title="Open Flippah settings" aria-label="Open settings">⚙</button></header>${updateStatus}<nav class="tabs" aria-label="Flippah sections"><button class="tab" data-tab="watchlist" aria-selected="${selectedTab === 'watchlist'}">Watchlist</button><button class="tab" data-tab="current" aria-selected="${selectedTab === 'current'}">Scraper</button></nav>${body}</div>`;
 }
 
 async function render(): Promise<void> {
@@ -182,6 +199,7 @@ function bind(): void {
   app.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((button) => button.addEventListener('click', () => {
     selectedTab = button.dataset.tab as 'current' | 'watchlist'; void render();
   }));
+  app.querySelector('#check-updates')?.addEventListener('click', () => void checkForUpdates());
   app.querySelector('#settings')?.addEventListener('click', () => chrome.runtime.openOptionsPage());
   app.querySelector<HTMLSelectElement>('#auction-group')?.addEventListener('change', async (event) => {
     selectedGroupId = (event.currentTarget as HTMLSelectElement).value;
@@ -203,6 +221,30 @@ function bind(): void {
   app.querySelectorAll<HTMLButtonElement>('.remove-watch').forEach((button) => button.addEventListener('click', async () => {
     await legacyMessage({ kind: 'watch:remove', lotId: button.dataset.lotId }); await render();
   }));
+}
+
+async function checkForUpdates(): Promise<void> {
+  if (updateCheckState.phase === 'checking') return;
+  const runtime = chrome.runtime as typeof chrome.runtime & {
+    requestUpdateCheck?: () => Promise<RuntimeUpdateCheckResultLike>;
+  };
+  if (typeof runtime.requestUpdateCheck !== 'function') {
+    updateCheckState = unsupportedUpdateState(currentVersion);
+    await setLocalStorage({ [UPDATE_STATE_STORAGE_KEY]: updateCheckState }).catch(() => undefined);
+    await render();
+    return;
+  }
+
+  updateCheckState = checkingUpdateState(currentVersion);
+  await render();
+  try {
+    const result = await runtime.requestUpdateCheck.call(chrome.runtime);
+    updateCheckState = runtimeResultUpdateState(result, currentVersion);
+  } catch {
+    updateCheckState = failedUpdateState(currentVersion);
+  }
+  await setLocalStorage({ [UPDATE_STATE_STORAGE_KEY]: updateCheckState }).catch(() => undefined);
+  await render();
 }
 
 async function analyzeBooks(): Promise<void> {
@@ -408,6 +450,9 @@ async function refreshContext(): Promise<void> {
 
 async function init(): Promise<void> {
   const settings = normalizeSettings(await getSyncStorage().catch(() => ({})));
+  const localState: Record<string, unknown> = await getLocalStorage([UPDATE_STATE_STORAGE_KEY])
+    .catch((): Record<string, unknown> => ({}));
+  updateCheckState = normalizeStoredUpdateState(localState[UPDATE_STATE_STORAGE_KEY], currentVersion);
   document.documentElement.dataset.debug = String(settings.debugMode || Boolean(context?.url && new URL(context.url).hash === '#flipperdebug'));
   const tab = await activeTab();
   currentTabId = tab?.id ?? null;
@@ -425,6 +470,12 @@ async function init(): Promise<void> {
   startPolling();
   await render();
 }
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !changes[UPDATE_STATE_STORAGE_KEY]) return;
+  updateCheckState = normalizeStoredUpdateState(changes[UPDATE_STATE_STORAGE_KEY]?.newValue, currentVersion);
+  void render();
+});
 
 void init().catch((error) => {
   const box = document.createElement('div');

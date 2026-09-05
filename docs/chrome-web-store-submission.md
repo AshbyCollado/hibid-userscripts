@@ -99,4 +99,4 @@ No paid account or reviewer credentials are required for public-page testing. Pe
 
 Chrome automatically updates Store-installed copies after an approved release is published. For each release, increment `package.json` and the generated manifest version, run `npm test` and `npm run package:store`, complete the live Chrome acceptance check, and upload the new Store ZIP to this same item.
 
-After the first release is approved, the Chrome Web Store API v2 can automate upload and publication from CI using scoped credentials and the item ID above. Store credentials must remain in repository secrets and must never be committed.
+After the first release is approved, the Chrome Web Store API v2 can automate upload and publication from the local development computer using a short-lived service-account token and the item ID above. Store credentials must never be committed. See [Local Chrome Web Store Releases](chrome-web-store-local-release.md).

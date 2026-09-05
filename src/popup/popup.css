@@ -7,6 +7,16 @@ button, select { font: inherit; }
 .brand { color: #1557d6; font-size: 17px; font-weight: 900; letter-spacing: 0; }
 .version { margin-left: auto; color: #708099; font-size: 12px; }
 .icon-button { border: 0; background: transparent; color: #40516c; cursor: pointer; padding: 4px 6px; }
+.icon-button:focus-visible, .button:focus-visible, .tab:focus-visible { outline: 2px solid #1557d6; outline-offset: 2px; }
+.update-button { display: inline-grid; width: 28px; height: 28px; place-items: center; border-radius: 50%; font-size: 19px; line-height: 1; }
+.update-button:hover { background: #edf3ff; color: #1557d6; }
+.update-button:disabled { cursor: wait; opacity: .7; }
+.update-button.checking { animation: flippah-update-spin .8s linear infinite; }
+.update-status { margin: 8px 12px 0; border: 1px solid #cbd8eb; border-radius: 6px; background: #edf3ff; color: #26466f; padding: 8px 10px; font-size: 12px; }
+.update-status.ready, .update-status.available { border-color: #91d1ad; background: #ecf9f1; color: #17613a; }
+.update-status.error, .update-status.throttled { border-color: #e0c49b; background: #fff8e9; color: #74450c; }
+@keyframes flippah-update-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .update-button.checking { animation: none; } }
 .tabs { display: grid; grid-template-columns: 1fr 1fr; padding: 10px 12px 0; background: #fff; }
 .tab { border: 0; border-bottom: 2px solid transparent; background: transparent; color: #63718a; font-weight: 750; padding: 9px; cursor: pointer; }
 .tab[aria-selected="true"] { border-color: #1557d6; color: #1557d6; }

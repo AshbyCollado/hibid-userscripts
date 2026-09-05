@@ -28,6 +28,7 @@ import {
   FLIPPAH_AUCTION_PENDING_TTL_MS,
   type AuctionPendingReservationV1,
 } from '../core/auction-pending-tab.js';
+import { UPDATE_STATE_STORAGE_KEY, readyUpdateState } from '../core/update-check.js';
 
 declare const __FLIPPAH_ENABLE_UNPACKED_AUTO_RELOAD__: boolean;
 
@@ -643,6 +644,21 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'flippah-scrape-owner') return;
   port.onMessage.addListener(() => undefined);
+});
+
+const runtimeWithUpdates = chrome.runtime as typeof chrome.runtime & {
+  onUpdateAvailable?: chrome.events.Event<(details: { version: string }) => void>;
+};
+runtimeWithUpdates.onUpdateAvailable?.addListener((details) => {
+  const currentVersion = chrome.runtime.getManifest().version;
+  void localSet({
+    [UPDATE_STATE_STORAGE_KEY]: readyUpdateState(details.version, currentVersion),
+  });
+});
+
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason !== 'install' && details.reason !== 'update') return;
+  void chrome.storage.local.remove(UPDATE_STATE_STORAGE_KEY);
 });
 
 async function applyToolbarPresentation(tabId?: number): Promise<void> {

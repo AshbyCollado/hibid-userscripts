@@ -207,6 +207,15 @@ const watchlistFixture = `<!doctype html><html><head><title>HiBid Watch List</ti
     await page.bringToFront();
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup/index.html`);
+    const updateButton = popup.getByRole('button', { name: 'Check for Flippah updates' });
+    await updateButton.waitFor({ timeout: 15_000 });
+    await updateButton.click();
+    const updateStatus = popup.locator('.update-status');
+    await updateStatus.waitFor({ timeout: 15_000 });
+    const updateText = (await updateStatus.textContent() || '').trim();
+    if (!updateText || /Checking the Chrome Web Store/i.test(updateText)) {
+      throw new Error(`Update check did not reach a terminal user-facing state: ${updateText}`);
+    }
     await popup.getByRole('button', { name: /Export outcomes \(1\)/ }).waitFor({ timeout: 15_000 });
     await popup.getByRole('button', { name: 'Scraper' }).click();
     await popup.getByRole('button', { name: 'Copy JSON' }).click();
@@ -219,6 +228,7 @@ const watchlistFixture = `<!doctype html><html><head><title>HiBid Watch List</ti
     console.log(JSON.stringify({
       browser: 'Chrome Playwright', extensionId, version: await worker.evaluate(() => chrome.runtime.getManifest().version),
       fullSizePreview: true, outcomeSaved: true, watchRedrawRestored: true, auctioneerRetailIgnored: true, conditionPill: true, outcomeExportVisible: true,
+      updateCheck: updateText,
       fidelity: copied.audit.fidelity, screenshots: artifacts,
     }));
   } finally {
