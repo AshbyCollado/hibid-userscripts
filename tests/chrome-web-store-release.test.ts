@@ -29,6 +29,10 @@ test('Windows gcloud launcher invokes the installed SDK without PowerShell', () 
   assert.deepEqual(invocation.args, ['/d', '/s', '/c', `"gcloud.cmd ${args.join(' ')}"`]);
   assert.throws(() => gcloudInvocation(['version & echo unsafe'], 'win32', {}), /unsupported characters/);
   assert.equal(gcloudInvocation(args, 'linux', {}).command, 'gcloud');
+  assert.equal(gcloudInvocation(args, 'win32', { COMSPEC: 'D:\\Windows\\System32\\cmd.exe' }).command, 'D:\\Windows\\System32\\cmd.exe');
+  assert.equal(gcloudInvocation(args, 'win32', { comspec: 'E:\\Windows\\System32\\cmd.exe' }).command, 'E:\\Windows\\System32\\cmd.exe');
+  assert.equal(gcloudInvocation(args, 'win32', { SYSTEMROOT: 'D:\\Windows' }).command, 'D:\\Windows\\System32\\cmd.exe');
+  assert.equal(gcloudInvocation(args, 'win32', {}).command, 'C:\\Windows\\System32\\cmd.exe');
 });
 
 test('Windows gcloud launcher executes an SDK path with spaces even when it is absent from PATH', { skip: process.platform !== 'win32' }, () => {

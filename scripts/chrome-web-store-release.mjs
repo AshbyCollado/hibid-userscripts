@@ -157,17 +157,20 @@ async function loadLocalConfig(environment = process.env) {
 
 export function gcloudInvocation(args, platform = process.platform, environment = process.env) {
   if (platform !== 'win32') return { command: 'gcloud', args, env: environment };
+  const windowsEnvironment = (key) => Object.entries(environment)
+    .find(([name]) => name.toUpperCase() === key)?.[1] || '';
   if (args.some((arg) => !/^[A-Za-z0-9:/.=+@_-]+$/.test(arg))) {
     throw new Error('Windows gcloud arguments contain unsupported characters');
   }
-  const sdkPath = environment.LOCALAPPDATA
-    ? path.join(environment.LOCALAPPDATA, 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin', 'gcloud.cmd')
+  const localAppData = windowsEnvironment('LOCALAPPDATA');
+  const sdkPath = localAppData
+    ? path.join(localAppData, 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin', 'gcloud.cmd')
     : '';
   const executable = sdkPath && existsSync(sdkPath) && !/["%!\r\n]/.test(sdkPath)
     ? `"${sdkPath}"`
     : 'gcloud.cmd';
   return {
-    command: environment.ComSpec || 'cmd.exe',
+    command: windowsEnvironment('COMSPEC') || path.win32.join(windowsEnvironment('SYSTEMROOT') || 'C:\\Windows', 'System32', 'cmd.exe'),
     args: ['/d', '/s', '/c', `"${executable} ${args.join(' ')}"`],
     env: environment,
     windowsVerbatimArguments: true,
