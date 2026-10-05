@@ -10,7 +10,7 @@ import {
   type EbaySoldRecord,
   type EbaySoldSearchAttempt,
 } from '../src/intelligence/ebay-sold-results.js';
-import { assessCondition, extractProductIdentity } from '../src/intelligence/us-deal-intelligence.js';
+import { assessCondition, buildProductResearchQuery, extractProductIdentity } from '../src/intelligence/us-deal-intelligence.js';
 
 const observedAt = '2026-08-30T12:00:00.000Z';
 
@@ -139,6 +139,287 @@ test('query variants preserve the precise title and back off through stable mode
   assert.ok(buildEbaySoldQueryVariants(extractProductIdentity('Magcubic 4K Smart Projector, WiFi/BT'))[1]?.includes('4k'));
 });
 
+test('model-less apparel uses a concise brand, pattern, garment, and size fallback', () => {
+  const theory = extractProductIdentity('Theory Plaid Cotton Flannel Shirt Size L');
+  assert.equal(theory.brand, 'Theory');
+  assert.equal(theory.model, null);
+  assert.deepEqual(buildEbaySoldQueryVariants(theory), [
+    'theory plaid cotton flannel shirt size l',
+    'Theory plaid shirt L',
+    '"theory plaid cotton flannel shirt size l"',
+  ]);
+
+  const otherBrand = extractProductIdentity('J.Crew Floral Cotton Blouse Size M');
+  assert.equal(buildEbaySoldQueryVariants(otherBrand)[1], 'J.Crew floral blouse M');
+
+  const singleLetterSize = extractProductIdentity('Patagonia Striped Wool Sweater Size XL');
+  assert.equal(buildEbaySoldQueryVariants(singleLetterSize)[1], 'Patagonia striped sweater XL');
+});
+
+test('apparel fallback preserves decimal and range sizes', () => {
+  assert.equal(buildEbaySoldQueryVariants(extractProductIdentity('Nike Running Shoes Size 9.5'))[1], 'Nike shoes 9.5');
+  assert.equal(buildEbaySoldQueryVariants(extractProductIdentity('Nike Running Shoes Size 8-10'))[1], 'Nike shoes 8-10');
+  assert.equal(buildEbaySoldQueryVariants(extractProductIdentity('Nike Running Shoes Size 9.5-10'))[1], 'Nike shoes 9.5-10');
+});
+
+test('apparel fallback preserves complete mixed-fraction and letter-range sizes', () => {
+  assert.equal(buildEbaySoldQueryVariants(extractProductIdentity('Nike Running Shoes Size 9 1/2'))[1], 'Nike shoes 9 1/2');
+  assert.equal(buildEbaySoldQueryVariants(extractProductIdentity('Nike Shoes Size 10 1/2'))[1], 'Nike shoes 10 1/2');
+  assert.equal(buildEbaySoldQueryVariants(extractProductIdentity('Theory Shirt Size L/XL'))[1], 'Theory shirt L/XL');
+});
+
+test('apparel fallback declines unsupported size continuations instead of truncating them', () => {
+  for (const title of [
+    'Nike Running Shoes Size 9 1/2X',
+    'Theory Shirt Size L-XL',
+    'Theory Shirt Size L/XXXL',
+  ]) {
+    const identity = extractProductIdentity(title);
+    const variants = buildEbaySoldQueryVariants(identity);
+    assert.ok(!variants.includes('Nike shoes 9') && !variants.includes('Theory shirt L'), title);
+  }
+});
+
+test('every fallback preserves unfamiliar sizes instead of generic partial shortening', () => {
+  for (const [title, completeSize] of [
+    ['Nike Running Shoes Size 9 1/2 Blue', '9 1/2'],
+    ['Nike Running Shoes Size 10 1/2X', '10 1/2x'],
+    ['Theory Shirt Size L-XL Blue', 'l-xl'],
+    ['Theory Shirt Size L/XXXL', 'l/xxxl'],
+    ['Unbranded Running Shoes Size 9 1/2 Blue', '9 1/2'],
+  ] as const) {
+    const identity = extractProductIdentity(title);
+    const variants = buildEbaySoldQueryVariants(identity);
+    assert.equal(variants[0], identity.query, title);
+    assert.ok(variants.every((query) => query.toLowerCase().includes(completeSize)),
+      `${title}: ${variants.join(' | ')}`);
+  }
+});
+
+test('apparel fallback rejects non-apparel contexts and placeholder brands', () => {
+  for (const title of [
+    'Simplicity Shirt Size L Sewing Pattern Book',
+    'Simplicity Shirt Size L Pattern Book',
+    'Generic Shirt Size M',
+    'Unknown Shirt Size M',
+    'Unbranded Shirt Size M',
+    'No Brand Shirt Size M',
+  ]) {
+    const identity = extractProductIdentity(title);
+    const variants = buildEbaySoldQueryVariants(identity);
+    assert.ok(!variants.includes(`${identity.brand} shirt M`) && !variants.some((query) => /simplicity shirt l/i.test(query)), title);
+  }
+  assert.equal(buildEbaySoldQueryVariants(extractProductIdentity('J.Crew Shirt Size M'))[1], 'J.Crew shirt M');
+});
+
+test('apparel fallback does not strip model or identity variants from non-apparel products', () => {
+  for (const title of [
+    'Sony WH-1000XM5 Wireless Headphones Size L',
+    'DeWalt DCF887 20V Impact Driver Size L',
+    'Introduction to Algorithms ISBN 9780262033848 Third Edition',
+  ]) {
+    const identity = extractProductIdentity(title);
+    const variants = buildEbaySoldQueryVariants(identity);
+    assert.ok(!variants.some((query) => /\b(?:shirt|blouse|sweater|jacket)\b/i.test(query)), title);
+  }
+  assert.equal(buildEbaySoldQueryVariants(extractProductIdentity('Sony WH-1000XM5 Wireless Headphones Size L'))[1], 'Sony WH-1000XM5');
+  assert.equal(buildEbaySoldQueryVariants(extractProductIdentity('DeWalt DCF887 20V Impact Driver Size L'))[1], 'DeWalt DCF887');
+});
+
+test('Apple SKU aliases reserve a model-free product-name fallback without dropping the exact query', () => {
+  const identity = extractProductIdentity('Apple Pencil MXN43AM/A');
+  assert.deepEqual(buildEbaySoldQueryVariants(identity, 2), [
+    'apple pencil mxn43am/a',
+    'apple pencil',
+  ]);
+  assert.ok(buildEbaySoldQueryVariants(identity).every((query) => query !== 'Apple' && query !== 'Pencil'));
+});
+
+test('SKU fallback retains generation words instead of inventing a wrong-generation query', () => {
+  const identity = extractProductIdentity('Apple Pencil 2nd Generation A2051/MU8F2AM/A');
+  const variants = buildEbaySoldQueryVariants(identity, 2);
+  assert.equal(variants[0], 'apple pencil 2nd generation a2051/mu8f2am/a');
+  assert.equal(variants[1], 'apple pencil 2nd generation');
+  assert.ok(variants.every((query) => !/\b(?:1st|3rd)\s+generation\b/i.test(query)));
+});
+
+test('structured SKU aliases derive a generation-aware fallback when the title omits the SKU', () => {
+  const identity = extractProductIdentity('$129 Apple Pencil for iPad 2nd gen (Renewed)', 'Model: mxn43am/a');
+  assert.equal(identity.model, 'mxn43am/a');
+  assert.deepEqual(buildEbaySoldQueryVariants(identity, 2), [
+    'apple pencil for ipad 2nd gen renewed mxn43am/a',
+    'apple pencil for ipad 2nd gen',
+  ]);
+});
+
+test('regional and labeled SKU suffixes do not replace the true model in sold queries', () => {
+  const identity = extractProductIdentity(
+    '$280 NIU Trottinette KQi 100P EU-GY EWM035',
+    'Model: KQi 100P\nSKU: EWM035\nUPC: 6972782769199\nCondition: Open Box - Tested\nMissing bolts',
+  );
+  assert.equal(identity.model, 'KQi 100P');
+  assert.equal(identity.query, 'niu trottinette kqi 100p');
+  assert.deepEqual(buildEbaySoldQueryVariants(identity, 2), [
+    'niu trottinette kqi 100p',
+    'NIU KQi 100P',
+  ]);
+});
+
+test('a genuine model suffix remains part of the identity query', () => {
+  const identity = extractProductIdentity('Sony WH-1000XM5 Wireless Headphones');
+  assert.equal(identity.model, 'WH-1000XM5');
+  assert.equal(identity.query, 'sony wh-1000xm5 wireless headphones');
+});
+
+test('long hyphenated seller SKUs fall back to brand and product after exact sold searches fail', () => {
+  const identity = extractProductIdentity(
+    '$130 KEMIMOTO Motorcycle Dog Carrier Bag, 28 lb',
+    'Brand: KEMIMOTO\nModel: KM2F1801-01403\nCondition: Used\nDamaged?: Yes\nNotes: Head pocket is broken',
+  );
+  assert.deepEqual(buildEbaySoldQueryVariants(identity, 2), [
+    'kemimoto motorcycle dog carrier bag 28 lb km2f1801-01403',
+    'kemimoto motorcycle dog carrier bag',
+  ]);
+  assert.deepEqual(buildEbaySoldQueryVariants(extractProductIdentity('Onkyo TX-SR304 Multi-Channel AV Receiver'), 2), [
+    'onkyo tx-sr304 multi-channel av receiver',
+    'Onkyo TX-SR304',
+  ]);
+});
+
+test('sold-query variants use corroborated manufacturers instead of a title collection or category', () => {
+  const rug = extractProductIdentity(
+    '$275 Eternal Dinosaur Jungle Party Rug 8x10',
+    'Brand: TOWN & COUNTRY PLAY\nModel: 1-69767-185\nThis Town & Country Play Dinosaur Jungle Party Kid\'s Area Rug is textured.',
+  );
+  assert.deepEqual(buildEbaySoldQueryVariants(rug, 2), [
+    'town country play eternal dinosaur jungle party rug 8x10 1-69767-185',
+    'TOWN & COUNTRY PLAY 1-69767-185',
+  ]);
+
+  const liner = extractProductIdentity(
+    '$149 Cargo Liner: 18 Expedition, 2nd Row Folded',
+    'Brand: Husky Liners\nModel: 23431\nOur Cargo Liners are made from a proprietary material blend.',
+  );
+  assert.deepEqual(buildEbaySoldQueryVariants(liner, 2), [
+    'husky liners cargo liner 18 expedition 2nd row folded 23431',
+    'Husky Liners 23431',
+  ]);
+});
+
+test('sold-query fallback does not search temperature or tent capacity as a model', () => {
+  for (const title of [
+    '$60 VEVOR Wax Melter 6.5L, 9-Temp Control',
+    '$160 VEVOR SUV Tent 8x8ft, Waterproof, 5-8P',
+  ]) {
+    const variants = buildEbaySoldQueryVariants(extractProductIdentity(title));
+    assert.ok(variants.length >= 1, title);
+    assert.ok(variants.every((query) => !/^\s*(?:vevor\s+)?(?:9-temp|5-8p|8x8ft)\s*$/i.test(query)), title);
+  }
+});
+
+test('model-free power ratings stay attached to their units in sold-query fallback', () => {
+  const motor = extractProductIdentity('$143 VEVOR 1 HP Pool Pump Motor, 56Y, 115/230V');
+  assert.equal(motor.model, null);
+  assert.deepEqual(buildEbaySoldQueryVariants(motor, 2), [
+    'vevor 1 hp pool pump motor 56y 115/230v',
+    'vevor 1hp pool pump motor 56y',
+  ]);
+});
+
+test('McAllen welder, gas trimmer, and lighting queries keep identity without false models or generic accessories', () => {
+  const welder = extractProductIdentity(
+    '$370 VEVOR TIG Welder 200A 6 in 1 Aluminum Welder',
+    'The package includes essential accessories.',
+  );
+  assert.equal(welder.model, null);
+  assert.deepEqual(buildEbaySoldQueryVariants(welder, 2), [
+    'vevor tig welder 200a 6 in 1 aluminum welder',
+    'vevor tig welder 200a aluminum welder',
+  ]);
+
+  const trimmer = extractProductIdentity(
+    '$176 VEVOR Cordless Trimmer, 52cc Gas Weed Eater',
+    'The gas-powered 52cc engine includes cutting blades.',
+  );
+  assert.equal(trimmer.model, null);
+  assert.deepEqual(buildEbaySoldQueryVariants(trimmer, 2), [
+    'vevor trimmer 52cc gas weed eater',
+    'VEVOR 52cc gas trimmer',
+  ]);
+
+  const light = extractProductIdentity('EAPUDUN Farmhouse Ceiling 13-inch Retro 2-Lamp', 'Bulbs not included.');
+  assert.equal(light.brand, 'EAPUDUN');
+  assert.equal(light.model, null);
+  assert.equal(light.query, 'eapudun farmhouse ceiling 13-inch retro 2-lamp');
+  assert.equal(extractProductIdentity('EA EAPUDUN Farmhouse Ceiling Light').brand, 'EAPUDUN');
+});
+
+test('sold-query fallback drops generic modifiers and slash-form capacity specs', () => {
+  assert.deepEqual(buildEbaySoldQueryVariants(extractProductIdentity('$85 VEVOR Heavy Duty Kayak Cart, 450lb Capacity'))[1],
+    'vevor kayak cart 450lb');
+  assert.deepEqual(buildEbaySoldQueryVariants(extractProductIdentity('$97 VEVOR Air Jack 3T/6600 lbs Pneumatic Jack'))[1],
+    'vevor air jack pneumatic jack');
+  assert.ok(buildEbaySoldQueryVariants(extractProductIdentity('$89 Ozark Trail 4-Person Dome Tent, 8x8'))
+    .every((query) => !/^\s*(?:ozark\s+)?4-person\s*$/i.test(query)));
+});
+
+test('description-confirmed jack stands produce a bundle-aware sold query', () => {
+  const identity = extractProductIdentity(
+    'VEVOR 2 Ton Low-Profile Floor Jack, 5.1-12.2',
+    'The accompanying jack stands enhance safety. The included stands reach 16.5 inches.',
+  );
+  assert.deepEqual(buildEbaySoldQueryVariants(identity), [
+    'vevor 2 ton low-profile floor jack 5.1-12.2',
+    'vevor 2 ton low-profile floor jack stand',
+    'vevor 2 ton low-profile floor jack',
+  ]);
+});
+
+test('model fallback retains the whole product before an accessory bundle', () => {
+  const saw = extractProductIdentity('Husqvarna 445 Chain Saw w/ Extra Bar, Chains, Files, & Wrench');
+  assert.deepEqual(buildEbaySoldQueryVariants(saw), [
+    'husqvarna 445 chain saw with extra bar chains files wrench',
+    'husqvarna 445 chain saw',
+    'Husqvarna 445',
+  ]);
+
+  const microphone = extractProductIdentity('Rode NT-USB+ Microphone with Stand');
+  const queries = buildEbaySoldQueryVariants(microphone);
+  assert.equal(queries[1], 'rode nt-usb+ microphone');
+  assert.ok(queries[0]?.includes('stand'));
+
+  const backupPlus = extractProductIdentity('Seagate STEL8000100 Backup Plus Hub with Power Adapter');
+  assert.equal(buildEbaySoldQueryVariants(backupPlus)[1], 'seagate stel8000100 backup plus hub');
+});
+
+test('captured GreatLakes WFE title normalizes w slash without a dangling w', () => {
+  const title = 'White Farm Equipment (WFE) Field Boss 31 w/ WFE 11';
+  const identity = extractProductIdentity(title);
+  assert.equal(buildProductResearchQuery(title), 'white farm equipment wfe field boss 31 with wfe 11');
+  assert.equal(identity.query, 'white farm equipment wfe field boss 31 with wfe 11');
+  assert.deepEqual(buildEbaySoldQueryVariants(identity), [
+    'white farm equipment wfe field boss 31 with wfe 11',
+    'farm equipment wfe field boss 31',
+    '"white farm equipment wfe field boss 31 with wfe 11"',
+  ]);
+  assert.ok(buildEbaySoldQueryVariants(identity).every((query) => !/\bw\b/i.test(query)));
+});
+
+test('captured McAllen VEVOR pump keeps NPT adapters out of generic eBay fallback expansion', () => {
+  const identity = extractProductIdentity(
+    'VEVOR Hot Water Recirculating Pump, 10 GPM',
+    'Includes NPT adapters for installation.',
+  );
+  assert.deepEqual(identity.includedComponents, [['adapter']]);
+  const variants = buildEbaySoldQueryVariants(identity);
+  assert.deepEqual(variants, [
+    'vevor hot water recirculating pump 10 gpm',
+    'vevor hot water recirculating pump 10gpm',
+    '"vevor hot water recirculating pump 10 gpm"',
+  ]);
+  assert.ok(variants.every((query) => !/\badapter\b/i.test(query)));
+});
+
 test('Seller Hub Product Research parser extracts sold provenance and economics', () => {
   const html = productResearchHtml([
     sellerHubRow({ itemId: '276589785006', title: 'The Jesus Papers: Exposing the Greatest Cover-Up in History - VERY GOOD', soldPrice: '$4.06', shipping: '$0.00 100% Free shipping' }),
@@ -214,6 +495,22 @@ test('public search parser rejects an active or ambiguously filtered result page
   );
   assert.equal(result.status, 'not-sold-context');
   assert.equal(result.records.length, 0);
+});
+
+test('a public Sold card price alone cannot verify the historical paid amount', () => {
+  const url = 'https://www.ebay.com/sch/i.html?_nkw=VEVOR+folding+hand+truck+110+lb&LH_Sold=1&LH_Complete=1';
+  const html = `<html><body><div>Completed listings Sold listings</div><ul class="srp-results">
+    ${publicCard({ itemId: '366416129048', title: 'VEVOR Folding Hand Truck 110 lbs Platform Cart Dolly Trolley Cart for Moving', price: '$25.90', shipping: 'Free shipping' })}
+  </ul></body></html>`;
+  const attempt = parsePublicEbaySoldSearch(documentFor(html), url, observedAt);
+  assert.equal(attempt.status, 'ok');
+  assert.equal(attempt.records[0]?.priceKind, 'public-visible');
+  const verification = verifyEbaySoldCompSet(extractProductIdentity('VEVOR Portable Hand Truck'), [attempt], {
+    plannedQueries: [attempt.query], minimumSampleSize: 1,
+  });
+  assert.equal(verification.accepted.length, 0);
+  assert.equal(verification.marketValueReady, false);
+  assert.ok(verification.rejected[0]?.reasons.includes('public-visible-price-unconfirmed'));
 });
 
 test('verification keeps the exact book comp and rejects eBay related-result drift', () => {

@@ -1,0 +1,1800 @@
+{
+  "sourceTitle": "Jet JBS-14 Band Saw - LIKE NEW",
+  "sourceDescription": "Jet JBS-14 Band Saw - LIKE NEW",
+  "query": "jet jbs-14 band saw",
+  "observedAt": "2026-10-03T14:55:54.577Z",
+  "sourceHashMetadata": {
+    "receiptContentSHA": "9ff46041dffb42cdadf4648b5ddb260062a3e376a1045bb6d560575919ec6e3f",
+    "fixtureBodySHA": "8717889e152f407a90fde1d58f12289fc2305485c738e2a9ddc2ca01f3c118b3",
+    "bodyHashEncoding": "SHA-256 of UTF-8 JSON.stringify(body), preserving property order.",
+    "bodyTransformation": {
+      "field": "body.itemSummaries[*].itemWebUrl",
+      "operation": "Remove every query parameter except var; serialize with URL.toString().",
+      "changedItemWebUrlCount": 75
+    },
+    "receiptSchemaVersion": 1,
+    "responseReceipt": "artifacts/eight-auction-2026-09-22/verification-20261003u/live-eight-active-asks/response-receipts/lot-03-hibid-776727-321617965/000001-search.json",
+    "receiptFileSHA": "bd229104195af07bf2d7bddff986990576dd9aba606cb1c828d77248be3de5f7",
+    "sourceCollection": "artifacts/eight-auction-2026-09-22/hibid-776727/2026-09-26T21-04-04-232Z/collection.json",
+    "sourceCollectionSHA": "60fcf48b743c5b19444aadde02d9fc0d594827deb97cf9f805ee863786462464",
+    "checkpointFileSHA": "b2f748c8c8b3721109359b87158d794963737e3ab9fae6a4247368af596b06dc",
+    "receiptObservedAt": "2026-10-03T14:55:54.561Z",
+    "httpStatus": 200,
+    "providerTotal": 75,
+    "returnedCount": 75,
+    "priorAcceptedItemIds": [
+      "v1|263573255990|0",
+      "v1|355251337394|0",
+      "v1|177739409825|0",
+      "v1|277577577194|0",
+      "v1|187910858260|0",
+      "v1|273669133479|0",
+      "v1|177739410662|0",
+      "v1|177739402038|0",
+      "v1|187910898193|0",
+      "v1|389076318552|0",
+      "v1|187910859401|0",
+      "v1|178001170303|0",
+      "v1|187910859977|0",
+      "v1|187900234318|0",
+      "v1|273131059235|0",
+      "v1|187910897765|0",
+      "v1|187910852065|0"
+    ],
+    "sanitization": "Public item URLs retain only identity-bearing var parameters; all other response body fields are unchanged."
+  },
+  "body": {
+    "total": 75,
+    "limit": 200,
+    "offset": 0,
+    "itemSummaries": [
+      {
+        "itemId": "v1|273139960881|0",
+        "legacyItemId": "273139960881",
+        "title": "JET JBS-14CS URETHANE BAND SAW TIRE SET  BLUE MAX HEAVY DUTY TIRES MADE IN USA!!",
+        "price": {
+          "value": 34.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/273139960881",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|263573255990|0",
+        "legacyItemId": "263573255990",
+        "title": "JET JBS-14 URETHANE BAND SAW TIRE SET  BLUE MAX HEAVY DUTY TIRES MADE IN USA!!",
+        "price": {
+          "value": 34.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/263573255990",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|266171426189|0",
+        "legacyItemId": "266171426189",
+        "title": "BRAND NEW BAND SAW TABLE INSERT 199037 FOR JET JBS-14MW 14\" BAND SAW",
+        "price": {
+          "value": 15.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 4.89,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/266171426189",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|263605779073|0",
+        "legacyItemId": "263605779073",
+        "title": "BLUE MAX HEAVY DUTY URETHANE BAND SAW TIRE SET FOR JET JBS-14MW 14 INCH BAND SAW",
+        "price": {
+          "value": 34.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/263605779073",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|355251337394|0",
+        "legacyItemId": "355251337394",
+        "title": "GENUINE OLSON COOL BLOCKS FOR JET JBS14  14\" BAND SAW",
+        "price": {
+          "value": 17.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/355251337394",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|292137278056|0",
+        "legacyItemId": "292137278056",
+        "title": "JET/Asian JBS-14CS 14\" Band Saw Owner Operator's & Parts Manual 0380",
+        "price": {
+          "value": 20,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/292137278056",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|356707313452|0",
+        "legacyItemId": "356707313452",
+        "title": "14\" inch Band Saw Shaft Hinge For Jet JWBS-14CS JWBS-14DXPRO JBS-14MW For Delta",
+        "price": {
+          "value": 47.9,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356707313452",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|311885838124|0",
+        "legacyItemId": "311885838124",
+        "title": "JET/Asian JBS-14 14\" Metal/Wood Band Saw Owners Operator's & Parts Manual 0385",
+        "price": {
+          "value": 20,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/311885838124",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|177739409825|0",
+        "legacyItemId": "177739409825",
+        "title": "Jet 14\"  Band Saw Md JBS-14  Lower  Blade Guide  JET-11",
+        "price": {
+          "value": 69.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/177739409825",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|277577577194|0",
+        "legacyItemId": "277577577194",
+        "title": "2 BLUE MAX ULTRA DUTY BAND SAW TIRES AND 2 THRUST BEARINGS FOR JET JBS-14 SAW",
+        "price": {
+          "value": 44.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/277577577194",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|273131039658|0",
+        "legacyItemId": "273131039658",
+        "title": "JET JBS-14MW  BLUE MAX URETHANE BAND SAW TIRES 2 WHEEL PROTECTORS MADE IN USA",
+        "price": {
+          "value": 34.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/273131039658",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|187910858260|0",
+        "legacyItemId": "187910858260",
+        "title": "Jet 14\"  Band Saw Md JBS-14 Table  Trunnion Support    JET-13",
+        "price": {
+          "value": 89.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/187910858260",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|365877921743|0",
+        "legacyItemId": "365877921743",
+        "title": "14\" inch Band Saw Shaft Hinge For Jet JWBS-14CS JWBS-14DXPRO JBS-14MW For Delta",
+        "price": {
+          "value": 46.16,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/365877921743",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|352316319018|0",
+        "legacyItemId": "352316319018",
+        "title": "JET JBS-14MW URETHANE BAND SAW TIRES ULTRA DUTY .125  THICKEST BEST QUALITY",
+        "price": {
+          "value": 39.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/352316319018",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|168586046172|0",
+        "legacyItemId": "168586046172",
+        "title": "14\" inch Band Saw Shaft Hinge For Jet JWBS-14CS JWBS-14DXPRO JBS-14MW For Delta",
+        "price": {
+          "value": 47.9,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/168586046172",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|356707324045|0",
+        "legacyItemId": "356707324045",
+        "title": "14\" inch Band Saw Shaft Hinge For Jet JWBS-14CS JWBS-14DXPRO JBS-14MW For Delta",
+        "price": {
+          "value": 47.9,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356707324045",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|273669133479|0",
+        "legacyItemId": "273669133479",
+        "title": "2 BLUE MAX PRO SERIES .110 THICK BAND SAW TIRES FOR JET JBS-14 BAND SAW",
+        "price": {
+          "value": 36.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/273669133479",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|226663918577|0",
+        "legacyItemId": "226663918577",
+        "title": "14\" inch Band Saw Shaft Hinge For Jet JWBS-14CS JWBS-14DXPRO JBS-14MW For Delta",
+        "price": {
+          "value": 47.9,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/226663918577",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|168756283114|0",
+        "legacyItemId": "168756283114",
+        "title": "Fits Jet JWBS-14CS JWBS-14DXPRO JBS-14MW Delta 14\" Band Saw Shaft Hinge",
+        "price": {
+          "value": 47.9,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/168756283114",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|820037700071|0",
+        "legacyItemId": "820037700071",
+        "title": "Jet JBS-14MW  14” Band Saw Table",
+        "price": {
+          "value": 28.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/820037700071",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|177739410662|0",
+        "legacyItemId": "177739410662",
+        "title": "Jet 14\"  Band Saw Md JBS-14  Trunnion Brackets Assy   JET-12",
+        "price": {
+          "value": 89.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/177739410662",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|172734856421|0",
+        "legacyItemId": "172734856421",
+        "title": "JET JBS-14MW Urethane Band Saw Tire Set of 2  Wheel Protector Free Shipping",
+        "price": {
+          "value": 34.94,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/172734856421",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|820037687534|0",
+        "legacyItemId": "820037687534",
+        "title": "Jet JBS-14MW  14” Band Saw Table Miter Mount",
+        "price": {
+          "value": 14.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/820037687534",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|177739402038|0",
+        "legacyItemId": "177739402038",
+        "title": "Jet 14\"  Band Saw Md JBS-14  On Off Push Button Switch JET-05",
+        "price": {
+          "value": 32.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/177739402038",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|263583930886|0",
+        "legacyItemId": "263583930886",
+        "title": "JET JBS-14CS URETHANE BAND SAW WHEEL PROTECTORS  ULTRA DUTY .125 THICK ",
+        "price": {
+          "value": 39.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/263583930886",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|187910898193|0",
+        "legacyItemId": "187910898193",
+        "title": "Jet 14\"  Band Saw Md JBS-14  Plastic Blade Guard  JET-07",
+        "price": {
+          "value": 39.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/187910898193",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|172677797361|0",
+        "legacyItemId": "172677797361",
+        "title": "JET JBS-14CS Urethane Band Saw Tire Set of 2  Wheel Protector Free Shipping",
+        "price": {
+          "value": 34.94,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/172677797361",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|273131058445|0",
+        "legacyItemId": "273131058445",
+        "title": "JET JBS-14CS WHEEL PROTECTORS BLUE MAX ULTRA DUTY BAND SAW TIRES .125 THICK USA",
+        "price": {
+          "value": 39.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/273131058445",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|389076318552|0",
+        "legacyItemId": "389076318552",
+        "title": "14\" Band Saw Upper Hinge Assy Fit For Delta Jet JWBS-14CS JBS-14 MW JWBS-14DXPRO",
+        "price": {
+          "value": 47.87,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/389076318552",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|286654113668|0",
+        "legacyItemId": "286654113668",
+        "title": "Jet JBS-14MW  14” Band Saw Drive Pulley [5.962] 6\" od. with 5/8\" dia. Bore",
+        "price": {
+          "value": 69,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/286654113668",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|147011646433|0",
+        "legacyItemId": "147011646433",
+        "title": "For Jet JWBS-14CS JWBS-14DXPRO JBS-14MW For Delta 14\" inch Band Saw Shaft Hinge",
+        "price": {
+          "value": 47.9,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/147011646433",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|187910859401|0",
+        "legacyItemId": "187910859401",
+        "title": "Jet 14\"  Band Saw Md JBS-14 Three Case Covers   JET-14",
+        "price": {
+          "value": 99.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/187910859401",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|178001170303|0",
+        "legacyItemId": "178001170303",
+        "title": "Jet 14\"  Band Saw Md JBS-14  Arbor Shaft Assy  JET-06",
+        "price": {
+          "value": 79.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/178001170303",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|354707933712|0",
+        "legacyItemId": "354707933712",
+        "title": "Jet JBS-14MW  14” Band Saw Lower Shaft Pulley",
+        "price": {
+          "value": 22.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/354707933712",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|187910859977|0",
+        "legacyItemId": "187910859977",
+        "title": "Jet 14\"  Band Saw Md JBS-14 Bolt for Top  & Bottom Frame JET-15",
+        "price": {
+          "value": 22.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/187910859977",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|306127305780|0",
+        "legacyItemId": "306127305780",
+        "title": "Jet JBS-14MW  14” Band Saw Drive Pulley [5.962] 6\" od. with 5/8\" dia. Bore",
+        "price": {
+          "value": 29.99,
+          "currency": "USD"
+        },
+        "itemWebUrl": "https://www.ebay.com/itm/306127305780",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|187900234318|0",
+        "legacyItemId": "187900234318",
+        "title": "Jet 14\" Band Saw Md JBS-14   Motor HP 3/4  V 110/220  RPM 1725 EM-448",
+        "price": {
+          "value": 139.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/187900234318",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|820037701119|0",
+        "legacyItemId": "820037701119",
+        "title": "Jet JBS-14MW  14” Band Saw Lower Cover",
+        "price": {
+          "value": 14.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/820037701119",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|273131059235|0",
+        "legacyItemId": "273131059235",
+        "title": "JET JBS-14 URETHANE BANDSAW TIRES ULTRA DUTY .125  THICKEST BEST QUALITY",
+        "price": {
+          "value": 39.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/273131059235",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|186255295921|0",
+        "legacyItemId": "186255295921",
+        "title": "Band Saw Blade 116 Inch x 3/4 Inch x 3 TPI for Jet JWBS-14SFX, JBS-14SFV Bandsaw",
+        "price": {
+          "value": 33.89,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/186255295921",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|358031107626|0",
+        "legacyItemId": "358031107626",
+        "title": "NEW DRIVE BELT V BELT FOR JET JBS-14 BAND SAW MOTOR DRIVE BELT",
+        "price": {
+          "value": 14.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 3.5,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/358031107626",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|226663914586|0",
+        "legacyItemId": "226663914586",
+        "title": "14\" inch Band Saw Shaft Hinge For Jet JWBS-14CS JWBS-14DXPRO JBS-14MW For Delta",
+        "price": {
+          "value": 47.9,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/226663914586",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|187910897765|0",
+        "legacyItemId": "187910897765",
+        "title": "Jet 14\"  Band Saw Md JBS-14  Post Clamp Bracket & Screw JET-04",
+        "price": {
+          "value": 35.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/187910897765",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|274406366119|0",
+        "legacyItemId": "274406366119",
+        "title": "OLSON COOL BLOCKS + BLUE MAX HEAVY DUTY BAND SAW TIRES FOR JET JBS-14MW BANDSAW",
+        "price": {
+          "value": 49.95,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/274406366119",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|187910852065|0",
+        "legacyItemId": "187910852065",
+        "title": "Jet 14\"  Band Saw Md JBS-14 Knobs & Studs for Case  JET-02",
+        "price": {
+          "value": 45.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/187910852065",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|173991733403|0",
+        "legacyItemId": "173991733403",
+        "title": "1/8\" ULTRA Thick JET JBS-14MW Urethane Band Saw Tire Set of 2 Free Shipping",
+        "price": {
+          "value": 39.88,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/173991733403",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|155882980756|0",
+        "legacyItemId": "155882980756",
+        "title": "116 x 1/2 Inch Bandsaw Blade 4 TPI for Jet JWBS-14SFX, JBS-14SFV Bandsaws",
+        "price": {
+          "value": 28.69,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/155882980756",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|326926073577|0",
+        "legacyItemId": "326926073577",
+        "title": "Bandsaw Blade 116 Inch x 3/4 Inch x 3 TPI replacement Jet JWBS-14SFX, JBS-14SFV",
+        "price": {
+          "value": 24.09,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/326926073577",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|266203736972|0",
+        "legacyItemId": "266203736972",
+        "title": "Drive Belt For Jet JBS-14CS bandsaw",
+        "price": {
+          "value": 16.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 6.99,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/266203736972",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|146749704700|0",
+        "legacyItemId": "146749704700",
+        "title": "Bandsaw Blade 116 x 1/2 Inch x 4 TPI for Jet JWBS-14SFX, JBS-14SFV Bandsaws",
+        "price": {
+          "value": 30.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/146749704700",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|357724021805|0",
+        "legacyItemId": "357724021805",
+        "title": "14\" Bandsaw Upper Wheel Shaft & Hinge Assy For Delta Ridgid Central Machinery",
+        "price": {
+          "value": 47.69,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/357724021805",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|306575987871|0",
+        "legacyItemId": "306575987871",
+        "title": "POWERTEC 93-1/2\" x 1/8\" Band Saw Blade 14 TPI High Carbon Delta Grizzly Jet",
+        "price": {
+          "value": 20.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/306575987871",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|356904586314|0",
+        "legacyItemId": "356904586314",
+        "title": "Bandsaw Blades 116 x 1/2 Inch x 4 TPI for Jet JWBS-14SFX, JBS-14SFV Bandsaws",
+        "price": {
+          "value": 31.59,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356904586314",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|146151832827|0",
+        "legacyItemId": "146151832827",
+        "title": "116 Inch x 1/4 Inch x 4 TPI Bandsaw Blades for Jet JWBS-14SFX, JBS-14SFV Bandsaw",
+        "price": {
+          "value": 33.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/146151832827",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|186328956259|0",
+        "legacyItemId": "186328956259",
+        "title": "116 x 1/2 Inch x 4 TPI Bandsaw Blade for Jet JWBS-14SFX, JBS-14SFV Bandsaws",
+        "price": {
+          "value": 33.69,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/186328956259",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|327222846418|0",
+        "legacyItemId": "327222846418",
+        "title": "FOXBC 116 Inch x 3/4 Inch x 3 TPI Bandsaw Blades for Jet JWBS-14SFX, JBS-14SFV ",
+        "price": {
+          "value": 30.18,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/327222846418",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|278093263239|0",
+        "legacyItemId": "278093263239",
+        "title": "Foxbc 116 Inch X 3/4 Inch X 3 Tpi Bandsaw Blades For Jet Jwbs-14Sfx Jbs-14Sfv",
+        "price": {
+          "value": 41.82,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/278093263239",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|295383419891|0",
+        "legacyItemId": "295383419891",
+        "title": "JET 14\" Bandsaw Upper Wheel Cover Assembly JBS-14CS",
+        "price": {
+          "value": 10,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/295383419891",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|327371255221|0",
+        "legacyItemId": "327371255221",
+        "title": "Bandsaw Blade 116 Inch x 3/4 Inch x 3 TPI replacement Jet JWBS-14SFX, JBS-14SFV",
+        "price": {
+          "value": 28.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/327371255221",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|227506912342|0",
+        "legacyItemId": "227506912342",
+        "title": "FOXBC 116 Inch x 3/4 Inch x 3 TPI Bandsaw Blades for Jet JWBS-14SFX, JBS-14SF...",
+        "price": {
+          "value": 39.96,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/227506912342",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|356577228592|0",
+        "legacyItemId": "356577228592",
+        "title": "ENCO Model 199-9005 Band Saw Lower Pulley",
+        "price": {
+          "value": 19.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356577228592",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|177754013783|0",
+        "legacyItemId": "177754013783",
+        "title": "Jet Band Saw Base  Stand  fits different models  top is 17x16\"  24\" high  CS-500",
+        "price": {
+          "value": 149.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/177754013783",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|356576930699|0",
+        "legacyItemId": "356576930699",
+        "title": "ENCO Model 199-9005 Band Saw Motor And 4 Speed Pulley",
+        "price": {
+          "value": 89.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356576930699",
+        "condition": "For parts or not working",
+        "conditionId": "7000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|406459467227|0",
+        "legacyItemId": "406459467227",
+        "title": "14\" Bandsaw Upper Wheel Tension Assembly with Iron Hinge For Delta Powermatic",
+        "price": {
+          "value": 47.9,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/406459467227",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|356576921011|0",
+        "legacyItemId": "356576921011",
+        "title": "ENCO Model 199-9005 Band Saw Lower Shaft",
+        "price": {
+          "value": 24.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356576921011",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|356577203401|0",
+        "legacyItemId": "356577203401",
+        "title": "ENCO Model 199-9005 Band Saw Lower Wheel",
+        "price": {
+          "value": 49.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356577203401",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|356577201037|0",
+        "legacyItemId": "356577201037",
+        "title": "ENCO Model 199-9005 Band Saw Upper Blade Guide Clamp",
+        "price": {
+          "value": 12.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356577201037",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|356577047965|0",
+        "legacyItemId": "356577047965",
+        "title": "ENCO Model 199-9005 Band Saw Upper Cast Housing",
+        "price": {
+          "value": 24.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356577047965",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|356577049561|0",
+        "legacyItemId": "356577049561",
+        "title": "ENCO Model 199-9005 Band Saw Lower Wheel Cover",
+        "price": {
+          "value": 14.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356577049561",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|356576924926|0",
+        "legacyItemId": "356576924926",
+        "title": "ENCO Model 199-9005 Band Saw Lower Cast Housing",
+        "price": {
+          "value": 24.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "CALCULATED"
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/356576924926",
+        "condition": "Used",
+        "conditionId": "3000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|800276795285|0",
+        "legacyItemId": "800276795285",
+        "title": "Band sa Blades for Woodworking/ Delta/JET, 1PK (13119), 93-1/2 x3/8 Inchx18 TPI",
+        "price": {
+          "value": 19.01,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/800276795285",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|267356515198|0",
+        "legacyItemId": "267356515198",
+        "title": "POWERTEC 93-1/2 Inch Bandsaw Blades, 3/8\" x 6 TPI Band Saw Blades for Delta, ...",
+        "price": {
+          "value": 19.68,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/267356515198",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|318887996039|0",
+        "legacyItemId": "318887996039",
+        "title": "FOXBC 116\" x 3/4\" x 3 TPI Bandsaw Blade for Jet JWBS-14SFX, JBS-14SFV",
+        "price": {
+          "value": 41.99,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/318887996039",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      },
+      {
+        "itemId": "v1|317761712680|0",
+        "legacyItemId": "317761712680",
+        "title": "116 Inch High Carbon Steel Bandsaw Blade for Jet JWBS-14SFX",
+        "price": {
+          "value": 54.49,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/317761712680",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE",
+          "BEST_OFFER"
+        ]
+      },
+      {
+        "itemId": "v1|407127889880|0",
+        "legacyItemId": "407127889880",
+        "title": "FOXBC 116\" x 3/4\" x 3 TPI Bandsaw Blade for Jet JWBS-14SFX, JBS-14SFV",
+        "price": {
+          "value": 38.56,
+          "currency": "USD"
+        },
+        "shippingOptions": [
+          {
+            "shippingCostType": "FIXED",
+            "shippingCost": {
+              "value": 0,
+              "currency": "USD"
+            }
+          }
+        ],
+        "itemWebUrl": "https://www.ebay.com/itm/407127889880",
+        "condition": "New",
+        "conditionId": "1000",
+        "buyingOptions": [
+          "FIXED_PRICE"
+        ]
+      }
+    ]
+  }
+}

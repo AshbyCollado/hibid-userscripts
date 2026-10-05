@@ -222,6 +222,40 @@ function stripLotHeading(value: string): string {
   return clean(value.replace(/^\s*Lot\s*#?\s*:?\s*[\w.-]+\s*(?:\||-|:)\s*/i, ''));
 }
 
+function lotDetailStatus(root: Document | Element): string {
+  const subpanel = root.querySelector('app-lot-details-subpanel');
+  const lotContainer = root.querySelector('[id^="lot-details-"], .lot-details-container');
+  const statusScope = subpanel || lotContainer || (root.nodeType === 1 ? root as Element : null);
+  if (!statusScope) return '';
+  const native = subpanel ? clean(visibleText(subpanel)) : '';
+  if (/\bWon\b/i.test(native)) return 'Won';
+  if (/\bOutbid\b/i.test(native)) return 'Outbid';
+  if (/\bWinning\b/i.test(native)) return 'Winning';
+  if (/\bBidding Closed\b|\bClosed\b/i.test(native)) return 'Closed';
+  const nativeStatus = native.match(/\b(?:POSTED|OPEN|UPCOMING|CLOSING)\b/);
+  if (nativeStatus) return nativeStatus[0];
+  if (subpanel && /\bTime Remaining\b/i.test(native)
+    && [...subpanel.querySelectorAll('button')].some((button) => /^Bid\s+\$?\d/i.test(clean(button.textContent)))) return 'OPEN';
+  // Sparse or older layouts may expose an isolated status badge without the
+  // current subpanel. Never scan auction terms, footer, or recommendations.
+  for (const node of statusScope.querySelectorAll('span,div,small,strong')) {
+    const value = clean(visibleText(node));
+    if (/^(?:Won|Winning|Outbid|Bidding Closed|Closed)$/i.test(value)) return /closed/i.test(value) ? 'Closed' : value;
+    if (/^(?:POSTED|OPEN|UPCOMING|CLOSING)$/.test(value)) return value;
+  }
+  return '';
+}
+
+function lotPageBiddingNotice(root: Document | Element): string {
+  for (const card of root.querySelectorAll('.notice.card')) {
+    const heading = clean(card.querySelector('h2')?.textContent).replace(/:$/, '');
+    if (!/^Bidding Notice$/i.test(heading)) continue;
+    const body = card.querySelector('p');
+    return body ? clean(visibleText(body)) : '';
+  }
+  return '';
+}
+
 export function extractHibidLotDetail(root: Document | Element, locationLike: LocationLike | URL | string): HiBidLotRecord | null {
   const sourceUrl = toUrl(locationLike).href;
   const raw = clean(visibleText(root));
@@ -246,7 +280,10 @@ export function extractHibidLotDetail(root: Document | Element, locationLike: Lo
   const bidText = raw.match(/(?:High|Current)\s+Bid\s*:?\s*\$?\s*[\d,.]+/i)?.[0]
     || raw.match(/Price\s+Realized\s*:?\s*\$?\s*[\d,.]+/i)?.[0]
     || '';
-  const nextText = raw.match(/(?:Minimum Next Bid|Bid)\s*:?\s*\$?\s*[\d,.]+/i)?.[0] || '';
+  const nativeBid = [...root.querySelectorAll('app-lot-details-subpanel button')]
+    .map((button) => clean(visibleText(button)))
+    .find((value) => /^Bid\s+\$?\s*\d/i);
+  const nextText = nativeBid || raw.match(/\bMinimum Next Bid\s*:?\s*\$?\s*[\d,.]+/i)?.[0] || '';
   const category = fields['Group - Category'] || '';
   return {
     source: 'hibid-dom', pageKind: 'lot', id, eventItemId: id, itemId: '', lot,
@@ -254,19 +291,11 @@ export function extractHibidLotDetail(root: Document | Element, locationLike: Lo
     description, descriptionHtml: descriptionNode?.innerHTML || '', category,
     categories: category ? [category] : [], currentBid: money(bidText), nextBid: money(nextText),
     bidCount: Number(raw.match(/(\d+)\s+Bids?/i)?.[1] || '') || null,
-    status: /\bWon\b/i.test(raw)
-      ? 'Won'
-      : (/\bOutbid\b/i.test(raw)
-        ? 'Outbid'
-        : (/\bWinning\b/i.test(raw)
-          ? 'Winning'
-          : (/\bBidding Closed\b|\bClosed\b/i.test(raw)
-            ? 'Closed'
-            : (raw.match(/\b(?:POSTED|OPEN|UPCOMING|CLOSING)\b/i)?.[0].toUpperCase() || '')))),
+    status: lotDetailStatus(root),
     timeLeft: clean(raw.match(/\b(?:\d+d\s*)?(?:\d+h\s*)?\d+m(?:\s*\d+s)?\b/i)?.[0]),
     quantity: Number(fields.Quantity || '') || null, shippingOffered: /shipping offered|will ship/i.test(raw),
     auctionId: sourceUrl.match(/auction(?:Id)?[=/](\d+)/i)?.[1] || '', auctionTitle: '',
-    location: '', buyerPremium: fieldFromText(raw, "Buyer's Premium"), rawText: raw.slice(0, 12000),
+    location: '', buyerPremium: fieldFromText(raw, "Buyer's Premium"), biddingNotice: lotPageBiddingNotice(root), rawText: raw.slice(0, 12000),
     descriptionFields: fields
   };
 }

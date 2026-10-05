@@ -1,9 +1,12 @@
 import {
   assessCondition,
+  buildProductResearchQuery,
   evaluateRetailCandidate,
   extractLotQuantityFromTitle,
   extractProductDiscriminators,
   extractProductIdentity,
+  getLimitedTestingCautions,
+  missingMajorComponentRejections,
   type ConditionAssessment,
   type ProductIdentity,
   type RetailCandidateEvaluation,
@@ -21,6 +24,7 @@ export type EbaySoldAttemptStatus = 'ok' | 'no-results' | 'challenge' | 'not-sol
 export type EbaySoldPriceKind = 'actual' | 'average-actual' | 'public-visible' | 'best-offer-unknown';
 export type EbaySoldVerificationStatus = 'not-attempted' | 'incomplete' | 'blocked' | 'insufficient' | 'verified';
 export type EbaySoldMatchConfidence = 'none' | 'exact-model' | 'title-family' | 'variant-ambiguous';
+export type EbaySoldQueryPlanVersion = 'legacy-v1' | 'short-model-v2';
 
 export interface EbayMoney {
   amount: number;
@@ -112,6 +116,7 @@ export interface VerifyEbaySoldCompOptions {
 const EBAY_QUERY_NOISE = new Set([
   'av', 'channel', 'channels', 'multi', 'multichannel', 'wireless', 'smart', 'portable',
   'new', 'used', 'open', 'box', 'black', 'white', 'video', 'audio', 'system', 'unit', 'console',
+  'heavy', 'duty', 'capacity', 'lb', 'lbs',
 ]);
 
 function cleanText(value: string | null | undefined): string {
@@ -129,6 +134,95 @@ function addUniqueQuery(target: string[], candidate: string): void {
   if (!target.some((query) => normalizedQuery(query) === key)) target.push(cleaned);
 }
 
+function jewelrySellerAbbreviationFallback(identity: ProductIdentity): string | null {
+  if (identity.model || identity.model2) return null;
+  const query = identity.query;
+  const tokens = query.split(/\s+/).filter(Boolean);
+  const tokenCore = (token: string): string => token.replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, '');
+  const hasSellerAbbreviation = tokens.some((token) => /^(?:antq|vntg)$/i.test(tokenCore(token)));
+  const hasJewelryMaterial = /\b(?:sterling|silver|gold|925)\b/i.test(query);
+  const hasJewelryObject = /\b(?:pin|buckle|pendant|necklace|earring|bracelet|ring)\b/i.test(query);
+  const hasExplicitJewelryContext = /\b(?:jewelry|jewellery)\b/i.test(query);
+  const hasToolContext = /\b(?:broaching|cutting|drill(?:ing)?|ream(?:er|ing)?|tools?|tooling|hss|milling|lathe|tap|die)\b|\bguide\s+pin\b/i.test(query);
+  if ((!hasSellerAbbreviation && !/\bbroach\b/i.test(query))
+    || !hasJewelryMaterial
+    || (!hasJewelryObject && !hasExplicitJewelryContext)
+    || (/\bbroach\b/i.test(query) && hasToolContext)) return null;
+
+  const fallback = tokens
+    .filter((token) => !/^(?:antq|vntg)$/i.test(tokenCore(token)))
+    .map((token) => /^(?:broach)$/i.test(tokenCore(token)) ? token.replace(/broach/i, 'brooch') : token)
+    .join(' ');
+  return fallback && normalizedQuery(fallback) !== normalizedQuery(query) ? fallback : null;
+}
+
+function apparelFallbackQuery(identity: ProductIdentity): string | null {
+  if (identity.model || identity.model2 || !identity.brand) return null;
+  const query = normalizedQuery(identity.query);
+  const placeholderBrand = /^(?:generic|unknown|unbranded|no|none|n\/?a|na|brandless)$/i.test(cleanText(identity.brand))
+    || /\b(?:generic|unknown|unbranded|brandless|no[\s-]+brand|no[\s-]+name)\b/i.test(query);
+  if (placeholderBrand) return null;
+
+  const letterSize = '(?:xxxs?|xxs|xs|s|m|l|xl|xxl|2xl|3xl|4xl|5xl)';
+  const sizeMatch = query.match(new RegExp(
+    `\\b(?:size|sz)\\s*[:#-]?\\s*((?:${letterSize}(?:\\s*\\/\\s*${letterSize})?|\\d{1,2}(?:\\.\\d+)?(?:\\s+\\d+\\/\\d+)?(?:\\s*[-\\u2013\\u2014]\\s*\\d{1,2}(?:\\.\\d+)?(?:\\s+\\d+\\/\\d+)?)?\\s*[wrl]?))\\b`,
+    'i',
+  ));
+  if (!sizeMatch?.[1] || sizeMatch.index === undefined) return null;
+  // A separator immediately after the match means a size continuation that
+  // this deliberately small grammar did not understand. Do not truncate it.
+  const sizeEnd = sizeMatch.index + sizeMatch[0].length;
+  if (/^\s*[\/\u2013\u2014-]|^\s*[a-z0-9]/i.test(query.slice(sizeEnd))) return null;
+  const size = sizeMatch[1]
+    .replace(/\s*([\/\u2013\u2014-])\s*/g, '$1')
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+
+  const garment = query.match(/\b(?:t[- ]?shirts?|tees?|shirts?|blouses?|tops?|sweaters?|sweatshirts?|hoodies?|jackets?|coats?|blazers?|cardigans?|vests?|dresses?|skirts?|pants?|jeans?|shorts?|trousers?|leggings?|rompers?|jumpsuits?|overalls?|swimsuits?|bikinis?|bras?|underwear|socks?|shoes?|boots?|sandals?)\b/i)?.[0];
+  if (!garment) return null;
+  if (/\b(?:books?|patterns?|sewing|crafts?|tools?|tooling|electronics?|organizers?|organisers?)\b/i.test(query)) return null;
+
+  // Keep only a small set of recognizable patterns; fabric, fit, and sales
+  // language is deliberately excluded from this discovery-only fallback.
+  const pattern = query.match(/\b(?:plaid|tartan|floral|striped?|checkered?|paisley|polka[- ]?dot(?:ted)?|houndstooth|argyle|camo(?:uflage)?|tie[- ]?dye)\b/i)?.[0];
+  const fallback = [identity.brand, pattern, garment, size]
+    .filter(Boolean)
+    .join(' ');
+  return normalizedQuery(fallback) !== normalizedQuery(identity.query) ? fallback : null;
+}
+
+function modelFreeSkuQuery(identity: ProductIdentity): string | null {
+  const model = identity.model || '';
+  const compactModel = model.replace(/[^a-z0-9]/gi, '');
+  const hasLongHyphenSku = /^[a-z0-9]+(?:-[a-z0-9]+)+$/i.test(model)
+    && compactModel.length >= 12 && (compactModel.match(/\d/g) || []).length >= 4;
+  const hasSkuShape = (/^[a-z]{2,}[a-z0-9]*(?:\/[a-z0-9]+)?$/i.test(model)
+    && (compactModel.match(/\d/g) || []).length >= 2) || hasLongHyphenSku;
+  const hasSkuAlias = model.includes('/') || hasLongHyphenSku
+    || /\b[A-Z0-9][A-Z0-9+.-]*\/[A-Z0-9]+\b/i.test(identity.name);
+  if (!hasSkuShape || !hasSkuAlias) return null;
+  const models = [identity.model, identity.model2].filter(Boolean)
+    .map((value) => value!.replace(/[^a-z0-9]/gi, '').toLocaleLowerCase('en-US'));
+  const productName = identity.query.split(/\s+/)
+    .filter((token) => {
+      const compact = token.replace(/[^a-z0-9]/gi, '').toLocaleLowerCase('en-US');
+      return !models.some((model) => compact.includes(model));
+    })
+    .join(' ');
+  const query = buildProductResearchQuery(hasLongHyphenSku
+    ? productName.replace(/\b\d+(?:\.\d+)?\s*(?:lb|lbs|pounds?)\b/gi, ' ')
+    : productName);
+  return query.split(/\s+/).length >= 2 ? query : null;
+}
+
+function joinedModelVariantQuery(identity: ProductIdentity): string | null {
+  const model = cleanText(identity.model);
+  if (!identity.brand || !model || /\s/.test(model)) return null;
+  const match = /^(.*\d)(Plus|Pro|Max|Mini|Ultra)$/i.exec(model);
+  if (!match || !match[1]) return null;
+  return [identity.brand, match[1], match[2]].join(' ');
+}
+
 function explicitBookTitleFromName(name: string): string | null {
   return cleanText(
     name.match(/^(.+?)\s+(?:book|novel)\s+by\s+.+$/i)?.[1]
@@ -136,14 +230,54 @@ function explicitBookTitleFromName(name: string): string | null {
   ) || null;
 }
 
-export function buildEbaySoldQueryVariants(identity: ProductIdentity, maximum = 3): string[] {
+function brandModelQuery(identity: ProductIdentity): string {
+  const brand = cleanText(identity.brand);
+  const model = cleanText(identity.model);
+  if (!brand) return model;
+  const escapedBrand = brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  return new RegExp(`^${escapedBrand}(?=$|[^A-Za-z0-9])`, 'i').test(model)
+    ? model : [brand, model].filter(Boolean).join(' ');
+}
+
+function isRecognizedPlaceholderBrand(brand: string): boolean {
+  return /^(?:unknown|unbranded|generic|n\/?a|na|no(?:\s+brand|\s+name)?|none|brandless)$/i.test(cleanText(brand));
+}
+
+export function buildEbaySoldQueryVariants(
+  identity: ProductIdentity,
+  maximum = 3,
+  queryPlanVersion: EbaySoldQueryPlanVersion = 'short-model-v2',
+): string[] {
   const limit = Math.max(1, Math.min(3, Math.floor(maximum)));
   const variants: string[] = [];
   addUniqueQuery(variants, identity.query);
+  const jewelryFallback = jewelrySellerAbbreviationFallback(identity);
+  if (jewelryFallback) addUniqueQuery(variants, jewelryFallback);
+  const apparelFallback = apparelFallbackQuery(identity);
+  if (apparelFallback) addUniqueQuery(variants, apparelFallback);
 
   if (identity.model) {
-    addUniqueQuery(variants, [identity.brand, identity.model].filter(Boolean).join(' '));
-    addUniqueQuery(variants, identity.model);
+    const modelFreeQuery = modelFreeSkuQuery(identity);
+    if (modelFreeQuery) addUniqueQuery(variants, modelFreeQuery);
+    const productBeforeBundle = identity.name.match(/^(.+?)\s+(?:w\/|with|including|includes)\s+.+$/i)?.[1];
+    if (productBeforeBundle) {
+      const coreQuery = buildProductResearchQuery(productBeforeBundle);
+      const modelQuery = brandModelQuery(identity);
+      if (coreQuery.split(/\s+/).some((token) => token.toLocaleLowerCase('en-US') === identity.model?.toLocaleLowerCase('en-US'))
+        && coreQuery.split(/\s+/).length > modelQuery.split(/\s+/).length) {
+        addUniqueQuery(variants, coreQuery);
+      }
+    }
+    const joinedVariantQuery = joinedModelVariantQuery(identity);
+    if (joinedVariantQuery) addUniqueQuery(variants, joinedVariantQuery);
+    addUniqueQuery(variants, brandModelQuery(identity));
+    // Short model codes recur across unrelated brands and product categories.
+    if (!identity.brand
+      || isRecognizedPlaceholderBrand(identity.brand)
+      || queryPlanVersion === 'legacy-v1'
+      || identity.model.replace(/[^A-Za-z0-9]/g, '').length > 4) {
+      addUniqueQuery(variants, identity.model);
+    }
   } else {
     const isbn = identity.name.match(/\b(?:97[89][\s-]?)?\d(?:[\s-]?\d){8,12}[\s-]?[\dXx]\b/)?.[0]
       ?.replace(/[^\dXx]/g, '');
@@ -153,10 +287,33 @@ export function buildEbaySoldQueryVariants(identity: ProductIdentity, maximum = 
       addUniqueQuery(variants, explicitBookTitle);
       addUniqueQuery(variants, `"${explicitBookTitle.replace(/"/g, '')}"`);
     }
-    const coreTokens = identity.query.split(/\s+/)
-      .filter((token) => (token.length > 2 || /\d/.test(token)) && !EBAY_QUERY_NOISE.has(token.toLocaleLowerCase('en-US')))
+    const gasTrimmerDisplacement = /\b(?:gas|gasoline)\b/i.test(identity.query)
+      && /\btrimmer\b/i.test(identity.query)
+      ? identity.query.match(/\b(\d+(?:\.\d+)?)cc\b/i)?.[1] : null;
+    if (gasTrimmerDisplacement) {
+      addUniqueQuery(variants, [identity.brand, `${gasTrimmerDisplacement}cc`, 'gas', 'trimmer'].filter(Boolean).join(' '));
+    }
+    const coreTokens = identity.query
+      .replace(/\b(\d+(?:\.\d+)?)\s+(hp|btu|gpm|gph|psi|rpm)\b/gi, '$1$2')
+      .replace(/\b\d+\s+in\s+\d+\b/gi, ' ')
+      .split(/\s+/)
+      .filter((token) => (token.length > 2 || /\d/.test(token))
+        && !EBAY_QUERY_NOISE.has(token.toLocaleLowerCase('en-US'))
+        && !/^\d+[a-z]?\/\d+(?:[a-z]+)?$/i.test(token)
+        && !/^\d+(?:\.\d+)?[-–]\d+(?:\.\d+)?$/.test(token))
       .slice(0, 6);
-    if (coreTokens.length >= 2) addUniqueQuery(variants, coreTokens.join(' '));
+    const coreSet = new Set(coreTokens.map((token) => token.toLocaleLowerCase('en-US')));
+    const includedNouns = [...new Set((identity.includedComponents || []).flat()
+      .filter((token) => !/^\d+$/.test(token)
+        && !/^accessor(?:y|ies)$/i.test(token)
+        && !/^adapter$/i.test(token)
+        && !coreSet.has(token.toLocaleLowerCase('en-US'))))];
+    // Generic token shortening cannot safely preserve an unfamiliar size.
+    const canShortenGeneric = !apparelFallback && !/\b(?:size|sz)\s*[:#-]?\s*[a-z0-9]/i.test(identity.query);
+    if (canShortenGeneric && coreTokens.length >= 2 && includedNouns.length) {
+      addUniqueQuery(variants, [...coreTokens, ...includedNouns.slice(0, 2)].join(' '));
+    }
+    if (canShortenGeneric && coreTokens.length >= 2) addUniqueQuery(variants, coreTokens.join(' '));
     if (identity.query.split(/\s+/).length >= 3) addUniqueQuery(variants, `"${identity.query.replace(/"/g, '')}"`);
   }
   return variants.slice(0, limit);
@@ -228,6 +385,61 @@ function challengeText(root: ParentNode): string {
 
 function isChallenge(root: ParentNode): boolean {
   return /pardon\s+our\s+interruption|verify\s+(?:that\s+)?you(?:'re|\s+are)\s+human|security\s+challenge|captcha/i.test(challengeText(root));
+}
+
+function isVisibleUiElement(element: Element): boolean {
+  for (let current: Element | null = element; current; current = current.parentElement) {
+    if (current.hasAttribute('hidden') || current.getAttribute('aria-hidden')?.toLowerCase() === 'true') return false;
+    const inlineStyle = current.getAttribute('style') || '';
+    if (/(?:^|;)\s*(?:display|visibility)\s*:\s*(?:none|hidden)\b/i.test(inlineStyle)) return false;
+    const view = current.ownerDocument.defaultView;
+    if (view) {
+      const computedStyle = view.getComputedStyle(current);
+      if (computedStyle.display === 'none' || computedStyle.visibility === 'hidden') return false;
+    }
+  }
+  return true;
+}
+
+function sellerHubQueryServerError(root: ParentNode): boolean {
+  function visibleText(node: Node): string {
+    if (node.nodeType === 3) return node.textContent || '';
+    if (node.nodeType === 1 && (!isVisibleUiElement(node as Element)
+      || /^(?:script|style|template)$/i.test((node as Element).tagName))) return '';
+    return [...node.childNodes].map(visibleText).join(' ');
+  }
+  return [...root.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="alert"]')]
+    .some((element) => isVisibleUiElement(element)
+      && /our\s+server\s+failed\s+to\s+respond\s+to\s+your\s+query/i.test(cleanText(visibleText(element))));
+}
+
+function sellerHubRowIdentity(row: Element): { itemId: string; itemUrl: string; title: string } | null {
+  const links = [...row.querySelectorAll<HTMLAnchorElement>('a.research-table-row__link-row-anchor[href*="/itm/"]')];
+  const productIds = new Set(row.querySelectorAll<Element>(
+    '.research-table-row__product-info-name[data-item-id],.research-table-row__product-info-name [data-item-id]',
+  ));
+  const itemIds = new Set<string>();
+  for (const link of links) {
+    const linkedId = extractEbayItemId(link.href);
+    if (!linkedId) return null;
+    itemIds.add(linkedId);
+    if (link.hasAttribute('data-item-id')) productIds.add(link);
+    for (const element of link.querySelectorAll('[data-item-id]')) productIds.add(element);
+  }
+  for (const element of productIds) {
+    const dataId = element.getAttribute('data-item-id') || '';
+    if (!/^\d{9,15}$/.test(dataId) || dataId !== dataId.trim()) return null;
+    itemIds.add(dataId);
+  }
+  if (itemIds.size !== 1) return null;
+  const itemId = [...itemIds][0];
+  if (!itemId) return null;
+
+  const title = cleanText(row.querySelector('.research-table-row__product-info-name')?.textContent)
+    || cleanText(links[0]?.textContent)
+    || cleanText(row.querySelector('img[alt]')?.getAttribute('alt'));
+  if (!title || /^item\s+id\b/i.test(title)) return null;
+  return { itemId, itemUrl: `https://www.ebay.com/itm/${itemId}`, title };
 }
 
 function isTrustedUsEbayUrl(url: URL): boolean {
@@ -307,14 +519,11 @@ export function parseSellerHubProductResearch(
   if (!sellerHubSoldContext(root, url)) return attempt('seller-hub-product-research', url.href, observedAt, 'not-sold-context', [], false, 'seller-hub-sold-tab-not-proven');
 
   const currency = marketplaceCurrency(url);
-  const byId = new Map<string, EbaySoldRecord>();
+  const records: EbaySoldRecord[] = [];
   for (const row of root.querySelectorAll('tr.research-table-row')) {
-    const link = row.querySelector<HTMLAnchorElement>('a.research-table-row__link-row-anchor[href*="/itm/"]');
-    const dataId = row.querySelector<HTMLElement>('[data-item-id]')?.dataset.itemId || '';
-    const itemId = dataId || extractEbayItemId(link?.href || '');
-    const itemUrl = canonicalItemUrl(link?.href || '');
-    const title = cleanText(link?.textContent || row.querySelector('img[alt]')?.getAttribute('alt'));
-    if (!itemId || !itemUrl || !title) continue;
+    const identity = sellerHubRowIdentity(row);
+    if (!identity) continue;
+    const { itemId, itemUrl, title } = identity;
     const soldCell = textOf(row, '.research-table-row__avgSoldPrice');
     const shippingCell = textOf(row, '.research-table-row__avgShippingCost');
     const soldPrice = parseEbayMoney(soldCell, currency);
@@ -343,29 +552,118 @@ export function parseSellerHubProductResearch(
       priceKind: totalSold != null && totalSold > 1 ? 'average-actual' : 'actual',
       provenance: evidence('seller-hub-product-research', itemId),
     };
-    if (!byId.has(itemId)) byId.set(itemId, record);
+    // Keep repeated rows until verification can distinguish identical captures
+    // from contradictory paid amounts, quantities, dates or conditions.
+    records.push(record);
   }
 
   const next = [...root.querySelectorAll<HTMLButtonElement>('button')].find((button) => /go\s+to\s+next\s+page/i.test(button.getAttribute('aria-label') || cleanText(button.textContent)));
   const hasNextPage = Boolean(next && !next.disabled && next.getAttribute('aria-disabled') !== 'true');
-  const records = [...byId.values()];
-  const noResults = records.length === 0 && /(?:0\s+results|no\s+(?:(?:matching|sold)\s+)?results|try\s+another\s+search)/i.test(challengeText(root));
+  if (records.length === 0 && sellerHubQueryServerError(root)) {
+    return attempt('seller-hub-product-research', url.href, observedAt, 'parse-error', [], hasNextPage, 'seller-hub-query-server-error');
+  }
+  const noResults = records.length === 0 && /(?:0\s+results|no\s+(?:(?:matching|sold)\s+)?results|try\s+another\s+search|your\s+search\s+did(?:\s+not|n['’]t)\s+return\s+any\s+results)/i.test(challengeText(root));
   if (records.length === 0 && !noResults) return attempt('seller-hub-product-research', url.href, observedAt, 'parse-error', [], hasNextPage, 'sold-table-contained-no-parseable-records');
   return attempt('seller-hub-product-research', url.href, observedAt, noResults ? 'no-results' : 'ok', records, hasNextPage, null);
 }
 
-function publicResultElements(root: ParentNode): Element[] {
-  const selectors = ['li.s-item', '.srp-results .s-item', '[data-view*="mi:1686"]'];
+function publicResultElements(root: ParentNode, rewriteBoundary: Element | null = null): Element[] {
+  const selectors = ['.srp-results > li.s-item', '.srp-results > li.s-card[id^="item"]', '.srp-results > [data-view*="mi:1686"]'];
   const seen = new Set<Element>();
   const result: Element[] = [];
   for (const selector of selectors) {
     for (const element of root.querySelectorAll(selector)) {
       if (seen.has(element)) continue;
+      if (rewriteBoundary && Boolean(rewriteBoundary.compareDocumentPosition(element) & 4)) continue;
       seen.add(element);
       result.push(element);
     }
   }
   return result;
+}
+
+function publicSoldPrice(card: Element, currency: EbayMoney['currency']): EbayMoney | null {
+  const priceSelector = '.s-item__price,.s-card__price';
+  const originalPriceSelector = 's,strike,del,[class*="strikethrough" i],[style*="line-through" i],.s-item__original-price,.s-card__original-price';
+  const parts: string[] = [];
+  for (const price of card.querySelectorAll(priceSelector)) {
+    if (price.closest(originalPriceSelector) || price.parentElement?.closest(priceSelector)) continue;
+    const visiblePrice = price.cloneNode(true) as Element;
+    for (const original of visiblePrice.querySelectorAll(`${originalPriceSelector},.clipped`)) original.remove();
+    parts.push(cleanText(visiblePrice.textContent));
+  }
+  const text = parts.filter(Boolean).join(' ');
+  // Ranges and multiple unmarked amounts do not establish a single sold price.
+  if (text.replace(/,/g, '').match(/\d+(?:\.\d+)?/g)?.length !== 1 || /\b(?:from|starting|to)\b/i.test(text)) return null;
+  return parseEbayMoney(text, currency);
+}
+
+function explicitlyHasNoExactMatches(root: ParentNode): boolean {
+  return [...root.querySelectorAll('#srp-results-heading,.srp-controls__count-heading')]
+    .some((heading) => !heading.closest('aside,nav,footer,.s-item,.s-card,[hidden],[aria-hidden="true"],[style*="display:none" i],[style*="display: none" i]')
+      && /(?:\b0\s+results?\b|no\s+exact\s+matches?\s+found)/i.test(cleanText(heading.textContent)));
+}
+
+function visibleUiText(node: Node): string {
+  if (node.nodeType === 3) return node.textContent || '';
+  if (node.nodeType === 1 && (!isVisibleUiElement(node as Element)
+    || /^(?:script|style|template)$/i.test((node as Element).tagName))) return '';
+  return [...node.childNodes].map(visibleUiText).join(' ');
+}
+
+function publicSearchQueryWasCorrected(root: ParentNode, url: URL): boolean {
+  const originalQuery = normalizedQuery(queryFromUrl(url, 'public-sold-search'));
+  if (!originalQuery) return false;
+  return [...root.querySelectorAll('#srp-results-heading,.srp-controls__count-heading')].some((heading) => {
+    if (!isVisibleUiElement(heading) || heading.closest('aside,nav,footer,.s-item,.s-card')) return false;
+    const headingQuery = cleanText(visibleUiText(heading)).match(/^[\d,]+\+?\s+results?\s+for\s+(.+)$/i)?.[1];
+    if (!headingQuery || normalizedQuery(headingQuery) === originalQuery) return false;
+    const notices = [...root.querySelectorAll('.section-notice__main')].filter((notice) => {
+      if (!isVisibleUiElement(notice) || notice.closest('aside,nav,footer,.s-item,.s-card')) return false;
+      const noticeText = cleanText(visibleUiText(notice));
+      return new RegExp(`including\\s+results\\s+for\\s+${escapePattern(headingQuery)}(?:\\.|$)`, 'i').test(noticeText)
+        && /search\s+instead\s+for/i.test(noticeText);
+    });
+    const colocatedScope = heading.closest('.srp-controls');
+    if (colocatedScope && isVisibleUiElement(colocatedScope)
+      && !notices.some((notice) => colocatedScope.contains(notice))) {
+      const noticeText = cleanText(visibleUiText(colocatedScope));
+      if (/including\s+results\s+for/i.test(noticeText) && /search\s+instead\s+for/i.test(noticeText)) {
+        notices.push(colocatedScope);
+      }
+    }
+    return notices.some((notice) => [...notice.querySelectorAll<HTMLAnchorElement>('a[href]')].some((link) => {
+      if (!isVisibleUiElement(link) || link.closest('aside,nav,footer,.s-item,.s-card')) return false;
+      try {
+        const retryUrl = new URL(link.href, url.href);
+        const linkText = cleanText(visibleUiText(link));
+        const displayedOriginal = normalizedQuery(linkText.replace(/^search\s+instead\s+for\s+/i, '').replace(/[.!?]+$/, ''));
+        return isTrustedUsEbayUrl(retryUrl)
+          && /^\/sch\/i\.html\/?$/i.test(retryUrl.pathname)
+          && retryUrl.searchParams.get('_blrs')?.toLowerCase() === 'spell_auto_correct'
+          && normalizedQuery(retryUrl.searchParams.get('_nkw')) === originalQuery
+          && displayedOriginal === originalQuery;
+      } catch {
+        return false;
+      }
+    }));
+  });
+}
+
+function publicResultCondition(card: Element): string | null {
+  const candidates = [...card.querySelectorAll('.SECONDARY_INFO,.s-item__subtitle,.s-card__subtitle')]
+    .map((node) => cleanText(node.textContent)).filter(Boolean);
+  const conditionPrefix = /^(?:item\s+)?condition\s*:\s*/i;
+  // Subtitles also contain promotions; recognize complete labels, not words such as "New".
+  const labels = [
+    /^(?:brand\s+)?new(?:\s+(?:\(?other\)?(?:\s*\(see details\))?|with(?:out)?\s+(?:tags|box)|with\s+defects))?$/i,
+    /^(?:used|pre[- ]owned|like new|very good|good|acceptable|open[- ]box)$/i,
+    /^(?:(?:certified|seller|manufacturer|excellent|very good|good)\s*(?:-\s*)?)?refurbished$/i,
+    /^(?:for\s+parts\s+or\s+not\s+working|parts\s+only|parts\s+or\s+repair)$/i,
+  ];
+  return candidates.find((text) => labels.some((label) => label.test(text.replace(conditionPrefix, ''))))
+    ?? candidates.find((text) => conditionPrefix.test(text))
+    ?? null;
 }
 
 export function parsePublicEbaySoldSearch(
@@ -383,22 +681,38 @@ export function parsePublicEbaySoldSearch(
   if (!publicSoldContext(url)) return attempt('public-sold-search', url.href, observedAt, 'not-sold-context', [], false, 'sold-and-completed-flags-not-proven');
 
   const currency = marketplaceCurrency(url);
+  const next = root.querySelector<HTMLAnchorElement>('a.pagination__next[href],a[aria-label*="next" i][href]');
+  const hasNextPage = Boolean(next && next.getAttribute('aria-disabled') !== 'true');
+  if (publicSearchQueryWasCorrected(root, url)) {
+    return attempt('public-sold-search', url.href, observedAt, 'parse-error', [], hasNextPage, 'sold-search-query-corrected');
+  }
+  const resultRootElement = root.querySelector('#srp-river-results');
+  const resultRoot = resultRootElement || root;
+  const rewriteBoundary = resultRoot.querySelector('.srp-river-answer--REWRITE_START');
+  const resultCards = publicResultElements(resultRoot, rewriteBoundary);
+  const explicitNoExactMatches = (!rewriteBoundary || resultCards.length === 0) && explicitlyHasNoExactMatches(root);
   const byId = new Map<string, EbaySoldRecord>();
-  for (const card of publicResultElements(root)) {
-    const link = card.querySelector<HTMLAnchorElement>('a.s-item__link[href*="/itm/"],a[href*="/itm/"]');
+  for (const card of resultCards) {
+    const titleNode = card.querySelector('.s-item__title,.s-card__title');
+    const link = titleNode?.closest<HTMLAnchorElement>('a[href*="/itm/"]')
+      || card.querySelector<HTMLAnchorElement>('a.s-item__link[href*="/itm/"],a.s-card__link[href*="/itm/"],a[href*="/itm/"]');
     const itemId = extractEbayItemId(link?.href || '');
     const itemUrl = canonicalItemUrl(link?.href || '');
-    const title = cleanText(card.querySelector('.s-item__title')?.textContent || link?.textContent);
+    const titleCopy = (titleNode || link)?.cloneNode(true) as Element | undefined;
+    for (const clipped of titleCopy?.querySelectorAll('.clipped') || []) clipped.remove();
+    const title = cleanText(titleCopy?.textContent);
     if (!itemId || !itemUrl || !title || /shop\s+on\s+ebay/i.test(title)) continue;
     const cardText = cleanText(card.textContent);
-    const soldMarker = cleanText(card.querySelector('.s-item__caption--signal,.s-item__title--tagblock,.s-item__ended-date')?.textContent);
-    if (!/\bsold\b/i.test(soldMarker)) continue;
+    const soldMarker = [...card.querySelectorAll('.s-item__caption--signal,.s-item__title--tagblock,.s-item__ended-date,.s-card__caption')]
+      .map((node) => cleanText(node.textContent)).find((text) => /^sold\b/i.test(text));
+    if (!soldMarker) continue;
     const bestOfferUnknown = /\b(?:best\s+offer\s+accepted|accepted\s+(?:best\s+)?offer|offer\s+accepted)\b/i.test(cardText);
-    const soldPrice = bestOfferUnknown ? null : parseEbayMoney(textOf(card, '.s-item__price'), currency);
-    const shippingText = textOf(card, '.s-item__shipping,.s-item__logisticsCost');
-    const shippingPrice = /free\s+shipping/i.test(shippingText)
-      ? { amount: 0, currency }
-      : parseEbayMoney(shippingText, currency);
+    const soldPrice = bestOfferUnknown ? null : publicSoldPrice(card, currency);
+    const attributes = [...card.querySelectorAll('.s-card__attribute-row')].map((row) => cleanText(row.textContent));
+    const shippingText = textOf(card, '.s-item__shipping,.s-item__logisticsCost')
+      || attributes.find((text) => /\b(?:shipping|delivery)\b/i.test(text) && (/\bfree\s+(?:shipping|delivery)\b/i.test(text) || parseEbayMoney(text, currency))) || '';
+    const shippingPrice = parseEbayMoney(shippingText, currency)
+      || (/\bfree\s+(?:shipping|delivery)\b/i.test(shippingText) ? { amount: 0, currency } : null);
     const soldAt = soldMarker
       .replace(/^sold\s*/i, '') || null;
     const record: EbaySoldRecord = {
@@ -415,19 +729,43 @@ export function parsePublicEbaySoldSearch(
       totalSold: 1,
       totalSales: soldPrice,
       soldAt,
-      condition: textOf(card, '.SECONDARY_INFO,.s-item__subtitle') || null,
-      format: textOf(card, '.s-item__purchase-options,.s-item__bidCount') || null,
+      condition: publicResultCondition(card),
+      format: textOf(card, '.s-item__purchase-options,.s-item__bidCount')
+        || attributes.find((text) => /^(?:or\s+best\s+offer|best\s+offer\s+accepted|accepted\s+(?:best\s+)?offer|\d+\s+bids?|buy\s+it\s+now)\b/i.test(text)) || null,
       priceKind: bestOfferUnknown ? 'best-offer-unknown' : 'public-visible',
       provenance: evidence('public-sold-search', itemId),
     };
-    if (!byId.has(itemId)) byId.set(itemId, record);
+    const previous = byId.get(itemId);
+    if (!previous) {
+      byId.set(itemId, record);
+    } else {
+      const hiddenOffer = previous.priceKind === 'best-offer-unknown' || record.priceKind === 'best-offer-unknown';
+      const agreedPrice = !hiddenOffer
+        && previous.soldPrice?.amount === record.soldPrice?.amount && previous.soldPrice?.currency === record.soldPrice?.currency
+        && normalizedQuery(previous.title) === normalizedQuery(record.title) && normalizedQuery(previous.condition) === normalizedQuery(record.condition)
+        ? previous.soldPrice : null;
+      const agreedShipping = previous.shippingPrice?.amount === record.shippingPrice?.amount && previous.shippingPrice?.currency === record.shippingPrice?.currency
+        ? previous.shippingPrice : null;
+      byId.set(itemId, {
+        ...previous,
+        soldPrice: agreedPrice,
+        totalSales: agreedPrice,
+        shippingPrice: agreedShipping,
+        deliveredPrice: sumMoney(agreedPrice, agreedShipping),
+        priceKind: hiddenOffer ? 'best-offer-unknown' : 'public-visible',
+        format: record.priceKind === 'best-offer-unknown' ? record.format : previous.format,
+      });
+    }
   }
 
-  const next = root.querySelector<HTMLAnchorElement>('a.pagination__next[href],a[aria-label*="next" i][href]');
-  const hasNextPage = Boolean(next && next.getAttribute('aria-disabled') !== 'true');
-  const records = [...byId.values()];
-  const noResults = records.length === 0 && /(?:0\s+results|no\s+exact\s+matches|no\s+matching\s+results)/i.test(challengeText(root));
-  if (records.length === 0 && !noResults) return attempt('public-sold-search', url.href, observedAt, 'parse-error', [], hasNextPage, 'sold-search-contained-no-parseable-records');
+  const records = explicitNoExactMatches ? [] : [...byId.values()];
+  const emptyResultsList = resultRoot.querySelector('.srp-results') && !resultRoot.querySelector('.srp-results > *');
+  const loading = Boolean(resultRootElement?.closest('[aria-busy="true"]')
+    || resultRoot.querySelector('.srp-results')?.closest('[aria-busy="true"]'));
+  const noResults = records.length === 0
+    && !loading
+    && (explicitNoExactMatches || (!rewriteBoundary && emptyResultsList && /(?:\b0\s+results?\b|no\s+(?:(?:matching|sold)\s+)?results|try\s+another\s+search)/i.test(challengeText(root))));
+  if (records.length === 0 && !noResults) return attempt('public-sold-search', url.href, observedAt, 'parse-error', [], hasNextPage, loading ? 'sold-search-still-loading' : 'sold-search-contained-no-parseable-records');
   return attempt('public-sold-search', url.href, observedAt, noResults ? 'no-results' : 'ok', records, hasNextPage, null);
 }
 
@@ -472,17 +810,53 @@ function quantityRejections(sourceQuantity: number | null, title: string): strin
   return [];
 }
 
-function conditionRejections(source: ConditionAssessment | null | undefined, record: EbaySoldRecord): string[] {
+function conditionRejections(source: ConditionAssessment | null | undefined, record: EbaySoldRecord, identity: ProductIdentity): string[] {
   const candidateText = `${record.title}\n${record.condition || ''}`;
   const candidate = assessCondition(candidateText);
   const reasons: string[] = [];
   if (!source?.partsOnly && candidate.partsOnly) reasons.push('condition-mismatch:parts-only-comp');
   if (source?.partsOnly && !candidate.partsOnly) reasons.push('condition-mismatch:working-comp-for-parts-lot');
+  if (source?.cautions.includes('possible repair')) reasons.push('condition-review:source-possible-repair');
   const locked = /\b(?:(?:icloud|activation|google|frp|carrier|mdm)\s*[- ]?locked|bad\s+esn|blacklisted)\b/i;
-  const sourceText = source ? [source.condition, source.freeText, ...Object.values(source.fields)].join(' ') : '';
+  const sourceText = [identity.name, source?.condition, source?.freeText,
+    ...(source ? Object.entries(source.fields).map(([name, value]) => `${name}: ${value}`) : []),
+    ...(source?.cautions || [])]
+    .filter(Boolean).join('\n');
+  reasons.push(...missingMajorComponentRejections(
+    sourceText,
+    candidateText,
+  ));
+  const candidateLimitedTesting = getLimitedTestingCautions(candidateText).length > 0;
   if (locked.test(candidateText) && !locked.test(sourceText)) reasons.push('condition-mismatch:locked-comp');
-  if (source?.positive && /\b(?:untested|not\s+tested|unable\s+to\s+test|as[\s-]*is)\b/i.test(candidateText)) {
+  if (source?.positive && (candidateLimitedTesting || /\bas[\s-]*is\b/i.test(candidateText))) {
     reasons.push('condition-mismatch:untested-comp-for-working-lot');
+  }
+  const affirmativeMatches = (text: string, pattern: RegExp) => [...text.matchAll(pattern)].filter((match) => {
+    const beforeMatch = text.slice(0, match.index ?? 0);
+    const afterMatch = text.slice((match.index ?? 0) + match[0].length);
+    return !/\b(?:not|never|no|non|without|isn't|wasn't|like)[ \t-]*$/i.test(beforeMatch)
+      && !/^[ \t]*(?:(?:condition|status)[ \t]*)?[?:]{0,2}[ \t]*(?:is[ \t]+)?(?:no|false|unknown|unconfirmed|unspecified)\b/i.test(afterMatch);
+  });
+  const workingPattern = /\b(?:fully\s+tested(?:\s+and\s+working)?|tested\s*(?:and\s*)?working|(?:fully\s+)?(?:working|functional)|works?)\b/gi;
+  const newPattern = /\b(?:(?:brand[\s-]+)?new(?:[\s-]+(?:(?:factory[\s-]+)?sealed|in\s+(?:box|packaging)))?|(?:factory[\s-]+)?sealed|nib)\b/gi;
+  const candidateWorking = affirmativeMatches(candidateText, workingPattern).length > 0;
+  const candidateStrongWorking = affirmativeMatches(candidateText, /\b(?:fully\s+tested(?:\s+and\s+working)?|tested\s*(?:and\s*)?working|fully\s+(?:functional|working)|works?\s+perfectly)\b/gi).length > 0;
+  const candidateNew = affirmativeMatches(record.condition || '', newPattern).length > 0
+    || affirmativeMatches(record.title, newPattern).some((match) => {
+      // A bare New may belong to the source product name rather than its condition.
+      if (!/^new$/i.test(match[0])) return true;
+      const nextWord = record.title.slice((match.index ?? 0) + match[0].length).match(/^[\s-]+(\w+)/)?.[1];
+      return !nextWord || !new RegExp(`\\bnew[\\s-]+${escapePattern(nextWord)}\\b`, 'i').test(identity.name);
+    });
+  if (candidateStrongWorking && candidateLimitedTesting) {
+    reasons.push('condition-ambiguous:comp-conflicting-testing-evidence');
+  }
+  if (getLimitedTestingCautions(sourceText).length > 0 && !candidate.partsOnly) {
+    if (candidateNew || candidateStrongWorking || (candidateWorking && !candidateLimitedTesting)) {
+      reasons.push('condition-mismatch:working-comp-for-untested-lot');
+    } else if (!candidateLimitedTesting) {
+      reasons.push('condition-ambiguous:comp-function-unconfirmed');
+    }
   }
   if (source && /\b(?:new\s*[- ]*factory\s*sealed|factory\s*sealed|brand\s*new|new\s+in\s+(?:box|packaging)|sealed)\b/i.test(sourceText)
     && /\b(?:used|pre[\s-]?owned|open\s*box|refurbished|renewed)\b/i.test(candidateText)) {
@@ -553,6 +927,69 @@ function bookMediaRejections(source: ProductIdentity, candidateTitle: string): s
   return reasons;
 }
 
+const soldAccessoryNoun = /\b(?:power\s+supply|power\s+adapter|adapters?|chargers?|remote(?:\s+controls?)?|cables?|cords?|manuals?|replacement\s+parts?)\b/i;
+const soldCompleteProductNoun = /\b(?:pedal|receiver|amplifier|speaker|headphones?|camera|projector|console|monitor|printer|laptop|tablet|phone|guitar|keyboard|drum|microphone|controller|machine|device|unit)\b/i;
+
+type SoldComponentKind = 'packaging' | 'manuals' | 'power-supply' | 'cup' | 'replacement-base' | 'remote' | 'cable' | 'charger';
+
+function soldComponentAssertion(text: string, pattern: RegExp, replacement = false): boolean {
+  for (const match of text.matchAll(new RegExp(pattern.source, 'gi'))) {
+    const before = text.slice(0, match.index);
+    const after = text.slice(match.index! + match[0].length);
+    // Negation and inclusion apply to this noun, not to nearby missing parts.
+    if (/\b(?:no|not|without|missing|isn't|is\s+not)\s+(?:(?:an?|the|any|original|new|replacement|ac|dc|power)\s+){0,5}$/i.test(before)
+      || /^\s*(?:[-,:()]\s*)?(?:(?:is|are)\s+)?(?:not\s+(?:included|supplied|provided)|missing|absent|excluded)\b/i.test(after)
+      || /(?:\b(?:with|includes?|including|comes\s+with)\b|\bw\/)\s*[:,-]?\s*(?:(?:an?|the|new|original|replacement|spare|working|ac|dc|power)\s+){0,5}(?:(?:box|manuals?|cups?|cables?|cords?|chargers?|adapters?|power\s+suppl(?:y|ies)|remotes?)\s*(?:and|&)\s*(?:(?:an?|the|new|original|replacement|spare|working|ac|dc|power)\s+){0,5}){0,2}$/i.test(before)) continue;
+    const exclusive = /^\s*(?:[-,:()/]\s*)?(?:only|alone)\b(?!\s+(?:used|tested|played|opened|tried|once|twice)\b)/i.test(after)
+      || /\bonly\s+(?:(?:an?|the)\s+)?$/i.test(before);
+    if (exclusive || replacement) return true;
+  }
+  return false;
+}
+
+function soldComponentSubject(text: string): SoldComponentKind | null {
+  if (soldComponentAssertion(text, /\b(?:(?:empty|original|retail|storage)\s+)*(?:box(?:es)?|cartons?|packag(?:e|es|ing))(?:\s*(?:and|&|\/)\s*(?:manuals?|guides?))?\b/)
+    || soldComponentAssertion(text, /\b(?:manuals?|guides?)\s*(?:and|&|\/)\s*(?:box(?:es)?|packaging)\b/)) return 'packaging';
+  if (soldComponentAssertion(text, /\b(?:(?:user|instruction|owner'?s|service)\s+)?(?:manuals?|guides?)\b/)
+    || soldComponentAssertion(text, /\b(?:(?:user|instruction|owner'?s|service)\s+)?(?:manuals?|guides?)\s+reprint\b/, true)) return 'manuals';
+  if (soldComponentAssertion(text, /\breplacement\s+(?:motor\s+)?base(?:\s+unit)?\b/, true)
+    || soldComponentAssertion(text, /\b(?:motor\s+)?base(?:\s+unit)?\b/)) return 'replacement-base';
+  if (soldComponentAssertion(text, /\breplacement\s+power\s+(?:supply|adapter)\b/, true)
+    || soldComponentAssertion(text, /\bpower\s+(?:supply|adapter)\b/)) return 'power-supply';
+  if (soldComponentAssertion(text, /\b(?:original\s+)?cups?\b/)) return 'cup';
+  if (!soldCompleteProductNoun.test(text)) {
+    for (const [kind, pattern] of [
+      ['manuals', /\b(?:(?:user|instruction|owner'?s|service)\s+)?(?:manuals?|guides?)\b/],
+      ['power-supply', /\bpower\s+(?:supply|adapter)\b/],
+      ['remote', /\bremote(?:\s+controls?)?\b/],
+      ['cable', /\b(?:cables?|cords?)\b/],
+      ['charger', /\bchargers?\b/],
+    ] as const) {
+      if (soldComponentAssertion(text, pattern, true)) return kind;
+    }
+  }
+  return null;
+}
+
+function soldComponentRejections(source: ProductIdentity, candidateTitle: string): string[] {
+  const sourceText = source.name;
+  const sourceComponent = soldComponentSubject(sourceText);
+  const candidateComponent = soldComponentSubject(candidateTitle);
+  if ((sourceComponent || candidateComponent)
+    && sourceComponent !== candidateComponent) return ['accessory-or-component'];
+
+  // Exact-model accessory rows can retain enough title overlap to pass the
+  // generic retail evaluator. Preserve a source that is itself an accessory.
+  const exactModel = Boolean(source.model
+    && new RegExp(`\\b${escapePattern(source.model)}\\b`, 'i').test(candidateTitle));
+  if (exactModel && soldComponentAssertion(candidateTitle, soldAccessoryNoun, true)
+    && !soldCompleteProductNoun.test(candidateTitle)
+    && !soldAccessoryNoun.test(sourceText)) {
+    return ['accessory-or-component'];
+  }
+  return [];
+}
+
 function credibleCandidateModel(title: string, source: ProductIdentity): string | null {
   const sourceModel = source.model?.replace(/[^a-z0-9]/gi, '').toLocaleUpperCase('en-US') || '';
   const compactTitle = title.replace(/[^a-z0-9]/gi, '').toLocaleUpperCase('en-US');
@@ -606,8 +1043,11 @@ function uniqueInOrder(values: string[]): string[] {
 }
 
 function attemptedQueriesArePlannedPrefix(plannedQueries: string[], attemptedQueries: string[]): boolean {
-  const planned = plannedQueries.map(normalizedQuery);
-  const attempted = attemptedQueries.map(normalizedQuery);
+  const planned = uniqueInOrder(plannedQueries).map(normalizedQuery);
+  const attempted = uniqueInOrder(attemptedQueries).map(normalizedQuery);
+  // Completed captures can arrive out of order; partial runs must still follow the plan.
+  if (planned.length > 0 && attempted.length === planned.length
+    && attempted.every((query) => planned.includes(query))) return true;
   return attempted.length > 0
     && attempted.length <= planned.length
     && attempted.every((query, index) => planned[index] === query);
@@ -645,6 +1085,11 @@ function duplicateRecordSignature(search: EbaySoldSearchAttempt, record: EbaySol
     soldPrice: record.soldPrice,
     shippingPrice: record.shippingPrice,
     priceKind: record.priceKind,
+    totalSold: record.totalSold,
+    totalSales: record.totalSales,
+    soldAt: record.soldAt,
+    condition: record.condition,
+    format: record.format,
   });
 }
 
@@ -700,14 +1145,16 @@ export function verifyEbaySoldCompSet(
     if (!soldEvidence.verifiedSoldComp) reasons.push('unverified-sold-provenance');
     const evaluation = evaluateRetailCandidate(record.title, comparisonIdentity);
     if (!evaluation.accepted) reasons.push(...evaluation.rejectionReasons);
+    reasons.push(...soldComponentRejections(comparisonIdentity, record.title));
     if (!record.soldPrice) reasons.push(record.priceKind === 'best-offer-unknown' ? 'best-offer-price-not-public' : 'missing-sold-price');
     if (record.soldPrice && record.soldPrice.amount <= 0) reasons.push('nonpositive-sold-price');
     if (record.soldPrice?.currency !== 'USD') reasons.push(`unsupported-currency:${record.soldPrice?.currency || 'unknown'}`);
     reasons.push(...quantityRejections(options.sourceQuantity ?? null, record.title));
-    reasons.push(...conditionRejections(options.sourceCondition, record));
+    reasons.push(...conditionRejections(options.sourceCondition, record, comparisonIdentity));
     reasons.push(...modelVariantRejections(comparisonIdentity, record.title));
     reasons.push(...bundleRejections(comparisonIdentity, record.title));
     reasons.push(...bookMediaRejections(identity, record.title));
+    if (reasons.length === 0 && record.priceKind === 'public-visible') reasons.push('public-visible-price-unconfirmed');
     if (reasons.length) {
       rejected.push({ itemId: record.itemId, title: record.title, itemUrl: record.itemUrl, query: search.query, reasons: [...new Set(reasons)] });
       continue;

@@ -20,7 +20,8 @@ test('background remembers a downloaded update without forcing page reloads', as
 
 test('Store manifest uses Chrome delivery and adds no updater permission', async () => {
   const manifest = JSON.parse(await readFile('dist/chrome/manifest.json', 'utf8'));
-  assert.equal(manifest.version, '0.5.46');
+  const release = JSON.parse(await readFile('package.json', 'utf8'));
+  assert.equal(manifest.version, release.version);
   assert.equal(manifest.update_url, undefined);
   assert.deepEqual(manifest.permissions, ['storage', 'alarms', 'tabs', 'downloads', 'clipboardWrite']);
 });

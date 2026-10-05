@@ -6,6 +6,7 @@ import type { DealAnalysisSummary, HiBidLotRecord, HiBidRoute, HiBidTransport } 
 import { hydrateHibidLots, mergeHibidVisibleWithHydrated } from '../hibid/api.js';
 import { extractHiBidVisibleLots, extractHibidLotDetail, extractHibidTileEventItemId } from '../hibid/dom.js';
 import { runProviderQueue } from '../intelligence/provider-queue.js';
+import { calculateAuctionEconomics, type AuctionEconomics, type PremiumSource } from './auction-economics.js';
 import {
   auctionStateKey,
   lotStateKey as stateKey,
@@ -13,9 +14,9 @@ import {
   type StoredLotState,
 } from '../intelligence/deal-storage.js';
 import {
-  assessCondition, buildConditionPresentation, buildProductResearchQuery, buildRetailIndicatorTooltip, buildRetailSearchPresentation, calculateUsAllIn, computeAccountVerdict, computeRetailIndicators,
+  assessCondition, buildConditionPresentation, buildProductResearchQuery, buildRetailIndicatorTooltip, buildRetailSearchPresentation, computeAccountVerdict, computeRetailIndicators,
   detectComparisonCurrency, detectMixedLot, extractProductIdentity, formatUsd,
-  explainHibidStatus, extractLotQuantityFromTitle, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
+  assessLotQuantity, explainHibidStatus, requiresQuantityConfirmation, selectAuctionHammer, trustedAmazonMarketValue,
   type AmazonCandidate, type AmazonCandidateMatch, type ConditionAssessment,
   type ProductIdentity, type RetailCandidateEvaluation, type RetailIndicator, type UsAllInResult
 } from '../intelligence/us-deal-intelligence.js';
@@ -43,12 +44,15 @@ interface AnalysisRecord {
   condition: ConditionAssessment;
   mixed: ReturnType<typeof detectMixedLot>;
   allIn: UsAllInResult | null;
+  comparisonCost: number | null;
+  economics: AuctionEconomics;
   amazon: RetailLookupResult | null;
   amazonIndicator: RetailIndicator;
   ebayIndicator: RetailIndicator;
   state: StoredLotState;
   currency: 'USD' | 'CAD';
   needsQuantity: boolean;
+  quantityAssessment: ReturnType<typeof assessLotQuantity>;
   ebayNet: number | null;
   premiumPct: number;
   outcome: DealOutcome | null;
@@ -57,10 +61,16 @@ interface AnalysisRecord {
 interface RetainedRetailEvidence {
   query: string;
   amazonOverrideAsin: string;
+  identityFingerprint?: string;
   result: RetailLookupResult;
 }
 
 const REUSABLE_RETAIL_STATUSES = new Set<RetailLookupResult['status']>(['matched', 'no_match', 'low_confidence']);
+
+export interface RetailEvidenceCapture {
+  identityFingerprint: string;
+  amazonOverrideAsin: string;
+}
 
 export function shouldRenderProvisionalDealAnnotations(route: Pick<HiBidRoute, 'kind'>): boolean {
   // List and account pages wait for hydrated evidence. Lot-detail pages render
@@ -70,13 +80,52 @@ export function shouldRenderProvisionalDealAnnotations(route: Pick<HiBidRoute, '
 
 export function canReuseRetailEvidence(
   evidence: RetainedRetailEvidence | null | undefined,
-  query: string,
+  queryOrIdentity: string | ProductIdentity,
   amazonOverrideAsin: string | null | undefined,
 ): evidence is RetainedRetailEvidence {
+  const query = typeof queryOrIdentity === 'string' ? queryOrIdentity : queryOrIdentity.query;
+  const identityMatches = typeof queryOrIdentity === 'string'
+    ? evidence?.query === query
+    : Boolean(evidence?.identityFingerprint && evidence.identityFingerprint === retailIdentityFingerprint(queryOrIdentity));
   return Boolean(evidence
-    && evidence.query === query
+    && identityMatches
     && evidence.amazonOverrideAsin === String(amazonOverrideAsin || '')
     && REUSABLE_RETAIL_STATUSES.has(evidence.result.status));
+}
+
+function normalizeIdentityText(value: unknown): string {
+  return String(value ?? '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
+}
+
+function canonicalIdentityValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map(canonicalIdentityValue).map((item) => JSON.stringify(item)))].sort().map((item) => JSON.parse(item));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value as Record<string, unknown>).sort().map((key) => [key, canonicalIdentityValue((value as Record<string, unknown>)[key])]));
+  }
+  return typeof value === 'string' ? normalizeIdentityText(value) : value ?? null;
+}
+
+/** Stable matcher inputs only; prices and other volatile enrichment are intentionally excluded. */
+export function retailIdentityFingerprint(identity: ProductIdentity): string {
+  return JSON.stringify(canonicalIdentityValue({
+    name: identity.name,
+    query: identity.query,
+    brand: identity.brand,
+    model: identity.model,
+    model2: identity.model2,
+    kind: identity.kind,
+    capacities: identity.capacities,
+    discriminators: identity.discriminators,
+    tokens: identity.tokens,
+    includedComponents: identity.includedComponents,
+  }));
+}
+
+export function retailEvidenceCaptureMatches(identity: ProductIdentity, amazonOverrideAsin: string | null | undefined, capture: RetailEvidenceCapture): boolean {
+  return capture.identityFingerprint === retailIdentityFingerprint(identity)
+    && capture.amazonOverrideAsin === String(amazonOverrideAsin || '');
 }
 
 function emptySummary(): DealAnalysisSummary {
@@ -207,7 +256,7 @@ export function mutationAffectedLotIds(mutations: readonly MutationRecord[]): st
   for (const mutation of mutations) {
     const target = elementForNode(mutation.target);
     if (target?.closest(FLIPPAH_OWNED_SELECTOR)) continue;
-    let hasNativeChange = mutation.type === 'attributes';
+    let hasNativeChange = mutation.type === 'attributes' || mutation.type === 'characterData';
     for (const node of [...mutation.addedNodes, ...mutation.removedNodes]) {
       const element = elementForNode(node);
       if (!element) {
@@ -336,6 +385,22 @@ export function reserveTileAnnotationSpace(id: string, route?: Pick<HiBidRoute, 
   return true;
 }
 
+function comparisonInput(record: AnalysisRecord): { allIn: number | null; costLabel?: string; costCaveat?: string } {
+  return {
+    allIn: record.comparisonCost ?? record.allIn?.total ?? null,
+    ...(record.economics && !record.economics.complete ? {
+      costLabel: 'Provisional bid cost',
+      costCaveat: `Excludes unverified costs; this is not a profit or final bid-ceiling estimate. ${record.economics.warnings.join(' ')}`,
+    } : {}),
+  };
+}
+
+export function refreshRecordIndicators(record: AnalysisRecord): void {
+  const indicators = computeRetailIndicators(comparisonInput(record).allIn, { amazon: amazonMarketValue(record), ebay: ebayMarketValue(record) });
+  record.amazonIndicator = indicators.amazon;
+  record.ebayIndicator = indicators.ebay;
+}
+
 export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): boolean {
   const target = ensureTileAnnotationStrip(record.lot.id, route);
   if (!target) return false;
@@ -354,8 +419,8 @@ export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): 
           ? `Amazon ${formatUsd(amazonPrice)}`
           : 'Amazon';
   const ebayLabel = ebayPrice === null ? 'eBay' : `eBay ${formatUsd(ebayPrice)}${record.state.resaleEstimate !== null ? ' saved' : ''}`;
-  const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-')) && record.allIn
-    ? computeAccountVerdict({ status: record.lot.status, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice })
+  const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-'))
+    ? computeAccountVerdict({ status: record.lot.status, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn?.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice, costsProvisional: record.economics ? !record.economics.complete : !record.allIn })
     : null;
   const renderSignature = JSON.stringify([
     record.identity.query,
@@ -369,6 +434,8 @@ export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): 
     condition.label,
     condition.tone,
     record.allIn?.total ?? null,
+    record.economics?.estimatedCost ?? record.allIn?.total ?? null,
+    record.economics?.warnings.join('|') ?? '',
     verdict?.kind || '',
   ]);
   if (strip.dataset.flippahRenderSignature === renderSignature) return true;
@@ -401,7 +468,7 @@ export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): 
   } else {
     const retailTitle = amazonSpecialTitle || (amazonPrice !== null
       ? buildRetailIndicatorTooltip({
-          providerName: 'Amazon', indicator: record.amazonIndicator, allIn: record.allIn?.total,
+          ...comparisonInput(record), providerName: 'Amazon', indicator: record.amazonIndicator,
           marketPrice: amazonPrice, evidenceSource: record.amazon?.match?.candidate.title || 'verified Amazon.com match'
         })
       : 'Amazon comparison needs manual review.');
@@ -412,13 +479,14 @@ export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): 
     add(search.label, '', search.title, search.href, false, 'ebay');
   } else {
     const ebayTitle = `${buildRetailIndicatorTooltip({
-      providerName: 'eBay', indicator: record.ebayIndicator, allIn: record.allIn?.total,
+      ...comparisonInput(record), providerName: 'eBay', indicator: record.ebayIndicator,
       marketPrice: ebayPrice, evidenceSource: 'your saved manual resale estimate'
     })} Open Sold and Completed results to verify it.`;
     add(ebayLabel, record.ebayIndicator.cls, ebayTitle, links.ebay);
   }
   add(condition.label, `condition condition-${condition.tone}`, condition.title, '', false);
-  if (record.allIn) add(`All-in ${formatUsd(record.allIn.total)}`, 'allin', 'Current or next bid plus buyer premium and estimated US sales tax.', '', false);
+  if (record.allIn) add(`All-in ${formatUsd(record.allIn.total)}`, 'allin', 'Current or next bid plus buyer premium and configured sales tax.', '', false);
+  else if (record.economics && record.comparisonCost != null) add(`Est. ${formatUsd(record.comparisonCost)} + costs`, 'allin', `Provisional bid cost; excludes unverified costs. Known subtotal ${formatUsd(record.economics.knownSubtotal)}. ${record.economics.warnings.join(' ')}`, '', false);
   if (verdict) add(verdict.label, verdict.cls, `${explainHibidStatus(record.lot.status)} Flippah: ${verdict.advice}`);
   return true;
 }
@@ -438,11 +506,31 @@ function lotPanelStyles(): string {
   </style>`;
 }
 
+export function publishLotPanelEconomics(host: HTMLElement, record: AnalysisRecord): void {
+  const feeCents = Math.round(record.economics.flatFees * 100);
+  const validFee = Number.isSafeInteger(feeCents) && feeCents >= 0;
+  const rate = record.economics.premiumPct;
+  const validRate = typeof rate === 'number' && Number.isFinite(rate) && rate >= 0 && rate <= 50
+    && record.economics.premiumSource !== 'fallback' && record.currency === 'USD';
+  const payload = {
+    flippahEconomicsLotId: record.lot.id,
+    flippahFixedFeeCents: String(validFee && record.currency === 'USD' ? feeCents : 0),
+    flippahPremiumPct: validRate ? String(rate) : '',
+    flippahEconomicsWarnings: JSON.stringify(record.economics.warnings),
+    flippahEconomicsComplete: String(validFee && record.currency === 'USD' && record.economics.complete),
+  };
+  if (Object.entries(payload).every(([key, value]) => host.dataset[key] === value)) return;
+  Object.assign(host.dataset, payload);
+  const EventClass = host.ownerDocument.defaultView?.Event || Event;
+  host.dispatchEvent(new EventClass('flippah:economics'));
+}
+
 function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   const host = document.getElementById('lotlens-root');
   const root = host?.shadowRoot;
   const panel = root?.querySelector('.lotlens-panel');
   if (!root || !panel) return false;
+  publishLotPanelEconomics(host!, record);
   if (!root.getElementById('flippah-intelligence-shadow-style')) {
     const parsed = new DOMParser().parseFromString(lotPanelStyles(), 'text/html');
     const style = parsed.querySelector('style');
@@ -495,7 +583,7 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
     const value = element('span', `flippah-retail-value ${indicator.cls}`);
     const dot = element('span', 'flippah-deal-dot'); dot.setAttribute('aria-hidden', 'true');
     value.append(dot, element('span', 'price', formatUsd(price)));
-    const title = buildRetailIndicatorTooltip({ providerName, indicator, allIn: record.allIn?.total, marketPrice: price, evidenceSource });
+    const title = buildRetailIndicatorTooltip({ ...comparisonInput(record), providerName, indicator, marketPrice: price, evidenceSource });
     value.title = title; value.setAttribute('aria-label', title);
     return value;
   };
@@ -645,7 +733,7 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   return true;
 }
 
-function buildAnalysisRecords(
+export function buildAnalysisRecords(
   lots: HiBidLotRecord[],
   stored: Map<string, StoredLotState>,
   auctionPremiums: Map<string, number>,
@@ -653,6 +741,8 @@ function buildAnalysisRecords(
   settings: FlippahSettings
 ): AnalysisRecord[] {
   const taxPct = effectiveTaxPct(settings);
+  const taxVerified = settings.taxExempt || settings.taxPctOverride !== null;
+  const taxIsStateEstimate = !taxVerified && Boolean(settings.stateCode?.trim());
   return lots.map((lot) => {
     const state = stored.get(lot.id) || normalizeStored(null);
     const identity = extractProductIdentity({
@@ -675,25 +765,87 @@ function buildAnalysisRecords(
       .join('\n');
     const condition = assessCondition([lot.description, structuredCondition].filter(Boolean).join('\n'));
     const mixed = detectMixedLot(lot.lead || lot.title, lot.description);
-    const quantities = [
-      numberFrom(lot.quantity),
-      numberFrom((lot.descriptionFields as any)?.Quantity),
-      extractLotQuantityFromTitle(lot.lead || lot.title),
-    ].filter((value): value is number => value !== null && Number.isFinite(value) && value > 0);
-    const quantity = quantities.length ? Math.max(...quantities) : null;
-    const needsQuantity = requiresQuantityConfirmation(quantity, mixed.mixed, state.confirmedQuantity);
+    const quantityAssessment = assessLotQuantity({
+      title: lot.lead || lot.title,
+      description: [lot.description, ...Object.entries(lot.descriptionFields || {}).map(([key, value]) => `${key}: ${value}`)].filter(Boolean).join('\n'),
+      structuredQuantities: [numberFrom(lot.quantity), ...Object.entries(lot.descriptionFields || {})
+        .filter(([key]) => /^(?:quantity|qty|count|set\s*size)$/i.test(key.trim()))
+        .map(([, value]) => numberFrom(value))],
+    });
+    const needsQuantity = requiresQuantityConfirmation(quantityAssessment, mixed.mixed, state.confirmedQuantity);
     const currency = detectLotCurrency(lot);
     const hammer = selectAuctionHammer(lot.nextBid, lot.currentBid);
-    const premiumPct = auctionPremiums.get(lot.auctionId) ?? numberFrom(lot.buyerPremium) ?? 15;
-    const allIn = currency === 'USD' && hammer !== null
-      ? calculateUsAllIn({ hammer, buyerPremiumPct: premiumPct, salesTaxPct: taxPct, taxOnPremium: settings.taxOnPremium })
+    const overridePremium = auctionPremiums.get(lot.auctionId);
+    const lotPremium = numberFrom(lot.buyerPremium);
+    const premiumPct = overridePremium ?? lotPremium ?? 15;
+    const premiumSource: PremiumSource = overridePremium != null ? 'auction_override' : lotPremium != null ? 'lot_buyer_premium' : 'fallback';
+    const auctionText = (key: keyof HiBidLotRecord): string => typeof lot[key] === 'string' ? lot[key] as string : '';
+    const auctionTerms = auctionText('auctionTerms');
+    const biddingNotice = auctionText('biddingNotice');
+    const paymentInfo = auctionText('paymentInfo');
+    const shippingAndPickupInfo = auctionText('shippingAndPickupInfo');
+    const economics = currency === 'USD' && hammer !== null
+      ? calculateAuctionEconomics({
+          hammer,
+          premiumPct,
+          premiumSource,
+          auctionTerms,
+          biddingNotice,
+          paymentInfo,
+          shippingAndPickupInfo,
+          paymentMethod: settings.auctionPaymentMethod === 'unspecified' ? 'unknown' : settings.auctionPaymentMethod,
+          premiumIncludesOnlineFee: /online|internet|processing/i.test(lot.buyerPremium),
+          taxPct,
+          taxVerified,
+          taxIsStateEstimate,
+          taxOnPremium: settings.taxOnPremium,
+        })
+      : { hammer: hammer ?? 0, premiumPct: null, premiumSource: 'fallback' as const, premium: 0, flatFees: 0, paymentFee: 0, tax: 0, knownSubtotal: 0, estimatedCost: 0, complete: false, warnings: ['No USD hammer price is available.'], evidence: [] };
+    const allIn = economics.complete
+      ? {
+          currency: 'USD' as const,
+          hammer: economics.hammer,
+          premium: economics.premium,
+          taxableSubtotal: economics.hammer + economics.premium,
+          tax: economics.tax,
+          total: economics.estimatedCost,
+        }
       : null;
     const ebayNet = state.resaleEstimate === null
       ? null
       : Math.max(0, state.resaleEstimate * (1 - settings.ebayFeePct / 100) - settings.ebayFeeFixedCents / 100);
-    const indicators = computeRetailIndicators(allIn, { amazon: null, ebay: state.resaleEstimate });
-    return { lot, identity, condition, mixed, allIn, amazon: null, amazonIndicator: indicators.amazon, ebayIndicator: indicators.ebay, state, currency, needsQuantity, ebayNet, premiumPct, outcome: outcomes.get(lot.id) || null };
+    const comparisonCost = currency === 'USD' && hammer !== null ? economics.estimatedCost : null;
+    const indicators = computeRetailIndicators(comparisonCost, { amazon: null, ebay: state.resaleEstimate });
+    return { lot, identity, condition, mixed, allIn, comparisonCost, economics, amazon: null, amazonIndicator: indicators.amazon, ebayIndicator: indicators.ebay, state, currency, needsQuantity, quantityAssessment, ebayNet, premiumPct, outcome: outcomes.get(lot.id) || null };
   });
+}
+
+export function mergeRetainedLotDetails(visible: HiBidLotRecord, previous?: HiBidLotRecord): HiBidLotRecord {
+  if (!previous || visible.id !== previous.id
+    || (visible.auctionId && previous.auctionId && visible.auctionId !== previous.auctionId)) return visible;
+  const merged = mergeHibidVisibleWithHydrated(visible, previous);
+  if (/^(?:closed|won|ended)$/i.test(visible.status) || visible.nextBid === 0) merged.nextBid = 0;
+  // Preserve enrichment across a native redraw, but accept newly supplied terms.
+  for (const key of ['buyerPremium', 'auctionTerms', 'biddingNotice', 'paymentInfo', 'shippingAndPickupInfo'] as const) {
+    const value = visible[key];
+    if (typeof value === 'string' && value.trim()) merged[key] = value;
+  }
+  if (visible.description?.trim()) {
+    merged.description = visible.description;
+    merged.descriptionHtml = visible.descriptionHtml;
+    merged.descriptionFields = visible.descriptionFields;
+  }
+  return merged;
+}
+
+export function refreshLiveAnalysisRecord(record: AnalysisRecord, visible: HiBidLotRecord, settings: FlippahSettings, auctionPremiums: Map<string, number>): AnalysisRecord {
+  const lot = mergeRetainedLotDetails(visible, record.lot);
+  const retained = lot !== visible;
+  const [next] = buildAnalysisRecords([lot], retained ? new Map([[record.lot.id, record.state]]) : new Map(), auctionPremiums, retained ? new Map([[record.lot.id, record.outcome]]) : new Map(), settings);
+  if (retained && retailIdentityFingerprint(next!.identity) === retailIdentityFingerprint(record.identity)
+    && next!.state.amazonOverrideAsin === record.state.amazonOverrideAsin) next!.amazon = record.amazon;
+  refreshRecordIndicators(next!);
+  return next!;
 }
 
 export class DealIntelligenceController {
@@ -705,6 +857,8 @@ export class DealIntelligenceController {
   private records = new Map<string, AnalysisRecord>();
   private retailEvidence = new Map<string, RetainedRetailEvidence>();
   private visibleLotSignature = '';
+  private liveSettings: FlippahSettings | null = null;
+  private liveAuctionPremiums = new Map<string, number>();
 
   constructor(
     private readonly getRoute: () => HiBidRoute,
@@ -751,6 +905,8 @@ export class DealIntelligenceController {
   handleLocationChange(): void {
     this.generation += 1;
     this.records.clear();
+    this.liveSettings = null;
+    this.liveAuctionPremiums.clear();
     this.visibleLotSignature = '';
     this.update(emptySummary());
     this.pendingAnnotationRepairIds.clear();
@@ -766,6 +922,8 @@ export class DealIntelligenceController {
   async rerun(): Promise<void> { this.records.clear(); this.retailEvidence.clear(); void this.run(); }
 
   private retainKnownEvidence(record: AnalysisRecord, previous?: AnalysisRecord): AnalysisRecord {
+    if (previous && (previous.lot.id !== record.lot.id
+      || (previous.lot.auctionId && record.lot.auctionId && previous.lot.auctionId !== record.lot.auctionId))) return record;
     if (previous && !record.lot.description && previous.lot.id === record.lot.id) {
       record.lot.description = previous.lot.description;
       record.lot.descriptionHtml = previous.lot.descriptionHtml;
@@ -780,26 +938,42 @@ export class DealIntelligenceController {
       if (record.state.queryOverride === previous.state.queryOverride) record.identity = previous.identity;
     }
     const evidence = this.retailEvidence.get(record.lot.id);
-    if (!canReuseRetailEvidence(evidence, record.identity.query, record.state.amazonOverrideAsin)) return record;
+    if (!canReuseRetailEvidence(evidence, record.identity, record.state.amazonOverrideAsin)) return record;
     record.amazon = evidence.result;
-    const price = amazonMarketValue(record);
-    record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price }).amazon;
+    refreshRecordIndicators(record);
     return record;
   }
 
-  private async restoreCachedEvidence(records: AnalysisRecord[]): Promise<void> {
+  private async restoreCachedEvidence(records: AnalysisRecord[], isCurrent: () => boolean = () => true): Promise<void> {
     const pending = records.filter((record) => record.currency !== 'CAD'
       && !record.mixed.mixed
       && !record.needsQuantity
       && Boolean(record.identity.query)
-      && !canReuseRetailEvidence(this.retailEvidence.get(record.lot.id), record.identity.query, record.state.amazonOverrideAsin));
+      && !canReuseRetailEvidence(this.retailEvidence.get(record.lot.id), record.identity, record.state.amazonOverrideAsin));
     if (!pending.length) return;
+    const captures = new Map(pending.map((record) => [record.lot.id, {
+      identityFingerprint: retailIdentityFingerprint(record.identity),
+      amazonOverrideAsin: String(record.state.amazonOverrideAsin || ''),
+    }]));
+    const activeIdentityAtStart = new Map(pending.map((record) => {
+      const active = this.records.get(record.lot.id);
+      return [record.lot.id, active ? {
+        identityFingerprint: retailIdentityFingerprint(active.identity),
+        amazonOverrideAsin: String(active.state.amazonOverrideAsin || ''),
+      } : null] as const;
+    }));
     const cached = await runtimeMessage<Array<RetailLookupResult | null>>('flippah:retail.peek', {
       identities: pending.map((record) => record.identity),
     });
+    if (!isCurrent()) return;
     pending.forEach((record, index) => {
       const result = cached[index];
       if (!result || !REUSABLE_RETAIL_STATUSES.has(result.status)) return;
+      const capture = captures.get(record.lot.id);
+      if (!capture || !retailEvidenceCaptureMatches(record.identity, record.state.amazonOverrideAsin, capture)) return;
+      const current = this.records.get(record.lot.id);
+      const activeAtStart = activeIdentityAtStart.get(record.lot.id);
+      if (current && activeAtStart && !retailEvidenceCaptureMatches(current.identity, current.state.amazonOverrideAsin, activeAtStart)) return;
       if (record.state.amazonOverrideAsin) {
         const candidate = result.candidates.find((item) => item.asin === record.state.amazonOverrideAsin);
         if (candidate) {
@@ -811,10 +985,11 @@ export class DealIntelligenceController {
       this.retailEvidence.set(record.lot.id, {
         query: record.identity.query,
         amazonOverrideAsin: String(record.state.amazonOverrideAsin || ''),
+        identityFingerprint: capture.identityFingerprint,
         result,
       });
       record.amazon = result;
-      record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: amazonMarketValue(record) }).amazon;
+      refreshRecordIndicators(record);
     });
   }
 
@@ -832,8 +1007,15 @@ export class DealIntelligenceController {
       this.pendingAnnotationRepairIds.clear();
       const route = this.getRoute();
       if (!route.supported || !SUPPORTED.has(route.kind)) return;
+      const visible = new Map(extractHiBidVisibleLots(document, route, location.href).map((lot) => [lot.id, lot]));
       pending.forEach((id) => {
-        const record = this.records.get(id);
+        let record = this.records.get(id);
+        const current = visible.get(id);
+        if (record && current && this.liveSettings) {
+          // Queue callbacks share this record; keep live costs current when a
+          // pending retail response arrives after the bid changed.
+          Object.assign(record, refreshLiveAnalysisRecord(record, current, this.liveSettings, this.liveAuctionPremiums));
+        }
         if (record) applyTileAnnotation(record, route);
       });
     }, 120);
@@ -854,27 +1036,33 @@ export class DealIntelligenceController {
     try {
       const settings = normalizeSettings(await getSyncStorage());
       let lots = route.kind === 'lot' ? [extractHibidLotDetail(document, location.href)].filter((item): item is HiBidLotRecord => Boolean(item)) : extractHiBidVisibleLots(document, route, location.href);
+      lots = lots.map((lot) => mergeRetainedLotDetails(lot, previousRecords.get(lot.id)?.lot));
       this.visibleLotSignature = lots.map((lot) => lot.id).filter(Boolean).sort().join('|');
       const stored = await readStoredLots(lots.map((lot) => lot.id));
       const outcomes = await readStoredOutcomes(lots.map((lot) => lot.id));
       let auctionPremiums = await readAuctionPremiums(lots.map((lot) => lot.auctionId));
       const quickRecords = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings)
         .map((record) => this.retainKnownEvidence(record, previousRecords.get(record.lot.id)));
-      if (settings.amazonAutoLookup) await this.restoreCachedEvidence(quickRecords);
+      const stillCurrent = () => generation === this.generation && fingerprint === routeFingerprint(this.getRoute(), location.href);
+      if (settings.amazonAutoLookup) await this.restoreCachedEvidence(quickRecords, stillCurrent);
       if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
+      this.liveSettings = settings;
+      this.liveAuctionPremiums = auctionPremiums;
       this.records = new Map(quickRecords.map((record) => [record.lot.id, record]));
       quickRecords.forEach((record) => {
         if (shouldRenderProvisionalDealAnnotations(route)) applyTileAnnotation(record, route);
         if (route.kind === 'lot') {
           const rerun = () => this.schedule(0);
-          if (!renderLotPanel(record, rerun)) window.setTimeout(() => renderLotPanel(record, rerun), 500);
+          if (!renderLotPanel(record, rerun)) window.setTimeout(() => {
+            if (generation === this.generation && fingerprint === routeFingerprint(this.getRoute(), location.href)) renderLotPanel(record, rerun);
+          }, 500);
         }
       });
       this.update({
         total: quickRecords.length,
         mixedLots: quickRecords.filter((item) => item.mixed.mixed).length,
         quantityReview: quickRecords.filter((item) => item.needsQuantity).length,
-        message: quickRecords.length ? `Calculated all-in for ${quickRecords.length} visible lot${quickRecords.length === 1 ? '' : 's'}` : 'No visible lots to analyze'
+        message: quickRecords.length ? `Read costs for ${quickRecords.length} visible lot${quickRecords.length === 1 ? '' : 's'}` : 'No visible lots to analyze'
       });
       if (lots.length) {
         try {
@@ -890,13 +1078,37 @@ export class DealIntelligenceController {
         }
       }
       if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
+      const latestVisible = route.kind === 'lot' ? [extractHibidLotDetail(document, location.href)].filter((item): item is HiBidLotRecord => Boolean(item)) : extractHiBidVisibleLots(document, route, location.href);
+      const latestById = new Map(latestVisible.map((lot) => [lot.id, lot]));
+      lots = lots.map((lot) => latestById.has(lot.id) ? mergeRetainedLotDetails(latestById.get(lot.id)!, lot) : lot);
       auctionPremiums = await readAuctionPremiums(lots.map((lot) => lot.auctionId));
       const quickById = new Map(quickRecords.map((record) => [record.lot.id, record]));
-      const preliminary = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings)
+      let preliminary = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings)
         .map((record) => this.retainKnownEvidence(record, quickById.get(record.lot.id)));
-      const stillCurrent = () => generation === this.generation && fingerprint === routeFingerprint(this.getRoute(), location.href);
-      if (settings.amazonAutoLookup) await this.restoreCachedEvidence(preliminary);
+      // Cached evidence is restored before repaint; the current-run guard also protects the peek result.
+      // await this.restoreCachedEvidence(preliminary)
+      const activeRecordsBeforeSecondPeek = this.records;
+      const activeCapturesBeforeSecondPeek = new Map([...activeRecordsBeforeSecondPeek].map(([id, record]) => [id, {
+        identityFingerprint: retailIdentityFingerprint(record.identity),
+        amazonOverrideAsin: String(record.state.amazonOverrideAsin || ''),
+      }]));
+      if (settings.amazonAutoLookup) await this.restoreCachedEvidence(preliminary, stillCurrent);
       if (!stillCurrent()) return;
+      const latestAfterSecondPeek = route.kind === 'lot'
+        ? [extractHibidLotDetail(document, location.href)].filter((item): item is HiBidLotRecord => Boolean(item))
+        : extractHiBidVisibleLots(document, route, location.href);
+      const latestAfterSecondPeekById = new Map(latestAfterSecondPeek.map((lot) => [lot.id, lot]));
+      preliminary = preliminary.map((record) => {
+        const active = this.records.get(record.lot.id);
+        const activeAtStart = activeCapturesBeforeSecondPeek.get(record.lot.id);
+        const activeChangedDuringPeek = active && (!activeAtStart
+          || !retailEvidenceCaptureMatches(active.identity, active.state.amazonOverrideAsin, activeAtStart));
+        const retained = activeChangedDuringPeek ? active : record;
+        const latest = latestAfterSecondPeekById.get(record.lot.id);
+        if (latest) Object.assign(retained, refreshLiveAnalysisRecord(retained, latest, settings, auctionPremiums));
+        return retained;
+      });
+      this.liveAuctionPremiums = auctionPremiums;
       this.records = new Map(preliminary.map((record) => [record.lot.id, record]));
       const repaint = (record: AnalysisRecord) => {
         applyTileAnnotation(record, route);
@@ -907,7 +1119,7 @@ export class DealIntelligenceController {
       };
       preliminary.forEach(repaint);
       const researchable = preliminary.filter((record) => record.currency !== 'CAD' && !record.mixed.mixed && !record.needsQuantity && Boolean(record.identity.query));
-      const eligible = researchable.filter((record) => !canReuseRetailEvidence(this.retailEvidence.get(record.lot.id), record.identity.query, record.state.amazonOverrideAsin));
+      const eligible = researchable.filter((record) => !canReuseRetailEvidence(this.retailEvidence.get(record.lot.id), record.identity, record.state.amazonOverrideAsin));
       const retained = researchable.length - eligible.length;
       const skipped = preliminary.length - researchable.length;
       let amazonAnalyzed = settings.amazonAutoLookup ? skipped + retained : preliminary.length;
@@ -935,19 +1147,31 @@ export class DealIntelligenceController {
         message: settings.amazonAutoLookup ? 'Starting paced Amazon checks' : 'Automatic price checks are off',
       });
       if (settings.amazonAutoLookup) {
+        const requestCaptures = new Map<string, RetailEvidenceCapture>();
+        let staleResponse = false;
         const queueResult = await runProviderQueue({
-            items: eligible,
+          items: eligible,
             shouldContinue: stillCurrent,
             policy: { delayMs: 350, batchSize: 6, maxRetries: 3, retryBaseMs: 5_000, retryMaxMs: 60_000 },
             lookup: async (record): Promise<RetailLookupResult> => {
+              requestCaptures.set(record.lot.id, {
+                identityFingerprint: retailIdentityFingerprint(record.identity),
+                amazonOverrideAsin: String(record.state.amazonOverrideAsin || ''),
+              });
               try {
                 return await runtimeMessage<RetailLookupResult>('flippah:retail.lookup', { identity: record.identity });
               } catch (error) {
                 return { status: 'network_error', query: record.identity.query, match: null, candidates: [], fetchedAt: Date.now(), cached: false, retryAfterMs: 5_000, message: error instanceof Error ? error.message : String(error) };
               }
             },
-            onProgress: ({ item: record, result }) => {
+          onProgress: ({ item: record, result }) => {
               if (!stillCurrent()) return;
+              const capture = requestCaptures.get(record.lot.id);
+              if (!capture || !retailEvidenceCaptureMatches(record.identity, record.state.amazonOverrideAsin, capture)
+                || this.records.get(record.lot.id) !== record) {
+                staleResponse = true;
+                return;
+              }
               if (record.state.amazonOverrideAsin) {
                 const candidate = result.candidates.find((item) => item.asin === record.state.amazonOverrideAsin);
                 if (candidate) {
@@ -961,17 +1185,22 @@ export class DealIntelligenceController {
                 this.retailEvidence.set(record.lot.id, {
                   query: record.identity.query,
                   amazonOverrideAsin: String(record.state.amazonOverrideAsin || ''),
+                  identityFingerprint: capture.identityFingerprint,
                   result,
                 });
               }
               const price = amazonMarketValue(record);
-              record.amazonIndicator = computeRetailIndicators(record.allIn, { amazon: price }).amazon;
+              refreshRecordIndicators(record);
               amazonAnalyzed += 1;
               if (price !== null && result.status === 'matched') amazonMatchedIds.add(record.lot.id);
               repaint(record);
               updateProgress();
             },
           });
+        if (staleResponse && stillCurrent()) {
+          this.schedule(0);
+          return;
+        }
         if (queueResult.stoppedResult && stillCurrent()) {
           this.update({
             phase: 'error',

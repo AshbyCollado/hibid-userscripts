@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   amazonIndicator,
+  assessCondition,
   assessLotCondition,
   buildAccountVerdict,
+  buildProductResearchQuery,
   buildConditionPresentation,
   buildRetailIndicatorTooltip,
   buildRetailLinks,
@@ -23,6 +25,7 @@ import {
   formatUsd,
   hasSufficientRetailIdentity,
   isAccessoryListing,
+  looksLikeModel,
   matchAmazonCandidates,
   modelMatches,
   parseAmazonSearchHtml,
@@ -33,6 +36,7 @@ import {
   trustedAmazonMarketValue,
 } from '../src/intelligence/us-deal-intelligence.js';
 import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '../src/intelligence/amazon-document-parser.js';
+import { buildEbaySoldQueryVariants } from '../src/intelligence/ebay-sold-results.js';
 
 test('auctioneer retail claims remain parseable metadata but are not verified pricing evidence', () => {
   assert.deepEqual(
@@ -62,6 +66,20 @@ test('condition pills summarize structured evidence without treating negative qu
   const normalWear = buildConditionPresentation(assessLotCondition({ description: 'Condition: Expected wear & tear for age' }));
   assert.deepEqual({ label: normalWear.label, tone: normalWear.tone }, { label: 'Normal age wear', tone: 'warning' });
   assert.match(normalWear.title, /Expected wear & tear for age/);
+});
+
+test('condition presentation ignores shipping-policy untested text but preserves lot warnings', () => {
+  const shippingAssessment = assessLotCondition({
+    description: 'Condition: Good\nShipping Policy: Items are untested before shipping.',
+  });
+  assert.equal(shippingAssessment.cautions.includes('untested'), false);
+  const shippingPolicy = buildConditionPresentation(shippingAssessment);
+  assert.deepEqual({ label: shippingPolicy.label, tone: shippingPolicy.tone }, { label: 'Good', tone: 'good' });
+
+  const lotWarning = buildConditionPresentation(assessLotCondition({
+    description: 'Condition: Good\nNotes: Item is untested before listing.',
+  }));
+  assert.deepEqual({ label: lotWarning.label, tone: lotWarning.tone }, { label: 'Good · untested', tone: 'warning' });
 });
 
 test('Amazon matching ignores auctioneer-stated retail price floors', () => {
@@ -118,6 +136,50 @@ test('retail indicator tooltips explain exact values and every color threshold',
   }
 });
 
+test('provisional costs keep reference comparisons explicit without claiming complete costs', () => {
+  const title = buildRetailIndicatorTooltip({
+    providerName: 'Amazon', indicator: amazonIndicator(16.375, 42.98),
+    allIn: 16.375, marketPrice: 42.98, evidenceSource: 'Exact product',
+    costLabel: 'Provisional bid cost', costCaveat: 'Excludes unverified tax and shipping.',
+  });
+  assert.match(title, /Provisional bid cost \$16\.38 is 38%/);
+  assert.match(title, /provisional bid cost is below 50%/);
+  assert.match(title, /Excludes unverified tax and shipping/);
+  assert.doesNotMatch(title, /All-in|all-in/);
+  const noCost = buildRetailIndicatorTooltip({
+    providerName: 'Amazon', indicator: amazonIndicator(null, 42.98),
+    allIn: null, marketPrice: 42.98, evidenceSource: 'Exact product',
+  });
+  assert.match(noCost, /\$42\.98 reference/);
+  assert.match(noCost, /Bid-cost comparison is unavailable/);
+  assert.doesNotMatch(noCost, /no saved or verified value/i);
+});
+
+test('HiBid no-UPC sentinel is metadata, not a product identity', () => {
+  const description = 'Condition: New(other)\nDamaged?: Unknown\nIn Packaging?: Yes\nAssembly Required?: No\nUPC: NOUPC{20203109}\n\nEnhance your outdoor space with the VEVOR Gazebo Netting Replacement.';
+  const parsed = parseStructuredDescription(description);
+  assert.equal(parsed.fields.upc, 'NOUPC{20203109}');
+  assert.doesNotMatch(parsed.freeText, /NOUPC/);
+  const identity = extractProductIdentity('VEVOR Portable Hand Truck', description);
+  assert.match(identity.query, /vevor portable hand truck/i);
+  assert.doesNotMatch(identity.query, /NOUPC|gazebo/i);
+});
+
+test('unverified costs retain saved ceiling warnings without recommending a profitable raise', () => {
+  const input = { status: 'Outbid', nextHammer: 90, maxBid: 100, allIn: 120, retail: 200, costsProvisional: true };
+  const below = buildAccountVerdict(input);
+  assert.equal(below.kind, 'manual');
+  assert.match(below.advice, /no profit or raise recommendation/);
+  for (const nextHammer of [100, 110]) {
+    const ceiling = buildAccountVerdict({ ...input, nextHammer });
+    assert.equal(ceiling.kind, 'at_ceiling');
+    assert.match(ceiling.advice, /saved \$100\.00 hammer ceiling/);
+    assert.match(ceiling.advice, /costs remain unverified/);
+  }
+  assert.equal(buildAccountVerdict({ ...input, status: 'Winning' }).kind, 'manual');
+  assert.equal(buildAccountVerdict({ ...input, partsOnly: true }).kind, 'parts_only');
+});
+
 test('missing retail evidence creates branded search actions with normalized queries', () => {
   const amazon = buildRetailSearchPresentation('amazon', '  Onkyo   TX-SR304  ');
   assert.equal(amazon.label, 'Amazon \u2197');
@@ -164,6 +226,107 @@ test('condition assessment respects answers instead of scanning question labels'
   assert.equal(assessLotCondition({ description: 'Condition: FOR PARTS ONLY\nIs Item Damaged? No' }).partsOnly, true);
 });
 
+test('unknown structured condition prose remains scannable without auction boilerplate', () => {
+  const parsed = parseStructuredDescription('Printer Time: 565 hours. calibration tested good. calibrated; needs a new nozzle.\nShipping: Not working');
+  assert.equal(parsed.fields['printer time'], '565 hours. calibration tested good. calibrated; needs a new nozzle.');
+  assert.match(parsed.freeText, /needs a new nozzle/i);
+  const assessment = assessCondition('Printer Time: 565 hours. calibration tested good. calibrated; needs a new nozzle.\nShipping: Not working');
+  assert.equal(assessment.partsOnly, false);
+  assert.ok(assessment.cautions.includes('needs replacement part'));
+  assert.ok(!assessment.cautions.includes('stated not working'));
+  assert.equal(assessCondition('Printer Time: 565 hours. Does not need a new nozzle.').cautions.includes('needs replacement part'), false);
+});
+
+test('component failures do not become whole-item parts-only when operation is affirmed', () => {
+  const partial = assessCondition('Troy-Bilt 21-inch Self-Propelled Push Mower - Owner Stated the Self-Propelled Function Does NOT Work Correctly, but the Mower Still Runs & Mows');
+  assert.equal(partial.partsOnly, false);
+  assert.ok(partial.cautions.includes('partial component defect'));
+
+  assert.equal(assessCondition('The mower does not work and does not mow.').partsOnly, true);
+  assert.equal(assessCondition('Condition: FOR PARTS ONLY\nFunctional: No').partsOnly, true);
+  assert.equal(assessCondition('The self-propelled function does not work, but the mower still runs and mows.').partsOnly, false);
+
+  const independent = assessCondition('Self-propelled function does not work correctly, but mower runs. The engine does not work / item does not power on.');
+  assert.equal(independent.partsOnly, true);
+  assert.ok(independent.partsReasons.includes('does not work / power on'));
+  assert.equal(assessCondition('The printer does not work. It never runs.').partsOnly, true);
+  assert.equal(assessCondition('The printer does not work. The fan still runs.').partsOnly, true);
+  assert.equal(assessCondition('Self-propelled function does not work correctly, but the mower never runs or mows.').partsOnly, true);
+});
+
+test('condition boilerplate suffixes stay out of fault evidence while fields remain available', () => {
+  for (const description of [
+    'Condition: Used\nAuction Terms: Items may be damaged or broken. All sales final.',
+    'Shipping Policy: No returns for damaged items.',
+  ]) {
+    const parsed = parseStructuredDescription(description);
+    const assessment = assessCondition(description);
+    assert.equal(assessment.partsOnly, false, description);
+    assert.ok(Object.keys(parsed.fields).some((key) => /(?:auction terms|shipping policy)/i.test(key)), description);
+  }
+  const mixed = detectMixedLot('Assorted electronics bundle', 'Mixed components: receiver; headphones');
+  assert.deepEqual(mixed.components, ['Assorted electronics bundle']);
+});
+
+test('mixed-component metadata preserves named values but not manual-review narrative', () => {
+  const named = detectMixedLot(
+    'Assorted electronics bundle',
+    'Mixed components: Onkyo TX-SR304 receiver; Sony WH-1000XM4 headphones',
+  );
+  assert.deepEqual(named.components, [
+    'Assorted electronics bundle',
+    'Onkyo TX-SR304 receiver',
+    'Sony WH-1000XM4 headphones',
+  ]);
+
+  const narrative = detectMixedLot('Assorted electronics bundle', 'Mixed components: requires manual review of photos.');
+  assert.deepEqual(narrative.components, ['Assorted electronics bundle']);
+
+  const lowercase = detectMixedLot(
+    'Assorted electronics bundle',
+    'Mixed components: onkyo tx-sr304 receiver; sony wh-1000xm4 headphones',
+  );
+  assert.deepEqual(lowercase.components, [
+    'Assorted electronics bundle',
+    'onkyo tx-sr304 receiver',
+    'sony wh-1000xm4 headphones',
+  ]);
+
+  const mixedNarrative = detectMixedLot(
+    'Assorted electronics bundle',
+    'Mixed components: Onkyo TX-SR304 receiver; remaining components require manual review.',
+  );
+  assert.deepEqual(mixedNarrative.components, ['Assorted electronics bundle', 'Onkyo TX-SR304 receiver']);
+
+  const photos = detectMixedLot('Assorted electronics bundle', 'Mixed components: See photos for details.');
+  assert.deepEqual(photos.components, ['Assorted electronics bundle']);
+
+  const descriptive = detectMixedLot('Assorted decor bundle', 'Mixed components: red bowl; blue vase');
+  assert.deepEqual(descriptive.components, ['Assorted decor bundle', 'red bowl', 'blue vase']);
+
+  const auctionNinjaWeatherNotice = detectMixedLot(
+    '24 Vintage LP Albums - Rock/Folk/Blues - Stevie Nicks, Monkees, John Lennon, Spiro Gyra, Etc',
+    'DUE TO POTENTIAL NOR\u2019EASTER RAIN & WIND CONDITIONS, PICKUP DATES ARE NOW OCTOBER 3 (MA) AND OCTOBER 4 (CT).\n24 Vintage LP Albums - Mostly Rock, Blues, and Folk. Includes albums from Stevie Nicks, The Monkees, John Lennon, Spiro Gyra, Linda Ronstadt, Chuck Mangione, and others. In Good Condition.',
+  );
+  assert.equal(auctionNinjaWeatherNotice.mixed, true);
+  assert.ok(auctionNinjaWeatherNotice.components.some((component) => /Stevie Nicks/i.test(component)));
+  assert.ok(!auctionNinjaWeatherNotice.components.some((component) => /pickup dates|nor\u2019?easter|rain.*wind/i.test(component)));
+
+  const legitimateMixedDescription = detectMixedLot(
+    'Assorted stereo components',
+    'Mixed components: Onkyo TX-SR304 receiver; Sony WH-1000XM4 headphones. Local pickup only.',
+  );
+  assert.deepEqual(legitimateMixedDescription.components, ['Assorted stereo components', 'Onkyo TX-SR304 receiver', 'Sony WH-1000XM4 headphones']);
+
+  const inlineNotice = detectMixedLot(
+    'Assorted stereo components',
+    'Onkyo TX-SR304 receiver and Sony WH-1000XM4 headphones. Pickup dates are now October 4. Yamaha CD player included.',
+  );
+  assert.ok(inlineNotice.components.some((component) => /Onkyo TX-SR304/i.test(component)));
+  assert.ok(inlineNotice.components.some((component) => /Yamaha CD player/i.test(component)));
+  assert.ok(!inlineNotice.components.some((component) => /Pickup dates/i.test(component)));
+});
+
 test('product identity preserves hyphenated plus models, capacities, and parenthesized models', () => {
   const rode = extractProductIdentity('RODE NT-USB+ USB CONDENSER MICROPHONE', 'Condition: BRAND NEW\nModel: NT-USB+');
   assert.equal(rode.query, 'rode nt-usb+ usb condenser microphone');
@@ -183,6 +346,189 @@ test('product identity preserves hyphenated plus models, capacities, and parenth
 
   const recordIdentity = extractProductIdentity({ title: 'Sony WF-1000XM5 Earbuds', statedRetail: 278 });
   assert.equal(recordIdentity.statedRetail, 278);
+});
+
+test('research query removes AuctionNinja price and marketing tails without losing mixer identity', () => {
+  const title = 'Peavey XR696F 8-channel, 1,200-watt Portable Powered Mixer - Live Shows / Rehearsals ($900)';
+  const identity = extractProductIdentity(title);
+  assert.equal(identity.model, 'XR696F');
+  assert.equal(identity.query, 'peavey xr696f 8-channel 1200-watt portable powered mixer');
+  assert.doesNotMatch(identity.query, /live|shows|rehearsals|900/);
+});
+
+test('research query controls preserve meaningful parentheticals and model-less suffixes', () => {
+  assert.equal(buildProductResearchQuery('Widget Pro (1200W Version) Portable Mixer'), 'widget pro 1200w version portable mixer');
+  assert.equal(buildProductResearchQuery('Sony Wireless Headphones - Studio Monitoring'), 'sony wireless headphones studio monitoring');
+  assert.equal(buildProductResearchQuery("Vintage Carvin Pro Bass 150 Amplifier Head - 1980's"), 'vintage carvin pro bass 150 amplifier head 1980s');
+  assert.equal(buildProductResearchQuery('Vintage stoneware from the 1970’s'), 'vintage stoneware from the 1970s');
+  assert.equal(buildProductResearchQuery('Carhartt Long-Sleeve Shirt Size S'), 'carhartt long-sleeve shirt size s');
+});
+
+test('research query strips currency at either boundary and collapses duplicated titles', () => {
+  assert.equal(buildProductResearchQuery('$900 Peavey XR696F Mixer'), 'peavey xr696f mixer');
+  assert.equal(buildProductResearchQuery('Peavey XR696F Mixer ($900)'), 'peavey xr696f mixer');
+  assert.equal(buildProductResearchQuery('Peavey XR696F Mixer Peavey XR696F Mixer'), 'peavey xr696f mixer');
+});
+
+test('collectible deck descriptions recover only known named variants', () => {
+  const title = '$57 MTG LOTR TALES OF MIDDLE EARTH COMMANDER DECK-';
+  const description = (variant: string) => [variant, 'Condition: New', 'UPC: 195166205052'].join('\n');
+  const host = extractProductIdentity({ title, description: description('The Host Of Mordor') });
+  const riders = extractProductIdentity({ title, description: description('RIDERS OF ROHAN') });
+  const typo = extractProductIdentity({ title, description: description('EVLVEN COUNCIL') });
+
+  assert.notEqual(host.query, riders.query);
+  assert.match(host.query, /the host of mordor/);
+  assert.match(riders.query, /riders of rohan/);
+  assert.match(typo.query, /elven council/);
+  assert.doesNotMatch(typo.query, /evlven council/);
+
+  assert.equal(
+    evaluateRetailCandidate('MTG LOTR Tales of Middle Earth Commander Deck The Host of Mordor', host).accepted,
+    true,
+  );
+  const wrongDeck = evaluateRetailCandidate('MTG LOTR Tales of Middle Earth Commander Deck Riders of Rohan', host);
+  assert.equal(wrongDeck.accepted, false);
+  assert.match(wrongDeck.rejectionReasons.join(','), /variantLabels:named-deck:the host of mordor/);
+  assert.equal(
+    evaluateRetailCandidate('MTG LOTR Tales of Middle Earth Commander Deck ELVEN COUNCIL', typo).accepted,
+    true,
+  );
+});
+
+test('captured Commander Deck lots require one positive exact named-deck candidate', () => {
+  const source = extractProductIdentity({
+    title: '$57 MTG LOTR TALES OF MIDDLE EARTH COMMANDER DECK-',
+    description: 'The Host of Mordor\nLot 323200524\nCondition: New\nUPC: 195166205052',
+  });
+  assert.deepEqual(source.discriminators.variantLabels, ['named-deck:the host of mordor']);
+
+  for (const candidate of [
+    'MTG LOTR Tales of Middle Earth Commander Deck',
+    'MTG LOTR Tales of Middle Earth Commander Deck Food and Fellowship',
+    'MTG LOTR Tales of Middle Earth Commander Deck not The Host of Mordor',
+    'MTG LOTR Tales of Middle Earth Commander Deck Riders of Rohan not The Host of Mordor',
+    'MTG LOTR Tales of Middle Earth Commander Deck The Host of Mordor and Riders of Rohan',
+  ]) {
+    const result = evaluateRetailCandidate(candidate, source);
+    assert.equal(result.accepted, false, `${candidate}: ${JSON.stringify(result)}`);
+    assert.match(result.rejectionReasons.join(','), /variantLabels:named-deck:the host of mordor/);
+  }
+
+  assert.equal(
+    evaluateRetailCandidate('MTG LOTR Tales of Middle Earth Commander Deck The Host of Mordor', source).accepted,
+    true,
+  );
+  assert.equal(
+    scoreRetailCandidate('MTG LOTR Tales of Middle Earth Commander Deck Riders of Rohan', source),
+    0,
+  );
+  assert.equal(
+    scoreRetailCandidate('Magic The Gathering Commander Deck Draconic Destruction', source),
+    0,
+  );
+  const fallback = evaluateAmazonCandidateEvidence({
+    asin: 'B0NAMEDDECK',
+    title: 'MTG LOTR Tales of Middle Earth Commander Deck Riders of Rohan',
+    matchText: 'MTG LOTR Tales of Middle Earth Commander Deck The Host of Mordor',
+    price: 59.99,
+    used: false,
+    sponsored: false,
+    url: 'https://www.amazon.com/dp/B0NAMEDDECK',
+    detailEnriched: true,
+  }, source);
+  assert.equal(fallback.accepted, false, JSON.stringify(fallback));
+});
+
+test('the LOTR deck guard does not reject an unrelated exact Commander deck', () => {
+  const source = extractProductIdentity('Magic The Gathering Commander Deck Draconic Destruction');
+  const exact = evaluateRetailCandidate('Magic The Gathering Commander Deck Draconic Destruction', source);
+  assert.equal(exact.accepted, true, JSON.stringify(exact));
+  assert.doesNotMatch(exact.rejectionReasons.join(','), /variantLabels:named-deck/);
+});
+
+test('LOTR abbreviation still recognizes an exact named Commander deck', () => {
+  const title = 'LOTR Commander Deck The Host of Mordor';
+  const source = extractProductIdentity(title);
+  assert.deepEqual(source.discriminators.variantLabels, ['named-deck:the host of mordor']);
+  const exact = evaluateRetailCandidate(title, source);
+  assert.equal(exact.accepted, true, JSON.stringify(exact));
+});
+
+test('Food and Fellowship uses narrow and/& equivalence, while unknown lots stay unresolved', () => {
+  const food = extractProductIdentity({
+    title: 'MTG LOTR TALES OF MIDDLE EARTH COMMANDER DECK-',
+    description: 'Food and Fellowship\nCondition: New\nUPC: 195166205052',
+  });
+  assert.equal(
+    evaluateRetailCandidate('MTG LOTR Tales of Middle Earth Commander Deck Food & Fellowship', food).accepted,
+    true,
+  );
+  assert.equal(
+    evaluateRetailCandidate('MTG LOTR Tales of Middle Earth Commander Deck The Host of Mordor', food).accepted,
+    false,
+  );
+
+  const unknown = extractProductIdentity({
+    title: '$57 MTG LOTR TALES OF MIDDLE EARTH COMMANDER DECK-',
+    description: 'Variant unknown\nLot 323200552\nCondition: New\nUPC: 195166205052',
+  });
+  assert.deepEqual(unknown.discriminators.variantLabels, []);
+  assert.equal(
+    evaluateRetailCandidate('MTG LOTR Tales of Middle Earth Commander Deck The Host of Mordor', unknown).accepted,
+    false,
+  );
+});
+
+test('eBay sold Commander Deck titles may omit MTG when Lord of the Rings identity is explicit', () => {
+  const source = extractProductIdentity({
+    title: 'MTG LOTR TALES OF MIDDLE EARTH COMMANDER DECK-',
+    description: 'Elven Council\nCondition: New',
+  });
+  for (const candidate of [
+    'Lord of the Rings Tales of Middle Earth Elven Council Commander Deck',
+    'Elven Council Commander Deck MTG Lord of the Rings Tales of Middle Earth',
+  ]) {
+    const result = evaluateRetailCandidate(candidate, source);
+    assert.equal(result.accepted, true, `${candidate}: ${JSON.stringify(result)}`);
+  }
+  const bare = evaluateRetailCandidate('Elven Council Commander Deck', source);
+  assert.equal(bare.accepted, false, JSON.stringify(bare));
+  const wrongVariant = evaluateRetailCandidate('Lord of the Rings Tales of Middle Earth The Host of Mordor Commander Deck', source);
+  assert.equal(wrongVariant.accepted, false, JSON.stringify(wrongVariant));
+});
+
+test('named deck recovery leaves non-deck leading lines and unrelated products unchanged', () => {
+  const nonDeck = extractProductIdentity({
+    title: 'MTG LOTR TALES OF MIDDLE EARTH BOOSTER BOX',
+    description: 'Factory sealed product with assorted cards',
+  });
+  assert.equal(nonDeck.query, 'mtg lotr tales of middle earth booster box');
+
+  const unrelated = extractProductIdentity({
+    title: 'Sony Wireless Headphones',
+    description: 'The Host Of Mordor',
+  });
+  assert.equal(unrelated.query, 'sony wireless headphones');
+});
+
+test('redacted seller model fields do not contaminate product research queries', () => {
+  for (const placeholder of ['PA***5', 'AB?12', 'PA***5, PA***5-2']) {
+    assert.equal(looksLikeModel(placeholder), false);
+  }
+  const identity = extractProductIdentity(
+    'Vaygway Ride-on Inflatable Banana Pool Float',
+    'Condition: New(other)\nBrand: VaygWay\nModel: PA***5, PA***5-2',
+  );
+  assert.equal(identity.model, null);
+  assert.equal(identity.query, 'vaygway ride-on inflatable banana pool float');
+  assert.ok(buildEbaySoldQueryVariants(identity).every((query) => !/\bpa\s*5\b/i.test(query)));
+  const titleModel = extractProductIdentity(
+    'Onkyo TX-SR304 Multi-Channel AV Receiver',
+    'Brand: Onkyo\nModel: PA***5, PA***5-2',
+  );
+  assert.equal(titleModel.model, 'TX-SR304');
+  assert.equal(titleModel.query, 'onkyo tx-sr304 multi-channel av receiver');
 });
 
 test('Magcubic projector title remains authoritative over longer marketing description prose', () => {
@@ -249,6 +595,42 @@ test('structured brand and model fields disambiguate warehouse batch prefixes', 
   assert.match(genuineModel.query, /\bx3\b/);
 });
 
+test('descriptor-led jewelry title retains the explicitly labeled manufacturer', () => {
+  const identity = extractProductIdentity(
+    '$130 Rotatable Jewelry Cabinet Armoire with Mirror',
+    'Retail Price: $130\nBrand: MASMIRE\nModel: HR4001-T02',
+  );
+  assert.equal(identity.brand, 'MASMIRE');
+  assert.equal(identity.model, 'HR4001-T02');
+  assert.match(identity.query, /^masmire rotatable jewelry cabinet armoire with mirror hr4001-t02$/i);
+
+  const conflicting = extractProductIdentity('Smart Magcubic Projector', 'Brand: Samsung\nModel: Unknown');
+  assert.equal(conflicting.brand, 'Magcubic');
+  assert.match(conflicting.query, /^smart magcubic projector$/i);
+});
+
+test('corroborated structured brands replace misleading title lead words in sold queries', () => {
+  const rug = extractProductIdentity(
+    '$275 Eternal Dinosaur Jungle Party Rug 8x10',
+    'Retail Price: $275\nBrand: TOWN & COUNTRY PLAY\nModel: 1-69767-185\nThis Town & Country Play Dinosaur Jungle Party Kid\'s Area Rug is textured.',
+  );
+  assert.equal(rug.brand, 'TOWN & COUNTRY PLAY');
+  assert.equal(rug.model, '1-69767-185');
+  assert.match(rug.query, /^town country play eternal dinosaur jungle party rug 8x10 1-69767-185$/i);
+
+  const liner = extractProductIdentity(
+    '$149 Cargo Liner: 18 Expedition, 2nd Row Folded',
+    'Brand: Husky Liners\nModel: 23431\nCargo Liner. Our Cargo Liners are made from a proprietary material blend.',
+  );
+  assert.equal(liner.brand, 'Husky Liners');
+  assert.equal(liner.model, '23431');
+  assert.match(liner.query, /^husky liners cargo liner 18 expedition 2nd row folded 23431$/i);
+
+  const rack = extractProductIdentity('Sorbus 75-Bottle Freestanding Rack Black', 'Brand: Sorbus\nLarge 75-bottle wine rack.');
+  assert.equal(rack.model, null);
+  assert.match(rack.query, /^sorbus 75-bottle freestanding rack black$/i);
+});
+
 test('product discriminator families generalize across capacities, resolutions, sizes, and platforms', () => {
   assert.deepEqual(extractProductDiscriminators('Samsung 55 inch 4K TV'), {
     capacities: [], cubicCapacities: [], weightLimits: [], resolutions: ['4k'], dimensions: ['55in'], platformVariants: [], memoryTypes: [],
@@ -270,6 +652,76 @@ test('product discriminator families generalize across capacities, resolutions, 
   assert.ok(scoreRetailCandidate('Samsung 55-Inch 4K UHD Smart Television', television) > 0);
   assert.equal(scoreRetailCandidate('Samsung 65-Inch 4K UHD Smart Television', television), 0);
   assert.equal(scoreRetailCandidate('Samsung 55-Inch 1080p Smart Television', television), 0);
+});
+
+test('ladder dimensions compare actual height separately from reach', () => {
+  const source = extractProductIdentity('Werner 10 ft Aluminum Step Ladder');
+
+  const wrongHeight = evaluateRetailCandidate('Werner 6 ft Aluminum Step Ladder 10 ft Reach', source);
+  assert.equal(wrongHeight.accepted, false);
+  assert.match(wrongHeight.rejectionReasons.join(' '), /actual-height/);
+
+  assert.equal(
+    evaluateRetailCandidate('Werner 10 ft Aluminum Step Ladder 14 ft Reach', source).accepted,
+    true,
+  );
+  assert.equal(evaluateRetailCandidate("Werner 10' Step Ladder 14 feet Reach", source).accepted, true);
+  assert.equal(
+    evaluateRetailCandidate('Werner Aluminum Step Ladder 10 ft Reach', source).accepted,
+    false,
+  );
+  assert.equal(evaluateRetailCandidate('Werner Aluminum Step Ladder 10 ft', source).accepted, true);
+  assert.equal(evaluateRetailCandidate('Werner 6208 Fiberglass Step Ladder, 8 ft, 12 ft maximum reach', source).accepted, false);
+  assert.equal(evaluateRetailCandidate('Werner 10-ft Aluminum Step Ladder', source).accepted, true);
+  assert.equal(evaluateRetailCandidate('Werner Aluminum Step Ladder, Reach 12ft', source).accepted, false);
+  assert.equal(evaluateRetailCandidate('Werner Aluminum Step Ladder 6 ft / 8 ft / 10 ft compatible', source).accepted, false);
+
+  const compact = extractProductIdentity('Werner 8 ft Aluminum Step Ladder');
+  assert.equal(evaluateRetailCandidate('Werner 8ftActual12ftReach Aluminum Step Ladder', compact).accepted, true);
+  assert.equal(evaluateRetailCandidate('Werner 6 feet Step Ladder 12 ft Reach', compact).accepted, false);
+});
+
+test('ladder height handling retains independent platform dimensions', () => {
+  const source = extractProductIdentity('Werner 8 ft Aluminum Step Ladder 20 inch Platform');
+  const wrongWidth = evaluateRetailCandidate('Werner 8 ft Aluminum Step Ladder 10 inch Platform', source);
+  assert.equal(wrongWidth.accepted, false);
+  assert.match(wrongWidth.rejectionReasons.join(' '), /dimensions:20in/);
+  assert.equal(evaluateRetailCandidate('Werner 8 ft Aluminum Step Ladder 20 inch Platform 12-ft Reach', source).accepted, true);
+  const fiberglass = extractProductIdentity('Werner 8 ft Fiberglass Step Ladder');
+  assert.equal(evaluateRetailCandidate('Werner 8-ft Fiberglass Step Ladder 12-ft Reach', fiberglass).accepted, true);
+});
+
+test('ladder roles bind reach labels without erasing actual height or accessory measurements', () => {
+  const source = extractProductIdentity('Werner 8 ft Aluminum Step Ladder Reach 12 ft');
+  assert.equal(evaluateRetailCandidate('Werner 6 ft Aluminum Step Ladder 12 ft Reach', source).accepted, false);
+  assert.equal(evaluateRetailCandidate('Werner 8 ft Aluminum Step Ladder 12 ft Reach', source).accepted, true);
+  const tenFoot = extractProductIdentity('Werner 10 ft Aluminum Step Ladder');
+  assert.equal(evaluateRetailCandidate('Werner 6 ft Aluminum Stepladder 10 ft Reach', tenFoot).accepted, false);
+  const eightFoot = extractProductIdentity('Werner 8 ft Aluminum Step Ladder');
+  assert.equal(evaluateRetailCandidate('Werner 8 ft 12-ft Reach Aluminum Step Ladder', eightFoot).accepted, true);
+  assert.equal(evaluateRetailCandidate('Werner 8 ft Aluminum Step Ladder 8 ft Height', eightFoot).accepted, true);
+  assert.equal(evaluateRetailCandidate('Werner 8 ft Aluminum Step Ladder with 6 ft cord', eightFoot).accepted, true);
+  const withCord = extractProductIdentity('Werner 8 ft Aluminum Step Ladder with 6 ft cord');
+  assert.equal(evaluateRetailCandidate('Werner 8 ft Aluminum Step Ladder with 12 ft cord', withCord).accepted, false);
+});
+
+test('exact ladder model and actual height do not require a redundant reach claim', () => {
+  const source = extractProductIdentity('Werner 6208 8 ft 300 lb Fiberglass Step Ladder 12 ft Reach');
+  assert.equal(evaluateRetailCandidate('Werner 6208 8 ft 300 lb Fiberglass Step Ladder', source).accepted, true);
+  assert.equal(evaluateRetailCandidate('Werner 6208 8 ft 300 lb Fiberglass Step Ladder 10 ft Reach', source).accepted, false);
+  assert.equal(evaluateRetailCandidate('Werner 6206 6 ft 300 lb Fiberglass Step Ladder 12 ft Reach', source).accepted, false);
+});
+
+test('ladder roles retain same-valued accessory lengths, source ambiguity, and punctuated reach labels', () => {
+  const withCord = extractProductIdentity('Werner 8 ft Aluminum Step Ladder with 8 ft cord');
+  assert.equal(evaluateRetailCandidate('Werner 8 ft Aluminum Step Ladder with 12 ft cord', withCord).accepted, false);
+  assert.equal(evaluateRetailCandidate('Werner 8 ft Aluminum Step Ladder with 8 ft cord', withCord).accepted, true);
+  const ambiguous = extractProductIdentity('Werner 8 ft / 10 ft Aluminum Step Ladder');
+  assert.equal(evaluateRetailCandidate('Werner 10 ft Aluminum Step Ladder', ambiguous).accepted, false);
+  const source = extractProductIdentity('Werner 8 ft Aluminum Step Ladder 12 ft Reach');
+  for (const prefix of ['Reach:', 'Reach -', 'Maximum Reach:']) {
+    assert.equal(evaluateRetailCandidate(`Werner 8 ft Aluminum Step Ladder ${prefix} 12 ft`, source).accepted, true, prefix);
+  }
 });
 
 test('equal-capacity memory kits retain their module count configuration', () => {
@@ -707,6 +1159,36 @@ test('description brand cannot override a credible title brand', () => {
   const identity = extractProductIdentity('Magcubic 4K Smart Projector', 'Brand: Samsung\nModel: Unknown\nLong marketing description');
   assert.equal(identity.brand, 'Magcubic');
   assert.equal(identity.kind, 'projector');
+  const bella = extractProductIdentity('Bella PRO 8-qt Touchscreen Air Fryer',
+    'Brand: Jhonawil\nModel: PRO 8QT Touchscreen Air Fryer\nCondition: Open Box - Tested');
+  assert.equal(bella.brand, 'Bella');
+});
+
+test('platform names do not establish the maker of an accessory', () => {
+  const title = '$55 Fire HD 10 Bluetooth Keyboard Case (13th Gen)';
+  const description = 'UPC: 840173916605\nCompatible only with Amazon Fire HD 10, 13th Gen.';
+  const unbranded = extractProductIdentity(title, description);
+  const tunkarmor = { asin: 'B0TUNKARM0', title: 'TUNKARMOR Case Keyboard for Amazon Fire HD 10 13th Gen', price: 25.99, used: false, sponsored: false, url: '' };
+  const fintie = { asin: 'B0FINTIE00', title: 'Fintie Wireless Keyboard Case for Fire HD 10 2023 13th Gen', price: 30, used: false, sponsored: false, url: '' };
+  assert.equal(unbranded.brand, '');
+  assert.equal(unbranded.query, 'fire hd 10 bluetooth keyboard case 13th gen');
+  assert.equal(hasSufficientRetailIdentity(unbranded), false);
+  assert.equal(chooseAmazonMatch(unbranded, [tunkarmor, fintie]), null);
+
+  const stated = extractProductIdentity(title, `Brand: Fintie\n${description}`);
+  assert.equal(stated.brand, 'Fintie');
+  assert.equal(hasSufficientRetailIdentity(stated), true);
+  assert.equal(chooseAmazonMatch(stated, [tunkarmor, fintie])?.candidate.asin, fintie.asin);
+
+  const amazon = extractProductIdentity(title, `Brand: Amazon\n${description}`);
+  const amazonCase = { asin: 'B0AMAZON00', title: 'Amazon Bluetooth Keyboard Case for Fire HD 10 13th Gen', price: 55, used: false, sponsored: false, url: '' };
+  assert.equal(amazon.brand, 'Amazon');
+  assert.equal(chooseAmazonMatch(amazon, [tunkarmor]), null, 'for Amazon is compatibility, not TUNKARMOR maker evidence');
+  assert.equal(chooseAmazonMatch(amazon, [amazonCase])?.candidate.asin, amazonCase.asin);
+
+  const sonyController = extractProductIdentity('PlayStation 5 DualSense Wireless Controller', 'Brand: Sony');
+  assert.equal(evaluateRetailCandidate('PDP DualSense Wireless Controller for Sony PlayStation 5', sonyController).accepted, false);
+  assert.equal(evaluateRetailCandidate('Sony DualSense Wireless Controller for PlayStation 5', sonyController).accepted, true);
 });
 
 test('low-confidence Amazon evidence cannot become a retail value', () => {
@@ -754,11 +1236,126 @@ test('mixed-lot detection identifies bundles and returns component text', () => 
   assert.equal(detectMixedLot('PNY RTX 4500 Ada', 'Lot of (1) consisting of: PNY RTX 4500 Ada').mixed, false);
 });
 
+test('structured product name completes a visibly cut-off title word without replacing model codes', () => {
+  const ecovacs = extractProductIdentity(
+    '$455 ECOVACS DEEBOT N30 PRO OMNI Robot Vacuum & Mo',
+    'Condition: Open Box - Tested\nTitle: $455 ECOVACS DEEBOT N30 PRO OMNI Robot Vacuum & Mo\nProduct Name: ECOVACS DEEBOT N30 PRO OMNI Robot Vacuum and Mop, 10000Pa Suction\nModel #: N30 PRO OMNI',
+  );
+  assert.match(ecovacs.query, /\brobot vacuum (?:and )?mop\b/);
+  assert.doesNotMatch(ecovacs.query, /\bmo\b/);
+
+  const inline = extractProductIdentity(
+    '$455 ECOVACS DEEBOT N30 PRO OMNI Robot Vacuum & Mo',
+    'Title: $455 ECOVACS DEEBOT N30 PRO OMNI Robot Vacuum & Mo\nHighlights: Hot water mop washing. Specifications: Dimensions (Overall): 4.09 inches. Product Name: ECOVACS DEEBOT N30 PRO OMNI Robot Vacuum and Mop, 10000Pa Suction, TruEdge Mopping Cleaning Path Width: 10.71 inches Model #: N30 PRO OMNI',
+  );
+  assert.match(inline.query, /\brobot vacuum (?:and )?mop\b/);
+  assert.doesNotMatch(inline.query, /\bmo\b/);
+
+  const completeCode = extractProductIdentity(
+    'Sony Camera XR',
+    'Product Name: Sony Camera XRS with Lens Kit',
+  );
+  assert.equal(completeCode.query, 'sony camera xr');
+
+  const completeWord = extractProductIdentity(
+    'Apple iPhone 13 mini',
+    'Product Name: Apple iPhone 13 minimalist case',
+  );
+  assert.equal(completeWord.query, 'apple iphone 13 mini');
+});
+
+test('numbered lots with separately named products require component review', () => {
+  assert.equal(detectMixedLot('Lot of 2 Sony Headphones and Bose Speaker').mixed, true);
+  assert.equal(detectMixedLot('Lot of (2) Sony Headphones + Bose Speaker').mixed, true);
+  assert.equal(detectMixedLot('Lot of 2 GE Dinamap Vital Signs Monitors').mixed, false);
+});
+
+test('unnumbered estate lots naming distinct contents require component review', () => {
+  for (const title of [
+    'LOT OF ANTQ. CAMERAS AND ACCESSORIES',
+    'LOT OF GLASS REFRIGERATOR DISHES & OLD BAY TIN',
+    'LOT OF COLLECTIBLE DOLLS, TEDDY BEAR, ETC',
+    'LOT OF CAMERAS + LENSES',
+  ]) assert.equal(detectMixedLot(title).mixed, true, title);
+  assert.equal(detectMixedLot('LOT OF CLEAR GLASS SERVING TRAYS').mixed, false);
+  assert.equal(detectMixedLot('Lot of 2 GE Dinamap Vital Signs Monitors').mixed, false);
+  assert.equal(detectMixedLot('Lot of 2 VEVOR Hot Water Dispenser, 4 Temps, 3L').mixed, false);
+  assert.equal(detectMixedLot('Lot of 2 GE Dinamap Vital Signs Monitors, Tested Working').mixed, false);
+  assert.equal(detectMixedLot('LOT OF BLACK AND DECKER DRILLS').mixed, false);
+  assert.equal(detectMixedLot('LOT OF WHITE CUPS, NEW IN BOX').mixed, false);
+});
+
+test('multi-title media collections require component review rather than a single-item comp', () => {
+  for (const title of [
+    '25 Vintage LP Albums - Rock/Folk - Simon And Garfunkel, J. Geils, Woodstock, Doors, James Taylor, Etc',
+    '11 Vintage LP Albums - Rock/Pop/Disco/R&B - David Bowie, Andy Gibb, Commodores, Sat Night Fever, Etc',
+    '7 VNTG. CHILDRENS BOOKS',
+    '3 CURRIER & IVES COFFEE TABLE BOOKS',
+  ]) assert.equal(detectMixedLot(title).mixed, true, title);
+  for (const title of [
+    'Funko Pop! Albums: Lil Wayne - Tha Carter III',
+    '3 Tier Wood Bookshelf',
+    '24 Pack Record Sleeves',
+  ]) assert.equal(detectMixedLot(title).mixed, false, title);
+});
+
+test('seller-labeled multiple pieces and apostrophe LP plurals require component review', () => {
+  assert.equal(detectMixedLot("10 Vintage Vinyl Record LP's Queen, Poison, & More").mixed, true);
+  assert.equal(detectMixedLot('10 Vintage Vinyl Record LP’s Queen, Poison, & More').mixed, true);
+  assert.equal(detectMixedLot('3 Pieces Of Amber Glass Vases & Bowls').mixed, true);
+  assert.equal(detectMixedLot('Ford Light Up Sign & Wood Wall Decor', 'The light up sign works and both are sold as is.').mixed, true);
+  assert.equal(detectMixedLot('24 Pack Record Sleeves').mixed, false);
+  assert.equal(detectMixedLot('Kobalt Work Swivel Stool', 'The item is used and has wear.').mixed, false);
+});
+
+test('assortment and abbreviated assorted titles require component review', () => {
+  assert.equal(detectMixedLot('LOT OF ASST. HOUSEHOLD & DECOR').mixed, true);
+  assert.equal(detectMixedLot('An Assortment Of Belleek Irish Pottery').mixed, true);
+  assert.equal(detectMixedLot('Pack of 6 assorted color tablecloths').mixed, true);
+  assert.equal(detectMixedLot('Six white tablecloths').mixed, false);
+});
+
+test('collection product lines do not become mixed lots or boilerplate components', () => {
+  assert.equal(detectMixedLot('A Jewel Collection Leopard Print Rug').mixed, false);
+  assert.equal(detectMixedLot('Hans Turnwald Signature Collection Silver-plated Serving Set').mixed, false);
+  assert.equal(detectMixedLot('CANADA 1999 COIN COLLECTION, 12 MONTH').mixed, true);
+  assert.equal(detectMixedLot('Vintage Daiwa "Coach Collection" Golf Bag W/ Clubs').mixed, true);
+  const dining = detectMixedLot(
+    'An Italian Modern Leather Dining Room Table And Chairs By Ycami Collection',
+    'In good condition with some minor surface wear. See photos for condition and size details.',
+  );
+  assert.equal(dining.mixed, true);
+  assert.deepEqual(dining.components, ['An Italian Modern Leather Dining Room Table And Chairs By Ycami Collection']);
+  const glassware = detectMixedLot(
+    'A Collection Of Sevres Crystal Glassware',
+    'Some chips seen in photos. See all photos for condition and size details.',
+  );
+  assert.deepEqual(glassware.components, ['A Collection Of Sevres Crystal Glassware']);
+});
+
+test('a generic clothing lot described as a collection needs component review', () => {
+  const clothing = detectMixedLot('Sweaters', 'Size s-Lp A collection of sweaters and t-shirts. Includes Lauren brand. See pictures for details.');
+  assert.equal(clothing.mixed, true);
+  assert.ok(clothing.reasons.includes('description identifies a collection of different items'));
+  assert.equal(detectMixedLot('Sony PlayStation 5 Console', 'Includes a collection of games and accessories in the box.').mixed, true);
+  assert.equal(detectMixedLot('Display Cabinet', 'Display your collection of books and keepsakes in this cabinet.').mixed, false);
+  assert.equal(detectMixedLot('Sony Headphones', 'Part of our collection of headphones and speakers.').mixed, false);
+});
+
 test('ordinary single-product marketing prose does not trigger mixed-lot review', () => {
   const tv = detectMixedLot('Samsung The Frame 55" QLED TV LS03FAF', 'With Samsung Vision AI, enjoy optimized picture and sound quality.');
   const projector = detectMixedLot('Magcubic 4K Smart Projector, WiFi/BT', 'Projector with autofocus and automatic keystone correction.');
   assert.equal(tv.mixed, false);
   assert.equal(projector.mixed, false);
+});
+
+test('undisclosed mystery lots require contents review rather than a generic product query', () => {
+  const unknown = detectMixedLot('$20 LOOT LOT!!!', 'A mystery box filled with surprise items. Loot lots vary in condition from New to completely Uninspected.');
+  assert.equal(unknown.mixed, true);
+  assert.deepEqual(unknown.components, []);
+  assert.match(unknown.reasons[0]!, /undisclosed contents/);
+  assert.equal(detectMixedLot('Pokemon Mystery Box 3 booster packs', 'Contains three sealed booster packs.').mixed, false);
+  assert.equal(detectMixedLot('Pokemon Mystery Box 3 booster packs', 'Contains three sealed booster packs. Condition: Uninspected.').mixed, false);
 });
 
 test('retail package counts are not mixed lots', () => {
@@ -968,6 +1565,87 @@ test('Amazon matching keeps bundled accessories from disabling primary-product g
   assert.match(replacementPack.rejectionReasons.join(' '), /accessory-or-component/);
 });
 
+test('Apple Pencil identity is a stylus, preserves generation, and rejects tablet accessories', () => {
+  const pencil = extractProductIdentity({
+    title: 'Apple Pencil (2nd Generation) for iPad Pro',
+    description: 'Apple Pencil 2nd generation with magnetic charging for compatible iPad models.',
+  });
+  assert.equal(pencil.kind, 'stylus');
+  assert.match(pencil.query, /apple pencil.*ipad pro/i);
+
+  const matchingPencil = evaluateRetailCandidate('Apple Pencil 2nd Generation for iPad Pro', pencil);
+  assert.equal(matchingPencil.accepted, true, JSON.stringify(matchingPencil));
+
+  const wrongGeneration = evaluateRetailCandidate('Apple Pencil 1st Generation for iPad', pencil);
+  assert.equal(wrongGeneration.accepted, false, JSON.stringify(wrongGeneration));
+  assert.match(wrongGeneration.rejectionReasons.join(' '), /editions/);
+
+  for (const accessory of [
+    'Apple Pencil 2nd Generation Replacement Tips for iPad',
+    'Case for Apple Pencil 2nd Generation Compatible with iPad Pro',
+  ]) {
+    const result = evaluateRetailCandidate(accessory, pencil);
+    assert.equal(result.accepted, false, `${accessory}: ${JSON.stringify(result)}`);
+    assert.match(result.rejectionReasons.join(' '), /accessory-or-component/);
+  }
+});
+
+test('audited Apple Pencil lot infers second generation without borrowing iPad compatibility prose', () => {
+  const audited = extractProductIdentity({
+    title: '$129 Apple Pencil for iPad 2nd gen (Renewed)',
+    description: 'Brand: Apple\nModel: mxn43am/a',
+  });
+  assert.equal(audited.kind, 'stylus');
+  assert.ok(audited.discriminators.editions.includes('stylus-generation:2'));
+  assert.deepEqual(audited.discriminators.seriesSignatures, []);
+
+  const equivalent = evaluateRetailCandidate('Apple Pencil 2nd Generation MU8F2AM/A Stylus', audited);
+  assert.equal(equivalent.accepted, true, JSON.stringify(equivalent));
+  for (const title of [
+    'Apple Pencil (2nd Generation) Stylus, White - MU8F2AM/A A2051 for iPad',
+    'Apple Pencil (2nd Gen - MU8F2AM) - Barely used',
+  ]) {
+    const result = evaluateRetailCandidate(title, audited);
+    assert.equal(result.accepted, true, `${title}: ${JSON.stringify(result)}`);
+  }
+  for (const title of [
+    'Apple Pencil (1st Generation) for iPad',
+    'Apple Pencil (USB-C) for iPad',
+    'Apple Pencil Pro for iPad Pro',
+  ]) {
+    const result = evaluateRetailCandidate(title, audited);
+    assert.equal(result.accepted, false, `${title}: ${JSON.stringify(result)}`);
+  }
+
+  assert.deepEqual(
+    extractProductDiscriminators('Apple Pencil compatible with iPad 2nd gen').editions,
+    [],
+  );
+
+  const unrelated = extractProductIdentity('Acme Digital Stylus', 'Brand: Acme\nModel: MXN43AM/A');
+  const unrelatedAlias = evaluateRetailCandidate('Acme Digital Stylus MU8F2AM/A', unrelated);
+  assert.equal(unrelatedAlias.accepted, false, JSON.stringify(unrelatedAlias));
+  assert.match(unrelatedAlias.rejectionReasons.join(' '), /model-mismatch/);
+
+  const skuIdentified = extractProductIdentity('Apple Pencil', 'Brand: Apple\nModel: MXN43AM/A');
+  for (const title of [
+    'Apple Pencil 1st Generation MU8F2AM/A',
+    'Apple Pencil USB-C MU8F2AM/A',
+    'Apple Pencil (USB-C) MU8F2AM/A',
+    'Apple Pencil Pro MU8F2AM/A',
+    'Apple Pencil (Pro) MU8F2AM/A',
+    'Apple Pencil - USB-C MU8F2AM/A',
+    'Apple Pencil: Pro MU8F2AM/A',
+    'Apple Pencil MU8F2AM/A USB-C',
+    'Apple Pencil MU8F2AM/A Pro',
+  ]) {
+    const result = evaluateRetailCandidate(title, skuIdentified);
+    assert.equal(result.accepted, false, `${title}: ${JSON.stringify(result)}`);
+  }
+  const compatible = evaluateRetailCandidate('Apple Pencil MU8F2AM/A compatible with iPad Pro', skuIdentified);
+  assert.equal(compatible.accepted, true, JSON.stringify(compatible));
+});
+
 test('Amazon detail enrichment accepts only failures that richer item evidence can resolve', () => {
   assert.equal(canAmazonDetailEnrichmentResolve(['identity-code-missing:abc']), true);
   assert.equal(canAmazonDetailEnrichmentResolve(['identity-missing:isbn:9780262033848']), true);
@@ -991,6 +1669,164 @@ test('marketing features after with are not mandatory bundle components', () => 
   const candidate = evaluateRetailCandidate('Sony WH-1000XM5 Wireless Noise Canceling Headphones', headphones);
   assert.equal(candidate.accepted, true, JSON.stringify(candidate));
   assert.doesNotMatch(candidate.rejectionReasons.join(' '), /bundle-component-missing/);
+});
+
+test('bundle components preserve decimal battery ratings and chargers', () => {
+  const product = extractProductIdentity({
+    title: 'DeWalt 20V Cordless Drill',
+    description: 'Includes a 5.0Ah battery and a charger.',
+  });
+  assert.equal(evaluateRetailCandidate('DeWalt 20V Cordless Drill with Battery and Charger', product).accepted, true);
+  const missingBattery = evaluateRetailCandidate('DeWalt 20V Cordless Drill with Charger', product);
+  assert.equal(missingBattery.accepted, false, JSON.stringify(missingBattery));
+  assert.match(missingBattery.rejectionReasons.join(' '), /bundle-component-missing:battery/);
+});
+
+test('explicit partial-kit wording demotes advertised full bundles from research and retail matching', () => {
+  const partial = extractProductIdentity({
+    title: '$1140 DJI Osmo Pocket 3 Creator Combo 4K Gimbal',
+    description: 'Camera with gimble handle and carrying case only. Missing Parts Unknown.',
+  });
+  assert.equal(partial.query, 'dji osmo pocket 3 4k gimbal');
+  assert.equal(partial.explicitlyPartialBundle, true);
+  assert.equal(buildEbaySoldQueryVariants(partial)[0], 'dji osmo pocket 3 4k gimbal');
+  const fullKit = evaluateRetailCandidate('DJI Osmo Pocket 3 Creator Combo with DJI Mic transmitter and tripod', partial);
+  assert.equal(fullKit.accepted, false, JSON.stringify(fullKit));
+  assert.match(fullKit.rejectionReasons.join(' '), /bundle-completeness-unverified/);
+
+  const complete = extractProductIdentity({
+    title: 'DJI Osmo Pocket 3 Creator Combo',
+    description: 'Includes camera, DJI Mic transmitter, tripod and carrying case.',
+  });
+  assert.equal(complete.explicitlyPartialBundle, undefined);
+  assert.equal(evaluateRetailCandidate('DJI Osmo Pocket 3 Creator Combo with DJI Mic transmitter, tripod and carrying case', complete).accepted, true);
+
+  const unrelatedOnly = extractProductIdentity({
+    title: 'DJI Osmo Pocket 3 Creator Combo',
+    description: 'Only tested once. Includes the complete kit.',
+  });
+  assert.equal(unrelatedOnly.explicitlyPartialBundle, undefined);
+  assert.equal(unrelatedOnly.query, 'dji osmo pocket 3 creator combo');
+});
+
+test('bundle matching rejects candidates that explicitly exclude required components', () => {
+  const scuba = extractProductIdentity({
+    title: 'VEVOR Mini Scuba Tank 0.5L Portable Diving',
+    description: 'Includes a hand pump, bag and lanyard.',
+  });
+  const withoutPump = evaluateRetailCandidate('VEVOR Mini Scuba Tank 0.5L with Bag and Lanyard, No Hand Pump', scuba);
+  assert.equal(withoutPump.accepted, false, JSON.stringify(withoutPump));
+  assert.match(withoutPump.rejectionReasons.join(' '), /bundle-component-excluded:pump/);
+
+  const cable = extractProductIdentity({
+    title: 'Sony Wireless Headphones',
+    description: 'Includes a charging cable.',
+  });
+  const withoutCable = evaluateRetailCandidate('Sony Wireless Headphones, Without Charging Cable', cable);
+  assert.equal(withoutCable.accepted, false, JSON.stringify(withoutCable));
+  assert.match(withoutCable.rejectionReasons.join(' '), /bundle-component-excluded:cable/);
+
+  const bothExcluded = evaluateRetailCandidate('Sony Wireless Headphones without charging cable and case',
+    extractProductIdentity({ title: 'Sony Wireless Headphones', description: 'Includes a charging cable and case.' }));
+  assert.equal(bothExcluded.accepted, false, JSON.stringify(bothExcluded));
+  assert.match(bothExcluded.rejectionReasons.join(' '), /bundle-component-excluded:cable/);
+  assert.match(bothExcluded.rejectionReasons.join(' '), /bundle-component-excluded:case/);
+});
+
+test('bundle exclusions remain hard rejections through Amazon fallback and scoring', () => {
+  const scuba = extractProductIdentity({
+    title: 'VEVOR Mini Scuba Tank 0.5L Portable Diving',
+    description: 'Includes a hand pump, bag and lanyard.',
+  });
+  const title = 'VEVOR Mini Scuba Tank 0.5L with Bag, Pump Not Included';
+  const matchText = 'VEVOR Mini Scuba Tank 0.5L with Pump and Bag';
+  const direct = evaluateRetailCandidate(title, scuba);
+  assert.equal(direct.accepted, false, JSON.stringify(direct));
+  assert.match(direct.rejectionReasons.join(' '), /bundle-component-excluded:pump/);
+  assert.equal(scoreRetailCandidate(title, scuba), 0);
+  assert.equal(evaluateAmazonCandidateEvidence({
+    asin: 'B0BUNDLEEXCLUDED', title, matchText, price: 59.99,
+    used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0BUNDLEEXCLUDED',
+  }, scuba).accepted, false);
+});
+
+test('description bundle exclusions retain affirmative components', () => {
+  const product = extractProductIdentity({
+    title: 'VEVOR Portable Air Compressor',
+    description: 'Includes bag without pump.',
+  });
+  assert.deepEqual(product.includedComponents, [['bag']]);
+  assert.equal(evaluateRetailCandidate('VEVOR Portable Air Compressor with Bag', product).accepted, true);
+  assert.equal(evaluateRetailCandidate('VEVOR Portable Air Compressor with Pump', product).accepted, false);
+});
+
+test('accompanying jack stands are included components, not a jack-only listing', () => {
+  const product = extractProductIdentity({
+    title: 'VEVOR 2 Ton Low-Profile Floor Jack',
+    description: 'The accompanying jack stands enhance safety and stability during use.',
+  });
+  assert.deepEqual(product.includedComponents, [['stand']]);
+  assert.equal(evaluateRetailCandidate('VEVOR 2 Ton Low-Profile Floor Jack with 2 Jack Stands', product).accepted, true);
+  assert.equal(evaluateRetailCandidate('VEVOR 2 Ton Low-Profile Floor Jack Only', product).accepted, false);
+});
+
+test('bundle quantities require the stated number of components', () => {
+  const product = extractProductIdentity({
+    title: 'DeWalt 20V Cordless Drill',
+    description: 'Includes two batteries and a charger.',
+  });
+  const oneBattery = evaluateRetailCandidate('DeWalt 20V Cordless Drill with one battery and charger', product);
+  assert.equal(oneBattery.accepted, false, JSON.stringify(oneBattery));
+  assert.match(oneBattery.rejectionReasons.join(' '), /bundle-component-missing:2-battery/);
+  const unrelatedTwo = evaluateRetailCandidate('DeWalt 20V 2-Speed Cordless Drill with one Battery and Charger', product);
+  assert.equal(unrelatedTwo.accepted, false, JSON.stringify(unrelatedTwo));
+  assert.match(unrelatedTwo.rejectionReasons.join(' '), /bundle-component-missing:2-battery/);
+  assert.equal(evaluateRetailCandidate('DeWalt 20V Cordless Drill with two batteries and charger', product).accepted, true);
+});
+
+test('bundle quantities and exclusions stay scoped to their noun phrases', () => {
+  const camera = extractProductIdentity({
+    title: 'Nikon D5300 DSLR Camera',
+    description: 'Includes a lens.',
+  });
+  assert.equal(evaluateRetailCandidate('Nikon D5300 DSLR Camera Body Only', camera).accepted, false);
+
+  const twoLenses = extractProductIdentity({
+    title: 'Nikon D5300 DSLR Camera',
+    description: 'Includes two lenses.',
+  });
+  assert.equal(evaluateRetailCandidate('Nikon D5300 DSLR Camera with two lenses', twoLenses).accepted, true);
+
+  const twoBatteriesAndCharger = extractProductIdentity({
+    title: 'DeWalt 20V Cordless Drill',
+    description: 'Includes two batteries and a charger.',
+  });
+  assert.equal(evaluateRetailCandidate('DeWalt 20V Cordless Drill with two 5.0Ah batteries and charger', twoBatteriesAndCharger).accepted, true);
+
+  const twoBatteries = extractProductIdentity({
+    title: 'DeWalt 20V Cordless Drill',
+    description: 'Includes two batteries.',
+  });
+  assert.equal(evaluateRetailCandidate('DeWalt 20V 2-Speed Cordless Drill with 2 tools & battery', twoBatteries).accepted, false);
+  assert.equal(evaluateRetailCandidate('DeWalt 20V Cordless Drill with 2 batteries', twoBatteries).accepted, true);
+
+  const battery = extractProductIdentity({
+    title: 'DeWalt 20V Cordless Drill',
+    description: 'Includes battery.',
+  });
+  assert.equal(evaluateRetailCandidate('DeWalt 20V Cordless Drill without charger but with battery', battery).accepted, true);
+});
+
+test('bundle quantities do not leak across unrelated nouns or lens measurements', () => {
+  const hammer = extractProductIdentity({
+    title: 'VEVOR 2200W Demolition Jack Hammer, 1350 BPM',
+    description: 'Includes two chisels in a case.',
+  });
+  assert.deepEqual(hammer.includedComponents, [['case']]);
+  assert.equal(evaluateRetailCandidate('VEVOR 2200W Demolition Jack Hammer 1350 BPM with Case', hammer).accepted, true);
+
+  const lens = extractProductIdentity('Nikon D5300 DSLR Camera Dual Lens Kit with 18-55mm and 70-300mm Lenses');
+  assert.equal(evaluateRetailCandidate('Nikon D5300 DSLR Camera Dual Lens Kit with 18-55mm and 70-300mm Lenses', lens).accepted, true);
 });
 
 test('strict book and collectible identities tolerate equivalent marketplace formatting', () => {
@@ -1092,6 +1928,25 @@ test('Amazon matching accepts an exact accessory when the auction lot is itself 
   assert.doesNotMatch(result.rejectionReasons.join(' '), /accessory-or-component/);
 });
 
+test('Nespresso machine does not inherit a pod-kit price', () => {
+  const machine = extractProductIdentity('Vertuo by Nespresso: For large coffee lovers');
+  const podKit = 'NESSUSReusable Pod Kit for Nespresso Pods Vertuo, Reuse Old Coffee Pods for Nespresso Vertuo: 100 Pcs Aluminum Foil Seal Lid, Holder, Brush, Refillable Vertuo Plus Next Capsule Machine(No Pods Come)';
+  const accessory = evaluateRetailCandidate(podKit, machine);
+  assert.equal(accessory.accepted, false);
+  assert.ok(accessory.rejectionReasons.includes('accessory-or-component'));
+  assert.equal(evaluateRetailCandidate('Nespresso Vertuo Reusable Coffee Pods', machine).accepted, false);
+  assert.equal(evaluateRetailCandidate('Nespresso Vertuo Coffee Machine with 12 Capsules', machine).accepted, true);
+  assert.equal(evaluateRetailCandidate('Nespresso Vertuo Coffee Machine, 12 Capsules Included', machine).accepted, true);
+  assert.equal(evaluateRetailCandidate('Nespresso Vertuo Coffee Machine + 12 Capsules', machine).accepted, true);
+  const identifiedMachine = extractProductIdentity('Nespresso Vertuo Coffee Machine');
+  assert.equal(evaluateRetailCandidate('Nespresso Vertuo Capsule Machine', identifiedMachine).accepted, true);
+  assert.equal(evaluateRetailCandidate('Nespresso Vertuo Pod Coffee Maker Cleaning Kit', machine).accepted, false);
+  assert.equal(evaluateRetailCandidate('Nespresso Vertuo Capsule Coffee Machine Reusable Pod Kit', machine).accepted, false);
+
+  const pods = extractProductIdentity('Nespresso Vertuo Reusable Coffee Pods');
+  assert.equal(evaluateRetailCandidate('Nespresso Vertuo Reusable Coffee Pods', pods).accepted, true);
+});
+
 test('primary products reject belts and vague brand-only identities', () => {
   const turntable = extractProductIdentity('Yamaha Full Automatic Turntable Model YP-B4');
   assert.equal(evaluateRetailCandidate('Turntable Belt for Yamaha Model YP-B4', turntable).accepted, false);
@@ -1153,6 +2008,20 @@ test('Amazon matching tolerates a concatenated LED feature suffix on an inferred
   assert.doesNotMatch(result.rejectionReasons.join(' '), /brand-mismatch/);
 });
 
+test('temperature counts and tent dimensions are specifications, not manufacturer models', () => {
+  assert.equal(extractProductIdentity('$60 VEVOR Wax Melter 6.5L, 9-Temp Control').model, null);
+  assert.equal(extractProductIdentity('$160 VEVOR SUV Tent 8x8ft, Waterproof, 5-8P').model, null);
+  assert.equal(extractProductIdentity('$89 Ozark Trail 4-Person Dome Tent, 8x8').model, null);
+  assert.equal(extractProductIdentity('Onkyo TX-SR304 Multi-Channel AV Receiver').model, 'TX-SR304');
+});
+
+test('brand followed by a horsepower rating does not invent a manufacturer model', () => {
+  const identity = extractProductIdentity('$136 VEVOR 1 HP Submersible Trash Pump, 5000 GPH');
+  assert.equal(identity.model, null);
+  assert.deepEqual(buildEbaySoldQueryVariants(identity).slice(0, 1), ['vevor 1 hp submersible trash pump 5000 gph']);
+  assert.ok(buildEbaySoldQueryVariants(identity).every((query) => !/vevor1hp/i.test(query)));
+});
+
 test('numeric manufacturer models reject a same-brand but different product', () => {
   const product = extractProductIdentity('Lot 9 | Pelican 1490 Protector Laptop Case');
   assert.equal(product.model, '1490');
@@ -1192,6 +2061,34 @@ test('family-number-suffix models reject a larger variant in the same product se
   );
 });
 
+test('unknown SCUF revision cannot inherit a V2 Amazon price', () => {
+  const source = extractProductIdentity('SCUF ENVISION PRO Wireless Controller for PC -',
+    'Brand: SCUF\nModel: ENVISION PRO\nCondition: Used\nMissing Parts?: Yes\nNotes: Not in box will need Charger and cords');
+  const v2 = 'SCUF ENVISION PRO Wireless V2 (2025) PC Gaming Controller - White and Black PC Only';
+  assert.equal(source.model, null);
+  assert.match(evaluateRetailCandidate(v2, source).rejectionReasons.join(','), /revision-unverified/);
+  assert.equal(scoreRetailCandidate(v2, source), 0);
+  assert.equal(evaluateAmazonCandidateEvidence({ title: v2, matchText: 'SCUF ENVISION PRO Wireless Controller for PC', detailEnriched: true, price: 134.99 }, source).accepted, false);
+  assert.equal(evaluateRetailCandidate('SCUF ENVISION PRO Wireless Controller for PC', source).accepted, true);
+
+  const knownV1 = extractProductIdentity('SCUF ENVISION PRO V1 Wireless Controller for PC');
+  assert.match(evaluateRetailCandidate(v2, knownV1).rejectionReasons.join(','), /revision-mismatch/);
+  assert.equal(evaluateRetailCandidate('SCUF ENVISION PRO V1 Wireless Controller for PC', knownV1).accepted, true);
+});
+
+test('protocol versions do not become unsupported product revisions', () => {
+  const headphones = extractProductIdentity('Sony WH-1000XM5 Headphones');
+  const exact = evaluateRetailCandidate('Sony WH-1000XM5 Wireless Headphones Bluetooth v5.2', headphones);
+  assert.equal(exact.accepted, true, exact.rejectionReasons.join(','));
+  assert.doesNotMatch(exact.rejectionReasons.join(','), /revision-unverified/);
+
+  const scuf = extractProductIdentity('SCUF ENVISION PRO Wireless Controller for PC');
+  assert.match(
+    evaluateRetailCandidate('SCUF ENVISION PRO Wireless V2 Controller with Bluetooth v5.2', scuf).rejectionReasons.join(','),
+    /revision-unverified/,
+  );
+});
+
 test('Amazon indicator shares the donor thresholds in USD', () => {
   assert.equal(amazonIndicator(40, 100).cls, 'green');
   assert.equal(amazonIndicator(50, 100).cls, 'yellow');
@@ -1217,4 +2114,161 @@ test('retail links are pure, encoded, and limited to Amazon and eBay', () => {
   assert.equal(links.ebayUrl, links.ebay);
   assert.match(links.ebay, /ebay\.com\/sch\/i\.html/);
   assert.doesNotMatch(JSON.stringify(links), /bestbuy/i);
+});
+
+test('Amazon matching rejects live catalog accessory, format, and character false positives', () => {
+  const cases = [
+    ['Bambu Lab P1S 3D Printer AMS w/ Filament', '3D Printer AMS Filament Desiccant Pack'],
+    ['ECOVACS DEEBOT N30 PRO OMNI Robot Vacuum and Mop', '22 PCS Accessories for ECOVACS DEEBOT N30 Omni Robot Vacuum'],
+    ['MTG LOTR Tales of Middle-Earth Commander Deck', 'Tales of Middle-Earth Set Booster'],
+    ['Ultra Pro Pokemon Binder 9-Pocket Lucario', 'Mega Charizard Binder'],
+  ] as const;
+  for (const [source, candidate] of cases) {
+    const identity = extractProductIdentity(source);
+    assert.equal(scoreRetailCandidate(candidate, identity), 0, `${source} must reject ${candidate}`);
+  }
+});
+
+test('collectible format and character conflicts remain hard failures through donor scoring and detail enrichment', () => {
+  const commander = extractProductIdentity('MTG LOTR Tales of Middle-Earth Commander Deck');
+  const booster = 'MTG LOTR Tales of Middle-Earth Set Booster';
+  assert.match(evaluateRetailCandidate(booster, commander).rejectionReasons.join(','), /format-mismatch:/);
+  assert.equal(scoreRetailCandidate(booster, commander), 0);
+  assert.equal(evaluateAmazonCandidateEvidence({ title: booster, matchText: commander.name, detailEnriched: true, price: 19.99 }, commander).accepted, false);
+
+  const lucario = extractProductIdentity('Ultra Pro Pokemon Binder 9-Pocket Lucario');
+  const charizard = 'Ultra Pro Pokemon Binder 9-Pocket Charizard';
+  assert.match(evaluateRetailCandidate(charizard, lucario).rejectionReasons.join(','), /variant-mismatch:lucario/);
+  assert.equal(scoreRetailCandidate(charizard, lucario), 0);
+  assert.equal(evaluateAmazonCandidateEvidence({ title: charizard, matchText: lucario.name, detailEnriched: true, price: 19.99 }, lucario).accepted, false);
+  assert.equal(evaluateRetailCandidate('Ultra Pro Pokemon Binder 9-Pocket Lucario', lucario).accepted, true);
+});
+
+test('accessory kits without compatibility wording are not full robot vacuums', () => {
+  const vacuum = extractProductIdentity('ECOVACS DEEBOT N30 PRO OMNI Robot Vacuum and Mop');
+  const kit = 'ECOVACS DEEBOT N30 PRO OMNI Robot Vacuum Accessories Kit';
+  assert.equal(scoreRetailCandidate(kit, vacuum), 0);
+  assert.match(evaluateRetailCandidate(kit, vacuum).rejectionReasons.join(','), /accessory-or-component/);
+  assert.equal(evaluateAmazonCandidateEvidence({ title: kit, matchText: vacuum.name, detailEnriched: true, price: 34.99 }, vacuum).accepted, false);
+  const bundle = 'ECOVACS DEEBOT N30 PRO OMNI Robot Vacuum with Accessories Kit';
+  assert.equal(isAccessoryListing(bundle, vacuum), false);
+  assert.ok(scoreRetailCandidate(bundle, vacuum) > 0);
+});
+
+test('printer bundle with included dryer is distinct from a standalone consumable', () => {
+  const printer = extractProductIdentity('Bambu Lab P1S 3D Printer');
+  const bundle = 'Bambu Lab P1S 3D Printer with Filament Dryer';
+  assert.equal(isAccessoryListing(bundle, printer), false);
+  assert.ok(scoreRetailCandidate(bundle, printer) > 0);
+  for (const accessory of ['Bambu Lab P1S Filament Dryer', '3D Printer P1S Filament Desiccant Pack']) {
+    assert.equal(scoreRetailCandidate(accessory, printer), 0, accessory);
+  }
+});
+
+test('printer replacement components and lights cannot inherit complete-printer matches', () => {
+  const printer = extractProductIdentity('Bambu Lab P1S 3D Printer AMS w/ Filament');
+  for (const accessory of [
+    'Bambu Lab P1 Series Complete Hotend 0.4mm P1P P1S 3D Printer',
+    'Bambu Lab P1S P1P 3D Printer Hotend Assembly 0.2mm Stainless Steel Nozzle',
+    'Bambu Lab P1S 3D Printer Hotend Assembly',
+    'Bambu Lab P1S 3D Printer Hotend Assembly - tools included',
+    'Bambu Lab P1S 3D Printer Replacement Nozzle - printer not included',
+    'BIQU Panda Lux LED Light For Bambu Lab P1S P1P X1C X1E 3D Printers',
+    'Bambu Lab P1S P1P 3D Printer LED Light',
+    'BIQU Panda Lux for Bambu Lab P1S P1P X1C X1E 3D Printers',
+    'BIQU Panda Lux Bambu Lab P1S P1P X1C X1E',
+    'Panda Lux Compatible with Bambu Lab P1S P1P X1C X1E',
+    'Bambu Lab P1S Replacement Nozzle',
+    'Bambu Lab P1S Extruder Replacement Kit',
+  ]) {
+    const result = evaluateRetailCandidate(accessory, printer);
+    assert.equal(result.accepted, false, `${accessory}: ${JSON.stringify(result)}`);
+    assert.ok(result.rejectionReasons.includes('accessory-or-component'), `${accessory}: ${result.rejectionReasons.join(', ')}`);
+    assert.equal(evaluateAmazonCandidateEvidence({
+      asin: 'B0BAMBUPART', title: accessory, matchText: accessory, price: 29.99,
+      used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0BAMBUPART',
+    }, printer).accepted, false, `Amazon: ${accessory}`);
+  }
+});
+
+test('complete printers may include printer components and printer accessories remain comparable to themselves', () => {
+  const printer = extractProductIdentity('Bambu Lab P1S 3D Printer');
+  for (const complete of [
+    'Bambu Lab P1S 3D Printer with LED light',
+    'Bambu Lab P1S with LED Light 3D Printer',
+    'Bambu Lab P1S 3D Printer Combo with AMS',
+  ]) {
+    assert.equal(evaluateRetailCandidate(complete, printer).accepted, true, complete);
+  }
+  const ams = extractProductIdentity('Bambu Lab AMS 2 Pro - Auto Material System for X1C/P1S/P1P, 4-Color Printing');
+  assert.equal(evaluateRetailCandidate(ams.name, ams).accepted, true);
+  const bundlePrinter = extractProductIdentity('Bambu Lab P1S 3D Printer AMS w/ Filament');
+  const printerOnly = evaluateRetailCandidate('Bambu Lab P1S 3D Printer', bundlePrinter);
+  assert.equal(printerOnly.accepted, false);
+  assert.match(printerOnly.rejectionReasons.join(' '), /bundle-component-missing:ams/);
+  for (const missingAms of [
+    'Bambu Lab P1S 3D Printer AMS not included',
+    'Bambu Lab P1S 3D Printer AMS sold separately',
+  ]) {
+    const result = evaluateRetailCandidate(missingAms, bundlePrinter);
+    assert.equal(result.accepted, false, missingAms);
+    assert.match(result.rejectionReasons.join(' '), /bundle-component-missing:ams/);
+    assert.equal(evaluateAmazonCandidateEvidence({
+      asin: 'B0BAMBUNOAMS', title: missingAms, matchText: missingAms, price: 299,
+      used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0BAMBUNOAMS', detailEnriched: true,
+    }, bundlePrinter).accepted, false, `Amazon: ${missingAms}`);
+  }
+  for (const complete of ['Bambu Lab P1S AMS Combo 3D Printer', 'Bambu Lab P1S with AMS 3D Printer']) {
+    assert.equal(evaluateRetailCandidate(complete, bundlePrinter).accepted, true, complete);
+    const reorderedSource = extractProductIdentity(complete);
+    for (const accessory of [ams.name, 'Bambu Lab P1S Replacement Nozzle', 'Bambu Lab P1S 3D Printer']) {
+      assert.equal(evaluateRetailCandidate(accessory, reorderedSource).accepted, false, `${complete}: ${accessory}`);
+      assert.equal(evaluateAmazonCandidateEvidence({
+        asin: 'B0BAMBUPART', title: accessory, matchText: accessory, price: 299,
+        used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0BAMBUPART', detailEnriched: true,
+      }, reorderedSource).accepted, false, `Amazon ${complete}: ${accessory}`);
+    }
+    assert.equal(evaluateRetailCandidate('Bambu Lab P1S 3D Printer Combo with AMS', reorderedSource).accepted, true);
+  }
+  assert.equal(evaluateRetailCandidate(ams.name, bundlePrinter).accepted, false);
+
+  const hotend = extractProductIdentity('Bambu Lab P1 Series Complete Hotend 0.4mm P1P P1S');
+  assert.equal(evaluateRetailCandidate('Bambu Lab P1 Series Complete Hotend 0.4mm P1P P1S', hotend).accepted, true);
+});
+
+test('specific booster formats and reordered Pokemon characters retain identity', () => {
+  const setBooster = extractProductIdentity('MTG Tales of Middle-Earth Set Booster Box');
+  assert.equal(scoreRetailCandidate('MTG Tales of Middle-Earth Draft Booster Box', setBooster), 0);
+  assert.match(evaluateRetailCandidate('MTG Tales of Middle-Earth Draft Booster Box', setBooster).rejectionReasons.join(','), /format-mismatch:set-booster/);
+  assert.ok(scoreRetailCandidate('MTG Tales of Middle-Earth Set Booster Box', setBooster) > 0);
+
+  const lucario = extractProductIdentity('Ultra Pro Pokemon Lucario 9-Pocket Premium Binder');
+  assert.equal(scoreRetailCandidate('Ultra Pro Pokemon Charizard 9-Pocket Trading Card Binder', lucario), 0);
+  assert.match(evaluateRetailCandidate('Ultra Pro Pokemon Charizard 9-Pocket Trading Card Binder', lucario).rejectionReasons.join(','), /variant-mismatch:lucario/);
+  assert.ok(scoreRetailCandidate('Ultra Pro Pokemon 9-Pocket Lucario Binder', lucario) > 0);
+});
+
+test('single booster packs cannot inherit box prices in either direction', () => {
+  const pack = extractProductIdentity('MTG Modern Horizons Set Booster Pack');
+  const box = extractProductIdentity('MTG Modern Horizons Set Booster Box');
+  assert.equal(scoreRetailCandidate(box.name, pack), 0);
+  assert.equal(scoreRetailCandidate(pack.name, box), 0);
+  assert.ok(scoreRetailCandidate(pack.name, pack) > 0);
+  assert.ok(scoreRetailCandidate(box.name, box) > 0);
+});
+
+test('binder material cannot satisfy a different named character', () => {
+  const pikachu = extractProductIdentity('Pokemon Leather Binder 9 Pocket Pikachu');
+  assert.equal(scoreRetailCandidate('Pokemon Leather Binder 9 Pocket Charizard', pikachu), 0);
+  assert.match(evaluateRetailCandidate('Pokemon Leather Binder 9 Pocket Charizard', pikachu).rejectionReasons.join(','), /variant-mismatch:pikachu/);
+  assert.ok(scoreRetailCandidate('Pokemon Leather Binder 9 Pocket Pikachu', pikachu) > 0);
+});
+
+test('complete headphones with their original box are not packaging-only', () => {
+  const headphones = extractProductIdentity('Sony WH-1000XM5 Headphones');
+  assert.equal(isAccessoryListing('Sony WH-1000XM5 Headphones with original box', headphones), false);
+  assert.ok(scoreRetailCandidate('Sony WH-1000XM5 Headphones with original box', headphones) > 0);
+  for (const packaging of ['Sony WH-1000XM5 original box only', 'Sony WH-1000XM5 empty original box']) {
+    assert.equal(scoreRetailCandidate(packaging, headphones), 0, packaging);
+  }
 });

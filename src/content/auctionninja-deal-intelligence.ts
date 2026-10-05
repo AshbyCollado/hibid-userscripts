@@ -18,7 +18,7 @@ import {
   computeRetailIndicators,
   detectComparisonCurrency,
   detectMixedLot,
-  extractLotQuantityFromTitle,
+  assessLotQuantity,
   extractProductIdentity,
   formatUsd,
   requiresQuantityConfirmation,
@@ -107,6 +107,7 @@ export interface AuctionNinjaAnalysisRecord {
   state: StoredLotState;
   currency: 'USD' | 'CAD';
   needsQuantity: boolean;
+  quantityAssessment: ReturnType<typeof assessLotQuantity>;
   ebayNet: number | null;
   premiumPct: number;
 }
@@ -175,14 +176,6 @@ export function auctionNinjaConditionInput(title: string, description: string): 
   return [inferred ? `Condition: ${inferred}` : '', source, description].filter(Boolean).join('\n');
 }
 
-function itemQuantity(item: AuctionNinjaAnalysisSource): number | null {
-  const fromFields = Object.entries(item.descriptionFields || {})
-    .filter(([key]) => /quantity|count|set size/i.test(key))
-    .map(([, value]) => numberFrom(value))
-    .find((value): value is number => value !== null && value > 0);
-  return fromFields || extractLotQuantityFromTitle(item.title) || null;
-}
-
 export function buildAuctionNinjaAnalysis(
   item: AuctionNinjaAnalysisSource,
   options: AuctionNinjaAnalysisOptions = {},
@@ -194,8 +187,11 @@ export function buildAuctionNinjaAnalysis(
   if (state.queryOverride) identity.query = buildProductResearchQuery(state.queryOverride) || identity.query;
   const condition = assessCondition(auctionNinjaConditionInput(item.title, description));
   const mixed = detectMixedLot(item.title, description);
-  const quantity = itemQuantity(item);
-  const needsQuantity = requiresQuantityConfirmation(quantity, mixed.mixed, state.confirmedQuantity);
+  const structuredQuantities = Object.entries(item.descriptionFields || {})
+    .filter(([key]) => /^(?:quantity|qty|count|set\s*size)$/i.test(key.trim()))
+    .map(([, value]) => numberFrom(value))
+  const quantityAssessment = assessLotQuantity({ title: item.title, description, structuredQuantities });
+  const needsQuantity = requiresQuantityConfirmation(quantityAssessment, mixed.mixed, state.confirmedQuantity);
   const currency = detectComparisonCurrency(item.rawText || description, item.buyerPremium || '');
   const premiumPct = options.buyerPremiumPct ?? parseAuctionNinjaBuyerPremium(item.buyerPremium) ?? settings.defaultBuyerPremiumPct ?? 0;
   const allIn = currency === 'USD' ? calculateAuctionNinjaAllIn(item.currentBid, premiumPct, settings) : null;
@@ -206,7 +202,7 @@ export function buildAuctionNinjaAnalysis(
   return {
     item, identity, condition, mixed, allIn, amazon: null,
     amazonIndicator: indicators.amazon, ebayIndicator: indicators.ebay, state, currency,
-    needsQuantity, ebayNet, premiumPct,
+    needsQuantity, quantityAssessment, ebayNet, premiumPct,
   };
 }
 

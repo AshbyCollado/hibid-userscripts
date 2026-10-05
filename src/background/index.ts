@@ -4,7 +4,8 @@ import { getJob, getJobForFingerprint, pruneJobs, putDiagnostic, putJobIfNewer, 
 import { collectStoredOutcomes } from '../core/outcomes.js';
 import type { ScrapeJobSummary, ScrapeStoredRecord } from '../core/types.js';
 import { clearRetailCache, getRetailCache, putRetailCache } from '../core/retail-db.js';
-import { canAmazonDetailEnrichmentResolve, detectProductKind, evaluateAmazonCandidateEvidence, extractProductDiscriminators, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
+import { canAmazonDetailEnrichmentResolve, evaluateAmazonCandidateEvidence, matchAmazonCandidates, parseAmazonCandidates, type ProductIdentity, type RetailCandidateEvaluation } from '../intelligence/us-deal-intelligence.js';
+import { retailQuery, validateRetailIdentity } from './retail-identity.js';
 import { enrichAmazonCandidateFromDetail, parseAmazonDocumentCandidates } from '../intelligence/amazon-document-parser.js';
 import { nextProviderFailureState, normalizeProviderThrottle, providerStateStorageKey, successfulProviderState, type ProviderThrottleState, type RetailProviderName } from '../intelligence/provider-state.js';
 import {
@@ -213,31 +214,6 @@ function ensureResearchPageSender(sender: chrome.runtime.MessageSender): void {
   const url = new URL(sender.url || sender.tab.url || 'https://invalid.invalid');
   const supported = /(^|\.)hibid\.com$/i.test(url.hostname) || /(^|\.)auctionninja\.com$/i.test(url.hostname);
   if (url.protocol !== 'https:' || !supported) throw new Error('Flippah operation rejected for this host');
-}
-
-function retailQuery(value: unknown): string {
-  const query = String(value || '').replace(/\s+/g, ' ').trim().slice(0, 180);
-  if (query.length < 2) throw new Error('Amazon search query is too short');
-  return query;
-}
-
-function validateRetailIdentity(value: unknown): ProductIdentity {
-  if (!value || typeof value !== 'object') throw new Error('Malformed retail identity');
-  const source = value as ProductIdentity;
-  const query = retailQuery(source.query);
-  const clean = (item: unknown, max: number) => String(item || '').replace(/\s+/g, ' ').trim().slice(0, max);
-  const discriminators = extractProductDiscriminators(clean(source.name, 300));
-  if (source.model || discriminators.gpuModels.length || discriminators.cpuModels.length) discriminators.seriesSignatures = [];
-  const identity: ProductIdentity = {
-    name: clean(source.name, 300), query, brand: clean(source.brand, 80),
-    model: source.model ? clean(source.model, 60) : null,
-    model2: source.model2 ? clean(source.model2, 60) : null,
-    kind: detectProductKind(source.name),
-    capacities: Array.isArray(source.capacities) ? source.capacities.slice(0, 8).map((item) => clean(item, 30)) : [],
-    discriminators,
-    tokens: Array.isArray(source.tokens) ? source.tokens.slice(0, 20).map((item) => clean(item, 40)) : []
-  };
-  return identity;
 }
 
 async function readResponseText(response: Response): Promise<string> {

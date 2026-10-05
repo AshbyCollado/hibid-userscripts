@@ -2,6 +2,8 @@ import { build } from 'esbuild';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { patchLegacyEbayQueryModule, patchLegacyHibidPageModule, patchLegacyRemoveCatalogChips, patchLegacyRemoveShipping } from './scripts/legacy-ebay-query.mjs';
+import { patchLegacyAuctionEconomics } from './scripts/legacy-auction-economics.mjs';
+import { patchLegacyLotPanelRecovery } from './scripts/legacy-lot-panel-recovery.mjs';
 
 const root = process.cwd();
 const reference = path.join(root, 'reference-build', 'flippah-v0.1.0');
@@ -104,8 +106,11 @@ for (const target of targets) {
         buildApi.onResolve({ filter: /taxRates-B3rE_xel\.js$/ }, () => ({
           path: path.join(root, 'src', 'legacy', 'tax-rates-compat.ts')
         }));
+        buildApi.onResolve({ filter: /money-ip6lU9wJ\.js$/ }, (args) => args.importer === path.join(root, 'src', 'legacy', 'money-compat.ts') ? undefined : ({
+          path: path.join(root, 'src', 'legacy', 'money-compat.ts')
+        }));
         buildApi.onLoad({ filter: /index\.ts-BuCXDImd\.js$/ }, async ({ path: modulePath }) => ({
-          contents: patchLegacyRemoveCatalogChips(patchLegacyRemoveShipping(patchLegacyEbayQueryModule(await readFile(modulePath, 'utf8')))),
+          contents: patchLegacyLotPanelRecovery(patchLegacyAuctionEconomics(patchLegacyRemoveCatalogChips(patchLegacyRemoveShipping(patchLegacyEbayQueryModule(await readFile(modulePath, 'utf8'))))), path.join(root, 'src', 'legacy', 'lot-panel-recovery.ts')),
           loader: 'js'
         }));
         buildApi.onLoad({ filter: /parseLotPage-B-8HdUYU\.js$/ }, async ({ path: modulePath }) => ({

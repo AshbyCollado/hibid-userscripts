@@ -67,6 +67,16 @@ test('administrative titles are measured separately from product query failures'
   assert.equal(issues.some((entry) => entry.code === 'empty-product-query'), false);
 });
 
+test('administrative no-shipping rows are not product mutation regressions', () => {
+  const report = runTitleCorpus([{
+    ...base,
+    eventItemId: 'no-shipping',
+    title: 'No Shipping Local Pickup Only',
+  }]);
+  assert.equal(report.issueCounts['administrative-query'], 1);
+  assert.equal(report.issueCounts['mutation-query-drift'] || 0, 0);
+});
+
 test('structured models cannot be shadowed by leading warehouse batch codes', () => {
   const report = runTitleCorpus([{
     provider: 'hibid',
@@ -88,4 +98,24 @@ test('issue totals include findings beyond the retained diagnostic sample', () =
   assert.equal(report.errorCount, 1);
   assert.equal(report.issueCounts['administrative-query'], 1);
   assert.equal(report.issueCounts['empty-product-query'], 1);
+});
+
+test('entity residue flags require encoded source text, not ordinary product words', () => {
+  for (const title of [
+    '10/2 AMP BATTERY CHARGER',
+    'Behringer Ultrabass BT108 15-watt Bass Amp',
+    "Vintage 1950's-1960's Times Square Studio Light",
+  ]) {
+    assert.equal(evaluateTitleCorpusRecord({ ...base, title }).some((entry) => entry.code === 'html-entity-token'), false, title);
+  }
+  const encoded = evaluateTitleCorpusRecord({ ...base, title: 'Smith &amp; Nephew Dyonics 7205357 Shaver Handpiece' });
+  assert.equal(encoded.some((entry) => entry.code === 'html-entity-token'), false);
+});
+
+test('legitimate repeated product phrases are not flagged as duplicated blocks', () => {
+  const issues = evaluateTitleCorpusRecord({
+    ...base,
+    title: 'The Vatican Museums Angel Of The Vatican Music Box',
+  });
+  assert.equal(issues.some((entry) => entry.code === 'repeated-token-block'), false);
 });

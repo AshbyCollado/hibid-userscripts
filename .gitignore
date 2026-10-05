@@ -17,6 +17,7 @@ tmp_govdeals_review/
 *.har.gz
 *.cdp.json
 network-captures/
+.research-downloads/
 
 # The reference ZIP is authoritative; bundled dependencies are not tracked.
 reference-build/**/node_modules/

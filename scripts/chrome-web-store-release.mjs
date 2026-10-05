@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -156,11 +157,20 @@ async function loadLocalConfig(environment = process.env) {
 
 export function gcloudInvocation(args, platform = process.platform, environment = process.env) {
   if (platform !== 'win32') return { command: 'gcloud', args, env: environment };
+  if (args.some((arg) => !/^[A-Za-z0-9:/.=+@_-]+$/.test(arg))) {
+    throw new Error('Windows gcloud arguments contain unsupported characters');
+  }
+  const sdkPath = environment.LOCALAPPDATA
+    ? path.join(environment.LOCALAPPDATA, 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin', 'gcloud.cmd')
+    : '';
+  const executable = sdkPath && existsSync(sdkPath) && !/["%!\r\n]/.test(sdkPath)
+    ? `"${sdkPath}"`
+    : 'gcloud.cmd';
   return {
-    command: 'powershell.exe',
-    args: ['-NoProfile', '-NonInteractive', '-Command',
-      '$ErrorActionPreference = "Stop"; $a = @(ConvertFrom-Json $env:FLIPPAH_GCLOUD_ARGS); $exe = Join-Path $env:LOCALAPPDATA "Google\\Cloud SDK\\google-cloud-sdk\\bin\\gcloud.cmd"; if (!(Test-Path -LiteralPath $exe)) { $exe = (Get-Command gcloud.cmd -ErrorAction Stop).Source }; & $exe @a; exit $LASTEXITCODE'],
-    env: { ...environment, FLIPPAH_GCLOUD_ARGS: JSON.stringify(args) },
+    command: environment.ComSpec || 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${executable} ${args.join(' ')}"`],
+    env: environment,
+    windowsVerbatimArguments: true,
   };
 }
 
@@ -174,7 +184,8 @@ async function gcloudAccessToken(serviceAccountEmail) {
   let stdout;
   try {
     ({ stdout } = await execFileAsync(invocation.command, invocation.args, {
-      env: invocation.env, windowsHide: true, timeout: 60_000, maxBuffer: 1024 * 1024,
+      env: invocation.env, windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+      timeout: 60_000, maxBuffer: 1024 * 1024,
     }));
   } catch { throw new Error('Google authentication failed. Check gcloud login and service-account impersonation access.'); }
   const token = stdout.trim();

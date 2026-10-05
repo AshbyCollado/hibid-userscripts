@@ -10,6 +10,23 @@ import type {
 import type { HiBidPageState } from '../core/types.js';
 import { parseStructuredDescription } from '../intelligence/us-deal-intelligence.js';
 
+export interface HibidPhysicalPhotoDescriptor {
+  sellerOrdinal: number | null;
+  description: string;
+  fullResolutionUrl: string | null;
+  hdThumbnailUrl: string | null;
+  thumbnailUrl: string | null;
+  width: number | null;
+  height: number | null;
+}
+
+export interface HibidPhotoAudit {
+  expectedCount: number | null;
+  observedCount: number;
+  reconciled: boolean;
+  verification: 'verified' | 'mismatch' | 'unverified';
+}
+
 export const HIBID_SEARCH_ENDPOINT = 'https://hibid-api.io/sr/main/v1/search/lot';
 export const HIBID_GRAPHQL_ENDPOINT = 'https://hibid.com/graphql';
 export const HIBID_LOT_SEARCH_OPERATION = 'FlippahLotSearch';
@@ -18,6 +35,7 @@ export const HIBID_WATCHLIST_SEARCH_OPERATION = 'FlippahWatchListSearch';
 export const HIBID_PAGE_SIZE = 100;
 export const HIBID_CONCURRENCY = 3;
 export const HIBID_RETRIES = 3;
+export const HIBID_LOT_DETAIL_TIMEOUT_MS = 10_000;
 
 export const HIBID_LOT_SEARCH_QUERY = `
   query FlippahLotSearch(
@@ -79,6 +97,7 @@ export const HIBID_LOT_SEARCH_QUERY = `
             id eventName description buyerPremium buyerPremiumRate eventAddress
             eventCity eventState eventZip eventDateBegin eventDateEnd eventDateInfo
             checkoutDateInfo previewDateInfo currencyAbbreviation lotCount
+            shippingAndPickupInfo paymentInfo termsAndConditions biddingNotice
             auctioneer { id name address city state postalCode country }
           }
         }
@@ -596,6 +615,92 @@ function imageUrls(lot: Record<string, unknown>): string[] {
   }))];
 }
 
+function sanitizedPhotoUrl(value: unknown): string | null {
+  const candidate = text(value);
+  if (!candidate) return null;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function providerPhotoIdentity(picture: Record<string, unknown>): string {
+  for (const field of ['pictureId', 'photoId', 'imageId', 'sourcePictureId', 'pictureKey', 'photoKey', 'id', 'key']) {
+    const id = text(picture[field]);
+    if (id) return `id:${id}`;
+  }
+  const candidate = [picture.fullSizeLocation, picture.hdThumbnailLocation, picture.thumbnailLocation, picture.url, picture.src].map(text).find(Boolean);
+  if (!candidate) return '';
+  try {
+    const url = new URL(candidate);
+    // HiBid img.axd identifies different physical photos through ?id=.
+    const photoId = url.searchParams.get('id');
+    if (photoId) return `url:${url.origin}${url.pathname}?id=${encodeURIComponent(photoId)}`;
+    for (const parameter of ['w', 'h', 'width', 'height', 'sz', 'size', 'quality', 'format', 'fit', 'checksum']) {
+      url.searchParams.delete(parameter);
+    }
+    url.searchParams.sort();
+    url.hash = '';
+    return `url:${url.href}`;
+  } catch {
+    return `raw:${candidate}`;
+  }
+}
+
+function physicalPhotoSources(lot: Record<string, unknown>): Record<string, unknown>[] {
+  const pictures = Array.isArray(lot.pictures)
+    ? lot.pictures.filter((picture): picture is Record<string, unknown> => Boolean(picture && typeof picture === 'object'))
+    : [];
+  const featured = lot.featuredPicture && typeof lot.featuredPicture === 'object'
+    ? lot.featuredPicture as Record<string, unknown>
+    : null;
+  if (!featured) return pictures;
+  const featuredIdentity = providerPhotoIdentity(featured);
+  // HiBid sends a description-only featured placeholder for some zero-photo notices.
+  if (!featuredIdentity) return pictures;
+  const repeated = pictures.some((picture) => providerPhotoIdentity(picture) === featuredIdentity);
+  // Keep every distinct known source even when it makes pictureCount mismatch.
+  // The audit reports that mismatch instead of dropping evidence to force a count.
+  if (!repeated) return [featured, ...pictures];
+  return pictures.map((picture) => {
+    if (providerPhotoIdentity(picture) !== featuredIdentity) return picture;
+    const merged = { ...picture };
+    for (const field of ['fullSizeLocation', 'hdThumbnailLocation', 'thumbnailLocation', 'width', 'height', 'description']) {
+      if (merged[field] === undefined || merged[field] === null || merged[field] === '') merged[field] = featured[field];
+    }
+    return merged;
+  });
+}
+
+function physicalPhotoData(lot: Record<string, unknown>): { descriptors: HibidPhysicalPhotoDescriptor[]; audit: HibidPhotoAudit } {
+  const rawExpected = amount(lot.pictureCount);
+  const expectedCount = rawExpected !== null && Number.isInteger(rawExpected) && rawExpected >= 0 ? rawExpected : null;
+  const sources = physicalPhotoSources(lot);
+  const descriptors = sources.map((picture, index) => ({
+    sellerOrdinal: expectedCount !== null && sources.length === expectedCount ? index + 1 : null,
+    description: text(picture.description),
+    fullResolutionUrl: sanitizedPhotoUrl(picture.fullSizeLocation),
+    hdThumbnailUrl: sanitizedPhotoUrl(picture.hdThumbnailLocation),
+    thumbnailUrl: sanitizedPhotoUrl(picture.thumbnailLocation),
+    width: amount(picture.width),
+    height: amount(picture.height),
+  }));
+  const countMatches = expectedCount !== null && sources.length === expectedCount;
+  const usableFullSize = descriptors.every((picture) => picture.fullResolutionUrl !== null);
+  const reconciled = countMatches && usableFullSize;
+  const verification = expectedCount === null || (countMatches && !usableFullSize)
+    ? 'unverified'
+    : reconciled
+      ? 'verified'
+      : 'mismatch';
+  return {
+    descriptors,
+    audit: { expectedCount, observedCount: sources.length, reconciled, verification },
+  };
+}
+
 export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; sourceUrl: string }): HiBidLotRecord | null {
   if (!raw || typeof raw !== 'object') return null;
   const lot = raw as Record<string, any>;
@@ -606,6 +711,7 @@ export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; so
   const descriptionHtml = String(lot.description ?? '').trim();
   const description = descriptionText(descriptionHtml);
   const images = imageUrls(lot);
+  const physicalPhotos = physicalPhotoData(lot);
   const highBid = amount(state.highBid);
   const priceRealized = amount(state.priceRealized);
   const currentBid = priceRealized !== null && priceRealized > 0
@@ -659,10 +765,23 @@ export function normalizeHibidLot(raw: unknown, context: { route: HiBidRoute; so
     auctionTitle: text(auction.eventName ?? auction.title),
     location: [auction.eventAddress, auction.eventCity, auction.eventState, auction.eventZip].map(text).filter(Boolean).join(', '),
     buyerPremium: text(auction.buyerPremium ?? auction.buyerPremiumRate),
+    auctionTerms: text(auction.termsAndConditions),
+    shippingAndPickupInfo: text(auction.shippingAndPickupInfo),
+    paymentInfo: text(auction.paymentInfo),
+    biddingNotice: text(auction.biddingNotice),
+    auctionDescription: text(auction.description),
+    currencyAbbreviation: text(auction.currencyAbbreviation),
+    checkoutDateInfo: text(auction.checkoutDateInfo),
+    previewDateInfo: text(auction.previewDateInfo),
+    eventDateBegin: text(auction.eventDateBegin),
+    eventDateEnd: text(auction.eventDateEnd),
+    eventDateInfo: text(auction.eventDateInfo),
     watchNotes: text(state.watchNotes ?? lot.watchNotes),
     rawText: [lotNumber, title, description, text(state.status)].filter(Boolean).join(' | ').slice(0, 12000),
     descriptionFields: descriptionFields(description),
-    extractionAudit: { source: 'graphql', stableId: id, hasDescription: Boolean(description), imageCount: images.length }
+    extractionAudit: { source: 'graphql', stableId: id, hasDescription: Boolean(description), imageCount: images.length },
+    physicalPhotoDescriptors: physicalPhotos.descriptors,
+    photoAudit: physicalPhotos.audit,
   };
 }
 
@@ -690,6 +809,42 @@ export function mergeHibidVisibleWithHydrated(visible: HiBidLotRecord, hydrated:
     status: visible.status || hydrated.status,
     timeLeft: visible.timeLeft || hydrated.timeLeft,
   };
+}
+
+export async function hydrateHibidLotDetail(
+  transport: HiBidTransport,
+  eventItemId: string,
+  route: HiBidRoute,
+  locationLike: LocationLike | URL | string,
+  options: { retries?: number; signal?: AbortSignal } = {}
+): Promise<HiBidLotRecord> {
+  const requestedId = String(eventItemId);
+  const retries = options.retries || HIBID_RETRIES;
+  const request = (body: unknown, requestOptions?: { signal?: AbortSignal }) => {
+    const timeout = AbortSignal.timeout(HIBID_LOT_DETAIL_TIMEOUT_MS);
+    const signal = requestOptions?.signal
+      ? AbortSignal.any([requestOptions.signal, timeout])
+      : timeout;
+    return transport.hydrateLots(body, { signal });
+  };
+  const json = await retryPost(request, {
+    operationName: HIBID_LOT_DETAILS_OPERATION,
+    variables: buildHibidLotDetailsVariables(requestedId),
+    query: HIBID_LOT_DETAILS_QUERY,
+  }, retries, options.signal);
+  const raw = (json as any)?.data?.lot?.lot;
+  const hydrated = normalizeHibidLot(raw, { route, sourceUrl: toUrl(locationLike).href });
+  if (!hydrated) throw new Error(`HiBid exact-item detail missing for ${requestedId}`);
+  if (hydrated.eventItemId !== requestedId) {
+    throw new Error(`HiBid exact-item ID mismatch: requested ${requestedId}, received ${hydrated.eventItemId}`);
+  }
+  const audit = hydrated.photoAudit as HibidPhotoAudit | undefined;
+  if (!audit || !audit.reconciled || audit.expectedCount === null) {
+    const observed = audit?.observedCount ?? 0;
+    const expected = audit?.expectedCount ?? '?';
+    throw new Error(`HiBid photo coverage incomplete: ${observed}/${expected} physical photos`);
+  }
+  return hydrated;
 }
 
 export interface HiBidWatchlistVariables {

@@ -767,3 +767,20 @@ ignored by Git.
   install self-reloads. Reinstalling changed files under an unchanged semantic
   version is not browser acceptance: an already-running content script may
   still be the older build.
+
+## v0.5.47 Store Release Scope
+
+- The owner closed the eight-auction audit on 2026-10-05, then explicitly
+  requested the Chrome Store update. Do not restart the closed audit.
+- Release notes: `docs/flippah-v0.5.47-release.md`. The isolated release checkout
+  contains maintained runtime changes and portable regressions, not private
+  captures, standalone audit importers, workbooks or their artifact-backed tests.
+- Preserve the original dirty audit checkout. Its full history, failed AI
+  acceptance and unpromoted evidence remain there, not retroactively completed.
+- Active asking prices remain distinct from sold evidence. This update grants
+  no sold-history API access and does not prove automatic AI research acceptance.
+- Release review found a bid-only race during the second retail-cache peek.
+  Reconcile current native bid/status after asynchronous enrichment; identity
+  equality alone does not imply that costs are still current.
+- Submission is not publication. Keep Google review, Store publication, and
+  installed-client delivery separate in every release report.

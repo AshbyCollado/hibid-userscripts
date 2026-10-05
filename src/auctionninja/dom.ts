@@ -15,6 +15,8 @@ import type {
   AuctionNinjaDetailRecord,
   AuctionNinjaLocationLike,
   AuctionNinjaLotRecord,
+  AuctionNinjaPhysicalPhotoDescriptor,
+  AuctionNinjaPhotoAudit,
   AuctionNinjaRoute,
   AuctionNinjaSaleContext,
   AuctionNinjaSaleRecord,
@@ -153,16 +155,80 @@ function extractDescriptionFields(description: string): AuctionNinjaDescriptionF
   return fields;
 }
 
+function isLotImageUrl(value: string): boolean {
+  return Boolean(value) && !/^https?:\/\/www\.auctionninja\.com\/ninjaremoved\.png(?:[?#]|$)/i.test(value)
+    && !/logo|icon|avatar|spinner|pixel|clock|map_pins|\/images\/star_\d+\.|\/sales\/details\/images\/box-img\.png(?:[?#]|$)|(?:\/|[?&]src=)blankwhite\.jpg(?:[&#?]|$)/i.test(value);
+}
+
 function imageUrls(root: Element, base: string): string[] {
   const nodes = Array.from(root.querySelectorAll('img[src], img[data-src], img[data-original], source[srcset], a[href*="/Pictures/"]'));
   const values: string[] = [];
   for (const node of nodes) {
+    if (node.classList.contains('starimgcls')) continue;
     const image = node as HTMLImageElement;
-    values.push(image.currentSrc, image.src, node.getAttribute('src') || '', node.getAttribute('data-src') || '', node.getAttribute('data-original') || '', node.getAttribute('href') || '');
+    const source = node.getAttribute('src')?.trim() || '';
+    values.push(source ? image.currentSrc : '', source, node.getAttribute('data-src')?.trim() || '', node.getAttribute('data-original')?.trim() || '', node.getAttribute('href')?.trim() || '');
     const srcset = String(node.getAttribute('srcset') || '');
     values.push(...srcset.split(',').map((part) => part.trim().split(/\s+/)[0] || ''));
   }
-  return uniqueNonEmpty(values.map((value) => absoluteUrl(value, base)).filter((value) => value && !/logo|icon|avatar|spinner|pixel|clock|map_pins/i.test(value)));
+  return uniqueNonEmpty(values.map((value) => absoluteUrl(value, base)).filter(isLotImageUrl));
+}
+
+function imageSourceUrl(node: Element, base: string): string {
+  const values = [
+    node.getAttribute('src') || '',
+    node.getAttribute('data-src') || '',
+    node.getAttribute('data-original') || '',
+    ...(node.getAttribute('srcset') || '').split(',').map((part) => part.trim().split(/\s+/)[0] || ''),
+  ];
+  return values.map((value) => value.trim()).filter(Boolean).map((value) => absoluteUrl(value, base)).find(isLotImageUrl) || '';
+}
+
+function canonicalGallery(root: DomRoot): Element | null {
+  const element = rootElement(root);
+  return element.matches('.listicle-capterra-gallery') ? element : element.querySelector('.listicle-capterra-gallery');
+}
+
+function physicalPhotoData(root: DomRoot, base: string, images: string[]): { descriptors: AuctionNinjaPhysicalPhotoDescriptor[]; audit: AuctionNinjaPhotoAudit } {
+  const gallery = canonicalGallery(root);
+  const mainGallery = gallery?.querySelector('.slider-for') || gallery;
+  const slots = gallery
+    ? Array.from(mainGallery!.querySelectorAll('a.listicle-capterra-gallery-sing')).filter((node) => !node.closest('.slick-cloned, .slider-nav'))
+    : [];
+  const descriptors = slots.length > 0
+    ? slots.map((slot, index) => {
+      const anchor = slot as HTMLAnchorElement;
+      const image = slot.querySelector('img');
+      const thumbnailUrl = image ? imageSourceUrl(image, base) : '';
+      const originalHref = anchor.getAttribute('href')?.trim() || '';
+      const candidateHref = originalHref ? absoluteUrl(originalHref, base) : '';
+      const fullResolutionUrl = isLotImageUrl(candidateHref) ? candidateHref : '';
+      return {
+        sellerOrdinal: index + 1,
+        fullResolutionUrl: fullResolutionUrl || null,
+        knownImageUrl: fullResolutionUrl || thumbnailUrl,
+        thumbnailUrl: thumbnailUrl || null,
+        source: 'dom-gallery' as const,
+      };
+    })
+    : images.map((url) => ({
+      sellerOrdinal: null,
+      fullResolutionUrl: null,
+      knownImageUrl: url,
+      thumbnailUrl: url,
+      source: 'known-image-url' as const,
+    }));
+  return {
+    descriptors,
+    audit: {
+      expectedCount: null,
+      observedCount: slots.length,
+      knownImageCount: descriptors.filter((photo) => photo.knownImageUrl).length,
+      reconciled: false,
+      verification: 'unverified',
+      countSource: 'dom-gallery',
+    },
+  };
 }
 
 function firstImage(root: Element, base: string): string {
@@ -274,6 +340,7 @@ function baseLot(card: Element, base: string, pageKind: AuctionNinjaLotRecord['p
   const bid = parseBid(rawText);
   const description = cardDescription(card);
   const images = imageUrls(card, base);
+  const physicalPhotos = physicalPhotoData(card, base, images);
   const record = {
     source: 'AuctionNinja' as const,
     pageKind,
@@ -284,6 +351,8 @@ function baseLot(card: Element, base: string, pageKind: AuctionNinjaLotRecord['p
     url,
     image: images[0] || '',
     images,
+    physicalPhotoDescriptors: physicalPhotos.descriptors,
+    photoAudit: physicalPhotos.audit,
     description,
     descriptionHtml: card.querySelector('.item-description-deta, .product-description, .item-description, #description')?.innerHTML || '',
     descriptionFields: extractDescriptionFields(description),
@@ -457,6 +526,7 @@ export function extractAuctionNinjaItemDetail(root: DomRoot, locationLike: Aucti
   const id = route.productId || productIdFromAuctionNinjaUrl(pageUrl.href);
   if (!id || !title) return null;
   const images = imageUrls(detailRoot, pageUrl.href);
+  const physicalPhotos = physicalPhotoData(detailRoot, pageUrl.href, images);
   const descriptionContainer = rootElement(root).querySelector('.item-description-deta');
   const sectionDescription = auctionNinjaDetailSectionText(descriptionContainer, 'Item Description');
   const sectionCondition = auctionNinjaDetailSectionText(descriptionContainer, 'Condition');
@@ -475,7 +545,7 @@ export function extractAuctionNinjaItemDetail(root: DomRoot, locationLike: Aucti
     || '';
   const result: AuctionNinjaDetailRecord = {
     source: 'AuctionNinja', pageKind: 'item-detail', id, stableId: id, url: canonicalAuctionNinjaProductUrl(pageUrl.href) || pageUrl.href, title,
-    lot, image: images[0] || '', images,
+    lot, image: images[0] || '', images, physicalPhotoDescriptors: physicalPhotos.descriptors, photoAudit: physicalPhotos.audit,
     description, descriptionHtml, descriptionFields: extractDescriptionFields(description),
     category: textOf(rootElement(root).querySelector('.breadcrumb, .breadcrumbs')),
     saleTitle: normalizeTitle(textOf(saleLink)), saleUrl: canonicalAuctionNinjaSaleUrl(absoluteUrl(controlHref(saleLink), pageUrl.href)), seller: '', sellerUrl: '',
@@ -500,6 +570,39 @@ export function mergeAuctionNinjaItemDetail(item: AuctionNinjaLotRecord, detail:
   if (detail.descriptionHtml) merged.descriptionHtml = detail.descriptionHtml;
   if (detail.descriptionFields) merged.descriptionFields = { ...merged.descriptionFields, ...detail.descriptionFields };
   merged.images = uniqueNonEmpty([...item.images, ...(detail.images || []), item.image, detail.image || '']);
+  const catalogSlots = (item.physicalPhotoDescriptors || []).filter((photo) => photo.source === 'dom-gallery');
+  const detailSlots = (detail.physicalPhotoDescriptors || []).filter((photo) => photo.source === 'dom-gallery');
+  if (catalogSlots.length || detailSlots.length) {
+    const primary = detailSlots.length >= catalogSlots.length ? detailSlots : catalogSlots;
+    const secondary = primary === detailSlots ? catalogSlots : detailSlots;
+    const descriptors = [...primary];
+    const counts = new Map<string, number>();
+    const identity = (photo: AuctionNinjaPhysicalPhotoDescriptor) => photo.fullResolutionUrl || photo.knownImageUrl;
+    for (const photo of primary) counts.set(identity(photo), (counts.get(identity(photo)) || 0) + 1);
+    // Match occurrences across views, not a URL set: repeated seller slots are evidence.
+    const observed = new Map<string, number>();
+    for (const photo of secondary) {
+      const key = identity(photo);
+      const occurrence = (observed.get(key) || 0) + 1;
+      observed.set(key, occurrence);
+      if (!key || occurrence > (counts.get(key) || 0)) descriptors.push(photo);
+    }
+    merged.physicalPhotoDescriptors = descriptors;
+    merged.photoAudit = {
+      expectedCount: null, observedCount: descriptors.length,
+      knownImageCount: descriptors.filter((photo) => photo.knownImageUrl).length,
+      reconciled: false, verification: 'unverified', countSource: 'dom-gallery',
+    };
+  } else {
+    merged.physicalPhotoDescriptors = merged.images.map((url) => ({
+      sellerOrdinal: null, fullResolutionUrl: null, knownImageUrl: url,
+      thumbnailUrl: url, source: 'known-image-url',
+    }));
+    merged.photoAudit = {
+      expectedCount: null, observedCount: 0, knownImageCount: merged.physicalPhotoDescriptors.length,
+      reconciled: false, verification: 'unverified', countSource: 'dom-gallery',
+    };
+  }
   if (!merged.image) merged.image = merged.images[0] || '';
   merged.detailEnriched = true; merged.detailSource = 'same-origin-product-document';
   merged.extractionAudit = { ...merged.extractionAudit, fieldsPresent: uniqueNonEmpty([...merged.extractionAudit.fieldsPresent, 'detailEnriched']), missingFields: merged.extractionAudit.missingFields.filter((field) => !detail[field as keyof AuctionNinjaDetailRecord]) };

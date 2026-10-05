@@ -94,7 +94,7 @@ test('lot detail includes lead, category, structured fields, description, and al
     <tr><th>Condition</th><td>New - Factory Sealed</td></tr><tr><th>Functional?</th><td>Yes</td></tr>
   </table><div id="description">Shelf Location: Z1<br>In Packaging?: Yes<br>Missing Parts?: No</div>
   <div class="lot-images"><img src="https://img/one.jpg"><img data-src="https://img/two.jpg"></div>
-  <aside class="recommendations"><img src="https://img/unrelated.jpg"></aside><div>OPEN</div>`;
+  <aside class="recommendations"><img src="https://img/unrelated.jpg"></aside><div id="lot-details-6"><div>OPEN</div></div>`;
   const dom = new JSDOM(html, { url: 'https://hibid.com/lot/6/steelseries' });
   const record = extractHibidLotDetail(dom.window.document, dom.window.location.href)!;
   assert.equal(record.lot, '6');
@@ -104,6 +104,42 @@ test('lot detail includes lead, category, structured fields, description, and al
   assert.ok(!record.images.some((url) => url.includes('unrelated')));
   assert.equal((record.descriptionFields as Record<string, string>).Condition, 'New - Factory Sealed');
   assert.equal(record.status, 'OPEN');
+});
+
+test('lot detail does not infer Won from auction fee terms on an open lot', () => {
+  const html = `<h1>Lot # : 39 - Fire HD 10 Bluetooth Keyboard Case</h1>
+    <div id="lot-details-323200518"><app-lot-details-subpanel>
+      <div>High Bid: 0.00 USD</div><div>Time Remaining: 23h 17m</div>
+      <button>Bid 2.50 USD</button>
+    </app-lot-details-subpanel></div>
+    <div>Bidding Notice: Fees: 15% Buyer's Premium + $2 per lot/item won.</div>`;
+  const dom = new JSDOM(html, { url: 'https://hibid.com/lot/323200518/fire-hd-10-bluetooth-keyboard-case' });
+  const record = extractHibidLotDetail(dom.window.document, dom.window.location.href)!;
+  assert.equal(record.status, 'OPEN');
+  assert.equal(record.nextBid, 2.5);
+});
+
+test('lot detail reads a closed outcome from its native status subpanel', () => {
+  const html = `<h1>Lot # : 7 - Test item</h1><app-lot-details-subpanel>
+    <div>Bidding Closed</div><div>Price Realized: 35.00 USD</div>
+    </app-lot-details-subpanel><footer>UPCOMING auctions</footer>`;
+  const dom = new JSDOM(html, { url: 'https://hibid.com/lot/700/test-item' });
+  const record = extractHibidLotDetail(dom.window.document, dom.window.location.href)!;
+  assert.equal(record.status, 'Closed');
+});
+
+test('lot detail fallback reads only badges inside the current lot container', () => {
+  for (const expected of ['Won', 'Winning', 'Outbid', 'Closed']) {
+    const html = `<h1>Lot # : 7 - Test item</h1>
+      <div id="lot-details-700"><span>${expected}</span></div>
+      <aside class="recommendations"><div>OPEN</div></aside>`;
+    const dom = new JSDOM(html, { url: 'https://hibid.com/lot/700/test-item' });
+    const record = extractHibidLotDetail(dom.window.document, dom.window.location.href)!;
+    assert.equal(record.status, expected);
+  }
+  const html = `<h1>Lot # : 7 - Test item</h1><div id="lot-details-700"><div>Bidding Closed</div></div><footer><div>OPEN</div></footer>`;
+  const dom = new JSDOM(html, { url: 'https://hibid.com/lot/700/test-item' });
+  assert.equal(extractHibidLotDetail(dom.window.document, dom.window.location.href)?.status, 'Closed');
 });
 
 test('lot detail rejects consent CSS and auction-level descriptions', () => {
@@ -148,6 +184,9 @@ test('LLM brief carries complete-only audit and mandatory resale rules', () => {
   const item: any = { id: '1', eventItemId: '1', title: 'Group of electronics', description: 'Model ABC', images: ['https://img/1.jpg'] };
   const payload = buildHibidExportPayload(context, job, [item], DEFAULT_SETTINGS);
   const brief = buildHibidLlmBrief(payload, DEFAULT_SETTINGS);
+  assert.match(brief, /raw action-log row with actionID, sourceID, requestURL, and the actual UTC openclock/);
+  assert.match(brief, /actual UTC observedclock, literal photo-specific visible fact or query-specific result evidence/);
+  assert.match(brief, /downloaded or opened image that was not visually inspected remains pending/);
   assert.match(brief, /generic mixed lot may not be marked Garbage/i);
   assert.match(brief, /EBAY SOLD EVIDENCE GATE/i);
   assert.match(brief, /A Confirmed Lead without a matching Evidence row is invalid/i);

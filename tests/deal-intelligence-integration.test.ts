@@ -3,7 +3,8 @@ import test from 'node:test';
 import { readFile, readdir } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js';
-import { applyTileAnnotation, canReuseRetailEvidence, mutationAffectedLotIds, reserveTileAnnotationSpace, shouldRenderProvisionalDealAnnotations, visibleLotIdSignature } from '../src/content/deal-intelligence.js';
+import { extractHibidLotDetail } from '../src/hibid/dom.js';
+import { applyTileAnnotation, buildAnalysisRecords, canReuseRetailEvidence, mergeRetainedLotDetails, mutationAffectedLotIds, publishLotPanelEconomics, refreshLiveAnalysisRecord, refreshRecordIndicators, reserveTileAnnotationSpace, shouldRenderProvisionalDealAnnotations, visibleLotIdSignature } from '../src/content/deal-intelligence.js';
 import { assessCondition, calculateUsAllIn, computeRetailIndicators, detectMixedLot, extractProductIdentity } from '../src/intelligence/us-deal-intelligence.js';
 import {
   DEV_RELOAD_PENDING_MAX_AGE_MS,
@@ -316,6 +317,210 @@ test('all-in evidence stays inside the isolated row and never changes native bid
   }
 });
 
+test('runtime economics uses hydrated auction terms only and keeps unconfigured tax estimated', () => {
+  const dom = new JSDOM('<app-lot-tile id="lot-323017949"><div class="lot-tile-content"></div></app-lot-tile>');
+  const previous = { document: (globalThis as any).document, CSS: (globalThis as any).CSS, HTMLAnchorElement: (globalThis as any).HTMLAnchorElement };
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).CSS = { escape: (value: string) => value };
+  (globalThis as any).HTMLAnchorElement = dom.window.HTMLAnchorElement;
+  try {
+    const lot: any = {
+      source: 'hibid-api', pageKind: 'lot', id: '323017949', eventItemId: '323017949', itemId: '', lot: '323', title: 'Test lot', lead: 'Test lot',
+      url: '/lot/323017949/test', image: '', images: [], description: 'Product retail fee $250 is irrelevant', descriptionHtml: '', category: '', categories: [],
+      currentBid: 10, nextBid: 12.5, bidCount: 0, status: 'OPEN', timeLeft: '', quantity: null, shippingOffered: false, auctionId: '779483', auctionTitle: '', location: '',
+      buyerPremium: '15%', rawText: 'OPEN USD $250 retail fee', auctionTerms: '15% buyer premium + $2 per lot', biddingNotice: '15% buyer premium + $2.00 per-lot fee', paymentInfo: '', shippingAndPickupInfo: '', descriptionFields: {},
+    };
+    const [record] = buildAnalysisRecords([lot], new Map(), new Map(), new Map(), normalizeSettings({ ...DEFAULT_SETTINGS, stateCode: '', taxPctOverride: null, taxExempt: false }));
+    assert.equal(record?.allIn, null);
+    assert.equal(record?.economics.flatFees, 2);
+    assert.equal(record?.economics.estimatedCost, 16.375);
+    record!.amazon = { status: 'matched', query: 'Test lot', fetchedAt: 1, cached: true, message: 'matched', candidates: [], match: { score: 100, candidate: { asin: 'B0TEST', title: 'Test lot', price: 42.98, used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0TEST' } } } as any;
+    refreshRecordIndicators(record!);
+    assert.equal(record!.comparisonCost, 16.375);
+    assert.equal(record!.amazonIndicator.cls, 'green');
+    assert.equal(applyTileAnnotation(record as any, { kind: 'catalog' } as any), true);
+    const strip = shadowStrip(dom.window.document, '323017949');
+    assert.match(strip.textContent || '', /Amazon \$42\.98/);
+    assert.match(strip.textContent || '', /Est\. \$16\.38 \+ costs/);
+    assert.doesNotMatch(strip.textContent || '', /All-in/);
+    assert.match(strip.querySelector('[title*="Sales tax"]')?.getAttribute('title') || '', /subtotal excludes tax/i);
+    const amazonTitle = strip.querySelector('a[title*="Amazon:"]')?.getAttribute('title') || '';
+    assert.match(amazonTitle, /Provisional bid cost \$16\.38/);
+    assert.match(amazonTitle, /not a profit or final bid-ceiling estimate/i);
+    assert.doesNotMatch(amazonTitle, /All-in/);
+  } finally {
+    if (previous.document === undefined) delete (globalThis as any).document; else (globalThis as any).document = previous.document;
+    if (previous.CSS === undefined) delete (globalThis as any).CSS; else (globalThis as any).CSS = previous.CSS;
+    if (previous.HTMLAnchorElement === undefined) delete (globalThis as any).HTMLAnchorElement; else (globalThis as any).HTMLAnchorElement = previous.HTMLAnchorElement;
+  }
+});
+
+test('runtime economics reconciles a published card premium before the cash discount', () => {
+  const lot: any = {
+    source: 'hibid-api', pageKind: 'lot', id: '322934183', eventItemId: '322934183', itemId: '', lot: '32',
+    title: 'Test lot', lead: 'Test lot', url: '/lot/322934183/test', image: '', images: [],
+    description: '', descriptionHtml: '', category: '', categories: [], currentBid: 10, nextBid: 12.5,
+    bidCount: 0, status: 'OPEN', timeLeft: '', quantity: null, shippingOffered: false,
+    auctionId: '779320', auctionTitle: '', location: 'Maryland', buyerPremium: '15%', rawText: '',
+    auctionTerms: 'Buyers shall pay a 20% buyers premuim on final accepted bids. A discount of 5% is offered if Buyer pays cash or check.',
+    biddingNotice: '20% buyers premium with a payment of a credit card, 15% with cash or check',
+    paymentInfo: '', shippingAndPickupInfo: '', descriptionFields: {},
+  };
+  const settings = normalizeSettings({ ...DEFAULT_SETTINGS, stateCode: '', taxPctOverride: null, taxExempt: false });
+  const [record] = buildAnalysisRecords([lot], new Map(), new Map(), new Map(), settings);
+  assert.equal(record?.economics.premiumPct, 20);
+  assert.equal(record?.economics.premiumSource, 'auction_terms');
+  assert.equal(record?.economics.premium, 2.5);
+  assert.equal(record?.economics.knownSubtotal, 15);
+  assert.match(record?.economics.warnings.join(' ') ?? '', /payment rate is confirmed/i);
+  assert.equal(record?.economics.complete, false);
+});
+
+test('lot calculator economics bridge sends lot-bound fixed fees once per changed payload', () => {
+  const dom = new JSDOM('<div id="lotlens-root"></div>');
+  const host = dom.window.document.getElementById('lotlens-root')!;
+  let updates = 0;
+  host.addEventListener('flippah:economics', () => { updates += 1; });
+  const record: any = {
+    lot: { id: '323017949' }, currency: 'USD',
+    economics: { flatFees: 2, premiumPct: 20, premiumSource: 'auction_terms', complete: false, warnings: ['Shipping is unknown.'] },
+  };
+  publishLotPanelEconomics(host, record);
+  assert.equal(host.dataset.flippahEconomicsLotId, '323017949');
+  assert.equal(host.dataset.flippahFixedFeeCents, '200');
+  assert.equal(host.dataset.flippahPremiumPct, '20');
+  assert.equal(host.dataset.flippahEconomicsComplete, 'false');
+  assert.deepEqual(JSON.parse(host.dataset.flippahEconomicsWarnings!), ['Shipping is unknown.']);
+  publishLotPanelEconomics(host, record);
+  assert.equal(updates, 1);
+  publishLotPanelEconomics(host, { ...record, lot: { id: '323017950' } });
+  assert.equal(host.dataset.flippahEconomicsLotId, '323017950');
+  assert.equal(updates, 2);
+  publishLotPanelEconomics(host, { ...record, currency: 'CAD' });
+  assert.equal(host.dataset.flippahFixedFeeCents, '0');
+  assert.equal(host.dataset.flippahPremiumPct, '');
+  assert.equal(host.dataset.flippahEconomicsComplete, 'false');
+  for (const flatFees of [-1, Infinity, NaN, Number.MAX_SAFE_INTEGER]) {
+    publishLotPanelEconomics(host, { ...record, economics: { flatFees, complete: true, warnings: [] } });
+    assert.equal(host.dataset.flippahFixedFeeCents, '0');
+    assert.equal(host.dataset.flippahEconomicsComplete, 'false');
+  }
+  dom.window.close();
+});
+
+test('Buda live notice publishes its calculated two-dollar fee to the lot-panel bridge', () => {
+  const lot: any = {
+    source: 'hibid-api', pageKind: 'lot', id: 'buda-live-fee', eventItemId: 'buda-live-fee', itemId: '', lot: '1',
+    title: 'Buda test lot', lead: 'Buda test lot', url: '/lot/buda-live-fee/test', image: '', images: [],
+    description: '', descriptionHtml: '', category: '', categories: [], currentBid: 2, nextBid: 2.50,
+    bidCount: 0, status: 'OPEN', timeLeft: '', quantity: null, shippingOffered: false,
+    auctionId: 'buda', auctionTitle: 'Buda', location: '', buyerPremium: '15%', rawText: '',
+    auctionTerms: '', biddingNotice: 'Fees: 15% Buyer’s Premium + $2 per lot/item won',
+    paymentInfo: '', shippingAndPickupInfo: '', descriptionFields: {},
+  };
+  const settings = normalizeSettings({ ...DEFAULT_SETTINGS, stateCode: '', taxPctOverride: 0, taxExempt: false });
+  const [record] = buildAnalysisRecords([lot], new Map(), new Map(), new Map(), settings);
+  assert.equal(record?.economics.knownSubtotal, 4.875);
+  assert.equal(Math.round((record?.economics.knownSubtotal ?? 0) * 100) / 100, 4.88);
+  assert.equal(record?.economics.flatFees, 2);
+
+  const dom = new JSDOM('<div id="lotlens-root"></div>');
+  const host = dom.window.document.getElementById('lotlens-root')!;
+  publishLotPanelEconomics(host, record!);
+  assert.equal(host.dataset.flippahFixedFeeCents, '200');
+  assert.equal(host.dataset.flippahPremiumPct, '15');
+  dom.window.close();
+});
+
+test('initial lot DOM supplies the visible bidding fee before GraphQL enrichment', () => {
+  const dom = new JSDOM(`<h1>Lot # : 118 - Swash Eco Seat 102</h1>
+    <div id="lot-details-323679824"><app-lot-details-subpanel>
+      <div>High Bid: 7.50 USD</div><div>Time Remaining: 9h 11m</div>
+      <button>Bid 10.00 USD</button>
+    </app-lot-details-subpanel></div>
+    <div class="notice card"><div class="card-header"><h2>Bidding Notice:</h2>
+      <p>Fees: 15% Buyer's Premium + $2 per lot/item won</p></div></div>
+    <div class="notice card"><div class="card-header"><h2>Auction Notice:</h2>
+      <p>Shipping and handling may cost $20 per item.</p></div></div>
+    <table><tr><th>Lot #</th><td>118</td></tr><tr><th>Lead</th><td>Swash Eco Seat 102</td></tr>
+      <tr><th>Description</th><td>Accessory is $40 per item.</td></tr></table>
+    <div id="lotlens-root"></div>`, { url: 'https://hibid.com/lot/323679824' });
+  const lot = extractHibidLotDetail(dom.window.document, dom.window.location.href)!;
+  assert.equal(lot.biddingNotice, "Fees: 15% Buyer's Premium + $2 per lot/item won");
+  assert.equal(lot.currentBid, 7.5);
+  assert.equal(lot.nextBid, 10);
+  const settings = normalizeSettings({ ...DEFAULT_SETTINGS, taxExempt: true });
+  const [record] = buildAnalysisRecords([lot], new Map(), new Map(), new Map(), settings);
+  assert.equal(record?.economics.flatFees, 2);
+  assert.equal(record?.economics.knownSubtotal, 13.5);
+  const host = dom.window.document.getElementById('lotlens-root')!;
+  publishLotPanelEconomics(host, record!);
+  assert.equal(host.dataset.flippahFixedFeeCents, '200');
+  dom.window.close();
+});
+
+test('live native bid changes recalculate costs and colors without losing hydrated terms or prices', () => {
+  const settings = normalizeSettings({ ...DEFAULT_SETTINGS, taxExempt: true });
+  const lot: any = {
+    id: '323017949', auctionId: '779483', title: 'Vicks Sinus Steam Inhaler', lead: 'Vicks Sinus Steam Inhaler',
+    currentBid: 6, nextBid: 7, bidCount: 2, status: 'Winning', rawText: 'Winning USD',
+    description: 'Condition: New', descriptionHtml: '<p>Condition: New</p>', descriptionFields: { Condition: 'New' },
+    buyerPremium: '15%', auctionTerms: '$2 per lot', biddingNotice: '', paymentInfo: '', shippingAndPickupInfo: '',
+    image: 'https://example.test/photo.jpg', images: ['https://example.test/photo.jpg'],
+    category: '', categories: [], quantity: null,
+  };
+  const [record] = buildAnalysisRecords([lot], new Map(), new Map(), new Map(), settings);
+  record!.amazon = { status: 'matched', query: record!.identity.query, fetchedAt: 1, cached: true, message: 'matched', candidates: [], match: { score: 100, candidate: { asin: 'B0TEST', title: lot.title, price: 30, used: false, sponsored: false, url: 'https://www.amazon.com/dp/B0TEST' } } } as any;
+  refreshRecordIndicators(record!);
+  assert.equal(record!.comparisonCost, 10.05);
+  assert.equal(record!.amazonIndicator.cls, 'green');
+  const redraw: any = { ...lot, auctionId: '', buyerPremium: '', auctionTerms: '', description: '', descriptionHtml: '', descriptionFields: {}, currentBid: 20, nextBid: 21, bidCount: 9, status: 'Outbid', images: [] };
+  const next = refreshLiveAnalysisRecord(record!, redraw, settings, new Map());
+  assert.equal(next.lot.nextBid, 21);
+  assert.equal(next.lot.currentBid, 20);
+  assert.equal(next.lot.bidCount, 9);
+  assert.equal(next.lot.status, 'Outbid');
+  assert.equal(next.economics.flatFees, 2);
+  assert.equal(next.comparisonCost, 26.15);
+  assert.equal(next.amazonIndicator.cls, 'red');
+  assert.equal(next.amazon, record!.amazon);
+  assert.equal(next.lot.description, 'Condition: New');
+  assert.equal(next.lot.auctionId, '779483');
+  assert.equal(record!.lot.nextBid, 7, 'prior snapshot is immutable');
+  const corrected = refreshLiveAnalysisRecord(next, { ...redraw, auctionTerms: '$3 per lot' }, settings, new Map());
+  assert.equal(corrected.economics.flatFees, 3);
+  const closed = refreshLiveAnalysisRecord(next, { ...redraw, status: 'Closed', currentBid: 20, nextBid: null }, settings, new Map());
+  assert.equal(closed.lot.nextBid, 0);
+  assert.equal(closed.economics.hammer, 20);
+  const foreign = { ...redraw, id: 'OTHER' };
+  assert.equal(mergeRetainedLotDetails(foreign, lot), foreign);
+  const foreignAuction = { ...redraw, auctionId: 'DIFFERENT' };
+  assert.equal(mergeRetainedLotDetails(foreignAuction, lot), foreignAuction);
+  record!.state.resaleEstimate = 100;
+  record!.state.maxBid = 50;
+  record!.state.queryOverride = 'Foreign query';
+  record!.outcome = { lotId: lot.id } as any;
+  const reset = refreshLiveAnalysisRecord(record!, foreignAuction, settings, new Map());
+  assert.equal(reset.amazon, null);
+  assert.equal(reset.state.resaleEstimate, null);
+  assert.equal(reset.state.maxBid, null);
+  assert.equal(reset.state.queryOverride, '');
+  assert.equal(reset.outcome, null);
+});
+
+test('native text-node bid updates trigger repair but owned annotation text does not', () => {
+  const dom = new JSDOM('<app-lot-tile id="lot-192"><span>Bid 7.00 USD</span><div data-flippah-owned="true">Amazon $30</div></app-lot-tile>');
+  const tile = dom.window.document.querySelector('app-lot-tile')!;
+  const observer = new dom.window.MutationObserver(() => undefined);
+  observer.observe(tile, { characterData: true, subtree: true });
+  tile.querySelector('span')!.firstChild!.textContent = 'Bid 21.00 USD';
+  assert.deepEqual(mutationAffectedLotIds(observer.takeRecords() as any), ['192']);
+  tile.querySelector('[data-flippah-owned]')!.firstChild!.textContent = 'Amazon $31';
+  assert.deepEqual(mutationAffectedLotIds(observer.takeRecords() as any), []);
+  observer.disconnect();
+  dom.window.close();
+});
+
 test('live redraws retain conclusive Amazon evidence but retry transient failures or changed queries', async () => {
   const matched = {
     query: 'Vicks Sinus Steam Inhaler', amazonOverrideAsin: '',
@@ -460,6 +665,8 @@ test('open-source QoL additions stay optional, local, and visible through end-us
   assert.match(content, /Record resale outcome/);
   assert.match(content, /flippah-outcome-save/);
   assert.match(popup, /Export outcomes/);
-  assert.match(popup, /details \$\{payload\.audit\.fidelity\.metrics\.description\.percent\}%/);
+  assert.match(popup, /descriptions on \$\{payload\.audit\.fidelity\.metrics\.description\.percent\}%/);
+  assert.match(popup, /image links on \$\{payload\.audit\.fidelity\.metrics\.images\.percent\}%/);
+  assert.match(popup, /gallery total unverified/);
   assert.match(exports, /auditHibidRecordFidelity/);
 });

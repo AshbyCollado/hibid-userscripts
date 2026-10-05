@@ -69,7 +69,7 @@ interface TitleMutator {
   expectsSameQuery: (title: string) => boolean;
 }
 
-const ADMINISTRATIVE_TITLE_RE = /^(?:welcome\b|preview\s+only\b|tba\b|shipping\s+(?:info|information)\b|pickup\s+(?:info|information|dates?)\b|terms\s+(?:and|&)\s+conditions\b|auction\s+(?:info|information|notes?)\b|read\s+(?:before|description)\b|important\s+(?:info|information|notice)\b)/i;
+const ADMINISTRATIVE_TITLE_RE = /^(?:welcome\b|preview\s+only\b|tba\b|no\s+shipping\b|shipping\s+(?:info|information)\b|pickup\s+(?:info|information|dates?)\b|terms\s+(?:and|&)\s+conditions\b|auction\s+(?:info|information|notes?)\b|read\s+(?:before|description)\b|important\s+(?:info|information|notice)\b)/i;
 const WEAK_TITLE_RE = /^(?:lot(?:\s*#?\s*:?\s*[\w.-]+)?|item(?:\s*#?\s*:?\s*[\w.-]+)?|see\s+(?:photos?|pictures?|description)|misc(?:ellaneous)?|various|assorted|unknown|n\/?a|tv)$/i;
 const GENERIC_QUERY_TOKENS = new Set(['auction', 'description', 'info', 'information', 'item', 'lot', 'misc', 'only', 'pickup', 'sale', 'see', 'shipping', 's', 'terms', 'various']);
 const CONDITION_SUFFIX_RE = /\b(?:tested\s+working|open\s+box|new\s+in\s+box|refurbished|used|for\s+parts|as\s+is|untested)\b/i;
@@ -118,8 +118,10 @@ function likelyModelTokens(title: string): string[] {
   }))];
 }
 
-function orphanEntityToken(query: string): string | null {
-  return tokenise(query).find((token) => ['amp', 'apos', 'hellip', 'nbsp', 'quot', 'times'].includes(token)) || null;
+function orphanEntityToken(query: string, sourceTitle: string): string | null {
+  const encodedNames = new Set([...sourceTitle.matchAll(/&(?:amp|apos|hellip|nbsp|quot|times);/gi)].map((match) => match[0]!.slice(1, -1).toLowerCase()));
+  if (!encodedNames.size) return null;
+  return tokenise(query).find((token) => encodedNames.has(token)) || null;
 }
 
 function repeatedTokenBlock(query: string): string | null {
@@ -127,7 +129,9 @@ function repeatedTokenBlock(query: string): string | null {
   for (let width = 2; width <= Math.floor(tokens.length / 2); width += 1) {
     const first = tokens.slice(0, width).join(' ');
     for (let start = width; start + width <= tokens.length; start += 1) {
-      if (tokens.slice(start, start + width).join(' ') === first) return first;
+      const isAdjacent = start === width;
+      const isBoundaryDuplicate = start === tokens.length - width;
+      if ((isAdjacent || isBoundaryDuplicate) && tokens.slice(start, start + width).join(' ') === first) return first;
     }
   }
   return null;
@@ -155,7 +159,11 @@ function titleMutators(): TitleMutator[] {
   const always = () => true;
   const enoughWords = (title: string) => title.split(/\s+/).length >= 3;
   const enoughBoundaryWords = (title: string) => buildProductResearchQuery(title).split(/\s+/).length >= 5;
-  const unambiguousBareLabel = (title: string) => !/^\d/i.test(buildProductResearchQuery(title));
+  const unambiguousBareLabel = (title: string) => (
+    !ADMINISTRATIVE_TITLE_RE.test(title.trim())
+    && !/^\d/i.test(buildProductResearchQuery(title))
+    && !/^\s*(?:no\.?|number)\s+[a-z0-9][a-z0-9.-]*\b/i.test(title)
+  );
   return [
     { name: 'lot-prefix', apply: (title) => `Lot #A17 | ${title}`, expectsSameQuery: always },
     { name: 'lot-no-prefix', apply: (title) => `Lot No. A17 - ${title}`, expectsSameQuery: always },
@@ -285,7 +293,7 @@ export function evaluateTitleCorpusRecord(record: TitleCorpusRecord): TitleRelia
   if (query && buildProductResearchQuery(query) !== query) {
     issues.push(issue(record, query, 'query-not-idempotent', 'error', `Second pass produced "${buildProductResearchQuery(query)}".`));
   }
-  const entityToken = orphanEntityToken(query);
+  const entityToken = orphanEntityToken(query, record.title);
   if (entityToken) issues.push(issue(record, query, 'html-entity-token', 'error', `Entity residue "${entityToken}" entered the query.`));
   const repeated = repeatedTokenBlock(query);
   if (repeated) issues.push(issue(record, query, 'repeated-token-block', 'warning', `Repeated token block: "${repeated}".`));

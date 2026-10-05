@@ -6,10 +6,15 @@ import { jobMatchesContextAndScope } from '../core/job-scope.js';
 import { calculateDealOutcome, type DealOutcome } from '../core/outcomes.js';
 import type { HiBidLotRecord, PageContext, ScrapeJobSummary } from '../core/types.js';
 import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
-import { buildHibidExportPayload, buildHibidLlmBrief } from '../hibid/exports.js';
+import { buildHibidExportPayload, buildHibidResearchQueue } from '../hibid/exports.js';
 import { buildHibidSavedResearchSnapshot, hibidSavedResearchStorageKeys } from '../intelligence/deal-storage.js';
-import { buildAuctionNinjaExportPayload, buildAuctionNinjaLlmBrief, type AuctionNinjaExportContext, type AuctionNinjaExportRecord } from '../auctionninja/exports.js';
+import { buildAuctionNinjaExportPayload, buildAuctionNinjaResearchQueue, type AuctionNinjaExportContext, type AuctionNinjaExportRecord } from '../auctionninja/exports.js';
+import { clampResearchBatch, researchBatchCount, researchBatchScopeKey, restoreResearchBatchSelection } from './research-batch-selection.js';
+import { buildResearchCopyText } from './research-copy.js';
+import { createCopyCoordinator } from './copy-coordinator.js';
+import { resolveResearchSessionStartedAt, type ResearchSessionIdentity } from '../intelligence/research-session-storage.js';
 import { resolveAuctionNinjaPage } from '../auctionninja/route.js';
+import { currentViewRenderKey } from './render-key.js';
 import {
   UPDATE_STATE_STORAGE_KEY,
   failedUpdateState,
@@ -29,15 +34,19 @@ let context: PageContext | null = null;
 let job: ScrapeJobSummary | null = null;
 let selectedTab: 'current' | 'watchlist' = 'watchlist';
 let selectedGroupId = '';
+let selectedResearchBatch = 1;
+let researchBatchKey = '';
 let toast = '';
 let toastFromRefreshError = false;
-let pendingCopy: 'json' | 'llm' | null = null;
+let pendingCopy: { format: 'json' | 'llm'; batch: number; request: number } | null = null;
 let pollTimer: number | null = null;
+let refreshInFlight = false;
 let countdownTimer: number | null = null;
 let bookHandoffBusy = false;
 let bookHandoffStatus = 'Ready to send every seller photo';
 let bookHandoffFailed = false;
 let updateCheckState: ExtensionUpdateState = idleUpdateState(currentVersion);
+let lastCurrentRenderKey: string | null = null;
 
 function legacyMessage<T>(message: unknown): Promise<T> {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, (response: T) => {
@@ -99,6 +108,19 @@ async function loadMatchingJob(): Promise<ScrapeJobSummary | null> {
   return jobMatchesContextAndScope(stored, context, selectedGroupId) ? stored : null;
 }
 
+async function syncResearchBatchSelection(): Promise<void> {
+  const key = context?.supported ? researchBatchScopeKey(context.fingerprint, selectedGroupId) : '';
+  if (key === researchBatchKey) return;
+  researchBatchKey = key;
+  selectedResearchBatch = 1;
+  if (!key) return;
+  const stored = await getLocalStorage([key]).catch((): Record<string, unknown> => ({}));
+  if (key !== researchBatchKey) return;
+  selectedResearchBatch = restoreResearchBatchSelection(
+    stored[key], job?.phase === 'completed' ? job.hydratedCount : null,
+  );
+}
+
 function routeLabel(): string {
   if (!context?.route.supported) return 'Unsupported page';
   const labels: Record<string, string> = {
@@ -147,10 +169,16 @@ function currentHtml(): string {
   const count = job?.expectedTotal ?? context.visibleExpectedTotal;
   const current = job?.hydratedCount || job?.enumeratedCount || 0;
   const percent = count && count > 0 ? Math.min(100, Math.round(current / count * 100)) : (job?.phase === 'completed' ? 100 : 0);
-  const groupSelect = context.auctionGroups.length ? `<label for="auction-group">Past auction</label><select id="auction-group"><option value="">Select an auction</option>${context.auctionGroups.map((group) => `<option value="${escapeHtml(group.id)}" ${selectedGroupId === group.id ? 'selected' : ''}>${escapeHtml(group.title)}${group.location ? ` — ${escapeHtml(group.location)}` : ''}</option>`).join('')}</select>` : '';
+  let groupSelect = context.auctionGroups.length ? `<label for="auction-group">Past auction</label><select id="auction-group"><option value="">Select an auction</option>${context.auctionGroups.map((group) => `<option value="${escapeHtml(group.id)}" ${selectedGroupId === group.id ? 'selected' : ''}>${escapeHtml(group.title)}${group.location ? ` — ${escapeHtml(group.location)}` : ''}</option>`).join('')}</select>` : '';
   const terminalFailure = Boolean(job && ['failed', 'stale', 'stopped'].includes(job.phase));
   const canStart = !busy() && !terminalFailure && (!(context.route.kind === 'pastbids' || context.route.kind === 'pastwatchlist') || Boolean(selectedGroupId));
   const complete = jobMatchesSelection() && job?.phase === 'completed';
+  const batchLotCount = complete ? job?.hydratedCount ?? 0 : 0;
+  const totalBatches = researchBatchCount(batchLotCount);
+  if (totalBatches > 1) {
+    const batch = clampResearchBatch(selectedResearchBatch, batchLotCount);
+    groupSelect += `<label for="research-batch">AI research batch</label><select id="research-batch" aria-label="AI research batch">${Array.from({ length: totalBatches }, (_, index) => `<option value="${index + 1}" ${batch === index + 1 ? 'selected' : ''}>Batch ${index + 1} of ${totalBatches} · lots ${index * 8 + 1}–${Math.min((index + 1) * 8, batchLotCount)}</option>`).join('')}</select>`;
+  }
   const analysis = context.analysis;
   const analysisPercent = analysis.total > 0 ? Math.min(100, Math.round(analysis.analyzed / analysis.total * 100)) : 0;
   const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid', 'sale-catalog', 'category-search', 'item-detail', 'followed-items', 'items-won', 'bid-history'].includes(context.route.kind)
@@ -176,9 +204,62 @@ function shell(body: string): string {
   return `<div class="shell"><header class="topbar"><span class="brand">Flippah by ALOS</span><span class="version">v${escapeHtml(currentVersion)}</span><button id="check-updates" class="icon-button update-button ${checking ? 'checking' : ''}" title="Check Chrome Web Store for a Flippah update" aria-label="Check for Flippah updates" ${checking ? 'disabled' : ''}>↻</button><button id="settings" class="icon-button" title="Open Flippah settings" aria-label="Open settings">⚙</button></header>${updateStatus}<nav class="tabs" aria-label="Flippah sections"><button class="tab" data-tab="watchlist" aria-selected="${selectedTab === 'watchlist'}">Watchlist</button><button class="tab" data-tab="current" aria-selected="${selectedTab === 'current'}">Scraper</button></nav>${body}</div>`;
 }
 
-async function render(): Promise<void> {
+function currentRenderKey(): string {
+  return JSON.stringify([
+    currentViewRenderKey(selectedTab, context, selectedGroupId, job?.phase ?? null),
+    job?.phase === 'completed' ? job.jobId : null,
+    job?.phase === 'completed' ? job.hydratedCount : null,
+    job?.phase === 'completed' ? job.expectedTotal : null,
+  ]);
+}
+
+function patchCurrentView(): void {
+  const status = app.querySelector<HTMLElement>('.status');
+  if (status) {
+    status.className = `status ${statusClass()}`;
+    const statusText = status.querySelector('span:last-child');
+    if (statusText) statusText.textContent = scrapeStatusText(job?.hydratedCount || job?.enumeratedCount || 0, job?.expectedTotal ?? context?.visibleExpectedTotal);
+  }
+
+  const scraperProgress = status?.nextElementSibling?.classList.contains('progress') ? status.nextElementSibling : null;
+  const count = job?.expectedTotal ?? context?.visibleExpectedTotal;
+  const current = job?.hydratedCount || job?.enumeratedCount || 0;
+  const percent = count && count > 0 ? Math.min(100, Math.round(current / count * 100)) : (job?.phase === 'completed' ? 100 : 0);
+  if (scraperProgress) {
+    scraperProgress.querySelector<HTMLElement>('i')!.style.width = `${percent}%`;
+    scraperProgress.toggleAttribute('hidden', !(busy() || job?.phase === 'completed'));
+  }
+
+  const complete = jobMatchesSelection() && job?.phase === 'completed';
+  const terminalFailure = Boolean(job && ['failed', 'stale', 'stopped'].includes(job.phase));
+  const canStart = !busy() && !terminalFailure && (!(context?.route.kind === 'pastbids' || context?.route.kind === 'pastwatchlist') || Boolean(selectedGroupId));
+  app.querySelectorAll<HTMLButtonElement>('#copy-llm, #copy-json').forEach((button) => { button.disabled = !canStart && !complete; });
+  const toastNode = app.querySelector<HTMLElement>('.toast');
+  if (toastNode) toastNode.textContent = toast;
+
+  const analysis = context?.analysis;
+  const analysisNode = app.querySelector<HTMLElement>('.analysis');
+  if (analysis && analysisNode) {
+    const analysisStatus = analysisNode.querySelector<HTMLElement>('.analysis-head span');
+    if (analysisStatus) analysisStatus.textContent = analysisStatusText(analysis);
+    const analysisProgress = analysisNode.querySelector<HTMLElement>('.progress');
+    if (analysisProgress) {
+      const analysisPercent = analysis.total > 0 ? Math.min(100, Math.round(analysis.analyzed / analysis.total * 100)) : 0;
+      analysisProgress.querySelector<HTMLElement>('i')!.style.width = `${analysisPercent}%`;
+    }
+    const rerun = analysisNode.querySelector<HTMLButtonElement>('#rerun-analysis');
+    if (rerun) rerun.disabled = analysis.phase === 'scanning' || analysis.phase === 'retail';
+  }
+}
+
+async function render(options: { preserveCurrent?: boolean } = {}): Promise<void> {
+  if (options.preserveCurrent && selectedTab === 'current' && lastCurrentRenderKey === currentRenderKey() && app.querySelector('.shell')) {
+    patchCurrentView();
+    return;
+  }
   if (selectedTab === 'current') {
     replaceMarkup(app, shell(currentHtml()));
+    lastCurrentRenderKey = currentRenderKey();
   } else {
     const [watchlist, outcomes] = await Promise.all([
       legacyMessage<any[]>({ kind: 'watch:list' }).catch(() => []),
@@ -189,6 +270,7 @@ async function render(): Promise<void> {
       ? `<section class="panel">${exportActions}<div class="watch-list">${watchlist.map((item) => `<article class="watch"><div>${safeHiBidUrl(item.imageUrl, '') ? `<img src="${escapeHtml(safeHiBidUrl(item.imageUrl, ''))}" alt="">` : ''}</div><div><a class="watch-title" href="${escapeHtml(safeHiBidUrl(item.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title || `Lot ${item.lotId}`)}</a><div class="watch-meta">${escapeHtml(item.auctioneerName || 'Unknown auctioneer')}</div><div class="watch-meta">${Number.isFinite(item.currentBidCents) ? `$${(item.currentBidCents / 100).toFixed(2)} bid` : 'Bid unavailable'}${Number.isFinite(item.maxBidCents) ? ` · max $${(item.maxBidCents / 100).toFixed(2)}` : ''}</div><div class="watch-meta countdown" data-ends-at="${escapeHtml(item.endsAt ?? '')}">${escapeHtml(formatCountdown(item.endsAt))}</div>${item.note ? `<div class="watch-note">${escapeHtml(item.note)}</div>` : ''}</div><button class="icon-button remove-watch" data-lot-id="${escapeHtml(item.lotId)}" title="Remove watched lot">×</button></article>`).join('')}</div></section>`
       : `<section class="panel">${exportActions}<div class="empty">No watched lots yet.</div></section>`;
     replaceMarkup(app, shell(cards));
+    lastCurrentRenderKey = null;
   }
   bind();
   if (countdownTimer !== null) window.clearInterval(countdownTimer);
@@ -202,8 +284,19 @@ function bind(): void {
   app.querySelector('#check-updates')?.addEventListener('click', () => void checkForUpdates());
   app.querySelector('#settings')?.addEventListener('click', () => chrome.runtime.openOptionsPage());
   app.querySelector<HTMLSelectElement>('#auction-group')?.addEventListener('change', async (event) => {
+    copyCoordinator.begin();
+    pendingCopy = null;
     selectedGroupId = (event.currentTarget as HTMLSelectElement).value;
     job = await loadMatchingJob();
+    await syncResearchBatchSelection();
+    toast = '';
+    await render();
+  });
+  app.querySelector<HTMLSelectElement>('#research-batch')?.addEventListener('change', async (event) => {
+    copyCoordinator.begin();
+    pendingCopy = null;
+    selectedResearchBatch = clampResearchBatch(Number((event.currentTarget as HTMLSelectElement).value), job?.hydratedCount ?? 0);
+    if (researchBatchKey) await setLocalStorage({ [researchBatchKey]: selectedResearchBatch });
     toast = '';
     await render();
   });
@@ -299,45 +392,81 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
-async function copyCompleted(format: 'json' | 'llm'): Promise<void> {
+const copyCoordinator = createCopyCoordinator(copyText);
+
+async function copyCompleted(format: 'json' | 'llm', requestedBatch: number, request: number): Promise<void> {
+  if (!copyCoordinator.isCurrent(request)) return;
   if (!context || !job || !jobMatchesSelection()) throw new Error('No completed scrape matches this page and selection');
+  const sourceJob = job;
+  const sourceContext = context;
+  const sourceGroupId = selectedGroupId;
+  const sourceBatchKey = researchBatchKey;
   const settings = normalizeSettings(await getSyncStorage());
-  const items = await getRecords(job.jobId);
+  const items = await getRecords(sourceJob.jobId);
   const savedStorage = await getLocalStorage(hibidSavedResearchStorageKeys(items));
   const savedResearch = buildHibidSavedResearchSnapshot(items, savedStorage);
-  const auctionNinja = /(^|\.)auctionninja\.com$/i.test(new URL(context.url).hostname);
+  const auctionNinja = /(^|\.)auctionninja\.com$/i.test(new URL(sourceContext.url).hostname);
+  const route = auctionNinja ? resolveAuctionNinjaPage(sourceContext.url) : null;
+  const scope = sourceJob.scopeId || (route?.kind === 'sale-catalog' ? route.saleId : route?.kind === 'category-search' ? route.categorySlug : route?.kind === 'item-detail' ? route.productId : null);
+  const identities: ResearchSessionIdentity[] = auctionNinja
+    ? buildAuctionNinjaResearchQueue(items as unknown as AuctionNinjaExportRecord[], savedResearch).map((row, index) => ({
+      auctionId: route?.saleId || (items[index] as unknown as { saleUrl?: string }).saleUrl || null,
+      sourceId: row.id,
+      query: row.query,
+      condition: String((items[index] as unknown as { descriptionFields?: { condition?: string } }).descriptionFields?.condition || ''),
+    }))
+    : buildHibidResearchQueue(items as unknown as HiBidLotRecord[], savedResearch).map((row, index) => ({
+      auctionId: (items[index] as HiBidLotRecord).auctionId,
+      sourceId: row.id,
+      query: row.query,
+      condition: String((items[index] as HiBidLotRecord & { descriptionFields?: { Condition?: string } }).descriptionFields?.Condition || ''),
+    }));
+  const sessionStartedAt = await resolveResearchSessionStartedAt({
+    provider: auctionNinja ? 'AuctionNinja' : 'HiBid',
+    pageKind: sourceContext.route.kind,
+    routeFingerprint: sourceJob.fingerprint,
+    scope,
+    identities,
+  });
   const payload = auctionNinja
     ? buildAuctionNinjaExportPayload({
       source: 'AuctionNinja',
-      pageKind: context.route.kind as AuctionNinjaExportContext['pageKind'],
-      url: context.url,
-      title: context.title,
-      fingerprint: context.fingerprint,
-      expectedTotal: context.visibleExpectedTotal,
+      pageKind: sourceContext.route.kind as AuctionNinjaExportContext['pageKind'],
+      url: sourceContext.url,
+      title: sourceContext.title,
+      fingerprint: sourceContext.fingerprint,
+      expectedTotal: sourceContext.visibleExpectedTotal,
       scopeId: null,
-      route: resolveAuctionNinjaPage(context.url),
-    } as AuctionNinjaExportContext, job, items as unknown as AuctionNinjaExportRecord[], settings, savedResearch)
-    : buildHibidExportPayload(context, job, items as unknown as HiBidLotRecord[], settings, savedResearch);
-  const text = format === 'json'
-    ? JSON.stringify(payload, null, 2)
-    : auctionNinja
-      ? buildAuctionNinjaLlmBrief(payload as ReturnType<typeof buildAuctionNinjaExportPayload>, settings)
-      : buildHibidLlmBrief(payload as ReturnType<typeof buildHibidExportPayload>, settings);
-  await copyText(text);
-  toast = `Copied ${items.length} lot${items.length === 1 ? '' : 's'} · details ${payload.audit.fidelity.metrics.description.percent}% · photos ${payload.audit.fidelity.metrics.images.percent}%`;
+      route: route!,
+    } as AuctionNinjaExportContext, sourceJob, items as unknown as AuctionNinjaExportRecord[], settings, savedResearch, sessionStartedAt)
+    : buildHibidExportPayload(sourceContext, sourceJob, items as unknown as HiBidLotRecord[], settings, savedResearch, sessionStartedAt);
+  const copied = buildResearchCopyText(payload, settings, format, requestedBatch);
+  if (!copyCoordinator.isCurrent(request) || job?.jobId !== sourceJob.jobId || context?.fingerprint !== sourceContext.fingerprint
+    || selectedGroupId !== sourceGroupId || researchBatchKey !== sourceBatchKey
+    || (format === 'llm' && selectedResearchBatch !== requestedBatch)) {
+    throw new Error('Page or AI batch changed while copying; select it and try again');
+  }
+  if (!await copyCoordinator.write(request, copied.text) || !copyCoordinator.isCurrent(request)
+    || (format === 'llm' && selectedResearchBatch !== requestedBatch)) return;
+  toast = `${copied.batchNumber > 0 ? `Copied AI batch ${copied.batchNumber}/${copied.batchCount} (${Math.min(8, items.length - (copied.batchNumber - 1) * 8)} lots)` : `Copied ${items.length} lot${items.length === 1 ? '' : 's'}`} · descriptions on ${payload.audit.fidelity.metrics.description.percent}% · image links on ${payload.audit.fidelity.metrics.images.percent}%${auctionNinja ? ' · gallery total unverified' : ''}`;
 }
 
 async function copyOrStart(format: 'json' | 'llm'): Promise<void> {
+  const request = copyCoordinator.begin();
   try {
+    const requestedBatch = selectedResearchBatch;
+    const requestedScope = researchBatchKey;
     await updateContextFromTab();
-    if (jobMatchesSelection() && job?.phase === 'completed') await copyCompleted(format);
+    if (!copyCoordinator.isCurrent(request)) return;
+    if (requestedScope && requestedScope !== researchBatchKey) throw new Error('Page changed while copying; try again');
+    if (jobMatchesSelection() && job?.phase === 'completed') await copyCompleted(format, requestedBatch, request);
     else if (job && ['failed', 'stale', 'stopped'].includes(job.phase)) throw new Error('Retry this scrape before exporting');
     else {
-      pendingCopy = format;
+      pendingCopy = { format, batch: requestedBatch, request };
       await command('flippah:job.start');
       toast = 'Scanning the current page…';
     }
-  } catch (error) { toast = error instanceof Error ? error.message : String(error); }
+  } catch (error) { if (copyCoordinator.isCurrent(request)) toast = error instanceof Error ? error.message : String(error); }
   await render();
 }
 
@@ -410,11 +539,22 @@ function startPolling(): void {
   pollTimer = window.setInterval(() => void refreshContext(), 800);
 }
 
+function pageContextFromTab(tabId: number): Promise<PageContext> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error('Auction page is still loading')), 20_000);
+    tabMessage<PageContext>(tabId, 'flippah:page.get-context', {}).then(
+      (value) => { window.clearTimeout(timeout); resolve(value); },
+      (error) => { window.clearTimeout(timeout); reject(error); },
+    );
+  });
+}
+
 async function updateContextFromTab(): Promise<void> {
   if (currentTabId === null) return;
   const previousFingerprint = context?.fingerprint;
-  const nextContext = await tabMessage<PageContext>(currentTabId, 'flippah:page.get-context', {});
+  const nextContext = await pageContextFromTab(currentTabId);
   if (previousFingerprint && previousFingerprint !== nextContext.fingerprint) {
+    copyCoordinator.begin();
     toast = '';
     pendingCopy = null;
     selectedGroupId = '';
@@ -424,10 +564,12 @@ async function updateContextFromTab(): Promise<void> {
   }
   context = nextContext;
   job = await loadMatchingJob();
+  await syncResearchBatchSelection();
 }
 
 async function refreshContext(): Promise<void> {
-  if (currentTabId === null) return;
+  if (currentTabId === null || refreshInFlight) return;
+  refreshInFlight = true;
   try {
     await updateContextFromTab();
     if (toastFromRefreshError) {
@@ -436,19 +578,27 @@ async function refreshContext(): Promise<void> {
     }
     if (job && ['completed', 'failed', 'stopped', 'stale'].includes(job.phase)) {
       if (job.phase === 'completed' && pendingCopy) {
-        const format = pendingCopy; pendingCopy = null;
-        await copyCompleted(format);
+        const { format, batch, request } = pendingCopy; pendingCopy = null;
+        await copyCompleted(format, batch, request);
       }
     }
-    await render();
+    await render({ preserveCurrent: true });
   } catch (error) {
     toast = error instanceof Error ? error.message : String(error);
     toastFromRefreshError = true;
     await render();
+  } finally {
+    refreshInFlight = false;
   }
 }
 
 async function init(): Promise<void> {
+  replaceMarkup(app, shell('<section class="panel"><div class="empty">Loading watchlist</div></section>'));
+  bind();
+  void render().catch((error) => {
+    replaceMarkup(app, shell(`<section class="panel"><div class="empty">${escapeHtml(error instanceof Error ? error.message : String(error))}</div></section>`));
+    bind();
+  });
   const settings = normalizeSettings(await getSyncStorage().catch(() => ({})));
   const localState: Record<string, unknown> = await getLocalStorage([UPDATE_STATE_STORAGE_KEY])
     .catch((): Record<string, unknown> => ({}));
@@ -458,10 +608,11 @@ async function init(): Promise<void> {
   currentTabId = tab?.id ?? null;
   if (currentTabId !== null) {
     try {
-      context = await tabMessage<PageContext>(currentTabId, 'flippah:page.get-context', {});
+      context = await pageContextFromTab(currentTabId);
       document.documentElement.dataset.debug = String(settings.debugMode || new URL(context.url).hash === '#flipperdebug');
       selectedGroupId = '';
       job = await loadMatchingJob();
+      await syncResearchBatchSelection();
     } catch (error) {
       toast = error instanceof Error ? error.message : String(error);
       context = null;

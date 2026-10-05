@@ -6,7 +6,7 @@ import { normalizeSettings } from '../core/settings.js';
 import type { HiBidLotRecord, HiBidRoute, PageContext, PastAuctionGroup, ScrapeJobSummary } from '../core/types.js';
 import type { HiBidTransport } from '../core/types.js';
 import { extractAccountLots, extractHiBidPageState, extractHiBidPortalSearchContext, extractHibidLotDetail, extractPastAuctionGroups, extractPastAuctionGroupState } from '../hibid/dom.js';
-import { scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js';
+import { hydrateHibidLotDetail, mergeHibidVisibleWithHydrated, scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js';
 import { DealIntelligenceController } from './deal-intelligence.js';
 import { installHibidImagePreview } from './image-preview.js';
 import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
@@ -223,9 +223,13 @@ async function runJob(route: HiBidRoute): Promise<void> {
     let failures: string[] = [];
     if (route.kind === 'lot') {
       await saveJob({ phase: 'hydrating', expectedTotal: 1, message: 'Reading lot detail' });
-      const lot = extractHibidLotDetail(document, location.href);
-      items = lot ? [lot] : [];
-      coverage = validateHibidApiCoverage({ enumeratedIds: lot ? [lot.id] : [], hydratedItems: items, expectedTotal: 1, startFingerprint, endFingerprint: routeFingerprint(resolveHiBidRoute(location.href), location.href) });
+      const visible = extractHibidLotDetail(document, location.href);
+      const requestedId = location.href.match(/\/lot\/(\d+)/i)?.[1] || visible?.id || '';
+      if (!requestedId) throw new Error('HiBid lot URL has no exact-item ID');
+      const hydrated = await hydrateHibidLotDetail(transport, requestedId, route, location.href, { signal });
+      const lot = visible ? mergeHibidVisibleWithHydrated(visible, hydrated) : hydrated;
+      items = [lot];
+      coverage = validateHibidApiCoverage({ enumeratedIds: [requestedId], hydratedItems: items, expectedTotal: 1, startFingerprint, endFingerprint: routeFingerprint(resolveHiBidRoute(location.href), location.href) });
     } else if (['watchlist', 'currentbids-winning', 'currentbids-outbid', 'pastbids', 'pastwatchlist'].includes(route.kind)) {
       await saveJob({ phase: 'enumerating', message: 'Reading saved HiBid lots' });
       let account = await readAccountPages(route, signal);
@@ -394,6 +398,7 @@ new MutationObserver((mutations) => {
   attributes: true,
   attributeFilter: ['id', 'href', 'data-event-item-id'],
   childList: true,
+  characterData: true,
   subtree: true,
 });
 window.addEventListener('popstate', handleLocationChange);

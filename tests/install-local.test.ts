@@ -21,6 +21,21 @@ async function fileInventory(root: string, prefix = ''): Promise<string[]> {
   return files;
 }
 
+async function removeFixtureRoot(root: string) {
+  const resolved = path.resolve(root);
+  const tempRoot = path.resolve(os.tmpdir());
+  const relative = path.relative(tempRoot, resolved);
+  assert.ok(relative && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  await rm(resolved, { recursive: true, force: true });
+}
+
+async function assertNoTemporarySiblings(root: string) {
+  const siblings = await readdir(root);
+  assert.equal(siblings.some((entry) => entry.includes('.flippah-staging-')), false);
+  assert.equal(siblings.some((entry) => entry.includes('.flippah-backup-')), false);
+  assert.equal(siblings.some((entry) => entry.includes('.flippah-install-lock')), false);
+}
+
 test('local install atomically replaces stale build output with the exact current artifact', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'flippah-install-local-'));
   try {
@@ -28,10 +43,10 @@ test('local install atomically replaces stale build output with the exact curren
     const target = path.join(root, 'installed-extension');
     await mkdir(path.join(source, 'assets'), { recursive: true });
     await mkdir(path.join(target, 'assets'), { recursive: true });
-    await writeFile(path.join(source, 'manifest.json'), '{"manifest_version":3,"version":"9.8.7"}\n');
+    await writeFile(path.join(source, 'manifest.json'), '{"manifest_version":3,"name":"Flippah","version":"9.8.7"}\n');
     await writeFile(path.join(source, 'current.js'), 'current bytes\n');
     await writeFile(path.join(source, 'assets', 'current.css'), 'current styles\n');
-    await writeFile(path.join(target, 'manifest.json'), '{"manifest_version":3,"version":"1.0.0"}\n');
+    await writeFile(path.join(target, 'manifest.json'), '{"manifest_version":3,"name":"Flippah","version":"1.0.0"}\n');
     await writeFile(path.join(target, 'current.js'), 'outdated bytes\n');
     await writeFile(path.join(target, 'obsolete.js'), 'stale top-level file\n');
     await writeFile(path.join(target, 'assets', 'obsolete.js'), 'stale nested file\n');
@@ -48,12 +63,10 @@ test('local install atomically replaces stale build output with the exact curren
       'manifest.json'
     ]);
     assert.equal(await readFile(path.join(target, 'current.js'), 'utf8'), 'current bytes\n');
-    assert.equal(await readFile(path.join(target, 'manifest.json'), 'utf8'), '{"manifest_version":3,"version":"9.8.7"}\n');
-    const siblings = await readdir(root);
-    assert.equal(siblings.some((entry) => entry.includes('.flippah-staging-')), false);
-    assert.equal(siblings.some((entry) => entry.includes('.flippah-backup-')), false);
+    assert.equal(await readFile(path.join(target, 'manifest.json'), 'utf8'), '{"manifest_version":3,"name":"Flippah","version":"9.8.7"}\n');
+    await assertNoTemporarySiblings(root);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeFixtureRoot(root);
   }
 });
 
@@ -76,10 +89,8 @@ test('local install preserves the prior target when source validation fails', as
 
     assert.deepEqual(await fileInventory(target), ['manifest.json', 'working.js']);
     assert.equal(await readFile(path.join(target, 'working.js'), 'utf8'), 'prior working bytes\n');
-    const siblings = await readdir(root);
-    assert.equal(siblings.some((entry) => entry.includes('.flippah-staging-')), false);
-    assert.equal(siblings.some((entry) => entry.includes('.flippah-backup-')), false);
+    await assertNoTemporarySiblings(root);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeFixtureRoot(root);
   }
 });

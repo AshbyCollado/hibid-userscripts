@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   assertStoreCanAcceptVersion,
   chromeWebStoreUrls,
@@ -18,13 +22,30 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
-test('Windows gcloud launcher passes arguments as data', () => {
+test('Windows gcloud launcher invokes the installed SDK without PowerShell', () => {
   const args = ['auth', 'print-access-token', '--impersonate-service-account=release@example.iam.gserviceaccount.com'];
-  const invocation = gcloudInvocation(args, 'win32', { LOCALAPPDATA: 'C:\\Users\\Example Name\\AppData\\Local' });
-  assert.equal(invocation.command, 'powershell.exe');
-  assert.deepEqual(JSON.parse(invocation.env.FLIPPAH_GCLOUD_ARGS), args);
-  assert.ok(!invocation.args.join(' ').includes('release@example'));
+  const invocation = gcloudInvocation(args, 'win32', { ComSpec: 'C:\\Windows\\System32\\cmd.exe' });
+  assert.equal(invocation.command, 'C:\\Windows\\System32\\cmd.exe');
+  assert.deepEqual(invocation.args, ['/d', '/s', '/c', `"gcloud.cmd ${args.join(' ')}"`]);
+  assert.throws(() => gcloudInvocation(['version & echo unsafe'], 'win32', {}), /unsupported characters/);
   assert.equal(gcloudInvocation(args, 'linux', {}).command, 'gcloud');
+});
+
+test('Windows gcloud launcher executes an SDK path with spaces even when it is absent from PATH', { skip: process.platform !== 'win32' }, () => {
+  const temp = mkdtempSync(path.join(tmpdir(), 'flippah-cws-sdk-'));
+  const sdk = path.join(temp, 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin', 'gcloud.cmd');
+  mkdirSync(path.dirname(sdk), { recursive: true });
+  writeFileSync(sdk, '@echo off\r\necho SDK-LAUNCH-OK\r\n');
+  try {
+    const env = { ...process.env, LOCALAPPDATA: temp, PATH: '' };
+    const invocation = gcloudInvocation(['version'], 'win32', env);
+    const output = execFileSync(invocation.command, invocation.args, { env: invocation.env, encoding: 'utf8', windowsHide: true,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments });
+    assert.match(output, /SDK-LAUNCH-OK/);
+  } finally {
+    if (!path.resolve(temp).startsWith(`${path.resolve(tmpdir())}${path.sep}`)) throw new Error('Unsafe temporary cleanup path');
+    rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test('Store requests have timeouts and malformed success responses fail closed', async () => {

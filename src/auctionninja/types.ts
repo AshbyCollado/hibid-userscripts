@@ -82,6 +82,23 @@ export interface AuctionNinjaDescriptionFields {
   [key: string]: string;
 }
 
+export interface AuctionNinjaPhysicalPhotoDescriptor {
+  sellerOrdinal: number | null;
+  fullResolutionUrl: string | null;
+  knownImageUrl: string;
+  thumbnailUrl: string | null;
+  source: 'dom-gallery' | 'known-image-url';
+}
+
+export interface AuctionNinjaPhotoAudit {
+  expectedCount: number | null;
+  observedCount: number;
+  knownImageCount: number;
+  reconciled: false;
+  verification: 'unverified';
+  countSource: 'dom-gallery';
+}
+
 export interface AuctionNinjaLotRecord {
   source: 'AuctionNinja';
   pageKind: 'sale-catalog' | 'category-search' | 'item-detail' | 'followed-items' | 'items-won' | 'bid-history';
@@ -92,6 +109,8 @@ export interface AuctionNinjaLotRecord {
   url: string;
   image: string;
   images: string[];
+  physicalPhotoDescriptors?: AuctionNinjaPhysicalPhotoDescriptor[];
+  photoAudit?: AuctionNinjaPhotoAudit;
   description: string;
   descriptionHtml: string;
   descriptionFields: AuctionNinjaDescriptionFields;
