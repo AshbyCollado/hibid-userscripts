@@ -784,3 +784,13 @@ ignored by Git.
   equality alone does not imply that costs are still current.
 - Submission is not publication. Keep Google review, Store publication, and
   installed-client delivery separate in every release report.
+
+## v0.5.48 Approved Branding
+
+- The owner selected the first blue rounded-square/green quill-arrow draft
+  on October 5, 2026 and requested immediate release, not a later rollout.
+- Preserve the approved raster in `assets/icons/flippah-source.png`. Its
+  16/32/48/128 pixel exports feed both browser manifests. Do not restore the
+  historical price-tag icon or reinterpret the approved design.
+- Icon-only release; keep research, pricing, storage and permissions unchanged.
+- See `docs/flippah-v0.5.48-release.md` and the branding asset regressions.
