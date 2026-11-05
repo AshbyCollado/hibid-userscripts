@@ -111,6 +111,10 @@ test('deferred second peek reconciles an unchanged-identity bid increase', async
   const run = (controller as any).run();
   for (let attempt = 0; attempt < 40 && peekResolvers.length < 1; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(peekResolvers.length, 1, 'controller reached the first cached-evidence peek');
+  const pendingHost = dom.window.document.querySelector('[data-flippah-retail-host-for="192"]');
+  assert.ok(pendingHost?.shadowRoot?.querySelector('a[href*="amazon.com"]'), 'Amazon search is clickable before cache resolves');
+  assert.match(pendingHost?.shadowRoot?.querySelector('a[href*="ebay.com"]')?.getAttribute('href') || '', /LH_Sold=1/);
+  pendingHost?.shadowRoot?.querySelector<HTMLAnchorElement>('a[href*="ebay.com"]')?.focus();
   peekResolvers.shift()!([null]);
   for (let attempt = 0; attempt < 40 && peekResolvers.length < 1; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(peekResolvers.length, 1, 'controller reached the deferred second cached-evidence peek');
@@ -121,6 +125,7 @@ test('deferred second peek reconciles an unchanged-identity bid increase', async
   await new Promise((resolve) => setTimeout(resolve, 160));
   peekResolvers.shift()!([null]);
   await run;
+  assert.match((pendingHost?.shadowRoot?.activeElement as HTMLAnchorElement)?.href || '', /ebay\.com/);
   assert.equal(peekCount, 2);
   const record = (controller as any).records.get('192');
   assert.ok(record);

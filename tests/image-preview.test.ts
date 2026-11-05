@@ -8,6 +8,7 @@ test('HiBid full-size image URL removes only the appended thumbnail dimensions',
   const full = hibidFullSizeImageUrl(thumbnail);
   assert.match(full, /w=0&h=0/);
   assert.doesNotMatch(full, /h=200&w=200/);
+  assert.equal(hibidFullSizeImageUrl('https://cdn.hibid.com/img.axd?id=9&sz=MAX&checksum=abc&w=300&h=300'), 'https://cdn.hibid.com/img.axd?id=9&sz=MAX&checksum=abc');
   assert.equal(hibidFullSizeImageUrl('javascript:alert(1)'), '');
 });
 

@@ -1,3 +1,5 @@
+import { HIBID_LOT_ROOT_SELECTOR } from '../hibid/dom-adapter.js';
+
 const PREVIEW_ID = 'flippah-fullsize-image-preview';
 const STYLE_ID = 'flippah-fullsize-image-preview-style';
 
@@ -10,8 +12,8 @@ export function hibidFullSizeImageUrl(value: string, base = 'https://hibid.com/'
   try {
     const url = new URL(value, base);
     if (url.protocol !== 'https:') return '';
-    if (/\/img\.axd$/i.test(url.pathname) && /(?:^|&)h=\d+&w=\d+(?:&|$)/i.test(url.search.slice(1))) {
-      url.search = url.search.replace(/&h=\d+&w=\d+(?=&|$)/gi, '');
+    if (/\/img\.axd$/i.test(url.pathname)) {
+      url.search = url.search.replace(/&(?:h=\d+&w=\d+|w=\d+&h=\d+)(?=&|$)/gi, (pair) => /(?:^|[&=])0(?:&|$)/.test(pair) ? pair : '');
     }
     return url.href;
   } catch {
@@ -23,11 +25,13 @@ function lotImage(target: EventTarget | null): HTMLImageElement | null {
   if (!(target instanceof HTMLImageElement)) return null;
   if (target.closest(`#${PREVIEW_ID}, [data-flippah-owned="true"]`)) return null;
   return target.closest([
+    HIBID_LOT_ROOT_SELECTOR,
     'app-lot-tile[id^="lot-"]',
     '.bid-status-border[id^="lot-"]',
     '[data-event-item-id]',
     'app-lot-images',
     'app-image-gallery',
+    'app-lot-image-gallery',
     '.lot-images',
     '[class*="lot-image"]',
     '[class*="gallery"]',

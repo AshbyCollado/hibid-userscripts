@@ -1,5 +1,6 @@
 import { toUrl } from '../core/route.js';
 import type { HiBidFilterState, HiBidLotRecord, HiBidPageState, HiBidRoute, LocationLike, PastAuctionGroup } from '../core/types.js';
+import { getHibidLotRoots, readHibidLotDom } from './dom-adapter.js';
 
 function clean(value: string | null | undefined): string {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -26,7 +27,7 @@ function visibleText(root: Document | Element): string {
   let node: Node | null = walker.nextNode();
   while (node) {
     const parent = node.parentElement;
-    if (parent && !parent.closest('script,style,template,[hidden],[aria-hidden="true"],[data-flippah-owned="true"],.flippah-deal-strip,.flippah-allin,#lotlens-root')) {
+    if (parent && !parent.closest('script,style,template,[hidden],[aria-hidden="true"],[data-flippah-owned="true"],app-watch-notes,[class*="app-watch-notes"],.flippah-deal-strip,.flippah-allin,#lotlens-root')) {
       const style = parent.getAttribute('style') || '';
       if (!/(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(style)) chunks.push(node.nodeValue || '');
     }
@@ -66,13 +67,17 @@ function filters(url: URL): HiBidFilterState {
 export function extractHiBidPageState(root: Document | Element, locationLike: LocationLike | URL | string): HiBidPageState {
   const url = toUrl(locationLike);
   const text = clean(visibleText(root));
-  const canonicalLots = new Set([...root.querySelectorAll('app-lot-tile[id^="lot-"], [data-event-item-id], .bid-status-border[id^="lot-"]')]
-    .map((node) => node.id.replace(/^lot-/, '') || node.getAttribute('data-event-item-id') || '')
-    .filter(Boolean));
-  const noMatches = canonicalLots.size === 0 && /no\s+(?:matches|lots|results)\s+found/i.test(text);
+  const canonicalLots = new Set(getHibidLotRoots(root).map(extractHibidTileEventItemId).filter(Boolean));
+  const accountEmptyText = [...root.querySelectorAll('app-bids-page, app-watch-list-page, app-past-bids-page')]
+    .map((node) => clean(visibleText(node)))
+    .join(' ');
+  const noMatches = canonicalLots.size === 0 && (
+    /no\s+(?:matches|lots|results)\s+found/i.test(text)
+    || /you\s+have\s+no\s+bids\s+on\s+open\s+lots|no\s+results\s+match\s+the\s+current\s+filters/i.test(accountEmptyText)
+  );
   const range = text.match(/showing\s+(\d+)\s*(?:-|to)\s*(\d+)\s+of\s+(\d+)\s+lots?/i);
   const total = range ? Number(range[3]) : null;
-  return { noMatches, visibleExpectedTotal: noMatches ? 0 : total, visibleCount: range ? Number(range[2]) - Number(range[1]) + 1 : (canonicalLots.size || null), filters: filters(url), text: text.slice(0, 10000) };
+  return { noMatches, visibleExpectedTotal: noMatches ? 0 : total, visibleCount: noMatches ? 0 : (range ? Number(range[2]) - Number(range[1]) + 1 : (canonicalLots.size || null)), filters: filters(url), text: text.slice(0, 10000) };
 }
 
 export function extractHiBidPortalSearchContext(root: Document | Element): { portalAuctioneerIds: string[]; siteType: number } {
@@ -124,7 +129,7 @@ function nativeTileMoney(tile: Element, selector: string): number | null {
 
 export function extractHiBidVisibleLots(root: Document | Element, route: HiBidRoute, locationLike: LocationLike | URL | string): HiBidLotRecord[] {
   const sourceUrl = toUrl(locationLike).href;
-  const tiles = [...root.querySelectorAll('app-lot-tile[id^="lot-"], [data-event-item-id], .bid-status-border[id^="lot-"]')];
+  const tiles = getHibidLotRoots(root);
   const records: HiBidLotRecord[] = [];
   const seen = new Set<string>();
   for (const tile of tiles) {
@@ -134,14 +139,18 @@ export function extractHiBidVisibleLots(root: Document | Element, route: HiBidRo
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const raw = clean(visibleText(tile));
+    const redesign = readHibidLotDom(tile);
     const titleText = clean(tile.querySelector('h1,h2,h3,h4,.title,[class*="title"]')?.textContent) || clean(link?.textContent) || `Lot ${id}`;
-    const lot = titleText.match(/\bLot\s*#?\s*([\w.-]+)/i)?.[1] || raw.match(/\bLot\s*#?\s*([\w.-]+)/i)?.[1] || id;
-    const title = clean(titleText.replace(/^\s*Lot\s*#?\s*[\w.-]+\s*(?:\||-|:)\s*/i, '')) || titleText;
-    const currentBid = nativeTileMoney(tile, '.lot-high-bid, .lot-current-bid')
+    const lot = redesign?.lot || titleText.match(/\bLot\s*#?\s*([\w.-]+)/i)?.[1] || raw.match(/\bLot\s*#?\s*([\w.-]+)/i)?.[1] || id;
+    const title = redesign?.title || clean(titleText.replace(/^\s*Lot\s*#?\s*[\w.-]+\s*(?:\||-|:)\s*/i, '')) || titleText;
+    const currentBid = redesign?.current.amount ?? nativeTileMoney(tile, '.lot-high-bid, .lot-current-bid')
       ?? money(raw.match(/(?:high|current)\s+bid[^\d$]*[\$]?\s*[\d,.]+/i)?.[0] || '');
-    const nextBid = nativeTileMoney(tile, '.TileDisplayMinBid, .lot-bid-button-bid-amount [class*="MinBid"]')
+    const nextBid = redesign?.next.amount ?? nativeTileMoney(tile, '.TileDisplayMinBid, .lot-bid-button-bid-amount [class*="MinBid"]')
       ?? money(raw.match(/\bbid\s+[\$]?\s*[\d,.]+\s*(?:USD|CAD)\b/i)?.[0] || '');
-    records.push({ source: 'hibid-dom', pageKind: route.kind, id, eventItemId: id, itemId: '', lot, title, lead: title, url: href || `${new URL(sourceUrl).origin}/lot/${id}`, image: imageList(tile)[0] || '', images: imageList(tile), description: '', descriptionHtml: '', category: '', categories: [], currentBid, nextBid, bidCount: Number(raw.match(/(\d+)\s+bids?/i)?.[1] || '') || null, status: /won/i.test(raw) ? 'Won' : (/outbid/i.test(raw) ? 'Outbid' : (/winning/i.test(raw) ? 'Winning' : '')), timeLeft: clean(raw.match(/\b(?:\d+d\s*)?(?:\d+h\s*)?\d+m\b/i)?.[0]), quantity: null, shippingOffered: /shipping/i.test(raw), auctionId: route.auctionId || '', auctionTitle: '', location: '', buyerPremium: '', rawText: raw });
+    const record = { source: 'hibid-dom', pageKind: route.kind, id, eventItemId: id, itemId: '', lot, title, lead: title, url: href || redesign?.url || `${new URL(sourceUrl).origin}/lot/${id}`, image: imageList(tile)[0] || '', images: imageList(tile), description: '', descriptionHtml: '', category: '', categories: [], currentBid, nextBid, bidCount: Number(raw.match(/(\d+)\s+bids?/i)?.[1] || '') || null, status: /won/i.test(raw) ? 'Won' : (/outbid/i.test(raw) ? 'Outbid' : (/winning/i.test(raw) ? 'Winning' : '')), timeLeft: clean(raw.match(/\b(?:\d+d\s*)?(?:\d+h\s*)?\d+m\b/i)?.[0]), quantity: redesign?.quantity ?? null, shippingOffered: /(?:shipping offered|will ship|shipping available)/i.test(raw) && !/no shipping/i.test(raw), auctionId: route.auctionId || '', auctionTitle: '', location: '', buyerPremium: '', rawText: raw } as HiBidLotRecord & { bidMultiplier?: number };
+    if (redesign?.status) record.status = redesign.status;
+    if (redesign?.bidMultiplier !== null && redesign?.bidMultiplier !== undefined) record.bidMultiplier = redesign.bidMultiplier;
+    records.push(record);
   }
   return records;
 }
@@ -285,6 +294,10 @@ export function extractHibidLotDetail(root: Document | Element, locationLike: Lo
     .find((value) => /^Bid\s+\$?\s*\d/i);
   const nextText = nativeBid || raw.match(/\bMinimum Next Bid\s*:?\s*\$?\s*[\d,.]+/i)?.[0] || '';
   const category = fields['Group - Category'] || '';
+  const premiumRow = [...root.querySelectorAll('app-lot-details tr, app-lot-details-subpanel tr')].find((row) =>
+    /^buyer'?s? premium$/i.test(clean(row.querySelector('th')?.textContent || row.firstElementChild?.textContent)));
+  const publishedPremium = clean(premiumRow?.querySelector('td')?.textContent || premiumRow?.lastElementChild?.textContent);
+  const catalogLink = root.querySelector<HTMLAnchorElement>('app-lot-details-subpanel a[href*="/livecatalog/"],app-lot-details a[href*="/catalog/"]');
   return {
     source: 'hibid-dom', pageKind: 'lot', id, eventItemId: id, itemId: '', lot,
     title: lead, lead, url: sourceUrl, image: images[0] || '', images,
@@ -294,8 +307,8 @@ export function extractHibidLotDetail(root: Document | Element, locationLike: Lo
     status: lotDetailStatus(root),
     timeLeft: clean(raw.match(/\b(?:\d+d\s*)?(?:\d+h\s*)?\d+m(?:\s*\d+s)?\b/i)?.[0]),
     quantity: Number(fields.Quantity || '') || null, shippingOffered: /shipping offered|will ship/i.test(raw),
-    auctionId: sourceUrl.match(/auction(?:Id)?[=/](\d+)/i)?.[1] || '', auctionTitle: '',
-    location: '', buyerPremium: fieldFromText(raw, "Buyer's Premium"), biddingNotice: lotPageBiddingNotice(root), rawText: raw.slice(0, 12000),
+    auctionId: sourceUrl.match(/auction(?:Id)?[=/](\d+)/i)?.[1] || catalogLink?.getAttribute('href')?.match(/\/(?:live)?catalog\/(\d+)/i)?.[1] || '', auctionTitle: '',
+    location: '', buyerPremium: publishedPremium || fieldFromText(raw, "Buyer's Premium"), biddingNotice: lotPageBiddingNotice(root), rawText: raw.slice(0, 12000),
     descriptionFields: fields
   };
 }
@@ -344,9 +357,7 @@ export function extractPastAuctionGroupState(
   if (!container) return { found: false, expectedTotal: null, visibleCount: 0 };
   const text = clean(visibleText(container));
   const range = text.match(/showing\s+(\d+)\s*(?:-|to)\s*(\d+)\s+of\s+(\d+)\s+lots?/i);
-  const visibleCount = new Set([...container.querySelectorAll('app-lot-tile[id^="lot-"], [data-event-item-id], .bid-status-border[id^="lot-"]')]
-    .map((node) => node.id.replace(/^lot-/, '') || node.getAttribute('data-event-item-id') || '')
-    .filter(Boolean)).size;
+  const visibleCount = getHibidLotRoots(container).length;
   return { found: true, expectedTotal: range ? Number(range[3]) : visibleCount, visibleCount };
 }
 
@@ -361,7 +372,7 @@ export function extractAccountLots(
     const container = groupContainer(root, selectedGroup);
     return container ? extractHiBidVisibleLots(container, route, locationLike) : [];
   }
-  if (route.kind === 'watchlist' || route.kind === 'currentbids-winning' || route.kind === 'currentbids-outbid') {
+  if (route.kind === 'watchlist' || route.kind === 'currentbids' || route.kind === 'currentbids-winning' || route.kind === 'currentbids-outbid') {
     const groups = extractPastAuctionGroups(root, locationLike);
     if (groups.length) {
       const grouped: HiBidLotRecord[] = [];

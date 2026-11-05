@@ -103,6 +103,49 @@ test('recovers the same host and preserves shadow inputs and handlers after same
   }
 });
 
+test('restores focus to the same shadow input after redraw removal', async () => {
+  const env = useDom();
+  try {
+    const value = host(env.window.document);
+    const input = value.shadowRoot!.querySelector('input')! as HTMLInputElement;
+    env.window.document.querySelector('.target')!.after(value);
+    const handle = install(env.window.document, value, new AbortController().signal, []);
+    input.focus();
+    assert.equal(value.shadowRoot!.activeElement, input);
+    value.remove();
+    await settle();
+    assert.equal(value.isConnected, true);
+    assert.equal(value.shadowRoot!.activeElement, input);
+    handle.disconnect();
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('inserts below native lot controls without moving native nodes', async () => {
+  const env = useDom('<app-lot-details-subpanel></app-lot-details-subpanel><app-lot-buttons><button class="app-button"><span class="app-button__label"><div class="lot-bid-text-container"><span class="TileDisplayMinBid">$2.00</span></div></span></button></app-lot-buttons>');
+  try {
+    const details = env.window.document.querySelector('app-lot-details-subpanel')!;
+    const controls = env.window.document.querySelector('app-lot-buttons')!;
+    const button = controls.querySelector('button')!;
+    const value = host(env.window.document);
+    const handle = install(env.window.document, value, new AbortController().signal, [], (next) => {
+      const nativeControls = env.window.document.querySelector('app-lot-buttons,.app-lot-buttons');
+      if (nativeControls?.parentNode) {
+        nativeControls.insertAdjacentElement('afterend', next);
+        return;
+      }
+      details.insertAdjacentElement('afterend', next);
+    });
+    assert.equal(controls.nextElementSibling, value);
+    assert.equal(details.parentNode?.firstChild, details);
+    assert.equal(controls.querySelector('button'), button);
+    handle.disconnect();
+  } finally {
+    env.cleanup();
+  }
+});
+
 test('waits for a missing insertion target and recovers when it returns', async () => {
   const env = useDom('<div class="bid">$1.00</div>');
   try {
@@ -224,6 +267,8 @@ test('bridges recovery into the transformed legacy index mount with exact emitte
   const patched = patchLegacyLotPanelRecovery(source, legacyHelperPath);
   assert.match(patched, /installLotPanelRecovery/);
   assert.match(patched, /host:l,signal:n,routeHref:location\.href,getBidNode:\(\)=>e\(document,t\.currentBid\),parseBid:.*parsed=r\(document,location\.href\)/);
+  assert.match(patched, /app-lot-buttons,\.app-lot-buttons/);
+  assert.match(patched, /app-lot-details-subpanel,\.app-lot-details-subpanel/);
   assert.doesNotMatch(patched, /l2|n5|n3\.currentBid|S\(document|currentBid\.join/);
   assert.equal(patched.split('let l=document.createElement(`div`);l.id=L,K(l),B=D(l,{parseResult:i,premium:s,settings:o,isPro:c});').length, 2);
 });

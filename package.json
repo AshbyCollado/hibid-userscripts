@@ -1,6 +1,6 @@
 {
   "name": "flippah-extension",
-  "version": "0.5.48",
+  "version": "0.5.49",
   "private": true,
   "type": "module",
   "description": "Flippah browser extension source for HiBid and AuctionNinja research.",
@@ -12,7 +12,7 @@
     "package:store": "npm run verify:store && node scripts/package-store.mjs",
     "release:chrome": "node scripts/chrome-web-store-release.mjs",
     "install:chrome": "npm run build && node scripts/install-local.mjs",
-    "test": "npm run build && tsx --test tests/*.test.ts",
+    "test": "npm run build && tsx --test --test-concurrency=2 tests/*.test.ts",
     "test:title-corpus": "tsx --test tests/title-corpus-harness.test.ts",
     "materialize:title-corpus": "tsx scripts/title-corpus/materialize.ts",
     "corpus:title": "tsx scripts/title-corpus/run.ts",

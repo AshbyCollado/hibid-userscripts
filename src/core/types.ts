@@ -4,6 +4,7 @@ export type HiBidRouteKind =
   | 'search'
   | 'lot'
   | 'watchlist'
+  | 'currentbids'
   | 'currentbids-winning'
   | 'currentbids-outbid'
   | 'pastbids'
@@ -73,6 +74,7 @@ export interface HiBidLotRecord {
   status: string;
   timeLeft: string;
   quantity: number | null;
+  bidMultiplier?: number | null;
   shippingOffered: boolean;
   auctionId: string;
   auctionTitle: string;

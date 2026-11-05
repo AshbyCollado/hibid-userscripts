@@ -3,6 +3,6 @@ export function patchLegacyLotPanelRecovery(source, helperPath) {
   const matches = source.split(mount).length - 1;
   if (matches !== 1) throw new Error(`Expected exactly one legacy calculator mount, found ${matches}`);
   const importLine = `import { installLotPanelRecovery } from ${JSON.stringify(helperPath)};`;
-  const bridge = `${mount}const flippahUpdateBid=B?.updateBid;installLotPanelRecovery({host:l,signal:n,routeHref:location.href,getBidNode:()=>e(document,t.currentBid),parseBid:()=>{let parsed=r(document,location.href);return parsed.status===\`ok\`?parsed.lot.currentBidCents:null},updateBid:bidCents=>flippahUpdateBid?.(bidCents),insertHost:K});`;
+  const bridge = `${mount}const flippahInsertHost=host=>{let controls=document.querySelector(\`app-lot-buttons,.app-lot-buttons\`);if(controls?.parentNode){controls.insertAdjacentElement(\`afterend\`,host);return}let details=document.querySelector(\`app-lot-details-subpanel,.app-lot-details-subpanel\`);if(details?.parentNode){details.insertAdjacentElement(\`afterend\`,host);return}K(host)};flippahInsertHost(l);const flippahUpdateBid=B?.updateBid;installLotPanelRecovery({host:l,signal:n,routeHref:location.href,getBidNode:()=>e(document,t.currentBid),parseBid:()=>{let parsed=r(document,location.href);return parsed.status===\`ok\`?parsed.lot.currentBidCents:null},updateBid:bidCents=>flippahUpdateBid?.(bidCents),insertHost:flippahInsertHost});`;
   return `${importLine}\n${source.replace(mount, bridge)}`;
 }

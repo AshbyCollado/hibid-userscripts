@@ -5,15 +5,18 @@ import { resolveHiBidRoute, routeFingerprint } from '../core/route.js';
 import { normalizeSettings } from '../core/settings.js';
 import type { HiBidLotRecord, HiBidRoute, PageContext, PastAuctionGroup, ScrapeJobSummary } from '../core/types.js';
 import type { HiBidTransport } from '../core/types.js';
-import { extractAccountLots, extractHiBidPageState, extractHiBidPortalSearchContext, extractHibidLotDetail, extractPastAuctionGroups, extractPastAuctionGroupState } from '../hibid/dom.js';
+import { extractHiBidPageState, extractHiBidPortalSearchContext, extractHibidLotDetail, extractPastAuctionGroups } from '../hibid/dom.js';
 import { hydrateHibidLotDetail, mergeHibidVisibleWithHydrated, scrapeHibidApiCatalog, validateHibidApiCoverage } from '../hibid/api.js';
 import { DealIntelligenceController } from './deal-intelligence.js';
 import { installHibidImagePreview } from './image-preview.js';
 import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
 import { isAnalysisActivityPhase, isScrapeActivityPhase, type ToolbarActivityUpdate } from '../core/activity.js';
 import { runHibidAuctionHandoff } from './auction-handoff-flow.js';
+import { collectHibidAccountPages, parseHibidAccountDetail } from '../hibid/account-pages.js';
+import { snapshotHibidAccountPage, type HibidAccountPageSnapshot } from '../hibid/account-snapshot.js';
 
 document.documentElement.dataset.flippahContentVersion = chrome.runtime.getManifest().version;
+document.documentElement.dataset.flippahDomRevision = 'hibid-redesign-2026-11-05';
 
 let activeJob: ScrapeJobSummary | null = null;
 let controller: AbortController | null = null;
@@ -171,7 +174,7 @@ async function enrichAccountLots(items: HiBidLotRecord[], signal: AbortSignal): 
         const response = await fetch(next.item.url, { credentials: 'same-origin', cache: 'no-store', signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const document = new DOMParser().parseFromString(await response.text(), 'text/html');
-        output[next.index] = mergeDetail(next.item, extractHibidLotDetail(document, next.item.url));
+        output[next.index] = mergeDetail(next.item, parseHibidAccountDetail(document, response.url || next.item.url, next.item));
       } catch (error) {
         if (!signal.aborted) failures.push(`Lot ${next.item.lot}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -183,33 +186,31 @@ async function enrichAccountLots(items: HiBidLotRecord[], signal: AbortSignal): 
 }
 
 async function readAccountPages(route: HiBidRoute, signal: AbortSignal): Promise<{ items: HiBidLotRecord[]; expected: number | null; failures: string[] }> {
-  const firstState = extractHiBidPageState(document, location.href);
-  const groups = route.kind === 'pastbids' || route.kind === 'pastwatchlist' ? extractPastAuctionGroups(document, location.href) : [];
-  const groupState = selectedGroup ? extractPastAuctionGroupState(document, selectedGroup) : null;
-  const found = new Map<string, HiBidLotRecord>();
-  const failures: string[] = [];
-  const add = (root: Document | Element, url: string) => {
-    for (const item of extractAccountLots(root, route, url, selectedGroup)) found.set(item.id, item);
-  };
-  add(document, location.href);
-  const expected = groupState?.expectedTotal ?? (selectedGroup && groups.length !== 1 ? null : firstState.visibleExpectedTotal);
-  const pageSize = firstState.visibleCount || Math.max(1, found.size);
-  const pages = expected !== null && expected > pageSize ? Math.ceil(expected / pageSize) : 1;
-  for (let page = 2; page <= pages && !signal.aborted; page += 1) {
-    const url = new URL(location.href);
-    url.searchParams.set('apage', String(page));
-    try {
-      const response = await fetch(url.href, { credentials: 'same-origin', cache: 'no-store', signal });
+  return collectHibidAccountPages({
+    document, url: location.href, route, selectedGroup, signal,
+    readPage: async (url, signal) => {
+      const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const next = new DOMParser().parseFromString(await response.text(), 'text/html');
-      if (!selectedGroup || extractPastAuctionGroupState(next, selectedGroup).found) add(next, url.href);
-      else failures.push(`Page ${page}: selected auction group ${selectedGroup.id} was not present`);
-      await saveJob({ phase: 'enumerating', expectedTotal: expected, enumeratedCount: found.size, message: `Reading account page ${page}/${pages}` });
-    } catch (error) {
-      failures.push(`Page ${page}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  return { items: [...found.values()], expected, failures };
+      const parsed = new DOMParser().parseFromString(await response.text(), 'text/html');
+      const observedUrl = response.url || url;
+      if (new URL(observedUrl).origin !== location.origin || new URL(observedUrl).pathname !== new URL(url).pathname
+        || parsed.querySelector('input[type="password"]')) throw new Error('HiBid account page requires sign-in or changed during capture');
+      if (extractHiBidPageState(parsed, observedUrl).visibleExpectedTotal !== null) {
+        return snapshotHibidAccountPage(parsed, observedUrl, route, selectedGroup);
+      }
+      if (!parsed.querySelector('app-root,app-bids-page,app-watch-list-page,app-past-bids-page')) throw new Error('HiBid account page is unavailable or requires verification');
+      const cancelRead = (): void => { void runtimeMessage('flippah:account.cancel-read', {}).catch(() => undefined); };
+      signal.addEventListener('abort', cancelRead, { once: true });
+      try {
+        return await abortableRuntime<HibidAccountPageSnapshot>('flippah:account.read-page', { url: observedUrl, selectedGroup }, signal);
+      } finally {
+        signal.removeEventListener('abort', cancelRead);
+      }
+    },
+    onProgress: async (count, expected, page) => {
+      await saveJob({ phase: 'enumerating', expectedTotal: expected, enumeratedCount: count, message: `Reading account page ${page}` });
+    },
+  });
 }
 
 async function runJob(route: HiBidRoute): Promise<void> {
@@ -230,7 +231,7 @@ async function runJob(route: HiBidRoute): Promise<void> {
       const lot = visible ? mergeHibidVisibleWithHydrated(visible, hydrated) : hydrated;
       items = [lot];
       coverage = validateHibidApiCoverage({ enumeratedIds: [requestedId], hydratedItems: items, expectedTotal: 1, startFingerprint, endFingerprint: routeFingerprint(resolveHiBidRoute(location.href), location.href) });
-    } else if (['watchlist', 'currentbids-winning', 'currentbids-outbid', 'pastbids', 'pastwatchlist'].includes(route.kind)) {
+    } else if (['watchlist', 'currentbids', 'currentbids-winning', 'currentbids-outbid', 'pastbids', 'pastwatchlist'].includes(route.kind)) {
       await saveJob({ phase: 'enumerating', message: 'Reading saved HiBid lots' });
       let account = await readAccountPages(route, signal);
       if (route.kind === 'watchlist') {
@@ -319,6 +320,9 @@ function pageContext(): PageContext {
 }
 
 async function handleMessage(message: MessageEnvelope): Promise<unknown> {
+  if (message.type === 'flippah:account.snapshot') {
+    return snapshotHibidAccountPage(document, location.href, resolveHiBidRoute(location.href), (message.payload as { selectedGroup?: PastAuctionGroup })?.selectedGroup);
+  }
   if (message.type === 'flippah:page.get-context') return pageContext();
   if (message.type === 'flippah:job.start' || message.type === 'flippah:job.retry') {
     const context = pageContext();

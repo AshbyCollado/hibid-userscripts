@@ -1,5 +1,12 @@
 import type { PageContext, ScrapeJobSummary } from './types.js';
 
+export function restoredPastAuctionScope(context: PageContext | null): string {
+  if (!context || !['pastbids', 'pastwatchlist'].includes(context.route.kind)) return '';
+  const scope = context.job?.scopeId;
+  return scope && context.job?.fingerprint === context.fingerprint
+    && context.auctionGroups.some(group => group.id === scope) ? scope : '';
+}
+
 export function jobMatchesContextAndScope(
   job: ScrapeJobSummary | null,
   context: PageContext | null,

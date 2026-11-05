@@ -86,6 +86,9 @@ export interface HiBidExportPayload {
     expectedCount: number;
     copiedCount: number;
     routeFingerprint: string;
+    scope?:
+      | { kind: 'selected-auction'; auctionId: string }
+      | { kind: 'current-route' };
   };
   researchQueue: HiBidResearchQueueItem[];
   researchSession: ResearchSessionManifest;
@@ -208,9 +211,11 @@ export function buildHibidExportPayload(
   sessionStartedAt?: string,
 ): HiBidExportPayload {
   const isPast = context.route.kind === 'pastbids' || context.route.kind === 'pastwatchlist';
+  const historyScopeId = isPast && /^\d+$/.test(job.scopeId || '') ? job.scopeId : null;
   if (job.phase !== 'completed'
     || job.fingerprint !== context.fingerprint
-    || (isPast ? !job.scopeId : job.scopeId !== null)
+    || (isPast ? historyScopeId === null : job.scopeId !== null)
+    || (isPast && items.some((item) => item.auctionId !== historyScopeId))
     || job.expectedTotal !== items.length
     || new Set(items.map((item) => item.id)).size !== items.length) {
     throw new Error('Flippah refused an unverified export');
@@ -223,7 +228,10 @@ export function buildHibidExportPayload(
       source: 'HiBid', pageKind: context.route.kind, sourceUrl: context.url, title: context.title,
       originLabel: settings.originLabel, originZip: settings.originZip, radiusMiles: settings.radiusMiles,
       researchProfile,
-      complete: true, expectedCount: job.expectedTotal, copiedCount: items.length, routeFingerprint: job.fingerprint
+      complete: true, expectedCount: job.expectedTotal, copiedCount: items.length, routeFingerprint: job.fingerprint,
+      scope: isPast
+        ? { kind: 'selected-auction', auctionId: historyScopeId! }
+        : { kind: 'current-route' },
     },
     researchQueue,
     researchSession: buildResearchSessionManifest({

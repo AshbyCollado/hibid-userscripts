@@ -1,5 +1,27 @@
 # Flippah living brain
 
+## HiBid redesign recovery 0.5.49
+
+- Shared `src/hibid/dom-adapter.ts` handles redesigned tile, condensed, full,
+  detail and account roots while retaining legacy markup. Canonical event-item
+  identity wins over recycled container IDs; promotions are not lot results.
+- `g` catalog filters reach both request builders. Public API coverage must
+  reconcile; authenticated accounts stay on dedicated DOM/detail contracts.
+- HiBid forbids iframe embedding. `account-page-reader.ts` uses one bounded
+  inactive same-origin account tab, normalized snapshots, source/filter checks,
+  serialized durable ownership and cleanup alarms. No permission was added.
+- History exports validate every row against the selected auction and emit
+  explicit `context.scope`; popup reopening restores a still-valid job scope.
+- Research links render immediately. Native bid controls remain untouched;
+  comparisons use one scoped current/next-bid observation. Calculator drafts
+  and focus survive redraws. Popup renders reject stale async results.
+- Actual Chrome acceptance: full catalog 2420/2420 unique; filtered 43/43;
+  search 19/19 and zero; Watchlist 67 initially, later Stop/retry 65/65;
+  selected Past Bids 14/14 and Past Watchlist 6/6. See the acceptance report.
+- Final tests: 2554 passes, two skips, no failures; legacy 278, title corpus 11.
+  Waterfox builds, but installed Waterfox testing is not claimed. Store review,
+  publication and installed delivery remain distinct from local acceptance.
+
 ## Local Store publisher verified 2026-09-05
 
 - v0.5.46 release tooling lives on `codex/chrome-store-local-release-0.5.46`.

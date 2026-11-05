@@ -543,21 +543,25 @@ test('live redraws retain conclusive Amazon evidence but retry transient failure
   assert.match(source, /record\.state\.queryOverride === previous\.state\.queryOverride/);
 });
 
-test('list and live-account rows wait for hydration and cached evidence before their first annotation paint', async () => {
-  for (const kind of ['lot', 'catalog', 'livecatalog', 'search', 'watchlist', 'currentbids-winning', 'currentbids-outbid']) {
-    assert.equal(shouldRenderProvisionalDealAnnotations({ kind } as any), false, kind);
+test('list and live-account rows expose research before hydration or cached evidence arrives', async () => {
+  assert.equal(shouldRenderProvisionalDealAnnotations({ kind: 'lot' } as any), false);
+  for (const kind of ['catalog', 'livecatalog', 'search', 'watchlist', 'currentbids', 'currentbids-winning', 'currentbids-outbid']) {
+    assert.equal(shouldRenderProvisionalDealAnnotations({ kind } as any), true, kind);
   }
 
   const source = await readFile('src/content/deal-intelligence.ts', 'utf8');
   assert.match(source, /if \(shouldRenderProvisionalDealAnnotations\(route\)\) applyTileAnnotation\(record, route\)/);
-  const preliminaryRestore = source.indexOf('await this.restoreCachedEvidence(preliminary)');
+  const firstPaint = source.indexOf('quickRecords.forEach((record) =>');
+  const firstRestore = source.indexOf('await this.restoreCachedEvidence(quickRecords, stillCurrent)');
+  assert.ok(firstPaint > 0 && firstPaint < firstRestore);
+  const preliminaryRestore = source.indexOf('await this.restoreCachedEvidence(preliminary, stillCurrent)');
   const preliminaryPaint = source.indexOf('preliminary.forEach(repaint)');
   assert.ok(preliminaryRestore > 0 && preliminaryRestore < preliminaryPaint);
 });
 
 test('personalized watchlist exports use the account DOM and never extension-origin GraphQL', async () => {
   const content = await readFile('src/content/index.ts', 'utf8');
-  assert.match(content, /\['watchlist', 'currentbids-winning'/);
+  assert.match(content, /\['watchlist', 'currentbids', 'currentbids-winning'/);
   assert.match(content, /Watchlist changed during capture; refreshing snapshot/);
   assert.doesNotMatch(content, /abortableRuntime\('flippah:network\.account-watchlist'/);
 });
@@ -597,7 +601,7 @@ test('deal annotations are additive, stable-ID scoped, and do not rewrite HiBid 
   assert.match(content, /explainHibidStatus/);
   assert.doesNotMatch(content, /Amazon: --|eBay: --/);
   assert.match(content, /host\.attachShadow\(\{ mode: 'open' \}\)/);
-  assert.match(content, /mount\.prepend\(host\)/);
+  assert.match(content, /mount\.container\.insertBefore\(host, mount\.before\)/);
   assert.match(content, /if \(route\?\.kind === 'lot'\) return null/);
   assert.match(content, /\[\$\{TILE_ANNOTATION_HOST_ATTRIBUTE\}\]\[data-flippah-owned="true"\]/);
   assert.doesNotMatch(content, /a\[href\*="\/lot\/\$\{escaped\}\//);

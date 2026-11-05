@@ -2,7 +2,7 @@ import { activeTab, getLocalStorage, getSyncStorage, runtimeMessage, setLocalSto
 import { buildCsv } from '../core/csv.js';
 import { getDiagnostic, getJobForFingerprint, getRecords } from '../core/job-db.js';
 import { normalizeSettings } from '../core/settings.js';
-import { jobMatchesContextAndScope } from '../core/job-scope.js';
+import { jobMatchesContextAndScope, restoredPastAuctionScope } from '../core/job-scope.js';
 import { calculateDealOutcome, type DealOutcome } from '../core/outcomes.js';
 import type { HiBidLotRecord, PageContext, ScrapeJobSummary } from '../core/types.js';
 import type { AuctionRelayAcceptedV1 } from '../core/auction-relay.js';
@@ -47,6 +47,7 @@ let bookHandoffStatus = 'Ready to send every seller photo';
 let bookHandoffFailed = false;
 let updateCheckState: ExtensionUpdateState = idleUpdateState(currentVersion);
 let lastCurrentRenderKey: string | null = null;
+let renderRevision = 0;
 
 function legacyMessage<T>(message: unknown): Promise<T> {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, (response: T) => {
@@ -125,7 +126,7 @@ function routeLabel(): string {
   if (!context?.route.supported) return 'Unsupported page';
   const labels: Record<string, string> = {
     catalog: 'Auction catalog', livecatalog: 'Live catalog', search: 'Lot search', lot: 'Single lot',
-    watchlist: 'Watchlist', 'currentbids-winning': 'Winning bids', 'currentbids-outbid': 'Outbid bids',
+    watchlist: 'Watchlist', currentbids: 'Current bids', 'currentbids-winning': 'Winning bids', 'currentbids-outbid': 'Outbid bids',
     pastbids: 'Past bids', pastwatchlist: 'Past watchlist',
     'sale-catalog': 'AuctionNinja sale', 'category-search': 'AuctionNinja category',
     'item-detail': 'AuctionNinja item', 'followed-items': 'AuctionNinja followed items',
@@ -181,7 +182,7 @@ function currentHtml(): string {
   }
   const analysis = context.analysis;
   const analysisPercent = analysis.total > 0 ? Math.min(100, Math.round(analysis.analyzed / analysis.total * 100)) : 0;
-  const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid', 'sale-catalog', 'category-search', 'item-detail', 'followed-items', 'items-won', 'bid-history'].includes(context.route.kind)
+  const analysisHtml = ['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids', 'currentbids-winning', 'currentbids-outbid', 'sale-catalog', 'category-search', 'item-detail', 'followed-items', 'items-won', 'bid-history'].includes(context.route.kind)
     ? `<div class="analysis"><div class="analysis-head"><strong>Price research</strong><span>${escapeHtml(analysisStatusText(analysis))}</span></div>${analysis.phase === 'scanning' || analysis.phase === 'retail' ? `<div class="progress"><i style="width:${analysisPercent}%"></i></div>` : ''}<div class="actions compact"><button id="rerun-analysis" class="button" ${analysis.phase === 'scanning' || analysis.phase === 'retail' ? 'disabled' : ''}>Check again</button><button id="clear-retail-cache" class="button">Clear saved prices</button></div></div>`
     : '';
   const booksHtml = context.route.kind === 'lot' && /(^|\.)hibid\.com$/i.test(new URL(context.url).hostname)
@@ -253,6 +254,8 @@ function patchCurrentView(): void {
 }
 
 async function render(options: { preserveCurrent?: boolean } = {}): Promise<void> {
+  const revision = ++renderRevision;
+  const requestedTab = selectedTab;
   if (options.preserveCurrent && selectedTab === 'current' && lastCurrentRenderKey === currentRenderKey() && app.querySelector('.shell')) {
     patchCurrentView();
     return;
@@ -265,6 +268,7 @@ async function render(options: { preserveCurrent?: boolean } = {}): Promise<void
       legacyMessage<any[]>({ kind: 'watch:list' }).catch(() => []),
       legacyMessage<DealOutcome[]>({ kind: 'outcome:list' }).catch(() => []),
     ]);
+    if (revision !== renderRevision || selectedTab !== requestedTab) return;
     const exportActions = `<div class="actions" style="margin:0 0 10px"><button id="export-watchlist" class="button primary">Export watchlist</button>${outcomes.length ? `<button id="export-outcomes" class="button">Export outcomes (${outcomes.length})</button>` : ''}</div>`;
     const cards = watchlist.length
       ? `<section class="panel">${exportActions}<div class="watch-list">${watchlist.map((item) => `<article class="watch"><div>${safeHiBidUrl(item.imageUrl, '') ? `<img src="${escapeHtml(safeHiBidUrl(item.imageUrl, ''))}" alt="">` : ''}</div><div><a class="watch-title" href="${escapeHtml(safeHiBidUrl(item.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title || `Lot ${item.lotId}`)}</a><div class="watch-meta">${escapeHtml(item.auctioneerName || 'Unknown auctioneer')}</div><div class="watch-meta">${Number.isFinite(item.currentBidCents) ? `$${(item.currentBidCents / 100).toFixed(2)} bid` : 'Bid unavailable'}${Number.isFinite(item.maxBidCents) ? ` · max $${(item.maxBidCents / 100).toFixed(2)}` : ''}</div><div class="watch-meta countdown" data-ends-at="${escapeHtml(item.endsAt ?? '')}">${escapeHtml(formatCountdown(item.endsAt))}</div>${item.note ? `<div class="watch-note">${escapeHtml(item.note)}</div>` : ''}</div><button class="icon-button remove-watch" data-lot-id="${escapeHtml(item.lotId)}" title="Remove watched lot">×</button></article>`).join('')}</div></section>`
@@ -610,7 +614,7 @@ async function init(): Promise<void> {
     try {
       context = await pageContextFromTab(currentTabId);
       document.documentElement.dataset.debug = String(settings.debugMode || new URL(context.url).hash === '#flipperdebug');
-      selectedGroupId = '';
+      selectedGroupId = restoredPastAuctionScope(context);
       job = await loadMatchingJob();
       await syncResearchBatchSelection();
     } catch (error) {

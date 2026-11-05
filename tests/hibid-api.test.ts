@@ -208,6 +208,22 @@ test('filtered no-exact-match response closes to zero even if fallback IDs are p
   assert.deepEqual(result.items, []);
 });
 
+test('catalog g category filter reaches API enumeration rather than the entire auction', async () => {
+  const url = 'https://hibid.com/catalog/791252/surplus?g=40196';
+  const route = resolveHiBidRoute(url);
+  const transport: HiBidTransport = {
+    searchLots: async () => { throw new Error('Single-status catalog uses the canonical GraphQL enumeration'); },
+    hydrateLots: async (body: any) => {
+      if (!body.variables.eventItemIds) assert.equal(body.variables.category, 40196);
+      return { data: { lotSearch: { pagedResults: { pageNumber: 1, pageLength: 100, totalCount: 2, filteredCount: 2, results: (body.variables.eventItemIds || [91, 92]).map(lot) } } } };
+    }
+  };
+  const result = await scrapeHibidApiCatalog(transport, route, url);
+  assert.equal(result.coverage.complete, true);
+  assert.deepEqual(result.items.map((item) => Number(item.id)), [91, 92]);
+  assert.equal(buildHibidSearchRequest(route, url).options.categoryId, 40196);
+});
+
 test('coverage rejects duplicate, missing, unexpected, and route-drift records', () => {
   const duplicate = validateHibidApiCoverage({ enumeratedIds: ['1', '1', '2'], hydratedItems: [{ id: '1' }, { id: '2' }], expectedTotal: 2 });
   assert.equal(duplicate.complete, false);

@@ -30,6 +30,7 @@ import {
   type AuctionPendingReservationV1,
 } from '../core/auction-pending-tab.js';
 import { UPDATE_STATE_STORAGE_KEY, readyUpdateState } from '../core/update-check.js';
+import { ACCOUNT_READER_ALARM, installAccountPageReader } from './account-page-reader.js';
 
 declare const __FLIPPAH_ENABLE_UNPACKED_AUTO_RELOAD__: boolean;
 
@@ -43,6 +44,7 @@ const unpackedAutoReload = __FLIPPAH_ENABLE_UNPACKED_AUTO_RELOAD__
   : null;
 const toolbarActivityByTab = new Map<number, ToolbarActivityState>();
 let endingSoonBadgeCount = 0;
+const accountPageReader = installAccountPageReader();
 
 function sessionGetValue(key: string): Promise<unknown> {
   return new Promise((resolve, reject) => chrome.storage.session.get(key, (value) => {
@@ -459,6 +461,15 @@ async function downloadDiagnostic(diagnostic: unknown): Promise<number | null> {
 
 async function handleMessage(message: MessageEnvelope, sender: chrome.runtime.MessageSender): Promise<unknown> {
   switch (message.type) {
+    case 'flippah:account.read-page':
+      ensureHiBidSender(sender);
+      if (!sender.tab?.id) throw new Error('HiBid account reader requires a source tab');
+      return accountPageReader.read(sender.tab.id, (message.payload || {}) as { url: string; selectedGroup?: import('../core/types.js').PastAuctionGroup });
+    case 'flippah:account.cancel-read':
+      ensureHiBidSender(sender);
+      if (!sender.tab?.id) throw new Error('HiBid account reader requires a source tab');
+      await accountPageReader.cancel(sender.tab.id);
+      return { cancelled: true };
     case 'flippah:network.search':
       ensureHiBidSender(sender);
       validateSearchBody((message.payload as any)?.body);
@@ -664,6 +675,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (__FLIPPAH_ENABLE_UNPACKED_AUTO_RELOAD__ && alarm.name === DEV_RELOAD_ALARM && unpackedAutoReload) {
     void unpackedAutoReload.check();
+  } else if (alarm.name === ACCOUNT_READER_ALARM) {
+    void accountPageReader.cleanupOnAlarm().catch(() => console.warn('[Flippah] Account reader cleanup will retry'));
   } else if (alarm.name.startsWith(FLIPPAH_AUCTION_PENDING_ALARM_PREFIX)) {
     const nonce = alarm.name.slice(FLIPPAH_AUCTION_PENDING_ALARM_PREFIX.length);
     void auctionPendingTabs.expire(nonce);

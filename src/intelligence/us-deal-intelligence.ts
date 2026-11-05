@@ -303,7 +303,7 @@ export function extractLotQuantityFromTitleAndDescription(
 
 export function detectComparisonCurrency(rawText: string | null | undefined, buyerPremium: string | null | undefined): 'USD' | 'CAD' {
   const evidence = `${rawText || ''} ${buyerPremium || ''}`;
-  return /\b(?:CAD|CDN)\b/i.test(evidence) || /(?:\$\s*)?\d[\d,.]*\s+Can\b/.test(evidence) ? 'CAD' : 'USD';
+  return /\b(?:CAD|CDN)\b/i.test(evidence) || /\bCAN\s*\$?\s*\d|(?:\$\s*)?\d[\d,.]*\s+Can\b/.test(evidence) ? 'CAD' : 'USD';
 }
 
 export interface RetailLinks {

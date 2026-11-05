@@ -15,6 +15,11 @@ export function isHiBidHost(hostname: string): boolean {
   return HOST_RE.test(String(hostname || '').toLowerCase());
 }
 
+export function normalizedHiBidAccountPath(url: URL): string | null {
+  const path = url.pathname.replace(/\/+$/, '').toLowerCase();
+  return /^(?:\/[^/]+)*\/account\/(?:watchlist|currentbids|pastbidsm?|pastwatchlist)$/.test(path) ? path : null;
+}
+
 function numeric(value: string | undefined): string | null {
   return value && /^\d+$/.test(value) ? value : null;
 }
@@ -58,13 +63,14 @@ export function resolveHiBidRoute(locationLike: LocationLike | URL | string): Hi
         reason: undefined
       };
     }
-    return { ...unsupported, statePrefix, reason: 'current bids requires WINNING or OUTBID status' };
+    if (!status || status === 'ALL') return { ...unsupported, supported: true, kind: 'currentbids', statePrefix, reason: undefined };
+    return { ...unsupported, statePrefix, reason: 'unsupported current bids status' };
   }
-  if (account === 'pastbidsm' || account === 'pastwatchlist') {
+  if (account === 'pastbidsm' || account === 'pastbids' || account === 'pastwatchlist') {
     return {
       ...unsupported,
       supported: true,
-      kind: account === 'pastbidsm' ? 'pastbids' : 'pastwatchlist',
+      kind: account === 'pastwatchlist' ? 'pastwatchlist' : 'pastbids',
       statePrefix,
       reason: undefined
     };
@@ -81,6 +87,7 @@ export function resolveHiBidRoute(locationLike: LocationLike | URL | string): Hi
       supported: true,
       kind,
       auctionId: numeric(parts[catalogIndex + 1]),
+      categoryId: numeric(url.searchParams.get('g') || undefined),
       statePrefix: prefixed ? parts.slice(0, catalogIndex).join('/') : null,
       siteType: prefixed ? 2 : 0,
       currentBidStatus: null,

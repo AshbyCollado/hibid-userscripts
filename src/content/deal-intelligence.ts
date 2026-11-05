@@ -5,6 +5,7 @@ import { routeFingerprint } from '../core/route.js';
 import type { DealAnalysisSummary, HiBidLotRecord, HiBidRoute, HiBidTransport } from '../core/types.js';
 import { hydrateHibidLots, mergeHibidVisibleWithHydrated } from '../hibid/api.js';
 import { extractHiBidVisibleLots, extractHibidLotDetail, extractHibidTileEventItemId } from '../hibid/dom.js';
+import { HIBID_LOT_ROOT_SELECTOR, getHibidLotRoots, getHibidLotRoot, getHibidResearchMount, getHibidCostAnchor } from '../hibid/dom-adapter.js';
 import { runProviderQueue } from '../intelligence/provider-queue.js';
 import { calculateAuctionEconomics, type AuctionEconomics, type PremiumSource } from './auction-economics.js';
 import {
@@ -21,10 +22,10 @@ import {
   type ProductIdentity, type RetailCandidateEvaluation, type RetailIndicator, type UsAllInResult
 } from '../intelligence/us-deal-intelligence.js';
 
-const LOT_TILE_SELECTOR = 'app-lot-tile[id^="lot-"], [data-event-item-id], .bid-status-border[id^="lot-"]';
+const LOT_TILE_SELECTOR = HIBID_LOT_ROOT_SELECTOR;
 const FLIPPAH_OWNED_SELECTOR = '[data-flippah-owned="true"]';
 const TILE_ANNOTATION_HOST_ATTRIBUTE = 'data-flippah-retail-host-for';
-const SUPPORTED = new Set(['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids-winning', 'currentbids-outbid']);
+const SUPPORTED = new Set(['catalog', 'livecatalog', 'search', 'lot', 'watchlist', 'currentbids', 'currentbids-winning', 'currentbids-outbid']);
 
 interface RetailLookupResult {
   status: 'matched' | 'no_match' | 'blocked' | 'rate_limited' | 'network_error' | 'parse_error' | 'low_confidence';
@@ -73,9 +74,7 @@ export interface RetailEvidenceCapture {
 }
 
 export function shouldRenderProvisionalDealAnnotations(route: Pick<HiBidRoute, 'kind'>): boolean {
-  // List and account pages wait for hydrated evidence. Lot-detail pages render
-  // only inside Flippah's existing Shadow DOM panel and never annotate HiBid DOM.
-  return false;
+  return route.kind !== 'lot' && SUPPORTED.has(route.kind);
 }
 
 export function canReuseRetailEvidence(
@@ -192,7 +191,8 @@ async function readAuctionPremiums(ids: string[]): Promise<Map<string, number>> 
   const unique = [...new Set(ids.filter(Boolean))];
   const raw = unique.length ? await localGet(unique.map(auctionStateKey)) : {};
   return new Map(unique.flatMap((id) => {
-    const value = Number(raw[auctionStateKey(id)]?.premiumPct);
+    const stored = raw[auctionStateKey(id)]?.premiumPct;
+    const value = stored === null || stored === undefined || stored === '' ? NaN : Number(stored);
     return Number.isFinite(value) && value >= 0 && value <= 30 ? [[id, value] as const] : [];
   }));
 }
@@ -220,8 +220,8 @@ function safeExternalUrl(url: string): string {
   } catch { return '#'; }
 }
 
-export function visibleLotIdSignature(root: ParentNode): string {
-  return [...new Set([...root.querySelectorAll<HTMLElement>(LOT_TILE_SELECTOR)]
+export function visibleLotIdSignature(root: Document | Element): string {
+  return [...new Set(getHibidLotRoots(root)
     .map(extractHibidTileEventItemId)
     .filter(Boolean))]
     .sort()
@@ -240,7 +240,7 @@ function lotIdForTile(tile: Element): string {
 
 function addElementLotIds(element: Element, ids: Set<string>): void {
   if (element.matches(FLIPPAH_OWNED_SELECTOR) || element.closest(FLIPPAH_OWNED_SELECTOR)) return;
-  const closest = element.matches(LOT_TILE_SELECTOR) ? element : element.closest(LOT_TILE_SELECTOR);
+  const closest = getHibidLotRoot(element);
   if (closest) {
     const id = lotIdForTile(closest);
     if (id) ids.add(id);
@@ -280,32 +280,23 @@ function researchLinks(query: string): { amazon: string; ebay: string; camel: st
 }
 
 function tileFor(id: string): Element | null {
-  const candidates = new Set<Element>();
-  document.querySelectorAll('app-lot-tile, .bid-status-border[id^="lot-"], [data-event-item-id]').forEach((element) => {
-    const tile = element.matches('app-lot-tile')
-      ? element
-      : element.closest('app-lot-tile')
-        || (element.matches('.bid-status-border') ? element : element.closest('.bid-status-border'))
-        || (element.matches('[data-event-item-id]') ? element : element.closest('[data-event-item-id]'));
-    if (tile) candidates.add(tile);
-  });
-  return [...candidates].find((tile) => extractHibidTileEventItemId(tile) === id) || null;
+  return getHibidLotRoots(document).find((tile) => extractHibidTileEventItemId(tile) === id) || null;
 }
 
 function tileAnnotationStyles(): string {
   return `
     :host{all:initial;display:block;max-width:100%;contain:content}
     *{box-sizing:border-box}
-    .flippah-deal-strip{display:flex;align-items:center;align-content:center;justify-content:center;flex-wrap:wrap;gap:6px 10px;min-height:52px;margin:5px 0;padding:3px 5px;font:700 11px/1.2 system-ui,sans-serif;letter-spacing:0}
+    .flippah-deal-strip{display:flex;align-items:center;align-content:center;justify-content:flex-start;flex-wrap:wrap;gap:6px 8px;min-height:52px;margin:4px 0;padding:4px 0;font:600 11px/1.3 var(--font-family-sans,Inter,system-ui,sans-serif);letter-spacing:0}
     .flippah-deal-pill{display:inline-flex;align-items:center;gap:5px;min-height:20px;color:#475569;white-space:nowrap}
     a.flippah-deal-pill{text-decoration:none;cursor:pointer}a.flippah-deal-pill:hover{text-decoration:underline}a.flippah-deal-pill:focus-visible{outline:2px solid #2563eb;outline-offset:2px;text-decoration:none}
     .flippah-deal-dot{display:inline-block;width:9px;height:9px;border:1px solid #64748b;border-radius:50%;background:#94a3b8;flex:0 0 9px}
     .flippah-deal-pill.green .flippah-deal-dot{border-color:#3f6212;background:#65a30d}.flippah-deal-pill.yellow .flippah-deal-dot{border-color:#854d0e;background:#eab308}
     .flippah-deal-pill.orange .flippah-deal-dot{border-color:#9a3412;background:#f97316}.flippah-deal-pill.red .flippah-deal-dot{border-color:#991b1b;background:#dc2626}
     .flippah-deal-pill.black .flippah-deal-dot{border-color:#111827;background:#111827}
-    .flippah-deal-pill.search{min-height:22px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;box-shadow:0 1px 1px rgba(15,23,42,.08);font-size:11px}
+    .flippah-deal-pill.search{min-height:24px;padding:3px 7px;border:1px solid #ddd;border-radius:6px;background:#fff;font-size:11px}
     .flippah-deal-pill.search.amazon{border-color:#f59e0b;color:#111827;font-family:Arial,sans-serif;font-weight:800}.flippah-deal-pill.search.ebay{border-color:#93c5fd;color:#3665f3;font-family:Arial,sans-serif;font-weight:800}
-    .flippah-deal-pill.condition,.flippah-deal-pill.allin{min-height:20px;padding:2px 7px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;font-weight:800}
+    .flippah-deal-pill.condition,.flippah-deal-pill.allin{min-height:22px;padding:2px 6px;border:1px solid #ddd;border-radius:6px;background:#f8f8f8;font-weight:600}
     .flippah-deal-pill.condition-good{border-color:#86efac;background:#f0fdf4;color:#166534}.flippah-deal-pill.condition-warning{border-color:#fcd34d;background:#fffbeb;color:#92400e}
     .flippah-deal-pill.condition-danger{border-color:#fca5a5;background:#fef2f2;color:#991b1b}.flippah-deal-pill.condition-unknown{color:#64748b}
     .flippah-deal-loading{display:inline-flex;align-items:center;gap:7px;min-height:22px;color:#64748b;font-weight:700}
@@ -321,11 +312,6 @@ function amazonMarketValue(record: AnalysisRecord): number | null {
 
 function ebayMarketValue(record: AnalysisRecord): number | null {
   return record.state.resaleEstimate;
-}
-
-function tileAnnotationMount(tile: Element): Element | null {
-  if (!tile.matches('app-lot-tile, .bid-status-border, [data-event-item-id]')) return null;
-  return tile.querySelector('.lot-tile-content, .current-bids-card-content, .lot-card-content');
 }
 
 function annotationStrip(tile: Element, id: string): HTMLElement | null {
@@ -349,7 +335,7 @@ function ensureTileAnnotationStrip(id: string, route?: Pick<HiBidRoute, 'kind'>)
   }
   let strip = annotationStrip(tile, id);
   if (strip) return { tile, strip };
-  const mount = tileAnnotationMount(tile);
+  const mount = getHibidResearchMount(tile);
   if (!mount) return null;
   const host = document.createElement('div');
   host.dataset.flippahRetailHostFor = id;
@@ -361,7 +347,7 @@ function ensureTileAnnotationStrip(id: string, route?: Pick<HiBidRoute, 'kind'>)
   strip.className = 'flippah-deal-strip';
   strip.dataset.flippahRetailFor = id;
   root.append(style, strip);
-  mount.prepend(host);
+  mount.container.insertBefore(host, mount.before);
   if (!host.isConnected) {
     host.remove();
     return null;
@@ -377,11 +363,24 @@ export function reserveTileAnnotationSpace(id: string, route?: Pick<HiBidRoute, 
   strip.dataset.flippahRenderSignature = 'pending';
   strip.setAttribute('aria-busy', 'true');
   strip.setAttribute('aria-label', 'Checking product prices');
+  const tile = target.tile;
+  const title = tile.querySelector('.app-auction-lot-card__title,.lot-title,.title,.lot-number-lead')?.textContent || '';
+  const query = cleanQuery(title.replace(/^\s*Lot\s*#?\s*[\w.-]+\s*[|:-]\s*/i, ''));
+  for (const provider of ['amazon', 'ebay'] as const) {
+    const search = buildRetailSearchPresentation(provider, query);
+    const link = document.createElement('a');
+    link.className = `flippah-deal-pill search ${provider}`;
+    link.textContent = search.label;
+    link.href = safeExternalUrl(search.href);
+    link.target = '_blank'; link.rel = 'noopener noreferrer';
+    link.title = search.title; link.setAttribute('aria-label', search.ariaLabel);
+    strip.append(link);
+  }
   const loading = document.createElement('span'); loading.className = 'flippah-deal-loading';
   const spinner = document.createElement('span'); spinner.className = 'flippah-deal-loading-spinner'; spinner.setAttribute('aria-hidden', 'true');
   const label = document.createElement('span'); label.textContent = 'Checking prices';
   loading.append(spinner, label);
-  strip.replaceChildren(loading);
+  strip.append(loading);
   return true;
 }
 
@@ -395,6 +394,35 @@ function comparisonInput(record: AnalysisRecord): { allIn: number | null; costLa
   };
 }
 
+function renderAdjacentCost(tile: Element, record: AnalysisRecord): boolean {
+  const anchor = getHibidCostAnchor(tile);
+  if (!anchor?.parentElement) return false;
+  const attribute = 'data-flippah-cost-host-for';
+  let host = tile.querySelector<HTMLElement>(`[${attribute}="${CSS.escape(record.lot.id)}"]`);
+  for (const old of tile.querySelectorAll<HTMLElement>(`[${attribute}]`)) {
+    if (old !== host && old.dataset.flippahOwned === 'true') old.remove();
+  }
+  if (!host) {
+    host = document.createElement('div');
+    host.setAttribute(attribute, record.lot.id); host.dataset.flippahOwned = 'true';
+    const shadow = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = ':host{display:block;min-height:24px;max-width:100%;margin:4px 0}span{display:block;font:600 11px/20px var(--font-family-sans,Inter,system-ui,sans-serif);letter-spacing:0;color:#215a77;overflow-wrap:anywhere}';
+    shadow.append(style, document.createElement('span'));
+    anchor.parentElement.insertBefore(host, anchor);
+  }
+  const value = host.shadowRoot?.querySelector('span');
+  if (value) {
+    const label = record.allIn ? `All-in ${formatUsd(record.allIn.total)}`
+      : record.comparisonCost !== null ? `Est. ${formatUsd(record.comparisonCost)} + costs` : 'Bid costs unavailable';
+    if (value.textContent !== label) value.textContent = label;
+    value.title = record.allIn ? 'Next bid, or current bid when closed, including verified fees and configured tax.'
+      : `Provisional cost; unverified charges are excluded. ${record.economics.warnings.join(' ')}`;
+    value.setAttribute('aria-label', `${label}. ${value.title}`);
+  }
+  return true;
+}
+
 export function refreshRecordIndicators(record: AnalysisRecord): void {
   const indicators = computeRetailIndicators(comparisonInput(record).allIn, { amazon: amazonMarketValue(record), ebay: ebayMarketValue(record) });
   record.amazonIndicator = indicators.amazon;
@@ -405,6 +433,7 @@ export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): 
   const target = ensureTileAnnotationStrip(record.lot.id, route);
   if (!target) return false;
   const { strip } = target;
+  const adjacentCost = renderAdjacentCost(target.tile, record);
   const amazonPrice = amazonMarketValue(record);
   const ebayPrice = ebayMarketValue(record);
   const condition = buildConditionPresentation(record.condition);
@@ -419,7 +448,7 @@ export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): 
           ? `Amazon ${formatUsd(amazonPrice)}`
           : 'Amazon';
   const ebayLabel = ebayPrice === null ? 'eBay' : `eBay ${formatUsd(ebayPrice)}${record.state.resaleEstimate !== null ? ' saved' : ''}`;
-  const verdict = (route.kind === 'watchlist' || route.kind.startsWith('currentbids-'))
+  const verdict = (route.kind === 'watchlist' || route.kind === 'currentbids' || route.kind.startsWith('currentbids-'))
     ? computeAccountVerdict({ status: record.lot.status, condition: record.condition, nextHammer: record.lot.nextBid, allIn: record.allIn?.total, maxBid: record.state.maxBid, retail: record.ebayNet ?? amazonPrice, costsProvisional: record.economics ? !record.economics.complete : !record.allIn })
     : null;
   const renderSignature = JSON.stringify([
@@ -442,6 +471,10 @@ export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): 
   strip.dataset.flippahRenderSignature = renderSignature;
   strip.removeAttribute('aria-busy');
   strip.removeAttribute('aria-label');
+  const focusedLink = (strip.getRootNode() as ShadowRoot).activeElement;
+  const focusedProvider = focusedLink instanceof HTMLAnchorElement
+    ? new URL(focusedLink.href).hostname.includes('amazon.com') ? 'amazon.com' : new URL(focusedLink.href).hostname.includes('ebay.com') ? 'ebay.com' : ''
+    : '';
   strip.replaceChildren();
   const add = (text: string, cls: string, title: string, href = '', showDot = true, brand = '') => {
     const pill = document.createElement(href ? 'a' : 'span'); pill.className = `flippah-deal-pill ${cls}${brand ? ` search ${brand}` : ''}`; pill.title = title; pill.setAttribute('aria-label', title);
@@ -485,18 +518,19 @@ export function applyTileAnnotation(record: AnalysisRecord, route: HiBidRoute): 
     add(ebayLabel, record.ebayIndicator.cls, ebayTitle, links.ebay);
   }
   add(condition.label, `condition condition-${condition.tone}`, condition.title, '', false);
-  if (record.allIn) add(`All-in ${formatUsd(record.allIn.total)}`, 'allin', 'Current or next bid plus buyer premium and configured sales tax.', '', false);
-  else if (record.economics && record.comparisonCost != null) add(`Est. ${formatUsd(record.comparisonCost)} + costs`, 'allin', `Provisional bid cost; excludes unverified costs. Known subtotal ${formatUsd(record.economics.knownSubtotal)}. ${record.economics.warnings.join(' ')}`, '', false);
+  if (!adjacentCost && record.allIn) add(`All-in ${formatUsd(record.allIn.total)}`, 'allin', 'Current or next bid plus buyer premium and configured sales tax.', '', false);
+  else if (!adjacentCost && record.economics && record.comparisonCost != null) add(`Est. ${formatUsd(record.comparisonCost)} + costs`, 'allin', `Provisional bid cost; excludes unverified costs. Known subtotal ${formatUsd(record.economics.knownSubtotal)}. ${record.economics.warnings.join(' ')}`, '', false);
   if (verdict) add(verdict.label, verdict.cls, `${explainHibidStatus(record.lot.status)} Flippah: ${verdict.advice}`);
+  if (focusedProvider) strip.querySelector<HTMLAnchorElement>(`a[href*="${focusedProvider}"]`)?.focus({ preventScroll: true });
   return true;
 }
 
 function lotPanelStyles(): string {
   return `<style id="flippah-intelligence-shadow-style">
-    .flippah-intelligence{margin-top:12px;border-top:1px solid #e2e2df;padding-top:10px;color:#202522;font:12px/1.4 system-ui,sans-serif}.flippah-intelligence *{box-sizing:border-box}
-    .flippah-intelligence-head,.flippah-retail-row{display:flex;align-items:center;justify-content:space-between;gap:10px}.flippah-intelligence-head strong{font-size:13px}.flippah-retail-row{margin-top:7px;padding:8px;border:1px solid #d7ddd9;border-radius:6px;background:#fff}
+    .flippah-intelligence{margin-top:12px;border-top:1px solid #ddd;padding-top:10px;color:#202522;font:12px/1.4 Inter,system-ui,sans-serif}.flippah-intelligence *{box-sizing:border-box;min-width:0;overflow-wrap:anywhere}
+    .flippah-intelligence-head,.flippah-retail-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.flippah-intelligence-head strong{font-size:13px}.flippah-retail-row{margin-top:7px;padding:6px 0;border-bottom:1px solid #ddd;background:#fff}
     .flippah-intelligence .price{color:#0d47a1;font-weight:800}.flippah-condition{margin-top:8px;border-left:3px solid #b45309;background:#fff7ed;padding:7px}.flippah-condition.danger{border-color:#b91c1c;background:#fef2f2}
-    .flippah-intelligence details{margin-top:7px;border:1px solid #e2e2df;border-radius:6px;background:#fff;padding:7px}.flippah-intelligence summary{cursor:pointer;font-weight:750}.flippah-intelligence a{color:#0d47a1;font-weight:700}.flippah-link-row{display:flex;flex-wrap:wrap;gap:9px;margin-top:7px}
+    .flippah-intelligence details{margin-top:7px;border-bottom:1px solid #ddd;background:#fff;padding:7px 0}.flippah-intelligence summary{cursor:pointer;font-weight:750}.flippah-intelligence a{color:#0d47a1;font-weight:700}.flippah-intelligence a:focus-visible,.flippah-intelligence summary:focus-visible{outline:2px solid #1f55b2;outline-offset:2px}.flippah-link-row{display:flex;flex-wrap:wrap;gap:9px;margin-top:7px}
     .flippah-evidence-title{margin-top:7px;color:#4b5563}.flippah-intelligence select,.flippah-intelligence input{min-height:30px;border:1px solid #cfd4d0;border-radius:6px;background:#fff;padding:5px 7px}.flippah-intelligence select{width:100%;margin-top:7px}.flippah-quantity{display:flex;align-items:center;gap:8px;margin-top:7px}.flippah-quantity input{width:70px}
     .flippah-retail-value{display:inline-flex;align-items:center;gap:6px;font-weight:800}.flippah-retail-value .flippah-deal-dot{display:inline-block;width:9px;height:9px;border:1px solid #64748b;border-radius:50%;background:#94a3b8;flex:0 0 9px}
     .flippah-retail-value.green .flippah-deal-dot{border-color:#3f6212;background:#65a30d}.flippah-retail-value.yellow .flippah-deal-dot{border-color:#854d0e;background:#eab308}.flippah-retail-value.orange .flippah-deal-dot{border-color:#9a3412;background:#f97316}.flippah-retail-value.red .flippah-deal-dot{border-color:#991b1b;background:#dc2626}
@@ -516,6 +550,7 @@ export function publishLotPanelEconomics(host: HTMLElement, record: AnalysisReco
     flippahEconomicsLotId: record.lot.id,
     flippahFixedFeeCents: String(validFee && record.currency === 'USD' ? feeCents : 0),
     flippahPremiumPct: validRate ? String(rate) : '',
+    flippahPremiumSource: record.economics.premiumSource,
     flippahEconomicsWarnings: JSON.stringify(record.economics.warnings),
     flippahEconomicsComplete: String(validFee && record.currency === 'USD' && record.economics.complete),
   };
@@ -525,12 +560,14 @@ export function publishLotPanelEconomics(host: HTMLElement, record: AnalysisReco
   host.dispatchEvent(new EventClass('flippah:economics'));
 }
 
-function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
+export function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   const host = document.getElementById('lotlens-root');
   const root = host?.shadowRoot;
   const panel = root?.querySelector('.lotlens-panel');
   if (!root || !panel) return false;
   publishLotPanelEconomics(host!, record);
+  const degraded = panel.querySelector<HTMLElement>('.lotlens-degraded');
+  if (degraded && record.lot.id && record.lot.title && record.lot.currentBid !== null) degraded.hidden = true;
   if (!root.getElementById('flippah-intelligence-shadow-style')) {
     const parsed = new DOMParser().parseFromString(lotPanelStyles(), 'text/html');
     const style = parsed.querySelector('style');
@@ -545,8 +582,8 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   const queryInput = root.querySelector<HTMLInputElement>('#lotlens-comps-query');
   const resaleInput = root.querySelector<HTMLInputElement>('#lotlens-resale');
   const premiumInput = root.querySelector<HTMLInputElement>('#lotlens-premium');
-  if (queryInput && record.state.queryOverride && queryInput.value !== record.state.queryOverride) queryInput.value = record.state.queryOverride;
-  if (queryInput && !record.state.queryOverride && record.identity.query && queryInput.value !== record.identity.query) {
+  if (queryInput && root.activeElement !== queryInput && record.state.queryOverride && queryInput.value !== record.state.queryOverride) queryInput.value = record.state.queryOverride;
+  if (queryInput && root.activeElement !== queryInput && !record.state.queryOverride && record.identity.query && queryInput.value !== record.identity.query) {
     queryInput.value = record.identity.query;
     queryInput.dispatchEvent(new Event('input', { bubbles: true }));
   }
@@ -556,6 +593,17 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   const ebayPrice = ebayMarketValue(record);
   const conditionText = record.condition.partsOnly ? record.condition.partsReasons.join('; ') : record.condition.damaged ? record.condition.damageReasons.join('; ') : record.condition.cautions.join('; ');
   const candidates = record.amazon?.candidates || [];
+  const renderSignature = JSON.stringify([record.lot.id, query, record.currency, record.condition, record.mixed,
+    record.needsQuantity, record.state, record.amazon, record.comparisonCost, record.economics, record.outcome,
+    record.lot.auctionTerms, record.lot.biddingNotice, record.lot.paymentInfo, record.lot.shippingAndPickupInfo]);
+  if (section.dataset.renderSignature === renderSignature) return true;
+  const sameLot = section.dataset.lotId === record.lot.id;
+  const expanded = sameLot ? [...section.querySelectorAll('details')].filter((node) => node.open).map((node) => node.querySelector('summary')?.textContent) : [];
+  const drafts = sameLot ? [...section.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input,select')]
+    .filter((node) => node.value !== (node.dataset.savedValue ?? node.value))
+    .map((node) => [node.id, node.value] as const) : [];
+  const controlsBefore = [...section.querySelectorAll<HTMLElement>('a,summary,input,select,button')];
+  const focusedIndex = sameLot ? controlsBefore.indexOf(root.activeElement as HTMLElement) : -1;
   const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] => {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -576,11 +624,15 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
     const presentation = buildRetailSearchPresentation(provider, query);
     const link = element('a', `flippah-search-pill ${provider}`, presentation.label);
     link.href = safeExternalUrl(presentation.href); link.target = '_blank'; link.rel = 'noopener noreferrer';
+    link.dataset.provider = provider;
     link.title = presentation.title; link.setAttribute('aria-label', presentation.ariaLabel);
     return link;
   };
-  const pricedValue = (providerName: string, price: number, indicator: RetailIndicator, evidenceSource: string): HTMLSpanElement => {
-    const value = element('span', `flippah-retail-value ${indicator.cls}`);
+  const pricedValue = (providerName: string, price: number, indicator: RetailIndicator, evidenceSource: string): HTMLAnchorElement => {
+    const value = element('a', `flippah-retail-value ${indicator.cls}`);
+    value.dataset.provider = providerName.toLowerCase();
+    value.href = safeExternalUrl(providerName === 'Amazon' ? links.amazon : links.ebay);
+    value.target = '_blank'; value.rel = 'noopener noreferrer';
     const dot = element('span', 'flippah-deal-dot'); dot.setAttribute('aria-hidden', 'true');
     value.append(dot, element('span', 'price', formatUsd(price)));
     const title = buildRetailIndicatorTooltip({ ...comparisonInput(record), providerName, indicator, marketPrice: price, evidenceSource });
@@ -595,9 +647,13 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
   const head = element('div', 'flippah-intelligence-head');
   head.append(
     element('strong', '', 'US Deal Intelligence'),
-    element('span', '', record.currency === 'CAD' ? 'CAD - no USD comparison' : record.mixed.mixed ? 'component review required' : record.amazon?.status || 'researching')
+    element('span', '', record.currency === 'CAD' ? 'CAD - no USD comparison' : record.mixed.mixed ? 'Component review' : record.amazon?.status === 'matched' ? 'Price found' : record.amazon ? 'Search available' : 'Checking prices')
   );
   section.append(head);
+  if (record.economics.premiumSource === 'auction_override') {
+    const published = numberFrom(record.lot.buyerPremium);
+    section.append(warning('Saved premium override:', `${record.premiumPct}%${published !== null && published !== record.premiumPct ? `; published rate ${published}%` : ''}. Applied to this auction.`));
+  }
   if (conditionText) section.append(warning('Condition warning:', `${conditionText}. Research remains available.`, record.condition.partsOnly || record.condition.damaged));
   if (record.mixed.mixed) section.append(warning('Mixed/group lot:', 'review every identifiable component before using a retail value.'));
   if (record.needsQuantity) {
@@ -650,6 +706,15 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
     label.append(select); evidence.append(label);
   }
   section.append(evidence);
+
+  const terms = details('Auction terms');
+  terms.append(element('p', '', [record.lot.auctionTerms, record.lot.biddingNotice, record.lot.paymentInfo, record.lot.shippingAndPickupInfo].filter(Boolean).join('\n\n') || 'Auction terms are not verified.'));
+  section.append(terms);
+  const fees = details('Fee evidence');
+  const premiumSources: Record<PremiumSource, string> = { auction_override: 'saved auction correction', lot_buyer_premium: 'published buyer premium', auction_terms: 'published auction terms', fallback: 'unverified default' };
+  fees.append(element('p', '', `Buyer premium: ${record.economics.premiumPct ?? 'unknown'}% (${premiumSources[record.economics.premiumSource]}).`));
+  for (const message of [...record.economics.evidence, ...record.economics.warnings]) fees.append(element('p', '', message));
+  section.append(fees);
 
   const outcomeDetails = details(record.outcome ? 'Resale outcome saved' : 'Record resale outcome');
   outcomeDetails.className = 'flippah-outcome';
@@ -730,6 +795,22 @@ function renderLotPanel(record: AnalysisRecord, onChange: () => void): boolean {
     void saveStoredOutcome(next).then(onChange);
   });
   section.querySelector<HTMLButtonElement>('#flippah-outcome-clear')?.addEventListener('click', () => void clearStoredOutcome(record.lot.id).then(onChange));
+  section.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input,select').forEach((node) => { node.dataset.savedValue = node.value; });
+  for (const [id, value] of drafts) {
+    const input = section.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`);
+    if (input) input.value = value;
+  }
+  section.querySelectorAll('details').forEach((node) => { node.open = expanded.includes(node.querySelector('summary')?.textContent); });
+  if (focusedIndex >= 0) {
+    const previous = controlsBefore[focusedIndex]!;
+    const controls = [...section.querySelectorAll<HTMLElement>('a,summary,input,select,button')];
+    const replacement = previous.dataset.provider ? controls.find((node) => node.dataset.provider === previous.dataset.provider)
+      : previous.id ? controls.find((node) => node.id === previous.id)
+      : controls.find((node) => node.tagName === previous.tagName && node.textContent === previous.textContent);
+    replacement?.focus({ preventScroll: true });
+  }
+  section.dataset.lotId = record.lot.id;
+  section.dataset.renderSignature = renderSignature;
   return true;
 }
 
@@ -774,7 +855,9 @@ export function buildAnalysisRecords(
     });
     const needsQuantity = requiresQuantityConfirmation(quantityAssessment, mixed.mixed, state.confirmedQuantity);
     const currency = detectLotCurrency(lot);
-    const hammer = selectAuctionHammer(lot.nextBid, lot.currentBid);
+    const unitHammer = selectAuctionHammer(lot.nextBid, lot.currentBid);
+    const multiplier = typeof lot.bidMultiplier === 'number' && Number.isSafeInteger(lot.bidMultiplier) && lot.bidMultiplier > 0 ? lot.bidMultiplier : 1;
+    const hammer = unitHammer === null ? null : Math.round(unitHammer * multiplier * 100) / 100;
     const overridePremium = auctionPremiums.get(lot.auctionId);
     const lotPremium = numberFrom(lot.buyerPremium);
     const premiumPct = overridePremium ?? lotPremium ?? 15;
@@ -873,6 +956,11 @@ export class DealIntelligenceController {
   handleMutations(mutations: MutationRecord[]): void {
     const route = this.getRoute();
     if (!SUPPORTED.has(route.kind)) return;
+    if (route.kind === 'lot' && mutations.some((mutation) => {
+      const target = elementForNode(mutation.target);
+      return target && !target.closest('#lotlens-root,[data-flippah-owned="true"],app-watch-notes')
+        && target.closest('.lot-high-bid,app-lot-buttons,.TileDisplayMinBid');
+    })) this.scheduleAnnotationRepair([...this.records.keys()]);
     const affectedIds = mutationAffectedLotIds(mutations);
     const cachedIds = affectedIds.filter((id) => this.records.has(id));
     cachedIds.forEach((id) => {
@@ -882,7 +970,7 @@ export class DealIntelligenceController {
       const record = this.records.get(id);
       if (record) applyTileAnnotation(record, route);
     });
-    if (route.kind !== 'lot' && !shouldRenderProvisionalDealAnnotations(route)) {
+    if (route.kind !== 'lot') {
       affectedIds.filter((id) => !this.records.has(id)).forEach((id) => reserveTileAnnotationSpace(id, route));
     }
     if (cachedIds.length) this.scheduleAnnotationRepair(cachedIds);
@@ -1007,7 +1095,8 @@ export class DealIntelligenceController {
       this.pendingAnnotationRepairIds.clear();
       const route = this.getRoute();
       if (!route.supported || !SUPPORTED.has(route.kind)) return;
-      const visible = new Map(extractHiBidVisibleLots(document, route, location.href).map((lot) => [lot.id, lot]));
+      const detail = route.kind === 'lot' ? extractHibidLotDetail(document, location.href) : null;
+      const visible = new Map((route.kind === 'lot' ? detail ? [detail] : [] : extractHiBidVisibleLots(document, route, location.href)).map((lot) => [lot.id, lot]));
       pending.forEach((id) => {
         let record = this.records.get(id);
         const current = visible.get(id);
@@ -1016,7 +1105,10 @@ export class DealIntelligenceController {
           // pending retail response arrives after the bid changed.
           Object.assign(record, refreshLiveAnalysisRecord(record, current, this.liveSettings, this.liveAuctionPremiums));
         }
-        if (record) applyTileAnnotation(record, route);
+        if (record) {
+          if (route.kind === 'lot') renderLotPanel(record, () => this.schedule(0));
+          else applyTileAnnotation(record, route);
+        }
       });
     }, 120);
   }
@@ -1032,6 +1124,7 @@ export class DealIntelligenceController {
     const fingerprint = routeFingerprint(route, location.href);
     const generation = ++this.generation;
     const previousRecords = this.records;
+    if (route.kind !== 'lot') getHibidLotRoots(document).forEach((tile) => reserveTileAnnotationSpace(extractHibidTileEventItemId(tile), route));
     this.update({ phase: 'scanning', routeFingerprint: fingerprint, total: 0, analyzed: 0, retailMatched: 0, retailUnmatched: 0, mixedLots: 0, quantityReview: 0, message: 'Reading visible lots' });
     try {
       const settings = normalizeSettings(await getSyncStorage());
@@ -1044,7 +1137,6 @@ export class DealIntelligenceController {
       const quickRecords = buildAnalysisRecords(lots, stored, auctionPremiums, outcomes, settings)
         .map((record) => this.retainKnownEvidence(record, previousRecords.get(record.lot.id)));
       const stillCurrent = () => generation === this.generation && fingerprint === routeFingerprint(this.getRoute(), location.href);
-      if (settings.amazonAutoLookup) await this.restoreCachedEvidence(quickRecords, stillCurrent);
       if (generation !== this.generation || fingerprint !== routeFingerprint(this.getRoute(), location.href)) return;
       this.liveSettings = settings;
       this.liveAuctionPremiums = auctionPremiums;
@@ -1058,6 +1150,18 @@ export class DealIntelligenceController {
           }, 500);
         }
       });
+      if (settings.amazonAutoLookup) {
+        await this.restoreCachedEvidence(quickRecords, stillCurrent);
+        if (!stillCurrent()) return;
+        const detail = route.kind === 'lot' ? extractHibidLotDetail(document, location.href) : null;
+        const latestLots = new Map((route.kind === 'lot' ? detail ? [detail] : [] : extractHiBidVisibleLots(document, route, location.href)).map((lot) => [lot.id, lot]));
+        quickRecords.forEach((record) => {
+          const latest = latestLots.get(record.lot.id);
+          if (latest?.id === record.lot.id) Object.assign(record, refreshLiveAnalysisRecord(record, latest, settings, auctionPremiums));
+          if (route.kind === 'lot') renderLotPanel(record, () => this.schedule(0));
+          else applyTileAnnotation(record, route);
+        });
+      }
       this.update({
         total: quickRecords.length,
         mixedLots: quickRecords.filter((item) => item.mixed.mixed).length,

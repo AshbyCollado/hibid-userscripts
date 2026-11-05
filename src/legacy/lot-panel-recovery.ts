@@ -15,7 +15,9 @@ export interface LotPanelRecoveryHandle {
 function sameRoute(expectedHref: string): boolean {
   try {
     const expected = new URL(expectedHref, globalThis.location?.href);
-    const current = new URL(globalThis.location.href);
+    const currentHref = globalThis.location?.href;
+    if (!currentHref) return false;
+    const current = new URL(currentHref);
     expected.hash = '';
     current.hash = '';
     return expected.href === current.href;
@@ -29,6 +31,23 @@ export function installLotPanelRecovery(options: LotPanelRecoveryOptions): LotPa
   let scheduled = false;
   let bidNode: Element | null = null;
   let bidObserver: MutationObserver | null = null;
+  let lastFocused: HTMLElement | null = null;
+
+  const shadow = options.host.shadowRoot;
+  const focusIn = (): void => {
+    const target = shadow?.activeElement;
+    if (target) lastFocused = target as HTMLElement;
+  };
+  options.host.addEventListener('focusin', focusIn);
+
+  // Keep the legacy panel visually aligned with the current HiBid surface without
+  // depending on page CSS or loading an external font.
+  if (shadow && !shadow.querySelector('[data-flippah-recovery-style]')) {
+    const style = document.createElement('style');
+    style.dataset.flippahRecoveryStyle = 'true';
+    style.textContent = ':host{display:block;width:100%;max-width:100%;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif} .lotlens-panel{border:1px solid #dfe3e1;border-radius:8px;margin:8px 0;padding:12px;background:#fff;box-shadow:none}';
+    shadow.append(style);
+  }
 
   const stop = (): void => {
     if (stopped) return;
@@ -37,6 +56,7 @@ export function installLotPanelRecovery(options: LotPanelRecoveryOptions): LotPa
     bidObserver?.disconnect();
     bidObserver = null;
     bidNode = null;
+    options.host.removeEventListener('focusin', focusIn);
     options.signal.removeEventListener('abort', stop);
   };
 
@@ -71,6 +91,12 @@ export function installLotPanelRecovery(options: LotPanelRecoveryOptions): LotPa
     if (options.host.isConnected) return;
     if (document.getElementById(options.host.id) && document.getElementById(options.host.id) !== options.host) return;
     options.insertHost(options.host);
+    if (options.host.isConnected && lastFocused && shadow?.contains(lastFocused)) {
+      const active = document.activeElement;
+      if (!active || active === document.body || active === document.documentElement) {
+        lastFocused.focus({ preventScroll: true });
+      }
+    }
   };
 
   const check = (bidChanged: boolean): void => {

@@ -19,6 +19,9 @@ test('resolves every supported HiBid route without confusing category IDs for au
     ['https://hibid.com/newjersey/account/watchlist', 'watchlist'],
     ['https://hibid.com/account/currentbids?status=WINNING', 'currentbids-winning'],
     ['https://hibid.com/account/currentbids?status=OUTBID', 'currentbids-outbid'],
+    ['https://hibid.com/account/currentbids', 'currentbids'],
+    ['https://hibid.com/account/currentbids?status=ALL', 'currentbids'],
+    ['https://hibid.com/account/pastbids', 'pastbids'],
     ['https://hibid.com/account/pastbidsm', 'pastbids'],
     ['https://hibid.com/account/pastwatchlist', 'pastwatchlist']
   ] as const;
@@ -26,6 +29,9 @@ test('resolves every supported HiBid route without confusing category IDs for au
   const category = resolveHiBidRoute('https://hibid.com/lots/40198/computers');
   assert.equal(category.auctionId, null);
   assert.equal(category.categoryId, '40198');
+  const filteredCatalog = resolveHiBidRoute('https://hibid.com/catalog/791252/surplus?g=40196');
+  assert.equal(filteredCatalog.auctionId, '791252');
+  assert.equal(filteredCatalog.categoryId, '40196');
   const state = resolveHiBidRoute('https://hibid.com/newjersey/lots/40196/electronics');
   assert.equal(state.statePrefix, 'newjersey');
   assert.equal(state.siteType, 2);

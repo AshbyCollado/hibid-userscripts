@@ -1220,6 +1220,8 @@ test('lot quantities embedded in titles require confirmation', () => {
 test('genuine Canadian evidence blocks USD comparison', () => {
   assert.equal(detectComparisonCurrency('High Bid: 20.00 CAD', ''), 'CAD');
   assert.equal(detectComparisonCurrency('High Bid: 20.00 Can', ''), 'CAD');
+  assert.equal(detectComparisonCurrency('CAN$52.50', ''), 'CAD');
+  assert.equal(detectComparisonCurrency('Trash can 20 gallon, Bid 15 USD', ''), 'USD');
   assert.equal(detectComparisonCurrency('High Bid: 20.00 USD', '15%'), 'USD');
 });
 

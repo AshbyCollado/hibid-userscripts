@@ -6,7 +6,7 @@ import { resolveHiBidRoute, routeFingerprint } from '../src/core/route.js';
 import { extractAccountLots, extractHiBidVisibleLots, extractHibidLotDetail, extractPastAuctionGroupState, extractPastAuctionGroups } from '../src/hibid/dom.js';
 import { buildHibidExportPayload, buildHibidLlmBrief } from '../src/hibid/exports.js';
 import { DEFAULT_SETTINGS } from '../src/core/settings.js';
-import { chooseNewestJob, jobMatchesContextAndScope } from '../src/core/job-scope.js';
+import { chooseNewestJob, jobMatchesContextAndScope, restoredPastAuctionScope } from '../src/core/job-scope.js';
 import type { PageContext, ScrapeJobSummary } from '../src/core/types.js';
 
 const accountHtml = `
@@ -222,6 +222,10 @@ test('completed jobs are isolated by route fingerprint and selected past-auction
   assert.equal(jobMatchesContextAndScope(job, context, '765226'), true);
   assert.equal(jobMatchesContextAndScope(job, context, '999999'), false);
   assert.equal(jobMatchesContextAndScope({ ...job, fingerprint: 'stale' }, context, '765226'), false);
+  const reopened = { ...context, job, auctionGroups: [{ id: '765226', title: 'History', catalogUrl: '', location: '', dateText: '' }] };
+  assert.equal(restoredPastAuctionScope(reopened), '765226');
+  assert.equal(restoredPastAuctionScope({ ...reopened, job: { ...job, fingerprint: 'stale' } }), '');
+  assert.equal(restoredPastAuctionScope({ ...reopened, auctionGroups: [] }), '');
 });
 
 test('a completed public scrape is not reused after the visible total changes', () => {
